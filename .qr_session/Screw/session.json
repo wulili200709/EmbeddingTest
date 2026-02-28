@@ -1,0 +1,28 @@
+{
+  "ok_files": [
+    "C:/Users/goney/Desktop/test/3/OK/Image_20260204164803851.bmp"
+  ],
+  "ng_files": [
+    "C:/Users/goney/Desktop/test/3/NG/Image_20260204164747304.bmp"
+  ],
+  "test_files": [
+    "C:/Users/goney/Desktop/test/3/TEST/Image_20260204164121943.bmp",
+    "C:/Users/goney/Desktop/test/3/TEST/Image_20260204164126339.bmp",
+    "C:/Users/goney/Desktop/test/3/TEST/Image_20260204164135794.bmp",
+    "C:/Users/goney/Desktop/test/3/TEST/Image_20260204164139517.bmp",
+    "C:/Users/goney/Desktop/test/3/TEST/Image_20260204164143688.bmp",
+    "C:/Users/goney/Desktop/test/3/TEST/Image_20260204164201654.bmp",
+    "C:/Users/goney/Desktop/test/3/TEST/Image_20260204164234731.bmp",
+    "C:/Users/goney/Desktop/test/3/TEST/Image_20260204164239661.bmp",
+    "C:/Users/goney/Desktop/test/3/TEST/Image_20260204164242608.bmp",
+    "C:/Users/goney/Desktop/test/3/TEST/Image_20260204164245628.bmp",
+    "C:/Users/goney/Desktop/test/3/TEST/Image_20260204164253976.bmp",
+    "C:/Users/goney/Desktop/test/3/TEST/Image_20260204164259285.bmp",
+    "C:/Users/goney/Desktop/test/3/TEST/Image_20260204164301582.bmp",
+    "C:/Users/goney/Desktop/test/3/TEST/Image_20260204164747304.bmp",
+    "C:/Users/goney/Desktop/test/3/TEST/Image_20260204164750815.bmp",
+    "C:/Users/goney/Desktop/test/3/TEST/Image_20260204164753596.bmp",
+    "C:/Users/goney/Desktop/test/3/TEST/Image_20260204164807163.bmp",
+    "C:/Users/goney/Desktop/test/3/TEST/with block.bmp"
+  ]
+}

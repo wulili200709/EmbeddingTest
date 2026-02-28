@@ -1,0 +1,9 @@
+{
+  "products": [
+    "Default",
+    "Screw",
+    "Block",
+    "Metal"
+  ],
+  "current_product": "Metal"
+}

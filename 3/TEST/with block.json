@@ -1,0 +1,26 @@
+{
+  "version": "5.5.0",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "roi",
+      "points": [
+        [
+          1028.0,
+          830.0
+        ],
+        [
+          1507.0,
+          1288.0
+        ]
+      ],
+      "group_id": null,
+      "shape_type": "rectangle",
+      "flags": {}
+    }
+  ],
+  "imagePath": "with block.bmp",
+  "imageData": null,
+  "imageHeight": 2048,
+  "imageWidth": 2448
+}

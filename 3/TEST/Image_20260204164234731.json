@@ -1,0 +1,38 @@
+{
+  "version": "5.5.0",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "roi",
+      "points": [
+        [
+          314.0,
+          219.0
+        ],
+        [
+          318.0,
+          714.0
+        ],
+        [
+          789.0,
+          714.0
+        ],
+        [
+          785.0,
+          215.0
+        ],
+        [
+          314.0,
+          211.0
+        ]
+      ],
+      "group_id": null,
+      "shape_type": "polygon",
+      "flags": {}
+    }
+  ],
+  "imagePath": "Image_20260204164234731.bmp",
+  "imageData": null,
+  "imageHeight": 2048,
+  "imageWidth": 2448
+}
