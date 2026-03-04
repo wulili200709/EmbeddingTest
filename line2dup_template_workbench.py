@@ -512,52 +512,94 @@ class CreateTemplateTab(ttk.Frame):
         roi_img = self.image_bgr[self.roi.y : self.roi.y + self.roi.h, self.roi.x : self.roi.x + self.roi.w].copy()
         roi_mask = np.full((roi_img.shape[0], roi_img.shape[1]), 255, dtype=np.uint8)
 
-        producer = ShapeInfoProducer(roi_img, roi_mask)
-        a0 = float(self.angle_start_var.get())
-        a1 = float(self.angle_end_var.get())
-        s0 = float(self.scale_start_var.get())
-        s1 = float(self.scale_end_var.get())
-        producer.angle_range = [a0, a1] if abs(a1 - a0) > 1e-9 else [a0]
-        producer.scale_range = [s0, s1] if abs(s1 - s0) > 1e-9 else [s0]
-        producer.angle_step = float(max(1e-6, self.angle_step_var.get()))
-        producer.scale_step = float(max(1e-6, self.scale_step_var.get()))
-        infos = producer.produce_infos()
-
         kept = 0
         skipped = 0
         first_success_tid = -1
         first_success_src: Optional[np.ndarray] = None
-        for info in infos:
-            src_i = producer.src_of(info)
-            mask_i = producer.mask_of(info)
-            nfeat = max(16, int(round(float(num_features) * float(info.scale))))
-            tid = detector.add_template(
-                src_i,
-                class_id=class_id,
-                object_mask=mask_i,
-                num_features=nfeat,
-                metadata={
-                    "angle": float(info.angle),
-                    "scale": float(info.scale),
-                    "roi_x": int(self.roi.x),
-                    "roi_y": int(self.roi.y),
-                    "roi_w": int(self.roi.w),
-                    "roi_h": int(self.roi.h),
-                },
+        use_manual_points = len(self.template_levels) > 0
+
+        if use_manual_points and len(self.template_levels) != len(levels):
+            messagebox.showerror(
+                "Levels mismatch",
+                "Current edited points were extracted with a different levels setting.\n"
+                "Please click 'Extract Points From ROI' again after changing Levels.",
             )
-            if tid >= 0:
+            return
+
+        if use_manual_points:
+            base_levels = clone_levels(self.template_levels)
+            detector.class_templates[class_id] = []
+            detector.class_meta[class_id] = []
+            for angle_deg, scale in pose_infos:
+                transformed = self._transform_levels_for_pose(
+                    base_levels=base_levels,
+                    angle_deg=float(angle_deg),
+                    scale=float(scale),
+                    # Important: crop to feature extent so localization anchor stays stable.
+                    auto_crop=True,
+                    adapt_feature_count=True,
+                )
+                if (not transformed) or any(len(lv.features) <= 0 for lv in transformed):
+                    skipped += 1
+                    continue
+
+                detector.class_templates[class_id].append(transformed)
+                detector.class_meta[class_id].append(
+                    {
+                        "angle": float(angle_deg),
+                        "scale": float(scale),
+                        "roi_x": int(self.roi.x),
+                        "roi_y": int(self.roi.y),
+                        "roi_w": int(self.roi.w),
+                        "roi_h": int(self.roi.h),
+                    }
+                )
                 kept += 1
                 if first_success_tid < 0:
-                    first_success_tid = int(tid)
-                    first_success_src = src_i.copy()
-            else:
-                skipped += 1
+                    first_success_tid = len(detector.class_templates[class_id]) - 1
+                    first_success_src = ShapeInfoProducer.transform(roi_img, float(angle_deg), float(scale))
+        else:
+            producer = ShapeInfoProducer(roi_img, roi_mask)
+            a0 = float(self.angle_start_var.get())
+            a1 = float(self.angle_end_var.get())
+            s0 = float(self.scale_start_var.get())
+            s1 = float(self.scale_end_var.get())
+            producer.angle_range = [a0, a1] if abs(a1 - a0) > 1e-9 else [a0]
+            producer.scale_range = [s0, s1] if abs(s1 - s0) > 1e-9 else [s0]
+            producer.angle_step = float(max(1e-6, self.angle_step_var.get()))
+            producer.scale_step = float(max(1e-6, self.scale_step_var.get()))
+            infos = producer.produce_infos()
+            for info in infos:
+                src_i = producer.src_of(info)
+                mask_i = producer.mask_of(info)
+                nfeat = max(16, int(round(float(num_features) * float(info.scale))))
+                tid = detector.add_template(
+                    src_i,
+                    class_id=class_id,
+                    object_mask=mask_i,
+                    num_features=nfeat,
+                    metadata={
+                        "angle": float(info.angle),
+                        "scale": float(info.scale),
+                        "roi_x": int(self.roi.x),
+                        "roi_y": int(self.roi.y),
+                        "roi_w": int(self.roi.w),
+                        "roi_h": int(self.roi.h),
+                    },
+                )
+                if tid >= 0:
+                    kept += 1
+                    if first_success_tid < 0:
+                        first_success_tid = int(tid)
+                        first_success_src = src_i.copy()
+                else:
+                    skipped += 1
 
         if kept <= 0:
             messagebox.showerror(
                 "No valid templates",
                 "All angle/scale variants became empty.\n"
-                "Try smaller angle/scale range or add more base points.",
+                "Try smaller angle/scale range, lower thresholds, or add more points.",
             )
             return
 
@@ -582,11 +624,13 @@ class CreateTemplateTab(ttk.Frame):
         preview_path = str(Path(out_path).with_name(f"{Path(out_path).stem}_preview.png"))
         cv2.imwrite(preview_path, preview)
 
-        self.status_var.set(f"Saved model: {out_path}  templates={kept}")
+        mode = "edited-points" if use_manual_points else "auto-extracted"
+        self.status_var.set(f"Saved model: {out_path}  templates={kept}  mode={mode}")
         messagebox.showinfo(
             "Saved",
             f"Model saved:\n{out_path}\n"
-            f"Templates: {kept} (skipped {skipped})\n\n"
+            f"Templates: {kept} (skipped {skipped})\n"
+            f"Source: {mode}\n\n"
             f"Preview:\n{preview_path}",
         )
 
@@ -694,6 +738,7 @@ class CreateTemplateTab(ttk.Frame):
 
             feats: List[Feature] = []
             seen = set()
+            rot_steps = int(round(float(angle_deg) / 45.0))
             for f in base.features:
                 px = float(f.x + base.tl_x)
                 py = float(f.y + base.tl_y)
@@ -706,7 +751,8 @@ class CreateTemplateTab(ttk.Frame):
                 if xi < x_min or yi < y_min or xi > x_max or yi > y_max:
                     continue
                 theta = (float(f.theta) - float(angle_deg)) % 360.0
-                lb = angle_deg_to_label(theta)
+                # Keep 8-bin orientation stable with discrete rotation steps.
+                lb = (int(f.label) - rot_steps) & 7
                 xr = int(xi - x_min)
                 yr = int(yi - y_min)
                 k = (xr, yr, lb)
