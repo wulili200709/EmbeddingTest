@@ -1,0 +1,46 @@
+generated_at_utc: '2026-03-02T06:22:26.214511+00:00'
+args:
+  root: D:\Git\matchtemplate
+  out_name: result_robust
+  occlusion: 0.3
+  max_results: 30
+  draw_top: 30
+  legend_top: 30
+  max_candidates: 100
+case:
+  case: case0
+  info_yaml: D:\Git\matchtemplate\test\case0\circle_info.yaml
+  template: D:\Git\matchtemplate\test\case0\templ\circle.png
+  scale_count: 89
+  angle_values_in_info:
+  - 0.0
+  rotation_step_deg: 0.0
+  scenes:
+  - scene: D:\Git\matchtemplate\test\case0\1.jpg
+    output_image: D:\Git\matchtemplate\test\case0\result_robust\1_robust.png
+    output_yaml: D:\Git\matchtemplate\test\case0\result_robust\1_robust.yaml
+    success: true
+    message: ok
+    best_score: 1.0
+    best_scale: 0.16
+  - scene: D:\Git\matchtemplate\test\case0\2.jpg
+    output_image: D:\Git\matchtemplate\test\case0\result_robust\2_robust.png
+    output_yaml: D:\Git\matchtemplate\test\case0\result_robust\2_robust.yaml
+    success: true
+    message: ok
+    best_score: 1.0
+    best_scale: 0.11
+  - scene: D:\Git\matchtemplate\test\case0\3.png
+    output_image: D:\Git\matchtemplate\test\case0\result_robust\3_robust.png
+    output_yaml: D:\Git\matchtemplate\test\case0\result_robust\3_robust.yaml
+    success: true
+    message: ok
+    best_score: 0.8830291759406108
+    best_scale: 0.11
+  - scene: D:\Git\matchtemplate\test\case0\4.png
+    output_image: D:\Git\matchtemplate\test\case0\result_robust\4_robust.png
+    output_yaml: D:\Git\matchtemplate\test\case0\result_robust\4_robust.yaml
+    success: true
+    message: ok
+    best_score: 1.0
+    best_scale: 0.1

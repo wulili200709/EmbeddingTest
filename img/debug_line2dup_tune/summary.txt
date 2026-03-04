@@ -1,0 +1,12 @@
+templates_loaded=1
+raw_matches=5
+after_nms=5
+threshold=55.0
+nms_iou=0.3
+
+top_matches:
+[1] sim=100.00, x=1073, y=549, templ_id=0, angle=0.00, scale=1.000
+[2] sim=78.26, x=1229, y=1697, templ_id=0, angle=0.00, scale=1.000
+[3] sim=78.26, x=1137, y=1721, templ_id=0, angle=0.00, scale=1.000
+[4] sim=77.17, x=1377, y=1673, templ_id=0, angle=0.00, scale=1.000
+[5] sim=60.87, x=1005, y=1705, templ_id=0, angle=0.00, scale=1.000

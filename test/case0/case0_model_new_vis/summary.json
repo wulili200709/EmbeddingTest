@@ -1,0 +1,30 @@
+{
+  "model_path": "D:\\Git\\matchtemplate\\test\\case0\\case0_model_new.json",
+  "template_path": "D:\\Git\\matchtemplate\\test\\case0\\templ\\circle.png",
+  "template_mask_path": "",
+  "class_id": "circle",
+  "detector_params": {
+    "num_features": 150,
+    "weak_thresh": 30.0,
+    "strong_thresh": 60.0,
+    "levels": [
+      4,
+      8
+    ]
+  },
+  "train_ranges": {
+    "angle_start": 0.0,
+    "angle_end": 0.0,
+    "angle_step": 1.0,
+    "scale_start": 0.1,
+    "scale_end": 1.0,
+    "scale_step": 0.01
+  },
+  "train_infos_total": 91,
+  "templates_loaded": 91,
+  "first_template_id": 0,
+  "first_template_meta": {
+    "angle": 0.0,
+    "scale": 0.1
+  }
+}

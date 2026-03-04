@@ -1,0 +1,27 @@
+templates_loaded=1
+raw_matches=470
+after_nms=134
+threshold=25.0
+nms_iou=0.3
+
+top_matches:
+[1] sim=100.00, x=1069, y=529, templ_id=0, angle=0.00, scale=1.000
+[2] sim=70.33, x=1313, y=1725, templ_id=0, angle=0.00, scale=1.000
+[3] sim=67.33, x=1197, y=1757, templ_id=0, angle=0.00, scale=1.000
+[4] sim=64.00, x=1265, y=1749, templ_id=0, angle=0.00, scale=1.000
+[5] sim=64.00, x=1253, y=1881, templ_id=0, angle=0.00, scale=1.000
+[6] sim=60.33, x=1181, y=1889, templ_id=0, angle=0.00, scale=1.000
+[7] sim=59.67, x=1369, y=1713, templ_id=0, angle=0.00, scale=1.000
+[8] sim=59.00, x=1001, y=385, templ_id=0, angle=0.00, scale=1.000
+[9] sim=58.00, x=1161, y=1825, templ_id=0, angle=0.00, scale=1.000
+[10] sim=56.67, x=1073, y=441, templ_id=0, angle=0.00, scale=1.000
+[11] sim=56.33, x=1129, y=857, templ_id=0, angle=0.00, scale=1.000
+[12] sim=56.00, x=1121, y=1765, templ_id=0, angle=0.00, scale=1.000
+[13] sim=55.33, x=925, y=401, templ_id=0, angle=0.00, scale=1.000
+[14] sim=55.00, x=1165, y=1345, templ_id=0, angle=0.00, scale=1.000
+[15] sim=54.00, x=1153, y=525, templ_id=0, angle=0.00, scale=1.000
+[16] sim=53.67, x=1113, y=1893, templ_id=0, angle=0.00, scale=1.000
+[17] sim=52.67, x=1293, y=385, templ_id=0, angle=0.00, scale=1.000
+[18] sim=52.33, x=1009, y=445, templ_id=0, angle=0.00, scale=1.000
+[19] sim=52.33, x=1329, y=1865, templ_id=0, angle=0.00, scale=1.000
+[20] sim=52.00, x=1093, y=1825, templ_id=0, angle=0.00, scale=1.000

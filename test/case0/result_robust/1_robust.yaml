@@ -1,0 +1,231 @@
+scene: D:\Git\matchtemplate\test\case0\1.jpg
+success: true
+best_scale: 0.16
+rotation_step_deg: 0.0
+draw_mode: contour
+match_mode: cross_scale_global_nms
+input_candidates: 120
+strict_candidates: 48
+used_strict_pool: true
+selected_candidates: 10
+top_matches:
+- score: 1.0
+  source: part_vote
+  trimmed_mean: 0.6263675093650818
+  inlier_ratio: 1.0
+  orientation_error_deg: 14.030861460985333
+  angle_deg: 0.0
+  matrix:
+  - - 1.0
+    - 0.0
+    - 250.0
+  - - 0.0
+    - 1.0
+    - 124.0
+  scale: 0.16
+  bbox_xyxy:
+  - 250.0
+  - 124.0
+  - 377.0
+  - 251.0
+  center_xy:
+  - 313.5
+  - 187.5
+- score: 0.9787240945885072
+  source: part_vote
+  trimmed_mean: 0.4868628680706024
+  inlier_ratio: 1.0
+  orientation_error_deg: 58.75362874990819
+  angle_deg: 0.0
+  matrix:
+  - - 1.0
+    - 0.0
+    - 180.0
+  - - 0.0
+    - 1.0
+    - 50.0
+  scale: 0.1
+  bbox_xyxy:
+  - 180.0
+  - 50.0
+  - 259.0
+  - 129.0
+  center_xy:
+  - 219.5
+  - 89.5
+- score: 0.9621623061593071
+  source: part_vote
+  trimmed_mean: 0.5405589938163757
+  inlier_ratio: 0.9351851851851852
+  orientation_error_deg: 48.45226572670867
+  angle_deg: 0.0
+  matrix:
+  - - 1.0
+    - 0.0
+    - 416.0
+  - - 0.0
+    - 1.0
+    - 301.0
+  scale: 0.15
+  bbox_xyxy:
+  - 416.0
+  - 301.0
+  - 535.0
+  - 420.0
+  center_xy:
+  - 475.5
+  - 360.5
+- score: 0.9507040236965596
+  source: part_vote
+  trimmed_mean: 0.8486365675926208
+  inlier_ratio: 0.9657534246575342
+  orientation_error_deg: 58.096598702698806
+  angle_deg: 0.0
+  matrix:
+  - - 1.0
+    - 0.0
+    - 476.0
+  - - 0.0
+    - 1.0
+    - 356.0
+  scale: 0.1
+  bbox_xyxy:
+  - 476.0
+  - 356.0
+  - 555.0
+  - 435.0
+  center_xy:
+  - 515.5
+  - 395.5
+- score: 0.891592598663493
+  source: part_vote
+  trimmed_mean: 0.9185815453529358
+  inlier_ratio: 0.8424657534246576
+  orientation_error_deg: 73.40251304775295
+  angle_deg: 0.0
+  matrix:
+  - - 1.0
+    - 0.0
+    - 361.0
+  - - 0.0
+    - 1.0
+    - 278.0
+  scale: 0.1
+  bbox_xyxy:
+  - 361.0
+  - 278.0
+  - 440.0
+  - 357.0
+  center_xy:
+  - 400.5
+  - 317.5
+- score: 0.8134945923805021
+  source: part_vote
+  trimmed_mean: 1.4590569734573364
+  inlier_ratio: 0.7019867549668874
+  orientation_error_deg: 78.39279268933684
+  angle_deg: 0.0
+  matrix:
+  - - 1.0
+    - 0.0
+    - 766.0
+  - - 0.0
+    - 1.0
+    - 82.0
+  scale: 0.21
+  bbox_xyxy:
+  - 766.0
+  - 82.0
+  - 933.0
+  - 249.0
+  center_xy:
+  - 849.5
+  - 165.5
+- score: 0.7989648435759156
+  source: part_vote
+  trimmed_mean: 1.8339956998825073
+  inlier_ratio: 0.6301369863013698
+  orientation_error_deg: 45.02995846193876
+  angle_deg: 0.0
+  matrix:
+  - - 1.0
+    - 0.0
+    - 817.0
+  - - 0.0
+    - 1.0
+    - 182.0
+  scale: 0.1
+  bbox_xyxy:
+  - 817.0
+  - 182.0
+  - 896.0
+  - 261.0
+  center_xy:
+  - 856.5
+  - 221.5
+- score: 0.792501934593071
+  source: part_vote
+  trimmed_mean: 1.6601654291152954
+  inlier_ratio: 0.6643835616438356
+  orientation_error_deg: 76.72967577738459
+  angle_deg: 0.0
+  matrix:
+  - - 1.0
+    - 0.0
+    - 668.0
+  - - 0.0
+    - 1.0
+    - 112.0
+  scale: 0.1
+  bbox_xyxy:
+  - 668.0
+  - 112.0
+  - 747.0
+  - 191.0
+  center_xy:
+  - 707.5
+  - 151.5
+- score: 0.7819183878855561
+  source: part_vote
+  trimmed_mean: 2.011474370956421
+  inlier_ratio: 0.6301369863013698
+  orientation_error_deg: 55.724378381305
+  angle_deg: 0.0
+  matrix:
+  - - 1.0
+    - 0.0
+    - 458.0
+  - - 0.0
+    - 1.0
+    - 199.0
+  scale: 0.1
+  bbox_xyxy:
+  - 458.0
+  - 199.0
+  - 537.0
+  - 278.0
+  center_xy:
+  - 497.5
+  - 238.5
+- score: 0.6535173324070769
+  source: part_vote
+  trimmed_mean: 3.6615912914276123
+  inlier_ratio: 0.541095890410959
+  orientation_error_deg: 81.65195405559182
+  angle_deg: 0.0
+  matrix:
+  - - 1.0
+    - 0.0
+    - 856.0
+  - - 0.0
+    - 1.0
+    - 124.0
+  scale: 0.1
+  bbox_xyxy:
+  - 856.0
+  - 124.0
+  - 935.0
+  - 203.0
+  center_xy:
+  - 895.5
+  - 163.5

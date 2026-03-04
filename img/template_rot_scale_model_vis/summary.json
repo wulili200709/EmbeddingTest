@@ -1,0 +1,30 @@
+{
+  "model_path": "D:\\Git\\matchtemplate\\img\\template_rot_scale_model.json",
+  "template_path": "D:\\Git\\matchtemplate\\img\\template.png",
+  "template_mask_path": "",
+  "class_id": "object",
+  "detector_params": {
+    "num_features": 128,
+    "weak_thresh": 30.0,
+    "strong_thresh": 60.0,
+    "levels": [
+      4,
+      8
+    ]
+  },
+  "train_ranges": {
+    "angle_start": 0.0,
+    "angle_end": 360.0,
+    "angle_step": 10.0,
+    "scale_start": 0.99,
+    "scale_end": 1.1,
+    "scale_step": 0.05
+  },
+  "train_infos_total": 111,
+  "templates_loaded": 111,
+  "first_template_id": 0,
+  "first_template_meta": {
+    "angle": 0.0,
+    "scale": 0.99
+  }
+}

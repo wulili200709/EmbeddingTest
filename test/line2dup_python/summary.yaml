@@ -1,0 +1,16 @@
+generated_at_utc: '2026-03-03T13:46:44.052028+00:00'
+pipeline: python_line2dup_like
+runs:
+- case: case0
+  success: true
+  output: D:\Git\matchtemplate\test\case0\result_line2dup_python
+  notes: 'templates=91, thresholds={''1.jpg'': 85.0, ''2.jpg'': 80.0, ''3.png'': 75.0,
+    ''4.png'': 85.0}'
+- case: case1
+  success: true
+  output: D:\Git\matchtemplate\test\case1\result_line2dup_python
+  notes: templates=361, matches=2
+- case: case2
+  success: true
+  output: D:\Git\matchtemplate\test\case2\result_line2dup_python
+  notes: templates=361, threshold=80.0, raw=43, matches=4
