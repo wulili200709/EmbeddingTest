@@ -140,7 +140,7 @@ py -3 line2dup_template_workbench.py
 The GUI includes two tabs:
 - `Create Template`: select image, drag ROI, extract points, mouse-edit points, save model.
 - `Edit Model`: open model, optionally load template image, mouse-edit points, save model.
-- `Find`: open model + scene, tune threshold/NMS/verify parameters, run match, save overlay.
+- `Find`: open model + scene, tune threshold/NMS parameters, run match, save overlay.
 
 In `Create Template`, angle/scale range is also configurable in the panel:
 - `Angle Start/End/Step`

@@ -15,7 +15,6 @@ from line2dup_like_matcher import (
     draw_matches,
     load_detector_model,
     nms_matches,
-    verify_matches_strict_orientation,
 )
 
 
@@ -46,29 +45,6 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help="If >0, crop scene to (h//stride*stride, w//stride*stride) before matching.",
-    )
-    parser.add_argument(
-        "--verify-strict",
-        action="store_true",
-        help="Apply strict orientation verification to suppress false high scores.",
-    )
-    parser.add_argument(
-        "--verify-window",
-        type=int,
-        default=1,
-        help="Neighborhood radius (in pixels) for strict orientation verification.",
-    )
-    parser.add_argument(
-        "--verify-min",
-        type=float,
-        default=0.0,
-        help="Drop matches with strict verification score below this value.",
-    )
-    parser.add_argument(
-        "--verify-blend",
-        type=float,
-        default=0.35,
-        help="Final score = blend*line2dup + (1-blend)*strict_verify.",
     )
     return parser.parse_args()
 
@@ -102,15 +78,6 @@ def main() -> int:
     def run_once(threshold: float):
         ms = detector.match(scene, threshold=threshold, class_ids=class_ids, mask=scene_mask)
         ms = nms_matches(detector, ms, iou_threshold=args.nms_iou)
-        if args.verify_strict:
-            ms = verify_matches_strict_orientation(
-                detector=detector,
-                scene_bgr=scene,
-                matches=ms,
-                verify_window=args.verify_window,
-                min_verify_score=args.verify_min,
-                blend_with_line2dup=args.verify_blend,
-            )
         ms.sort(key=lambda m: m.similarity, reverse=True)
         return ms
 

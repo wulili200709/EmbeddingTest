@@ -30,10 +30,11 @@ from line2dup_like_matcher import (
     TemplateLevel,
     crop_templates,
     draw_matches,
+    label_to_theta_deg as matcher_label_to_theta_deg,
     load_detector_model,
     nms_matches,
     save_detector_model,
-    verify_matches_strict_orientation,
+    theta_deg_to_label as matcher_theta_deg_to_label,
 )
 
 ZOOM_MIN = 0.2
@@ -79,12 +80,11 @@ def orientation_palette_bgr() -> List[Tuple[int, int, int]]:
 
 
 def label_to_angle_deg(label: int) -> float:
-    return float((int(label) % 8) * 45.0)
+    return float(matcher_label_to_theta_deg(label))
 
 
 def angle_deg_to_label(theta_deg: float) -> int:
-    a = float(theta_deg) % 360.0
-    return int(round(a / 45.0)) & 7
+    return int(matcher_theta_deg_to_label(theta_deg))
 
 
 def arrow_endpoint(x: int, y: int, theta_deg: float, length: float) -> Tuple[int, int]:
@@ -439,15 +439,22 @@ class CreateTemplateTab(ttk.Frame):
             messagebox.showwarning("No template extracted", "Try lower strong/weak threshold or select a clearer ROI.")
             return
 
-        self.template_levels = clone_levels(detector.get_templates(class_id, tid))
+        extracted_levels = clone_levels(detector.get_templates(class_id, tid))
+        if not extracted_levels:
+            self.status_var.set("No template extracted.")
+            return
+
+        # Editing baseline is always level-0 (full-resolution ROI).
+        self.template_levels = [extracted_levels[0]]
         self._force_levels_to_roi_extent()
+        self._sync_levels_from_level0(total_levels=len(levels))
         max_level = max(0, len(self.template_levels) - 1)
         self.level_spin.configure(from_=0, to=max_level)
-        self.level_var.set(min(self.level_var.get(), max_level))
+        self.level_var.set(0)
         self.tool_var.set("point")
         self.status_var.set(
             f"Extracted {len(self.template_levels[0].features)} points at level0. "
-            f"Template extent is fixed to ROI ({self.roi.w}x{self.roi.h})."
+            f"L0 is editable; L1+ are auto-scaled from L0."
         )
         self._refresh_canvas()
 
@@ -535,8 +542,8 @@ class CreateTemplateTab(ttk.Frame):
                     base_levels=base_levels,
                     angle_deg=float(angle_deg),
                     scale=float(scale),
-                    # Important: crop to feature extent so localization anchor stays stable.
-                    auto_crop=True,
+                    # Keep expanded canvas for transformed variants (do not crop back).
+                    auto_crop=False,
                     adapt_feature_count=True,
                 )
                 if (not transformed) or any(len(lv.features) <= 0 for lv in transformed):
@@ -557,7 +564,10 @@ class CreateTemplateTab(ttk.Frame):
                 kept += 1
                 if first_success_tid < 0:
                     first_success_tid = len(detector.class_templates[class_id]) - 1
-                    first_success_src = ShapeInfoProducer.transform(roi_img, float(angle_deg), float(scale))
+                    l0 = transformed[0]
+                    ph = max(1, int(l0.height) + 1)
+                    pw = max(1, int(l0.width) + 1)
+                    first_success_src = np.zeros((ph, pw, 3), dtype=np.uint8)
         else:
             producer = ShapeInfoProducer(roi_img, roi_mask)
             a0 = float(self.angle_start_var.get())
@@ -640,19 +650,94 @@ class CreateTemplateTab(ttk.Frame):
         idx = max(0, min(int(self.level_var.get()), len(self.template_levels) - 1))
         return self.template_levels[idx]
 
-    def _roi_level_shapes(self) -> List[Tuple[int, int]]:
+    def _roi_level_shapes(self, num_levels: Optional[int] = None) -> List[Tuple[int, int]]:
         """Return (w, h) for each pyramid level based on the fixed user ROI."""
         if self.image_bgr is None or self.roi is None:
             return []
         img = self.image_bgr[self.roi.y : self.roi.y + self.roi.h, self.roi.x : self.roi.x + self.roi.w].copy()
         shapes: List[Tuple[int, int]] = []
-        for _ in range(len(self.template_levels)):
+        nlevels = len(self.template_levels) if num_levels is None else max(1, int(num_levels))
+        for _ in range(nlevels):
             h, w = img.shape[:2]
             shapes.append((int(w), int(h)))
             if h < 2 or w < 2:
                 continue
             img = cv2.pyrDown(img)
         return shapes
+
+    def _sync_levels_from_level0(self, total_levels: Optional[int] = None) -> None:
+        """
+        Rebuild L1+ from L0 by pure geometric down-scaling (no per-level re-extraction).
+        """
+        if not self.template_levels:
+            return
+        if total_levels is None:
+            total_levels = len(self.template_levels)
+        total_levels = max(1, int(total_levels))
+
+        shapes = self._roi_level_shapes(num_levels=total_levels)
+        if not shapes:
+            return
+
+        l0 = self.template_levels[0]
+        w0, h0 = shapes[0]
+        max_x0 = max(0, int(w0) - 1)
+        max_y0 = max(0, int(h0) - 1)
+
+        # Normalize level-0 points into fixed ROI coordinates.
+        l0_feats: List[Feature] = []
+        l0_seen = set()
+        for f in l0.features:
+            x0 = int(np.clip(int(f.x) + int(l0.tl_x), 0, max_x0))
+            y0 = int(np.clip(int(f.y) + int(l0.tl_y), 0, max_y0))
+            key = (x0, y0, int(f.label) & 7)
+            if key in l0_seen:
+                continue
+            l0_seen.add(key)
+            l0_feats.append(Feature(x=x0, y=y0, label=int(f.label) & 7, theta=float(f.theta)))
+
+        new_levels: List[TemplateLevel] = [
+            TemplateLevel(
+                width=max_x0,
+                height=max_y0,
+                tl_x=0,
+                tl_y=0,
+                pyramid_level=0,
+                features=l0_feats,
+            )
+        ]
+
+        for lv in range(1, total_levels):
+            w, h = shapes[lv]
+            max_x = max(0, int(w) - 1)
+            max_y = max(0, int(h) - 1)
+            div = float(1 << lv)
+
+            feats: List[Feature] = []
+            seen = set()
+            for f in l0_feats:
+                x = int(round(float(f.x) / div))
+                y = int(round(float(f.y) / div))
+                x = int(np.clip(x, 0, max_x))
+                y = int(np.clip(y, 0, max_y))
+                key = (x, y, int(f.label) & 7)
+                if key in seen:
+                    continue
+                seen.add(key)
+                feats.append(Feature(x=x, y=y, label=int(f.label) & 7, theta=float(f.theta)))
+
+            new_levels.append(
+                TemplateLevel(
+                    width=max_x,
+                    height=max_y,
+                    tl_x=0,
+                    tl_y=0,
+                    pyramid_level=lv,
+                    features=feats,
+                )
+            )
+
+        self.template_levels = new_levels
 
     def _force_levels_to_roi_extent(self) -> None:
         """
@@ -736,25 +821,47 @@ class CreateTemplateTab(ttk.Frame):
             cx = float(x_min + w * 0.5)
             cy = float(y_min + h * 0.5)
 
-            feats: List[Feature] = []
-            seen = set()
-            rot_steps = int(round(float(angle_deg) / 45.0))
-            for f in base.features:
-                px = float(f.x + base.tl_x)
-                py = float(f.y + base.tl_y)
+            def _xf(px: float, py: float) -> Tuple[float, float]:
                 dx = (px - cx) * sc
                 dy = (py - cy) * sc
                 rx = c * dx - s * dy + cx
                 ry = s * dx + c * dy + cy
+                return rx, ry
+
+            # Auto-expand canvas by transformed ROI rectangle bounds.
+            corners = [
+                (float(x_min), float(y_min)),
+                (float(x_max), float(y_min)),
+                (float(x_max), float(y_max)),
+                (float(x_min), float(y_max)),
+            ]
+            tc = [_xf(px, py) for px, py in corners]
+            canvas_x_min = int(np.floor(min(p[0] for p in tc)))
+            canvas_y_min = int(np.floor(min(p[1] for p in tc)))
+            canvas_x_max = int(np.ceil(max(p[0] for p in tc)))
+            canvas_y_max = int(np.ceil(max(p[1] for p in tc)))
+            if canvas_x_max < canvas_x_min:
+                canvas_x_max = canvas_x_min
+            if canvas_y_max < canvas_y_min:
+                canvas_y_max = canvas_y_min
+
+            feats: List[Feature] = []
+            seen = set()
+            for f in base.features:
+                px = float(f.x + base.tl_x)
+                py = float(f.y + base.tl_y)
+                rx, ry = _xf(px, py)
                 xi = int(round(rx))
                 yi = int(round(ry))
-                if xi < x_min or yi < y_min or xi > x_max or yi > y_max:
+                base_theta = float(f.theta)
+                if not np.isfinite(base_theta):
+                    base_theta = label_to_angle_deg(int(f.label))
+                theta = (base_theta - float(angle_deg)) % 360.0
+                lb = angle_deg_to_label(theta)
+                xr = int(xi - canvas_x_min)
+                yr = int(yi - canvas_y_min)
+                if xr < 0 or yr < 0:
                     continue
-                theta = (float(f.theta) - float(angle_deg)) % 360.0
-                # Keep 8-bin orientation stable with discrete rotation steps.
-                lb = (int(f.label) - rot_steps) & 7
-                xr = int(xi - x_min)
-                yr = int(yi - y_min)
                 k = (xr, yr, lb)
                 if k in seen:
                     continue
@@ -769,10 +876,10 @@ class CreateTemplateTab(ttk.Frame):
 
             out.append(
                 TemplateLevel(
-                    width=int(base.width),
-                    height=int(base.height),
-                    tl_x=int(base.tl_x),
-                    tl_y=int(base.tl_y),
+                    width=int(canvas_x_max - canvas_x_min),
+                    height=int(canvas_y_max - canvas_y_min),
+                    tl_x=0,
+                    tl_y=0,
                     pyramid_level=int(base.pyramid_level),
                     features=feats,
                 )
@@ -824,6 +931,9 @@ class CreateTemplateTab(ttk.Frame):
         tl = self._current_level_template()
         if tl is None:
             return
+        if int(self.level_var.get()) != 0:
+            self.status_var.set("Only L0 is editable. Switch View Level to 0.")
+            return
         xr = int(round(x_abs - tl.tl_x))
         yr = int(round(y_abs - tl.tl_y))
         xr = max(0, min(xr, int(tl.width)))
@@ -831,10 +941,14 @@ class CreateTemplateTab(ttk.Frame):
         lb = int(label) % 8
         theta = label_to_angle_deg(lb) if theta_deg is None else float(theta_deg)
         tl.features.append(Feature(x=xr, y=yr, label=lb, theta=theta))
+        self._sync_levels_from_level0(total_levels=len(self.template_levels))
 
     def _delete_nearest(self, x_abs: int, y_abs: int) -> bool:
         tl = self._current_level_template()
         if tl is None or not tl.features:
+            return False
+        if int(self.level_var.get()) != 0:
+            self.status_var.set("Only L0 is editable. Switch View Level to 0.")
             return False
         best_idx = -1
         best_d2 = 1e18
@@ -850,6 +964,7 @@ class CreateTemplateTab(ttk.Frame):
             return False
         del tl.features[best_idx]
         self.hover_index = None
+        self._sync_levels_from_level0(total_levels=len(self.template_levels))
         return True
 
     def _canvas_to_image(self, event: tk.Event) -> Tuple[int, int]:
@@ -867,6 +982,9 @@ class CreateTemplateTab(ttk.Frame):
             self.drag_start = (x, y)
             self.drag_end = (x, y)
         elif self.tool_var.get() == "point" and self.roi is not None:
+            if int(self.level_var.get()) != 0:
+                self.status_var.set("Only L0 is editable. Switch View Level to 0.")
+                return
             self.drag_kind = "point"
             self.drag_start = (x, y)
             self.drag_end = (x, y)
@@ -925,6 +1043,9 @@ class CreateTemplateTab(ttk.Frame):
 
     def _on_right_click(self, event: tk.Event) -> None:
         if self.tool_var.get() != "point" or self.roi is None:
+            return
+        if int(self.level_var.get()) != 0:
+            self.status_var.set("Only L0 is editable. Switch View Level to 0.")
             return
         x, y = self._canvas_to_image(event)
         if self._delete_nearest(x, y):
@@ -1558,10 +1679,6 @@ class FindTemplateTab(ttk.Frame):
         self.crop_stride_var = tk.IntVar(value=0)
         self.nms_iou_var = tk.DoubleVar(value=0.50)
         self.topk_var = tk.IntVar(value=20)
-        self.verify_strict_var = tk.BooleanVar(value=True)
-        self.verify_window_var = tk.IntVar(value=1)
-        self.verify_min_var = tk.DoubleVar(value=0.0)
-        self.verify_blend_var = tk.DoubleVar(value=0.35)
         self.auto_sweep_var = tk.BooleanVar(value=True)
         self.zoom_var = tk.DoubleVar(value=1.5)
         self.out_image_var = tk.StringVar(value="")
@@ -1621,24 +1738,6 @@ class FindTemplateTab(ttk.Frame):
         ttk.Label(control, text="Top K").grid(row=row, column=0, sticky="w", pady=(6, 0))
         row += 1
         ttk.Spinbox(control, from_=1, to=500, increment=1, textvariable=self.topk_var, width=10).grid(row=row, column=0, sticky="w")
-        row += 1
-
-        ttk.Checkbutton(control, text="Strict Verify", variable=self.verify_strict_var).grid(row=row, column=0, sticky="w", pady=(6, 0))
-        row += 1
-
-        ttk.Label(control, text="Verify Window").grid(row=row, column=0, sticky="w")
-        row += 1
-        ttk.Spinbox(control, from_=0, to=8, increment=1, textvariable=self.verify_window_var, width=10).grid(row=row, column=0, sticky="w")
-        row += 1
-
-        ttk.Label(control, text="Verify Min").grid(row=row, column=0, sticky="w", pady=(6, 0))
-        row += 1
-        ttk.Spinbox(control, from_=0, to=100, increment=1, textvariable=self.verify_min_var, width=10).grid(row=row, column=0, sticky="w")
-        row += 1
-
-        ttk.Label(control, text="Verify Blend").grid(row=row, column=0, sticky="w", pady=(6, 0))
-        row += 1
-        ttk.Spinbox(control, from_=0.0, to=1.0, increment=0.05, textvariable=self.verify_blend_var, width=10).grid(row=row, column=0, sticky="w")
         row += 1
 
         ttk.Checkbutton(control, text="Auto Threshold Sweep", variable=self.auto_sweep_var).grid(row=row, column=0, sticky="w", pady=(6, 0))
@@ -1802,15 +1901,6 @@ class FindTemplateTab(ttk.Frame):
                 mask=self.scene_mask,
             )
             ms = nms_matches(self.detector, ms, iou_threshold=nms_iou)
-            if self.verify_strict_var.get():
-                ms = verify_matches_strict_orientation(
-                    detector=self.detector,
-                    scene_bgr=scene_for_match,
-                    matches=ms,
-                    verify_window=int(max(0, self.verify_window_var.get())),
-                    min_verify_score=float(np.clip(self.verify_min_var.get(), 0.0, 100.0)),
-                    blend_with_line2dup=float(np.clip(self.verify_blend_var.get(), 0.0, 1.0)),
-                )
             ms.sort(key=lambda m: m.similarity, reverse=True)
             return ms
 

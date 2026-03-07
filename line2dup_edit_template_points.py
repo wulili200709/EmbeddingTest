@@ -31,7 +31,14 @@ from typing import List, Optional, Tuple
 import cv2
 import numpy as np
 
-from line2dup_like_matcher import Feature, ShapeInfoProducer, load_detector_model, save_detector_model
+from line2dup_like_matcher import (
+    Feature,
+    ShapeInfoProducer,
+    label_to_theta_deg as matcher_label_to_theta_deg,
+    load_detector_model,
+    save_detector_model,
+    theta_deg_to_label as matcher_theta_deg_to_label,
+)
 
 
 def orientation_palette_bgr() -> List[Tuple[int, int, int]]:
@@ -48,12 +55,11 @@ def orientation_palette_bgr() -> List[Tuple[int, int, int]]:
 
 
 def label_to_angle_deg(label: int) -> float:
-    return float((int(label) % 8) * 45.0)
+    return float(matcher_label_to_theta_deg(label))
 
 
 def angle_deg_to_label(theta_deg: float) -> int:
-    a = float(theta_deg) % 360.0
-    return int(round(a / 45.0)) & 7
+    return int(matcher_theta_deg_to_label(theta_deg))
 
 
 def arrow_endpoint(x: int, y: int, theta_deg: float, length: float) -> Tuple[int, int]:

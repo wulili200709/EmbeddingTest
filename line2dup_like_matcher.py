@@ -88,6 +88,21 @@ def get_label(one_hot: int) -> int:
     return int(int(one_hot).bit_length() - 1)
 
 
+def theta_deg_to_label(theta_deg: float) -> int:
+    """Map angle (deg) to the same 8-bin label style used by auto extraction."""
+    if not np.isfinite(theta_deg):
+        return 0
+    a = float(theta_deg) % 360.0
+    q16 = int(a * (16.0 / 360.0))
+    q16 = max(0, min(15, q16))
+    return int(q16 & 7)
+
+
+def label_to_theta_deg(label: int) -> float:
+    """Return a canonical angle (deg) near the center of the folded 8-bin class."""
+    return (float(int(label) & 7) + 0.5) * 22.5
+
+
 def _fallback_similarity_lut() -> np.ndarray:
     lut = np.zeros((256,), dtype=np.uint8)
     for ori in range(8):
@@ -973,98 +988,6 @@ def nms_matches(
     return [matches[i] for i in indices]
 
 
-def strict_orientation_score(
-    scene_quant: np.ndarray,
-    templ: TemplateLevel,
-    match: Match,
-    window: int = 1,
-    neighbor_half_credit: bool = True,
-) -> float:
-    h, w = scene_quant.shape[:2]
-    win = max(0, int(window))
-    exact = 0.0
-    soft = 0.0
-    valid = 0
-
-    for f in templ.features:
-        x = int(match.x + f.x)
-        y = int(match.y + f.y)
-        if x < 0 or y < 0 or x >= w or y >= h:
-            continue
-        x0 = max(0, x - win)
-        y0 = max(0, y - win)
-        x1 = min(w, x + win + 1)
-        y1 = min(h, y + win + 1)
-        patch = scene_quant[y0:y1, x0:x1]
-        if patch.size == 0:
-            continue
-        valid += 1
-
-        target = np.uint8(1 << int(f.label))
-        if np.any((patch & target) != 0):
-            exact += 1.0
-            continue
-
-        if neighbor_half_credit:
-            left = np.uint8(1 << ((int(f.label) + 7) % 8))
-            right = np.uint8(1 << ((int(f.label) + 1) % 8))
-            if np.any((patch & left) != 0) or np.any((patch & right) != 0):
-                soft += 0.5
-
-    if valid <= 0:
-        return 0.0
-    return float((exact + soft) * 100.0 / valid)
-
-
-def verify_matches_strict_orientation(
-    detector: Line2DupLikeDetector,
-    scene_bgr: np.ndarray,
-    matches: Sequence[Match],
-    verify_window: int = 1,
-    min_verify_score: float = 0.0,
-    blend_with_line2dup: float = 0.35,
-) -> List[Match]:
-    if not matches:
-        return []
-
-    qp = ColorGradientPyramid(
-        scene_bgr,
-        None,
-        weak_threshold=detector.weak_threshold,
-        num_features=detector.num_features,
-        strong_threshold=detector.strong_threshold,
-    )
-    scene_quant = qp.quantize()
-
-    out: List[Match] = []
-    alpha = float(np.clip(blend_with_line2dup, 0.0, 1.0))
-    for m in matches:
-        t0 = detector.get_templates(m.class_id, m.template_id)[0]
-        strict = strict_orientation_score(
-            scene_quant=scene_quant,
-            templ=t0,
-            match=m,
-            window=verify_window,
-            neighbor_half_credit=True,
-        )
-        if strict < float(min_verify_score):
-            continue
-        # Keep line2Dup ranking signal, but calibrate with stricter score.
-        calibrated = alpha * float(m.similarity) + (1.0 - alpha) * strict
-        out.append(
-            Match(
-                x=m.x,
-                y=m.y,
-                similarity=float(calibrated),
-                class_id=m.class_id,
-                template_id=m.template_id,
-            )
-        )
-
-    out.sort(key=lambda mm: mm.similarity, reverse=True)
-    return out
-
-
 def draw_matches(
     detector: Line2DupLikeDetector,
     image_bgr: np.ndarray,
@@ -1090,7 +1013,7 @@ def draw_matches(
             pyi = int(round(py))
             theta = float(f.theta)
             if not np.isfinite(theta):
-                theta = float((int(f.label) % 8) * 45.0)
+                theta = label_to_theta_deg(int(f.label))
             rad = np.deg2rad(theta)
             p2x = int(round(pxi + 7.0 * float(np.cos(rad))))
             p2y = int(round(pyi + 7.0 * float(np.sin(rad))))
@@ -1150,29 +1073,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scale-step", type=float, default=0.1, help="Training scale step.")
     parser.add_argument("--nms-iou", type=float, default=0.50, help="NMS IoU threshold on final matches.")
     parser.add_argument("--topk", type=int, default=20, help="How many matches to print and draw.")
-    parser.add_argument(
-        "--verify-strict",
-        action="store_true",
-        help="Apply strict orientation verification to suppress false high scores.",
-    )
-    parser.add_argument(
-        "--verify-window",
-        type=int,
-        default=1,
-        help="Neighborhood radius (in pixels) for strict orientation verification.",
-    )
-    parser.add_argument(
-        "--verify-min",
-        type=float,
-        default=0.0,
-        help="Drop matches with strict verification score below this value.",
-    )
-    parser.add_argument(
-        "--verify-blend",
-        type=float,
-        default=0.35,
-        help="Final score = blend*line2dup + (1-blend)*strict_verify.",
-    )
     return parser.parse_args()
 
 
@@ -1235,15 +1135,6 @@ def main() -> int:
 
     matches = detector.match(scene, threshold=args.threshold, class_ids=[class_id], mask=scene_mask)
     matches = nms_matches(detector, matches, iou_threshold=args.nms_iou)
-    if args.verify_strict:
-        matches = verify_matches_strict_orientation(
-            detector=detector,
-            scene_bgr=scene,
-            matches=matches,
-            verify_window=args.verify_window,
-            min_verify_score=args.verify_min,
-            blend_with_line2dup=args.verify_blend,
-        )
     matches.sort(key=lambda m: m.similarity, reverse=True)
 
     topk = min(args.topk, len(matches))
