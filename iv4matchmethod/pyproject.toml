@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iv4matchmethod"
+version = "0.1.0"
+description = "Template-conditioned lightweight locator for industrial ROI follow."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "numpy>=1.26,<3",
+  "kornia>=0.7,<0.8",
+  "opencv-python-headless>=4.10,<5",
+  "Pillow>=10,<12",
+  "torch>=2.5,<3",
+  "tqdm>=4,<5",
+  "torchvision>=0.20,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<9",
+]
+
+[project.scripts]
+iv4matchmethod = "iv4matchmethod.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
