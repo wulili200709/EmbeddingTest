@@ -132,11 +132,22 @@ class XFeatMatchResult:
     homography: list[list[float]] | None
     roi_follow: list[list[float]] | None
     bbox_follow: list[list[float]] | None
-    match_vis_path: str
-    roi_vis_path: str
+    match_vis_path: str | None
+    roi_vis_path: str | None
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
+
+
+@dataclass(slots=True)
+class PreparedXFeatTemplate:
+    template_image: str
+    template_annotation: str
+    annotation: dict[str, object]
+    original_image: Image.Image
+    resized_image: Image.Image
+    scale: float
+    features: dict[str, torch.Tensor]
 
 
 class LighterGlueWrapper(nn.Module):
@@ -241,92 +252,178 @@ def estimate_homography(
     return homography, mask.reshape(-1).astype(bool)
 
 
+class XFeatLighterGlueMatcher:
+    def __init__(self, config: XFeatMatchConfig | None = None) -> None:
+        self.config = config or XFeatMatchConfig()
+        self.xfeat = load_xfeat(self.config.top_k, self.config.detection_threshold)
+        self.lighterglue = LighterGlueWrapper()
+        self._template_cache: dict[tuple[str, str, int, int, float], PreparedXFeatTemplate] = {}
+
+    def prepare_template(
+        self,
+        template_image_path: str | Path,
+        template_annotation_path: str | Path,
+    ) -> PreparedXFeatTemplate:
+        template_image = str(Path(template_image_path).resolve())
+        template_annotation = str(Path(template_annotation_path).resolve())
+        cache_key = (
+            template_image,
+            template_annotation,
+            self.config.max_dim,
+            self.config.top_k,
+            self.config.detection_threshold,
+        )
+        cached = self._template_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        annotation = load_template_annotation(template_annotation)
+        template_original = load_rgb(template_image)
+        template_resized, template_scale = resize_to_max_dim(template_original, self.config.max_dim)
+        template_features = detect_xfeat_features(self.xfeat, template_resized, self.config.top_k)
+
+        prepared = PreparedXFeatTemplate(
+            template_image=template_image,
+            template_annotation=template_annotation,
+            annotation=annotation,
+            original_image=template_original,
+            resized_image=template_resized,
+            scale=template_scale,
+            features=template_features,
+        )
+        self._template_cache[cache_key] = prepared
+        return prepared
+
+    def match_search_image(
+        self,
+        prepared_template: PreparedXFeatTemplate,
+        search_image_path: str | Path,
+        output_dir: str | Path | None = None,
+        *,
+        save_visuals: bool = True,
+        save_result_json: bool = True,
+        print_result: bool = True,
+    ) -> XFeatMatchResult:
+        if (save_visuals or save_result_json) and output_dir is None:
+            raise ValueError("output_dir is required when saving outputs")
+
+        search_image = str(Path(search_image_path).resolve())
+        search_original = load_rgb(search_image)
+        search_resized, search_scale = resize_to_max_dim(search_original, self.config.max_dim)
+
+        feature1 = detect_xfeat_features(self.xfeat, search_resized, self.config.top_k)
+        match_indices = self.lighterglue(
+            prepared_template.features,
+            feature1,
+            min_confidence=self.config.min_confidence,
+        )
+
+        mkpts0 = prepared_template.features["keypoints"][match_indices[:, 0]].detach().cpu().numpy()
+        mkpts1 = feature1["keypoints"][match_indices[:, 1]].detach().cpu().numpy()
+        mkpts0_original = rescale_points(mkpts0, prepared_template.scale)
+        mkpts1_original = rescale_points(mkpts1, search_scale)
+
+        homography, inlier_mask = estimate_homography(
+            mkpts0_original,
+            mkpts1_original,
+            self.config.ransac_reproj_threshold,
+        )
+
+        roi_follow = None
+        bbox_follow = None
+        if homography is not None:
+            roi_follow = apply_homography(prepared_template.annotation["roi_image_polygon"], homography).tolist()
+            bbox_follow = apply_homography(
+                bbox_to_polygon(prepared_template.annotation["template_bbox"]),
+                homography,
+            ).tolist()
+
+        match_vis_path = None
+        roi_vis_path = None
+        result_path = None
+        output_path = Path(output_dir) if output_dir is not None else None
+        if output_path is not None and (save_visuals or save_result_json):
+            output_path.mkdir(parents=True, exist_ok=True)
+
+        if output_path is not None and save_visuals:
+            match_vis = draw_match_visualization(
+                prepared_template.resized_image,
+                search_resized,
+                mkpts0,
+                mkpts1,
+                inlier_mask,
+                self.config.max_draw_matches,
+            )
+            match_vis_path = str((output_path / "xfeat_lighterglue_matches.png").resolve())
+            match_vis.save(match_vis_path)
+
+            roi_overlay = draw_prediction_overlay(search_original, polygon=roi_follow)
+            if bbox_follow is not None:
+                draw = ImageDraw.Draw(roi_overlay)
+                pts = [(float(x), float(y)) for x, y in bbox_follow]
+                draw.line(pts + [pts[0]], fill=(0, 200, 255), width=3)
+            roi_vis_path = str((output_path / "xfeat_lighterglue_roi.png").resolve())
+            roi_overlay.save(roi_vis_path)
+
+        result = XFeatMatchResult(
+            template_image=prepared_template.template_image,
+            template_annotation=prepared_template.template_annotation,
+            search_image=search_image,
+            keypoints_template=int(prepared_template.features["keypoints"].shape[0]),
+            keypoints_search=int(feature1["keypoints"].shape[0]),
+            matches=int(len(match_indices)),
+            inliers=int(inlier_mask.sum()) if inlier_mask is not None else 0,
+            inlier_ratio=float(inlier_mask.mean()) if inlier_mask is not None and len(inlier_mask) > 0 else 0.0,
+            homography=homography.tolist() if homography is not None else None,
+            roi_follow=roi_follow,
+            bbox_follow=bbox_follow,
+            match_vis_path=match_vis_path,
+            roi_vis_path=roi_vis_path,
+        )
+
+        if output_path is not None and save_result_json:
+            result_path = output_path / "xfeat_lighterglue_result.json"
+            result_path.write_text(
+                json.dumps(result.to_dict(), indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+        if print_result:
+            print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+        return result
+
+
 def match_template_with_xfeat_lighterglue(
     template_image_path: str | Path,
     template_annotation_path: str | Path,
     search_image_path: str | Path,
-    output_dir: str | Path,
+    output_dir: str | Path | None,
     config: XFeatMatchConfig | None = None,
+    *,
+    matcher: XFeatLighterGlueMatcher | None = None,
+    save_visuals: bool = True,
+    save_result_json: bool = True,
+    print_result: bool = True,
 ) -> XFeatMatchResult:
     config = config or XFeatMatchConfig()
-    annotation = load_template_annotation(template_annotation_path)
-
-    template_original = load_rgb(template_image_path)
-    search_original = load_rgb(search_image_path)
-    template_resized, template_scale = resize_to_max_dim(template_original, config.max_dim)
-    search_resized, search_scale = resize_to_max_dim(search_original, config.max_dim)
-
-    xfeat = load_xfeat(config.top_k, config.detection_threshold)
-    lighterglue = LighterGlueWrapper()
-
-    feature0 = detect_xfeat_features(xfeat, template_resized, config.top_k)
-    feature1 = detect_xfeat_features(xfeat, search_resized, config.top_k)
-    match_indices = lighterglue(feature0, feature1, min_confidence=config.min_confidence)
-
-    mkpts0 = feature0["keypoints"][match_indices[:, 0]].detach().cpu().numpy()
-    mkpts1 = feature1["keypoints"][match_indices[:, 1]].detach().cpu().numpy()
-    mkpts0_original = rescale_points(mkpts0, template_scale)
-    mkpts1_original = rescale_points(mkpts1, search_scale)
-
-    homography, inlier_mask = estimate_homography(
-        mkpts0_original,
-        mkpts1_original,
-        config.ransac_reproj_threshold,
+    matcher = matcher or XFeatLighterGlueMatcher(config)
+    prepared_template = matcher.prepare_template(template_image_path, template_annotation_path)
+    return matcher.match_search_image(
+        prepared_template,
+        search_image_path,
+        output_dir=output_dir,
+        save_visuals=save_visuals,
+        save_result_json=save_result_json,
+        print_result=print_result,
     )
-
-    roi_follow = None
-    bbox_follow = None
-    if homography is not None:
-        roi_follow = apply_homography(annotation["roi_image_polygon"], homography).tolist()
-        bbox_follow = apply_homography(bbox_to_polygon(annotation["template_bbox"]), homography).tolist()
-
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    match_vis = draw_match_visualization(
-        template_resized,
-        search_resized,
-        mkpts0,
-        mkpts1,
-        inlier_mask,
-        config.max_draw_matches,
-    )
-    match_vis_path = output_dir / "xfeat_lighterglue_matches.png"
-    match_vis.save(match_vis_path)
-
-    roi_overlay = draw_prediction_overlay(search_original, polygon=roi_follow)
-    if bbox_follow is not None:
-        draw = ImageDraw.Draw(roi_overlay)
-        pts = [(float(x), float(y)) for x, y in bbox_follow]
-        draw.line(pts + [pts[0]], fill=(0, 200, 255), width=3)
-    roi_vis_path = output_dir / "xfeat_lighterglue_roi.png"
-    roi_overlay.save(roi_vis_path)
-
-    result = XFeatMatchResult(
-        template_image=str(Path(template_image_path).resolve()),
-        template_annotation=str(Path(template_annotation_path).resolve()),
-        search_image=str(Path(search_image_path).resolve()),
-        keypoints_template=int(feature0["keypoints"].shape[0]),
-        keypoints_search=int(feature1["keypoints"].shape[0]),
-        matches=int(len(match_indices)),
-        inliers=int(inlier_mask.sum()) if inlier_mask is not None else 0,
-        inlier_ratio=float(inlier_mask.mean()) if inlier_mask is not None and len(inlier_mask) > 0 else 0.0,
-        homography=homography.tolist() if homography is not None else None,
-        roi_follow=roi_follow,
-        bbox_follow=bbox_follow,
-        match_vis_path=str(match_vis_path.resolve()),
-        roi_vis_path=str(roi_vis_path.resolve()),
-    )
-    (output_dir / "xfeat_lighterglue_result.json").write_text(
-        json.dumps(result.to_dict(), indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
-    return result
 
 
 def run_xfeat_match(args) -> XFeatMatchResult:
     template_image = Path(args.template_image) if args.template_image else Path(load_template_annotation(args.template_annotation)["template_image"])
+    save_visuals = not getattr(args, "no_write_visuals", False)
+    save_result_json = not getattr(args, "no_write_json", False)
+    if (save_visuals or save_result_json) and not args.output_dir:
+        raise ValueError("--output-dir is required unless both --no-write-visuals and --no-write-json are set")
     return match_template_with_xfeat_lighterglue(
         template_image_path=template_image,
         template_annotation_path=args.template_annotation,
@@ -340,5 +437,7 @@ def run_xfeat_match(args) -> XFeatMatchResult:
             ransac_reproj_threshold=args.ransac_reproj_threshold,
             max_draw_matches=args.max_draw_matches,
         ),
+        save_visuals=save_visuals,
+        save_result_json=save_result_json,
+        print_result=not getattr(args, "quiet", False),
     )
-

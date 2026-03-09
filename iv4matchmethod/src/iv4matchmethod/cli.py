@@ -82,13 +82,16 @@ def build_parser() -> argparse.ArgumentParser:
     xfeat.add_argument("--template-annotation", required=True)
     xfeat.add_argument("--template-image", default=None)
     xfeat.add_argument("--search-image", required=True)
-    xfeat.add_argument("--output-dir", required=True)
+    xfeat.add_argument("--output-dir", default=None)
     xfeat.add_argument("--top-k", type=int, default=4096)
     xfeat.add_argument("--detection-threshold", type=float, default=0.05)
     xfeat.add_argument("--min-confidence", type=float, default=0.1)
     xfeat.add_argument("--max-dim", type=int, default=1024)
     xfeat.add_argument("--ransac-reproj-threshold", type=float, default=4.0)
     xfeat.add_argument("--max-draw-matches", type=int, default=80)
+    xfeat.add_argument("--no-write-visuals", action="store_true")
+    xfeat.add_argument("--no-write-json", action="store_true")
+    xfeat.add_argument("--quiet", action="store_true")
 
     return parser
 
