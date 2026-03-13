@@ -9,7 +9,6 @@ from typing import Iterable
 import cv2
 import numpy as np
 import torch
-from kornia.feature.lightglue import LightGlue
 from PIL import Image, ImageDraw
 from torch import nn
 
@@ -109,18 +108,57 @@ def draw_match_visualization(
     return canvas
 
 
+def match_descriptors_mnn(
+    feature0: dict[str, torch.Tensor],
+    feature1: dict[str, torch.Tensor],
+    min_confidence: float,
+) -> np.ndarray:
+    descriptors0 = feature0["descriptors"]
+    descriptors1 = feature1["descriptors"]
+    if descriptors0.numel() == 0 or descriptors1.numel() == 0:
+        return np.empty((0, 2), dtype=np.int64)
+
+    similarity = descriptors0 @ descriptors1.transpose(0, 1)
+    match01 = similarity.argmax(dim=1)
+    match10 = similarity.argmax(dim=0)
+    index0 = torch.arange(match01.shape[0], device=match01.device)
+    mutual = match10[match01] == index0
+
+    if min_confidence > 0.0:
+        scores = similarity.gather(1, match01.unsqueeze(1)).squeeze(1)
+        mutual &= scores >= min_confidence
+
+    index0 = index0[mutual]
+    index1 = match01[mutual]
+    if index0.numel() == 0:
+        return np.empty((0, 2), dtype=np.int64)
+
+    scores = similarity[index0, index1]
+    order = torch.argsort(scores, descending=True)
+    matches = torch.stack([index0[order], index1[order]], dim=1)
+    return matches.detach().cpu().numpy().astype(np.int64, copy=False)
+
+
 @dataclass(slots=True)
 class XFeatMatchConfig:
+    matcher: str = "lighterglue"
     top_k: int = 4096
     detection_threshold: float = 0.05
-    min_confidence: float = 0.1
+    min_confidence: float | None = None
     max_dim: int = 1024
     ransac_reproj_threshold: float = 4.0
     max_draw_matches: int = 80
 
+    def __post_init__(self) -> None:
+        if self.matcher not in {"lighterglue", "mnn"}:
+            raise ValueError("matcher must be one of: lighterglue, mnn")
+        if self.min_confidence is None:
+            self.min_confidence = 0.82 if self.matcher == "mnn" else 0.1
+
 
 @dataclass(slots=True)
 class XFeatMatchResult:
+    matcher: str
     template_image: str
     template_annotation: str
     search_image: str
@@ -171,6 +209,8 @@ class LighterGlueWrapper(nn.Module):
 
     def __init__(self) -> None:
         super().__init__()
+        from kornia.feature.lightglue import LightGlue
+
         LightGlue.default_conf = self.default_conf_xfeat
         self.net = LightGlue(None)
         self.dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -256,8 +296,30 @@ class XFeatLighterGlueMatcher:
     def __init__(self, config: XFeatMatchConfig | None = None) -> None:
         self.config = config or XFeatMatchConfig()
         self.xfeat = load_xfeat(self.config.top_k, self.config.detection_threshold)
-        self.lighterglue = LighterGlueWrapper()
+        self.lighterglue: LighterGlueWrapper | None = None
         self._template_cache: dict[tuple[str, str, int, int, float], PreparedXFeatTemplate] = {}
+
+    @property
+    def result_prefix(self) -> str:
+        if self.config.matcher == "mnn":
+            return "xfeat_mnn"
+        return "xfeat_lighterglue"
+
+    def match_features(
+        self,
+        feature0: dict[str, torch.Tensor],
+        feature1: dict[str, torch.Tensor],
+    ) -> np.ndarray:
+        if self.config.matcher == "mnn":
+            return match_descriptors_mnn(feature0, feature1, self.config.min_confidence)
+
+        if self.lighterglue is None:
+            self.lighterglue = LighterGlueWrapper()
+        return self.lighterglue(
+            feature0,
+            feature1,
+            min_confidence=self.config.min_confidence,
+        )
 
     def prepare_template(
         self,
@@ -312,11 +374,7 @@ class XFeatLighterGlueMatcher:
         search_resized, search_scale = resize_to_max_dim(search_original, self.config.max_dim)
 
         feature1 = detect_xfeat_features(self.xfeat, search_resized, self.config.top_k)
-        match_indices = self.lighterglue(
-            prepared_template.features,
-            feature1,
-            min_confidence=self.config.min_confidence,
-        )
+        match_indices = self.match_features(prepared_template.features, feature1)
 
         mkpts0 = prepared_template.features["keypoints"][match_indices[:, 0]].detach().cpu().numpy()
         mkpts1 = feature1["keypoints"][match_indices[:, 1]].detach().cpu().numpy()
@@ -354,7 +412,7 @@ class XFeatLighterGlueMatcher:
                 inlier_mask,
                 self.config.max_draw_matches,
             )
-            match_vis_path = str((output_path / "xfeat_lighterglue_matches.png").resolve())
+            match_vis_path = str((output_path / f"{self.result_prefix}_matches.png").resolve())
             match_vis.save(match_vis_path)
 
             roi_overlay = draw_prediction_overlay(search_original, polygon=roi_follow)
@@ -362,10 +420,11 @@ class XFeatLighterGlueMatcher:
                 draw = ImageDraw.Draw(roi_overlay)
                 pts = [(float(x), float(y)) for x, y in bbox_follow]
                 draw.line(pts + [pts[0]], fill=(0, 200, 255), width=3)
-            roi_vis_path = str((output_path / "xfeat_lighterglue_roi.png").resolve())
+            roi_vis_path = str((output_path / f"{self.result_prefix}_roi.png").resolve())
             roi_overlay.save(roi_vis_path)
 
         result = XFeatMatchResult(
+            matcher=self.config.matcher,
             template_image=prepared_template.template_image,
             template_annotation=prepared_template.template_annotation,
             search_image=search_image,
@@ -382,7 +441,7 @@ class XFeatLighterGlueMatcher:
         )
 
         if output_path is not None and save_result_json:
-            result_path = output_path / "xfeat_lighterglue_result.json"
+            result_path = output_path / f"{self.result_prefix}_result.json"
             result_path.write_text(
                 json.dumps(result.to_dict(), indent=2, ensure_ascii=False),
                 encoding="utf-8",
@@ -394,6 +453,31 @@ class XFeatLighterGlueMatcher:
 
 
 def match_template_with_xfeat_lighterglue(
+    template_image_path: str | Path,
+    template_annotation_path: str | Path,
+    search_image_path: str | Path,
+    output_dir: str | Path | None,
+    config: XFeatMatchConfig | None = None,
+    *,
+    matcher: XFeatLighterGlueMatcher | None = None,
+    save_visuals: bool = True,
+    save_result_json: bool = True,
+    print_result: bool = True,
+) -> XFeatMatchResult:
+    return match_template_with_xfeat(
+        template_image_path=template_image_path,
+        template_annotation_path=template_annotation_path,
+        search_image_path=search_image_path,
+        output_dir=output_dir,
+        config=config,
+        matcher=matcher,
+        save_visuals=save_visuals,
+        save_result_json=save_result_json,
+        print_result=print_result,
+    )
+
+
+def match_template_with_xfeat(
     template_image_path: str | Path,
     template_annotation_path: str | Path,
     search_image_path: str | Path,
@@ -424,12 +508,13 @@ def run_xfeat_match(args) -> XFeatMatchResult:
     save_result_json = not getattr(args, "no_write_json", False)
     if (save_visuals or save_result_json) and not args.output_dir:
         raise ValueError("--output-dir is required unless both --no-write-visuals and --no-write-json are set")
-    return match_template_with_xfeat_lighterglue(
+    return match_template_with_xfeat(
         template_image_path=template_image,
         template_annotation_path=args.template_annotation,
         search_image_path=args.search_image,
         output_dir=args.output_dir,
         config=XFeatMatchConfig(
+            matcher=args.matcher,
             top_k=args.top_k,
             detection_threshold=args.detection_threshold,
             min_confidence=args.min_confidence,

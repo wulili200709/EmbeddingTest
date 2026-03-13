@@ -64,13 +64,25 @@ python -m iv4matchmethod annotate-search `
   --append-manifest demo_data/train_real.jsonl
 ```
 
-Run XFeat + LighterGlue matching:
+Run XFeat matching (default: LighterGlue):
 
 ```powershell
 python -m iv4matchmethod match-xfeat `
   --template-annotation demo_data/user_images/template_annotation.json `
   --search-image demo_data/user_images/test.png `
   --output-dir runs/xfeat_match
+```
+
+Run the lighter MNN matcher:
+
+```powershell
+python -m iv4matchmethod match-xfeat `
+  --template-annotation demo_data/user_images/template_annotation.json `
+  --search-image demo_data/user_images/test.png `
+  --output-dir runs/xfeat_match_mnn `
+  --matcher mnn `
+  --max-dim 320 `
+  --top-k 512
 ```
 
 Run inference:
@@ -161,25 +173,42 @@ Controls:
 - `Ctrl+S`: save JSON and preview image
 - `Enter`: save and exit
 
-## XFeat + LighterGlue
+## XFeat Matchers
 
-This project also ships a registration path using the official XFeat model and
-the XFeat-specific LighterGlue weights:
+This project also ships a registration path using the official XFeat model with
+either the XFeat-specific LighterGlue weights or a simpler MNN/cosine matcher.
 
 ```powershell
 python -m iv4matchmethod match-xfeat `
   --template-annotation demo_data/user_images/template_annotation.json `
   --search-image demo_data/user_images/test.png `
   --output-dir runs/xfeat_match `
+  --matcher lighterglue `
   --max-dim 1024 `
   --top-k 4096
 ```
 
+To use the simpler matcher:
+
+```powershell
+python -m iv4matchmethod match-xfeat `
+  --template-annotation demo_data/user_images/template_annotation.json `
+  --search-image demo_data/user_images/test.png `
+  --output-dir runs/xfeat_match `
+  --matcher mnn `
+  --min-confidence 0.82
+```
+
+Common tradeoff:
+
+- `--matcher lighterglue`: slower, usually more stable on hard images
+- `--matcher mnn`: lighter and faster on CPU, but easier to drift on repeated or symmetric structures
+- a practical CPU preset for `mnn` is `--max-dim 320 --top-k 512`
+
 Outputs written to `--output-dir`:
 
-- `xfeat_lighterglue_matches.png`: side-by-side match visualization
-- `xfeat_lighterglue_roi.png`: followed ROI on the search image
-- `xfeat_lighterglue_result.json`: keypoint counts, match counts, inliers, homography, ROI polygon
+- `xfeat_lighterglue_*.png/.json` or `xfeat_mnn_*.png/.json`
+- the JSON result includes the selected `matcher`, keypoint counts, match counts, inliers, homography, and ROI polygon
 
 ## Notes
 
