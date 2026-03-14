@@ -5,6 +5,7 @@ Interactive visual editor for line2Dup-like template feature points.
 Mouse:
 - Left drag: add a point and infer direction label from drag angle.
 - Right click: delete nearest point within radius.
+- Right drag: box-select and delete all points inside the box.
 - Wheel: zoom in/out.
 
 Keyboard:
@@ -69,6 +70,19 @@ def arrow_endpoint(x: int, y: int, theta_deg: float, length: float) -> Tuple[int
     return ex, ey
 
 
+def drag_is_click(start: Tuple[int, int], end: Tuple[int, int], threshold: int = 3) -> bool:
+    return abs(int(end[0]) - int(start[0])) < threshold and abs(int(end[1]) - int(start[1])) < threshold
+
+
+def normalize_drag_rect(start: Tuple[int, int], end: Tuple[int, int]) -> Tuple[int, int, int, int]:
+    return (
+        min(int(start[0]), int(end[0])),
+        min(int(start[1]), int(end[1])),
+        max(int(start[0]), int(end[0])),
+        max(int(start[1]), int(end[1])),
+    )
+
+
 @dataclass
 class UndoItem:
     class_id: str
@@ -117,6 +131,9 @@ class EditorState:
         self.is_dragging = False
         self.drag_start_abs: Optional[Tuple[int, int]] = None
         self.drag_end_abs: Optional[Tuple[int, int]] = None
+        self.is_erase_dragging = False
+        self.erase_start_abs: Optional[Tuple[int, int]] = None
+        self.erase_end_abs: Optional[Tuple[int, int]] = None
 
     @property
     def class_id(self) -> str:
@@ -233,6 +250,29 @@ class EditorState:
         self.dirty = True
         return True
 
+    def delete_box_abs(self, start_abs: Tuple[int, int], end_abs: Tuple[int, int]) -> int:
+        tl = self.current_template_level()
+        if not tl.features:
+            return 0
+        x1, y1, x2, y2 = normalize_drag_rect(start_abs, end_abs)
+        pts = self.get_feature_abs_points()
+        keep: List[Feature] = []
+        deleted = 0
+        for i, feat in enumerate(tl.features):
+            px, py = pts[i]
+            if x1 <= int(px) <= x2 and y1 <= int(py) <= y2:
+                deleted += 1
+                continue
+            keep.append(feat)
+        if deleted <= 0:
+            return 0
+        self.push_undo()
+        tl.features = keep
+        self.detector.invalidate_native_cache(self.class_id)
+        self.hover_index = None
+        self.dirty = True
+        return deleted
+
     def update_hover_abs(self, x_abs: int, y_abs: int) -> None:
         tl = self.current_template_level()
         if not tl.features:
@@ -331,6 +371,10 @@ class EditorState:
             color = palette[lb]
             cv2.arrowedLine(img, (sx, sy), (ex, ey), color, 1, cv2.LINE_AA, 0, 0.35)
 
+        if self.is_erase_dragging and self.erase_start_abs is not None and self.erase_end_abs is not None:
+            x1, y1, x2, y2 = normalize_drag_rect(self.erase_start_abs, self.erase_end_abs)
+            cv2.rectangle(img, (x1, y1), (x2, y2), (0, 128, 255), 1, cv2.LINE_AA)
+
         if self.show_status:
             status = (
                 f"class={self.class_id} ({self.class_index+1}/{len(self.class_ids)})  "
@@ -344,7 +388,7 @@ class EditorState:
 
         if self.show_help:
             lines = [
-                "L-drag:add with direction  R-click:delete nearest  Wheel/+-:zoom  0:reset",
+                "L-drag:add direction  R-click:delete nearest  R-drag:box delete  Wheel/+-:zoom",
                 "c/x class, n/p template, l/k level, ]/[ label, s save, u undo, i status, q quit",
             ]
             y = 48
@@ -416,7 +460,11 @@ def main() -> int:
             state.update_hover_abs(x_abs, y_abs)
             if state.is_dragging:
                 state.drag_end_abs = (x_abs, y_abs)
+            if state.is_erase_dragging:
+                state.erase_end_abs = (x_abs, y_abs)
         elif event == cv2.EVENT_LBUTTONDOWN:
+            if state.is_erase_dragging:
+                return
             state.is_dragging = True
             state.drag_start_abs = (x_abs, y_abs)
             state.drag_end_abs = (x_abs, y_abs)
@@ -440,7 +488,23 @@ def main() -> int:
             state.drag_end_abs = None
             state.update_hover_abs(x_abs, y_abs)
         elif event == cv2.EVENT_RBUTTONDOWN:
-            state.delete_nearest_abs(x_abs, y_abs)
+            if state.is_dragging:
+                return
+            state.is_erase_dragging = True
+            state.erase_start_abs = (x_abs, y_abs)
+            state.erase_end_abs = (x_abs, y_abs)
+        elif event == cv2.EVENT_RBUTTONUP:
+            if state.is_erase_dragging and state.erase_start_abs is not None and state.erase_end_abs is not None:
+                state.erase_end_abs = (x_abs, y_abs)
+                if drag_is_click(state.erase_start_abs, state.erase_end_abs):
+                    state.delete_nearest_abs(x_abs, y_abs)
+                else:
+                    deleted = state.delete_box_abs(state.erase_start_abs, state.erase_end_abs)
+                    if deleted > 0:
+                        print(f"deleted {deleted} points in selection")
+            state.is_erase_dragging = False
+            state.erase_start_abs = None
+            state.erase_end_abs = None
             state.update_hover_abs(x_abs, y_abs)
         elif event == cv2.EVENT_MOUSEWHEEL:
             delta = 0
@@ -462,7 +526,7 @@ def main() -> int:
     print("Editor started.")
     print(f"model={model_path}")
     print(f"out_model={out_model_path}")
-    print("Mouse: left-drag add with direction, right click delete. Press 'h' for help, 'i' for status.")
+    print("Mouse: left-drag add with direction, right click delete nearest, right-drag box delete. Press 'h' for help, 'i' for status.")
 
     while True:
         canvas = state.render()

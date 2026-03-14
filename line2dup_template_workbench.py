@@ -171,6 +171,19 @@ def keep_canvas_point_stable_after_zoom(
         canvas.yview_moveto(0.0)
 
 
+def drag_is_click(start: Tuple[int, int], end: Tuple[int, int], threshold: int = 3) -> bool:
+    return abs(int(end[0]) - int(start[0])) < threshold and abs(int(end[1]) - int(start[1])) < threshold
+
+
+def normalize_drag_rect(start: Tuple[int, int], end: Tuple[int, int]) -> Tuple[int, int, int, int]:
+    return (
+        min(int(start[0]), int(end[0])),
+        min(int(start[1]), int(end[1])),
+        max(int(start[0]), int(end[0])),
+        max(int(start[1]), int(end[1])),
+    )
+
+
 @dataclass
 class RoiRect:
     x: int
@@ -347,7 +360,9 @@ class CreateTemplateTab(ttk.Frame):
         self.canvas.bind("<ButtonPress-1>", self._on_left_down)
         self.canvas.bind("<B1-Motion>", self._on_left_move)
         self.canvas.bind("<ButtonRelease-1>", self._on_left_up)
-        self.canvas.bind("<Button-3>", self._on_right_click)
+        self.canvas.bind("<ButtonPress-3>", self._on_right_down)
+        self.canvas.bind("<B3-Motion>", self._on_right_move)
+        self.canvas.bind("<ButtonRelease-3>", self._on_right_up)
         self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)
         self.canvas.bind("<Button-4>", self._on_mouse_wheel)
         self.canvas.bind("<Button-5>", self._on_mouse_wheel)
@@ -454,7 +469,7 @@ class CreateTemplateTab(ttk.Frame):
         self.tool_var.set("point")
         self.status_var.set(
             f"Extracted {len(self.template_levels[0].features)} points at level0. "
-            f"L0 is editable; L1+ are auto-scaled from L0."
+            f"L0 is editable; L1+ are auto-scaled from L0. Right-drag box deletes selected points."
         )
         self._refresh_canvas()
 
@@ -968,6 +983,30 @@ class CreateTemplateTab(ttk.Frame):
         self._sync_levels_from_level0(total_levels=len(self.template_levels))
         return True
 
+    def _delete_points_in_box(self, start: Tuple[int, int], end: Tuple[int, int]) -> int:
+        tl = self._current_level_template()
+        if tl is None or not tl.features:
+            return 0
+        if int(self.level_var.get()) != 0:
+            self.status_var.set("Only L0 is editable. Switch View Level to 0.")
+            return 0
+        x1, y1, x2, y2 = normalize_drag_rect(start, end)
+        pts = self._get_abs_points()
+        keep: List[Feature] = []
+        deleted = 0
+        for i, feat in enumerate(tl.features):
+            px, py = pts[i]
+            if x1 <= int(px) <= x2 and y1 <= int(py) <= y2:
+                deleted += 1
+                continue
+            keep.append(feat)
+        if deleted <= 0:
+            return 0
+        tl.features = keep
+        self.hover_index = None
+        self._sync_levels_from_level0(total_levels=len(self.template_levels))
+        return deleted
+
     def _canvas_to_image(self, event: tk.Event) -> Tuple[int, int]:
         z = max(1e-6, float(self.zoom_var.get()))
         xw = float(self.canvas.canvasx(event.x))
@@ -976,6 +1015,8 @@ class CreateTemplateTab(ttk.Frame):
 
     def _on_left_down(self, event: tk.Event) -> None:
         if self.image_bgr is None:
+            return
+        if self.drag_kind == "erase":
             return
         x, y = self._canvas_to_image(event)
         if self.tool_var.get() == "roi":
@@ -993,6 +1034,8 @@ class CreateTemplateTab(ttk.Frame):
 
     def _on_left_move(self, event: tk.Event) -> None:
         if self.drag_kind is None:
+            return
+        if self.drag_kind == "erase":
             return
         x, y = self._canvas_to_image(event)
         self.drag_end = (x, y)
@@ -1042,15 +1085,44 @@ class CreateTemplateTab(ttk.Frame):
         self.drag_end = None
         self._refresh_canvas()
 
-    def _on_right_click(self, event: tk.Event) -> None:
+    def _on_right_down(self, event: tk.Event) -> None:
         if self.tool_var.get() != "point" or self.roi is None:
             return
         if int(self.level_var.get()) != 0:
             self.status_var.set("Only L0 is editable. Switch View Level to 0.")
             return
+        if self.drag_kind is not None:
+            return
         x, y = self._canvas_to_image(event)
-        if self._delete_nearest(x, y):
-            self.status_var.set("Point deleted.")
+        self.drag_kind = "erase"
+        self.drag_start = (x, y)
+        self.drag_end = (x, y)
+        self._refresh_canvas()
+
+    def _on_right_move(self, event: tk.Event) -> None:
+        if self.drag_kind != "erase":
+            return
+        x, y = self._canvas_to_image(event)
+        self.drag_end = (x, y)
+        self._refresh_canvas()
+
+    def _on_right_up(self, event: tk.Event) -> None:
+        if self.drag_kind != "erase" or self.drag_start is None:
+            return
+        x, y = self._canvas_to_image(event)
+        self.drag_end = (x, y)
+        if drag_is_click(self.drag_start, self.drag_end):
+            if self._delete_nearest(x, y):
+                self.status_var.set("Point deleted.")
+        else:
+            deleted = self._delete_points_in_box(self.drag_start, self.drag_end)
+            if deleted > 0:
+                self.status_var.set(f"Deleted {deleted} points in selection.")
+            else:
+                self.status_var.set("No points in selection.")
+        self.drag_kind = None
+        self.drag_start = None
+        self.drag_end = None
         self._refresh_canvas()
 
     def _on_motion(self, event: tk.Event) -> None:
@@ -1120,6 +1192,9 @@ class CreateTemplateTab(ttk.Frame):
                     lb = int(self.label_var.get()) % 8
                 color = orientation_palette_bgr()[lb]
                 cv2.arrowedLine(canvas, (sx, sy), (ex, ey), color, 1, cv2.LINE_AA, 0, 0.35)
+            elif self.drag_kind == "erase" and self.drag_start is not None and self.drag_end is not None:
+                x1, y1, x2, y2 = normalize_drag_rect(self.drag_start, self.drag_end)
+                cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 128, 255), 1, cv2.LINE_AA)
             return canvas
 
         canvas = self.image_bgr.copy()
@@ -1166,6 +1241,9 @@ class EditTemplateTab(ttk.Frame):
         self.drag_start: Optional[Tuple[int, int]] = None
         self.drag_end: Optional[Tuple[int, int]] = None
         self.is_dragging = False
+        self.erase_start: Optional[Tuple[int, int]] = None
+        self.erase_end: Optional[Tuple[int, int]] = None
+        self.is_erasing = False
         self.hover_index: Optional[int] = None
 
         self._photo: Optional[tk.PhotoImage] = None
@@ -1278,7 +1356,9 @@ class EditTemplateTab(ttk.Frame):
         self.canvas.bind("<ButtonPress-1>", self._on_left_down)
         self.canvas.bind("<B1-Motion>", self._on_left_move)
         self.canvas.bind("<ButtonRelease-1>", self._on_left_up)
-        self.canvas.bind("<Button-3>", self._on_right_click)
+        self.canvas.bind("<ButtonPress-3>", self._on_right_down)
+        self.canvas.bind("<B3-Motion>", self._on_right_move)
+        self.canvas.bind("<ButtonRelease-3>", self._on_right_up)
         self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)
         self.canvas.bind("<Button-4>", self._on_mouse_wheel)
         self.canvas.bind("<Button-5>", self._on_mouse_wheel)
@@ -1310,7 +1390,7 @@ class EditTemplateTab(ttk.Frame):
         self.class_var.set(class_ids[0])
         self.undo_stack = []
         self._on_class_changed()
-        self.status_var.set("Model loaded. Left-drag to add directional point, right click to delete.")
+        self.status_var.set("Model loaded. Left-drag adds point direction; right-drag box deletes selected points.")
         self._refresh_canvas()
 
     def open_template_image(self) -> None:
@@ -1441,6 +1521,9 @@ class EditTemplateTab(ttk.Frame):
         lb = int(label) % 8
         theta = label_to_angle_deg(lb) if theta_deg is None else float(theta_deg)
         tl.features.append(Feature(x=xr, y=yr, label=lb, theta=theta))
+        class_id = self.class_var.get().strip()
+        if class_id:
+            self.detector.invalidate_native_cache(class_id)
 
     def _delete_nearest(self, x_abs: int, y_abs: int) -> bool:
         tl = self._current_template_level()
@@ -1460,8 +1543,35 @@ class EditTemplateTab(ttk.Frame):
             return False
         self._push_undo()
         del tl.features[best_idx]
+        class_id = self.class_var.get().strip()
+        if class_id:
+            self.detector.invalidate_native_cache(class_id)
         self.hover_index = None
         return True
+
+    def _delete_points_in_box(self, start: Tuple[int, int], end: Tuple[int, int]) -> int:
+        tl = self._current_template_level()
+        if tl is None or not tl.features:
+            return 0
+        x1, y1, x2, y2 = normalize_drag_rect(start, end)
+        pts = self._get_abs_points()
+        keep: List[Feature] = []
+        deleted = 0
+        for i, feat in enumerate(tl.features):
+            px, py = pts[i]
+            if x1 <= int(px) <= x2 and y1 <= int(py) <= y2:
+                deleted += 1
+                continue
+            keep.append(feat)
+        if deleted <= 0:
+            return 0
+        self._push_undo()
+        tl.features = keep
+        class_id = self.class_var.get().strip()
+        if class_id:
+            self.detector.invalidate_native_cache(class_id)
+        self.hover_index = None
+        return deleted
 
     def save_model(self) -> None:
         if self.detector is None:
@@ -1485,6 +1595,8 @@ class EditTemplateTab(ttk.Frame):
 
     def _on_left_down(self, event: tk.Event) -> None:
         if self.detector is None:
+            return
+        if self.is_erasing:
             return
         x, y = self._canvas_to_image(event)
         self.is_dragging = True
@@ -1522,12 +1634,41 @@ class EditTemplateTab(ttk.Frame):
         self.drag_end = None
         self._refresh_canvas()
 
-    def _on_right_click(self, event: tk.Event) -> None:
+    def _on_right_down(self, event: tk.Event) -> None:
         if self.detector is None:
             return
         x, y = self._canvas_to_image(event)
-        if self._delete_nearest(x, y):
-            self.status_var.set("Point deleted.")
+        if self.is_dragging:
+            return
+        self.is_erasing = True
+        self.erase_start = (x, y)
+        self.erase_end = (x, y)
+        self._refresh_canvas()
+
+    def _on_right_move(self, event: tk.Event) -> None:
+        if not self.is_erasing:
+            return
+        x, y = self._canvas_to_image(event)
+        self.erase_end = (x, y)
+        self._refresh_canvas()
+
+    def _on_right_up(self, event: tk.Event) -> None:
+        if self.detector is None or not self.is_erasing or self.erase_start is None:
+            return
+        x, y = self._canvas_to_image(event)
+        self.erase_end = (x, y)
+        if drag_is_click(self.erase_start, self.erase_end):
+            if self._delete_nearest(x, y):
+                self.status_var.set("Point deleted.")
+        else:
+            deleted = self._delete_points_in_box(self.erase_start, self.erase_end)
+            if deleted > 0:
+                self.status_var.set(f"Deleted {deleted} points in selection.")
+            else:
+                self.status_var.set("No points in selection.")
+        self.is_erasing = False
+        self.erase_start = None
+        self.erase_end = None
         self._refresh_canvas()
 
     def _on_motion(self, event: tk.Event) -> None:
@@ -1626,6 +1767,9 @@ class EditTemplateTab(ttk.Frame):
                 lb = int(self.label_var.get()) % 8
             color = orientation_palette_bgr()[lb]
             cv2.arrowedLine(canvas, (sx, sy), (ex, ey), color, 1, cv2.LINE_AA, 0, 0.35)
+        if self.is_erasing and self.erase_start is not None and self.erase_end is not None:
+            x1, y1, x2, y2 = normalize_drag_rect(self.erase_start, self.erase_end)
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 128, 255), 1, cv2.LINE_AA)
         return canvas
 
     def _refresh_canvas(self) -> None:

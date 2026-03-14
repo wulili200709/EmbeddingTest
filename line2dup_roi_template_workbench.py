@@ -64,6 +64,19 @@ def arrow_endpoint(x: int, y: int, theta_deg: float, length: float) -> Tuple[int
     return ex, ey
 
 
+def drag_is_click(start: Tuple[int, int], end: Tuple[int, int], threshold: int = 3) -> bool:
+    return abs(int(end[0]) - int(start[0])) < threshold and abs(int(end[1]) - int(start[1])) < threshold
+
+
+def normalize_drag_rect(start: Tuple[int, int], end: Tuple[int, int]) -> Tuple[int, int, int, int]:
+    return (
+        min(int(start[0]), int(end[0])),
+        min(int(start[1]), int(end[1])),
+        max(int(start[0]), int(end[0])),
+        max(int(start[1]), int(end[1])),
+    )
+
+
 def clone_levels(levels: List[TemplateLevel]) -> List[TemplateLevel]:
     out: List[TemplateLevel] = []
     for lv in levels:
@@ -129,6 +142,9 @@ class WorkbenchState:
         self.is_dragging = False
         self.drag_start_abs: Optional[Tuple[int, int]] = None
         self.drag_end_abs: Optional[Tuple[int, int]] = None
+        self.is_erase_dragging = False
+        self.erase_start_abs: Optional[Tuple[int, int]] = None
+        self.erase_end_abs: Optional[Tuple[int, int]] = None
 
     def current_level_template(self) -> Optional[TemplateLevel]:
         if not self.template_levels:
@@ -232,6 +248,27 @@ class WorkbenchState:
         self.dirty = True
         return True
 
+    def delete_points_in_box(self, start_abs: Tuple[int, int], end_abs: Tuple[int, int]) -> int:
+        tl = self.current_level_template()
+        if tl is None or not tl.features:
+            return 0
+        x1, y1, x2, y2 = normalize_drag_rect(start_abs, end_abs)
+        pts = self.get_abs_points()
+        keep: List[Feature] = []
+        deleted = 0
+        for i, feat in enumerate(tl.features):
+            px, py = pts[i]
+            if x1 <= int(px) <= x2 and y1 <= int(py) <= y2:
+                deleted += 1
+                continue
+            keep.append(feat)
+        if deleted <= 0:
+            return 0
+        tl.features = keep
+        self.hover_index = None
+        self.dirty = True
+        return deleted
+
     def set_zoom(self, z: float) -> None:
         self.zoom = max(1.0, min(16.0, float(z)))
 
@@ -316,6 +353,10 @@ class WorkbenchState:
             color = orientation_palette_bgr()[lb]
             cv2.arrowedLine(canvas, (sx, sy), (ex, ey), color, 1, cv2.LINE_AA, 0, 0.35)
 
+        if self.is_erase_dragging and self.erase_start_abs is not None and self.erase_end_abs is not None:
+            x1, y1, x2, y2 = normalize_drag_rect(self.erase_start_abs, self.erase_end_abs)
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 128, 255), 1, cv2.LINE_AA)
+
         if self.show_status:
             status = (
                 f"roi=({self.roi.x},{self.roi.y},{self.roi.w},{self.roi.h})  "
@@ -329,7 +370,7 @@ class WorkbenchState:
 
         if self.show_help:
             lines = [
-                "L-drag:add with direction  R-click:delete  Wheel/+- zoom  0 reset",
+                "L-drag:add direction  R-click:delete nearest  R-drag:box delete  Wheel/+- zoom",
                 "Trackbars auto-recompute. s save, r recompute, h help, i status, q quit",
             ]
             y = 48
@@ -428,7 +469,11 @@ def main() -> int:
             state.update_hover(x_abs, y_abs)
             if state.is_dragging:
                 state.drag_end_abs = (x_abs, y_abs)
+            if state.is_erase_dragging:
+                state.erase_end_abs = (x_abs, y_abs)
         elif event == cv2.EVENT_LBUTTONDOWN:
+            if state.is_erase_dragging:
+                return
             state.is_dragging = True
             state.drag_start_abs = (x_abs, y_abs)
             state.drag_end_abs = (x_abs, y_abs)
@@ -453,7 +498,23 @@ def main() -> int:
             state.drag_end_abs = None
             state.update_hover(x_abs, y_abs)
         elif event == cv2.EVENT_RBUTTONDOWN:
-            state.delete_point(x_abs, y_abs)
+            if state.is_dragging:
+                return
+            state.is_erase_dragging = True
+            state.erase_start_abs = (x_abs, y_abs)
+            state.erase_end_abs = (x_abs, y_abs)
+        elif event == cv2.EVENT_RBUTTONUP:
+            if state.is_erase_dragging and state.erase_start_abs is not None and state.erase_end_abs is not None:
+                state.erase_end_abs = (x_abs, y_abs)
+                if drag_is_click(state.erase_start_abs, state.erase_end_abs):
+                    state.delete_point(x_abs, y_abs)
+                else:
+                    deleted = state.delete_points_in_box(state.erase_start_abs, state.erase_end_abs)
+                    if deleted > 0:
+                        print(f"deleted {deleted} points in selection")
+            state.is_erase_dragging = False
+            state.erase_start_abs = None
+            state.erase_end_abs = None
             state.update_hover(x_abs, y_abs)
         elif event == cv2.EVENT_MOUSEWHEEL:
             delta = 0
@@ -476,7 +537,7 @@ def main() -> int:
     print(f"roi=(x={x}, y={y}, w={w}, h={h})")
     print(f"out_model={out_model}")
     print("Adjust trackbars to auto-recompute points.")
-    print("Mouse: left-drag add with direction, right click delete. Press 'h' for help, 'i' for status.")
+    print("Mouse: left-drag add with direction, right click delete nearest, right-drag box delete. Press 'h' for help, 'i' for status.")
 
     while True:
         sync_from_trackbars()
