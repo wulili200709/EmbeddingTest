@@ -15,6 +15,7 @@ import math
 import os
 import re
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -52,6 +53,12 @@ class Match:
     similarity: float
     class_id: str
     template_id: int
+    backend: str = "original"
+    refined_transform: Optional[np.ndarray] = None
+    refined_scale: Optional[float] = None
+    refined_angle_deg: Optional[float] = None
+    refined_fitness: Optional[float] = None
+    refined_rmse: Optional[float] = None
 
 
 @dataclass
@@ -164,10 +171,15 @@ def _load_similarity_lut() -> np.ndarray:
 SIMILARITY_LUT = _load_similarity_lut()
 
 _DEFAULT_OPENCV_BUILD_ROOT = Path(r"C:\Users\ADMIN\tools\opencv\build")
-_LINE2DUP_NATIVE: Any = None
+NATIVE_BACKEND_TO_MODULE = {
+    "original": "line2dup_native",
+    "fusion": "line2dup_fusion_native",
+    "sim3": "line2dup_sim3_native",
+}
+_NATIVE_MODULES: Dict[str, Any] = {}
 _OPENCV_DLL_HANDLE: Any = None
-_LINE2DUP_NATIVE_ERROR: Optional[BaseException] = None
-_NATIVE_FALLBACK_WARNED = False
+_NATIVE_MODULE_ERRORS: Dict[str, BaseException] = {}
+_NATIVE_FALLBACK_WARNED: set[str] = set()
 
 
 def _opencv_build_root() -> Path:
@@ -179,7 +191,7 @@ def _opencv_build_root() -> Path:
 
 def _native_build_instructions() -> str:
     return (
-        "To enable the OpenCV-backed accelerator:\n"
+        "To enable the OpenCV-backed accelerators:\n"
         "py -3 -m pip install -U setuptools wheel pybind11\n"
         "py -3 setup.py build_ext --inplace\n"
         f"Set LINE2DUP_OPENCV_BUILD if OpenCV is not installed at {_DEFAULT_OPENCV_BUILD_ROOT}.\n"
@@ -192,42 +204,58 @@ def _native_fallback_warn_enabled() -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
-def _warn_native_fallback(exc: BaseException) -> None:
-    global _NATIVE_FALLBACK_WARNED
-    if _NATIVE_FALLBACK_WARNED:
+def _normalize_backend_name(backend: str) -> str:
+    key = str(backend or "original").strip().lower()
+    if key in {"orig", "original", "native"}:
+        return "original"
+    if key in {"fusion", "fused"}:
+        return "fusion"
+    if key in {"sim3", "icp", "icp(sim3)", "sim3_icp"}:
+        return "sim3"
+    raise ValueError(f"Unsupported backend: {backend}")
+
+
+def _warn_native_fallback(backend: str, exc: BaseException) -> None:
+    backend = _normalize_backend_name(backend)
+    if backend in _NATIVE_FALLBACK_WARNED:
         return
     if not _native_fallback_warn_enabled():
-        _NATIVE_FALLBACK_WARNED = True
+        _NATIVE_FALLBACK_WARNED.add(backend)
         return
     print(
-        "line2dup_native is unavailable; falling back to the slower Python matcher.\n"
+        f"{NATIVE_BACKEND_TO_MODULE[backend]} is unavailable; falling back to the slower Python matcher.\n"
         f"{_native_build_instructions()}\n"
         f"Original import error: {exc}",
         file=sys.stderr,
     )
-    _NATIVE_FALLBACK_WARNED = True
+    _NATIVE_FALLBACK_WARNED.add(backend)
 
 
-def _load_native_matcher(required: bool = True) -> Any:
-    global _LINE2DUP_NATIVE, _OPENCV_DLL_HANDLE, _LINE2DUP_NATIVE_ERROR
-    if _LINE2DUP_NATIVE is not None:
-        return _LINE2DUP_NATIVE
-    if _LINE2DUP_NATIVE_ERROR is not None:
+def _load_native_matcher(backend: str = "original", required: bool = True) -> Any:
+    backend = _normalize_backend_name(backend)
+    module_name = NATIVE_BACKEND_TO_MODULE[backend]
+    global _OPENCV_DLL_HANDLE
+    if backend in _NATIVE_MODULES:
+        return _NATIVE_MODULES[backend]
+    if backend in _NATIVE_MODULE_ERRORS:
         if required:
-            raise RuntimeError(f"{_native_build_instructions()}\nOriginal import error: {_LINE2DUP_NATIVE_ERROR}")
+            raise RuntimeError(
+                f"{module_name} is unavailable.\n{_native_build_instructions()}\n"
+                f"Original import error: {_NATIVE_MODULE_ERRORS[backend]}"
+            )
         return None
     if os.name == "nt" and hasattr(os, "add_dll_directory"):
         dll_dir = _opencv_build_root() / "x64" / "vc16" / "bin"
         if dll_dir.exists() and _OPENCV_DLL_HANDLE is None:
             _OPENCV_DLL_HANDLE = os.add_dll_directory(str(dll_dir))
     try:
-        _LINE2DUP_NATIVE = importlib.import_module("line2dup_native")
+        _NATIVE_MODULES[backend] = importlib.import_module(module_name)
     except Exception as exc:  # pragma: no cover - exercised via runtime import failures
-        _LINE2DUP_NATIVE_ERROR = exc
+        _NATIVE_MODULE_ERRORS[backend] = exc
         if required:
-            raise RuntimeError(f"{_native_build_instructions()}\nOriginal import error: {exc}") from exc
+            raise RuntimeError(f"{module_name} is unavailable.\n{_native_build_instructions()}\nOriginal import error: {exc}") from exc
         return None
-    return _LINE2DUP_NATIVE
+    return _NATIVE_MODULES[backend]
 
 
 def hysteresis_gradient(
@@ -640,14 +668,15 @@ class Line2DupLikeDetector:
         self.strong_threshold = float(strong_threshold)
         self.class_templates: Dict[str, List[List[TemplateLevel]]] = {}
         self.class_meta: Dict[str, List[Dict[str, float]]] = {}
-        self._native_detector: Any = None
+        self._native_detectors: Dict[str, Any] = {}
         self._native_dirty = True
 
     def invalidate_native_cache(self, class_id: Optional[str] = None) -> None:
         self._native_dirty = True
+        self._native_detectors.clear()
 
-    def _create_native_detector(self, required: bool = True) -> Any:
-        native_matcher = _load_native_matcher(required=required)
+    def _create_native_detector(self, backend: str = "original", required: bool = True) -> Any:
+        native_matcher = _load_native_matcher(backend=backend, required=required)
         if native_matcher is None:
             return None
         return native_matcher.NativeDetector(
@@ -680,28 +709,31 @@ class Line2DupLikeDetector:
         self._ensure_class_meta_length(class_id, template_id + 1)
         self.class_meta[class_id][template_id] = dict(metadata) if isinstance(metadata, dict) else {}
 
-    def _import_python_templates_to_native(self) -> Any:
-        native_detector = self._create_native_detector()
+    def _import_python_templates_to_native(self, backend: str = "original") -> Any:
+        backend = _normalize_backend_name(backend)
+        native_detector = self._create_native_detector(backend=backend)
         native_detector.clear_classes()
         for class_id, template_pyramids in self.class_templates.items():
             native_detector.replace_class_templates(
                 class_id,
                 [self._template_pyramid_to_native(tp) for tp in template_pyramids],
             )
-        self._native_detector = native_detector
+        self._native_detectors[backend] = native_detector
         self._native_dirty = False
         return native_detector
 
-    def _ensure_native_detector_synced(self, required: bool = True) -> Any:
-        if self._native_detector is None and not self._native_dirty:
-            return None
-        if self._native_detector is None and not required:
-            native_matcher = _load_native_matcher(required=False)
+    def _ensure_native_detector_synced(self, backend: str = "original", required: bool = True) -> Any:
+        backend = _normalize_backend_name(backend)
+        native_detector = self._native_detectors.get(backend)
+        if native_detector is not None and not self._native_dirty:
+            return native_detector
+        if native_detector is None and not required:
+            native_matcher = _load_native_matcher(backend=backend, required=False)
             if native_matcher is None:
                 return None
-        if self._native_detector is None or self._native_dirty:
-            return self._import_python_templates_to_native()
-        return self._native_detector
+        if native_detector is None or self._native_dirty:
+            return self._import_python_templates_to_native(backend=backend)
+        return native_detector
 
     def _append_template_from_native(self, native_detector: Any, class_id: str, template_id: int) -> None:
         levels_raw = native_detector.export_template_pyramid(class_id, int(template_id))
@@ -726,7 +758,7 @@ class Line2DupLikeDetector:
     ) -> int:
         nfeat = int(num_features) if num_features is not None and num_features > 0 else self.num_features
         self._ensure_class_containers(class_id)
-        native_detector = self._ensure_native_detector_synced(required=False)
+        native_detector = self._ensure_native_detector_synced(backend="original", required=False)
         if native_detector is not None:
             mask = ensure_mask(object_mask, source.shape[:2]) if object_mask is not None else None
             template_id = int(native_detector.add_template(source, class_id, mask, nfeat))
@@ -737,8 +769,8 @@ class Line2DupLikeDetector:
             self._native_dirty = False
             return template_id
 
-        if _LINE2DUP_NATIVE_ERROR is not None:
-            _warn_native_fallback(_LINE2DUP_NATIVE_ERROR)
+        if "original" in _NATIVE_MODULE_ERRORS:
+            _warn_native_fallback("original", _NATIVE_MODULE_ERRORS["original"])
         return self._add_template_python(source, class_id, object_mask, nfeat, metadata)
 
     def _add_template_python(
@@ -771,8 +803,8 @@ class Line2DupLikeDetector:
         self.class_templates[class_id].append(tp)
         self._ensure_class_meta_length(class_id, template_id)
         self.class_meta[class_id].append(dict(metadata) if isinstance(metadata, dict) else {})
-        self._native_detector = None
         self._native_dirty = True
+        self._native_detectors.clear()
         return template_id
 
     def add_template_rotate(
@@ -794,7 +826,7 @@ class Line2DupLikeDetector:
             tt = base_tp[0].tl_y
             center = (tl + base_tp[0].width * 0.5, tt + base_tp[0].height * 0.5)
 
-        native_detector = self._ensure_native_detector_synced(required=False)
+        native_detector = self._ensure_native_detector_synced(backend="original", required=False)
         if native_detector is not None:
             template_id = int(
                 native_detector.add_template_rotate(
@@ -812,8 +844,8 @@ class Line2DupLikeDetector:
             self._native_dirty = False
             return template_id
 
-        if _LINE2DUP_NATIVE_ERROR is not None:
-            _warn_native_fallback(_LINE2DUP_NATIVE_ERROR)
+        if "original" in _NATIVE_MODULE_ERRORS:
+            _warn_native_fallback("original", _NATIVE_MODULE_ERRORS["original"])
         return self._add_template_rotate_python(class_id, zero_id, theta_deg, center, metadata)
 
     def _add_template_rotate_python(
@@ -857,8 +889,8 @@ class Line2DupLikeDetector:
         self.class_templates[class_id].append(tp)
         self._ensure_class_meta_length(class_id, template_id)
         self.class_meta[class_id].append(dict(metadata) if isinstance(metadata, dict) else {})
-        self._native_detector = None
         self._native_dirty = True
+        self._native_detectors.clear()
         return template_id
 
     def get_templates(self, class_id: str, template_id: int) -> List[TemplateLevel]:
@@ -876,7 +908,9 @@ class Line2DupLikeDetector:
         threshold: float,
         class_ids: Optional[Sequence[str]] = None,
         mask: Optional[np.ndarray] = None,
+        backend: str = "original",
     ) -> List[Match]:
+        backend = _normalize_backend_name(backend)
         if not self.class_templates:
             return []
         if class_ids is None or len(class_ids) == 0:
@@ -884,7 +918,7 @@ class Line2DupLikeDetector:
         if not class_ids:
             return []
 
-        native_detector = self._ensure_native_detector_synced(required=False)
+        native_detector = self._ensure_native_detector_synced(backend=backend, required=(backend != "original"))
         if native_detector is not None:
             align = max((int(t) * (1 << idx)) for idx, t in enumerate(self.T_at_level)) if self.T_at_level else 1
             h, w = source.shape[:2]
@@ -905,6 +939,7 @@ class Line2DupLikeDetector:
                     similarity=float(similarity),
                     class_id=str(native_class_id),
                     template_id=int(template_id),
+                    backend=backend,
                 )
                 for x, y, similarity, native_class_id, template_id in native_detector.match(
                     scene,
@@ -914,8 +949,10 @@ class Line2DupLikeDetector:
                 )
             ]
         else:
-            if _LINE2DUP_NATIVE_ERROR is not None:
-                _warn_native_fallback(_LINE2DUP_NATIVE_ERROR)
+            if backend != "original":
+                raise RuntimeError(f"{backend} backend is unavailable.\n{_native_build_instructions()}")
+            if "original" in _NATIVE_MODULE_ERRORS:
+                _warn_native_fallback("original", _NATIVE_MODULE_ERRORS["original"])
             matches = self._match_python(source, float(threshold), class_ids, mask)
 
         matches.sort(key=lambda m: m.similarity, reverse=True)
@@ -1085,6 +1122,45 @@ class Line2DupLikeDetector:
             for m in candidates:
                 if float(m.similarity) >= final_threshold:
                     out_matches.append(m)
+
+
+def _apply_affine_transform_point(transform: np.ndarray, x: float, y: float) -> Tuple[float, float]:
+    tx = float(transform[0, 0] * x + transform[0, 1] * y + transform[0, 2])
+    ty = float(transform[1, 0] * x + transform[1, 1] * y + transform[1, 2])
+    tw = 1.0
+    if transform.shape[0] >= 3 and transform.shape[1] >= 3:
+        tw = float(transform[2, 0] * x + transform[2, 1] * y + transform[2, 2])
+    if abs(tw) > 1e-9 and abs(tw - 1.0) > 1e-9:
+        tx /= tw
+        ty /= tw
+    return tx, ty
+
+
+def refine_matches_sim3(
+    detector: Line2DupLikeDetector,
+    source: np.ndarray,
+    matches: Sequence[Match],
+) -> float:
+    if not matches:
+        return 0.0
+    native_detector = detector._ensure_native_detector_synced(backend="sim3", required=True)
+    if not hasattr(native_detector, "refine_match"):
+        raise RuntimeError("line2dup_sim3_native does not expose refine_match(). Rebuild native extensions.")
+
+    started = time.perf_counter()
+    for match in matches:
+        info = native_detector.refine_match(source, match.class_id, int(match.template_id), int(match.x), int(match.y))
+        transform = np.array(info.get("transform", np.eye(3, dtype=np.float32)), dtype=np.float32)
+        meta = detector.get_template_meta(match.class_id, match.template_id)
+        base_scale = float(meta.get("scale", 1.0))
+        base_angle = float(meta.get("angle", 0.0))
+        match.backend = "sim3"
+        match.refined_transform = transform
+        match.refined_scale = base_scale * float(info.get("delta_scale", 1.0))
+        match.refined_angle_deg = base_angle + float(info.get("delta_angle_deg", 0.0))
+        match.refined_fitness = float(info.get("fitness", 0.0))
+        match.refined_rmse = float(info.get("rmse", 0.0))
+    return time.perf_counter() - started
 
 
 class ShapeInfoProducer:
@@ -1304,12 +1380,15 @@ def draw_matches(
         t0 = detector.get_templates(m.class_id, m.template_id)[0]
         meta = detector.get_template_meta(m.class_id, m.template_id)
         color = palette[i % len(palette)]
+        refined_transform = m.refined_transform
 
         # Draw matched template feature points in scene coordinates.
         pts: List[Tuple[float, float]] = []
         for f in t0.features:
             px = float(f.x + m.x)
             py = float(f.y + m.y)
+            if refined_transform is not None:
+                px, py = _apply_affine_transform_point(refined_transform, px, py)
             pts.append((px, py))
             pxi = int(round(px))
             pyi = int(round(py))
@@ -1317,24 +1396,41 @@ def draw_matches(
             if not np.isfinite(theta):
                 theta = label_to_theta_deg(int(f.label))
             rad = np.deg2rad(theta)
-            p2x = int(round(pxi + 7.0 * float(np.cos(rad))))
-            p2y = int(round(pyi + 7.0 * float(np.sin(rad))))
+            raw_p2x = float(f.x + m.x + 7.0 * float(np.cos(rad)))
+            raw_p2y = float(f.y + m.y + 7.0 * float(np.sin(rad)))
+            if refined_transform is not None:
+                raw_p2x, raw_p2y = _apply_affine_transform_point(refined_transform, raw_p2x, raw_p2y)
+            p2x = int(round(raw_p2x))
+            p2y = int(round(raw_p2y))
             # Draw dark outline then color line for visibility.
             cv2.arrowedLine(out, (pxi, pyi), (p2x, p2y), (0, 0, 0), 3, cv2.LINE_AA, 0, 0.35)
             cv2.arrowedLine(out, (pxi, pyi), (p2x, p2y), color, 1, cv2.LINE_AA, 0, 0.35)
 
         # Draw stable template bbox (width/height from matched template).
         # Using minAreaRect on sparse/one-sided feature clouds may degenerate to a near-line.
-        x1 = int(m.x)
-        y1 = int(m.y)
-        x2 = int(m.x + t0.width)
-        y2 = int(m.y + t0.height)
-        cv2.rectangle(out, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
-        tx = x1
-        ty = y1
+        corners = [
+            (float(m.x), float(m.y)),
+            (float(m.x + t0.width), float(m.y)),
+            (float(m.x + t0.width), float(m.y + t0.height)),
+            (float(m.x), float(m.y + t0.height)),
+        ]
+        if refined_transform is not None:
+            corners = [_apply_affine_transform_point(refined_transform, x, y) for x, y in corners]
+            pts_i = np.array([[int(round(x)), int(round(y))] for x, y in corners], dtype=np.int32).reshape(-1, 1, 2)
+            cv2.polylines(out, [pts_i], isClosed=True, color=color, thickness=2, lineType=cv2.LINE_AA)
+            tx = int(round(corners[0][0]))
+            ty = int(round(corners[0][1]))
+        else:
+            x1 = int(m.x)
+            y1 = int(m.y)
+            x2 = int(m.x + t0.width)
+            y2 = int(m.y + t0.height)
+            cv2.rectangle(out, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
+            tx = x1
+            ty = y1
 
-        ang = float(meta.get("angle", 0.0))
-        label = f"#{i+1} {m.similarity:.1f} a={ang:.0f}"
+        ang = float(m.refined_angle_deg) if m.refined_angle_deg is not None else float(meta.get("angle", 0.0))
+        label = f"#{i+1} {m.similarity:.1f} a={ang:.1f}"
         cv2.putText(
             out,
             label,

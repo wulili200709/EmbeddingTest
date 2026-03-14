@@ -34,12 +34,20 @@ from line2dup_like_matcher import (
     label_to_theta_deg as matcher_label_to_theta_deg,
     load_detector_model,
     nms_matches,
+    refine_matches_sim3,
     save_detector_model,
     theta_deg_to_label as matcher_theta_deg_to_label,
 )
 
 ZOOM_MIN = 0.2
 ZOOM_MAX = 16.0
+BACKEND_ITEMS = [
+    ("Original", "original"),
+    ("Fusion", "fusion"),
+    ("ICP (sim3)", "sim3"),
+]
+BACKEND_LABEL_TO_KEY = {label: key for label, key in BACKEND_ITEMS}
+BACKEND_KEY_TO_LABEL = {key: label for label, key in BACKEND_ITEMS}
 
 
 def parse_levels(arg: str) -> List[int]:
@@ -2040,6 +2048,7 @@ class FindTemplateTab(ttk.Frame):
         self.nms_iou_var = tk.DoubleVar(value=0.50)
         self.topk_var = tk.IntVar(value=20)
         self.auto_sweep_var = tk.BooleanVar(value=True)
+        self.backend_var = tk.StringVar(value="Original")
         self.zoom_var = tk.DoubleVar(value=1.5)
         self.out_image_var = tk.StringVar(value="")
 
@@ -2078,6 +2087,18 @@ class FindTemplateTab(ttk.Frame):
         row += 1
         self.class_combo = ttk.Combobox(control, textvariable=self.class_choice_var, values=["ALL"], state="readonly", width=24)
         self.class_combo.grid(row=row, column=0, sticky="ew")
+        row += 1
+
+        ttk.Label(control, text="Backend").grid(row=row, column=0, sticky="w", pady=(6, 0))
+        row += 1
+        self.backend_combo = ttk.Combobox(
+            control,
+            textvariable=self.backend_var,
+            values=[label for label, _key in BACKEND_ITEMS],
+            state="readonly",
+            width=24,
+        )
+        self.backend_combo.grid(row=row, column=0, sticky="ew")
         row += 1
 
         ttk.Label(control, text="Threshold").grid(row=row, column=0, sticky="w", pady=(6, 0))
@@ -2239,8 +2260,11 @@ class FindTemplateTab(ttk.Frame):
         crop_stride = int(max(0, self.crop_stride_var.get()))
         nms_iou = float(np.clip(self.nms_iou_var.get(), 0.0, 1.0))
         topk = int(max(1, self.topk_var.get()))
+        backend_key = BACKEND_LABEL_TO_KEY.get(self.backend_var.get().strip(), "original")
+        backend_label = BACKEND_KEY_TO_LABEL.get(backend_key, "Original")
         match_ms = 0.0
         nms_ms = 0.0
+        refine_ms = 0.0
         attempts = 0
 
         scene_for_match = self.scene_bgr
@@ -2266,6 +2290,7 @@ class FindTemplateTab(ttk.Frame):
                 threshold=th,
                 class_ids=class_ids,
                 mask=self.scene_mask,
+                backend=backend_key,
             )
             match_ms += (time.perf_counter() - t0) * 1000.0
             t1 = time.perf_counter()
@@ -2286,6 +2311,10 @@ class FindTemplateTab(ttk.Frame):
                     break
                 cur -= 5
 
+        shown = min(topk, len(matches))
+        if backend_key == "sim3" and shown > 0:
+            refine_ms = refine_matches_sim3(self.detector, scene_for_match, matches[:shown]) * 1000.0
+
         draw_t0 = time.perf_counter()
         overlay = draw_matches(self.detector, scene_for_match, matches, topk=topk)
         draw_ms = (time.perf_counter() - draw_t0) * 1000.0
@@ -2297,28 +2326,36 @@ class FindTemplateTab(ttk.Frame):
         self.result_list.insert(
             tk.END,
             (
-                f"[time] total={total_ms:.0f}ms "
+                f"[time] backend={backend_label} total={total_ms:.0f}ms "
                 f"match={match_ms:.0f}ms nms={nms_ms:.0f}ms "
-                f"draw={draw_ms:.0f}ms attempts={attempts}"
+                f"refine={refine_ms:.0f}ms draw={draw_ms:.0f}ms attempts={attempts}"
             ),
         )
-        shown = min(topk, len(matches))
         for i in range(shown):
             m = matches[i]
             meta = self.detector.get_template_meta(m.class_id, m.template_id)
-            line = (
-                f"#{i+1} s={m.similarity:.1f} cls={m.class_id} "
-                f"x={m.x} y={m.y} a={float(meta.get('angle', 0.0)):.0f} "
-                f"sc={float(meta.get('scale', 1.0)):.2f}"
-            )
+            if backend_key == "sim3" and m.refined_scale is not None:
+                fit = float(m.refined_fitness) if m.refined_fitness is not None else 0.0
+                rmse = float(m.refined_rmse) if m.refined_rmse is not None else 0.0
+                line = (
+                    f"#{i+1} s={m.similarity:.1f} cls={m.class_id} "
+                    f"x={m.x} y={m.y} a={float(m.refined_angle_deg or 0.0):.1f} "
+                    f"sc={float(m.refined_scale):.3f} fit={fit:.3f} rmse={rmse:.3f}"
+                )
+            else:
+                line = (
+                    f"#{i+1} s={m.similarity:.1f} cls={m.class_id} "
+                    f"x={m.x} y={m.y} a={float(meta.get('angle', 0.0)):.0f} "
+                    f"sc={float(meta.get('scale', 1.0)):.2f}"
+                )
             self.result_list.insert(tk.END, line)
         if shown == 0:
             self.result_list.insert(tk.END, "No match.")
 
         self.status_var.set(
-            f"Match done. total={len(matches)}, shown={shown}, threshold_used={used_threshold:.1f}, "
-            f"stride={crop_stride}, time={total_ms:.0f}ms "
-            f"(match={match_ms:.0f}, nms={nms_ms:.0f}, draw={draw_ms:.0f})."
+            f"Match done. backend={backend_label}, total={len(matches)}, shown={shown}, "
+            f"threshold_used={used_threshold:.1f}, stride={crop_stride}, time={total_ms:.0f}ms "
+            f"(match={match_ms:.0f}, nms={nms_ms:.0f}, refine={refine_ms:.0f}, draw={draw_ms:.0f})."
         )
 
     def save_overlay(self) -> None:

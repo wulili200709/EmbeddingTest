@@ -4,6 +4,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <cmath>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -11,7 +12,15 @@
 #include <utility>
 #include <vector>
 
+#ifdef LINE2DUP_ENABLE_SIM3_ICP
+#include "cuda_icp/icp.h"
+#endif
+
 namespace py = pybind11;
+
+#ifndef LINE2DUP_PYMODULE_NAME
+#define LINE2DUP_PYMODULE_NAME line2dup_native
+#endif
 
 namespace {
 
@@ -317,12 +326,76 @@ static py::list match_py(
     return out;
 }
 
+#ifdef LINE2DUP_ENABLE_SIM3_ICP
+static py::dict refine_match_py(
+    NativeDetector& detector,
+    const py::object& source_obj,
+    const std::string& class_id,
+    int template_id,
+    int match_x,
+    int match_y
+) {
+    if (!detector.has_class(class_id)) {
+        throw py::value_error("unknown class_id");
+    }
+    if (template_id < 0 || template_id >= detector.numTemplates(class_id)) {
+        throw py::value_error("template_id out of range");
+    }
+
+    MatHolder source_holder = numpy_to_mat(source_obj);
+    cv::Mat source = ensure_source_image(source_holder);
+    auto templ = detector.export_template_pyramid(class_id, template_id);
+    if (templ.empty()) {
+        throw std::runtime_error("native detector did not return template pyramid");
+    }
+
+    std::vector<Vec2f> model_pcd;
+    model_pcd.reserve(templ[0].features.size());
+    for (const auto& feat : templ[0].features) {
+        model_pcd.push_back(Vec2f(float(feat.x + match_x), float(feat.y + match_y)));
+    }
+
+    Scene_edge scene;
+    std::vector<Vec2f> pcd_buffer;
+    std::vector<Vec2f> normal_buffer;
+    cuda_icp::RegistrationResult result;
+    {
+        py::gil_scoped_release release;
+        ScopedCoutSilencer silence;
+        scene.init_Scene_edge_cpu(source, pcd_buffer, normal_buffer);
+        result = cuda_icp::ICP2D_Point2Plane_cpu(model_pcd, scene);
+    }
+
+    const float a00 = result.transformation_[0][0];
+    const float a10 = result.transformation_[1][0];
+    const float delta_scale = std::sqrt(a00 * a00 + a10 * a10);
+    const float delta_angle_deg = float(-std::atan2(a10, a00) * 180.0 / CV_PI);
+
+    py::list transform_rows;
+    for (int r = 0; r < 3; ++r) {
+        py::list row;
+        for (int c = 0; c < 3; ++c) {
+            row.append(result.transformation_[r][c]);
+        }
+        transform_rows.append(row);
+    }
+
+    py::dict out;
+    out["transform"] = transform_rows;
+    out["delta_scale"] = delta_scale;
+    out["delta_angle_deg"] = delta_angle_deg;
+    out["fitness"] = result.fitness_;
+    out["rmse"] = result.inlier_rmse_;
+    return out;
+}
+#endif
+
 }  // namespace
 
-PYBIND11_MODULE(line2dup_native, module) {
-    module.doc() = "OpenCV-backed native wrapper around the original line2Dup detector";
+PYBIND11_MODULE(LINE2DUP_PYMODULE_NAME, module) {
+    module.doc() = "OpenCV-backed native wrapper around line2Dup-compatible detectors";
 
-    py::class_<NativeDetector>(module, "NativeDetector")
+    auto native_detector = py::class_<NativeDetector>(module, "NativeDetector", py::module_local())
         .def(
             py::init<int, const std::vector<int>&, float, float>(),
             py::arg("num_features"),
@@ -358,16 +431,17 @@ PYBIND11_MODULE(line2dup_native, module) {
             py::arg("threshold"),
             py::arg("class_ids") = py::none(),
             py::arg("mask") = py::none()
-        )
-        .def("class_ids", &NativeDetector::classIds)
-        .def(
-            "num_templates",
-            [](const NativeDetector& detector, const std::string& class_id) {
-                if (class_id.empty()) {
-                    return detector.numTemplates();
-                }
-                return detector.numTemplates(class_id);
-            },
-            py::arg("class_id") = ""
         );
+
+#ifdef LINE2DUP_ENABLE_SIM3_ICP
+    native_detector.def(
+        "refine_match",
+        &refine_match_py,
+        py::arg("source"),
+        py::arg("class_id"),
+        py::arg("template_id"),
+        py::arg("match_x"),
+        py::arg("match_y")
+    );
+#endif
 }
