@@ -1,0 +1,70 @@
+{
+  "matcher": "mnn",
+  "template_image": "D:\\Git\\matchtemplate\\iv4matchmethod\\demo_data\\user_images\\template.png",
+  "template_annotation": "D:\\Git\\matchtemplate\\iv4matchmethod\\demo_data\\user_images\\template_annotation.json",
+  "search_image": "D:\\Git\\matchtemplate\\iv4matchmethod\\demo_data\\user_images\\test.png",
+  "keypoints_template": 4096,
+  "keypoints_search": 4096,
+  "matches": 1825,
+  "inliers": 168,
+  "inlier_ratio": 0.09205479452054795,
+  "homography": [
+    [
+      0.9943910333720207,
+      -0.010236676671972474,
+      48.36902508541545
+    ],
+    [
+      0.0008369782453737896,
+      0.989290444293944,
+      -17.686351174112033
+    ],
+    [
+      4.6029762947242425e-07,
+      -6.311189825991165e-06,
+      1.0
+    ]
+  ],
+  "roi_follow": [
+    [
+      886.2885131835938,
+      622.412109375
+    ],
+    [
+      914.0160522460938,
+      668.2969360351562
+    ],
+    [
+      978.0520629882812,
+      626.450439453125
+    ],
+    [
+      960.2880859375,
+      580.5965576171875
+    ],
+    [
+      886.2885131835938,
+      622.412109375
+    ]
+  ],
+  "bbox_follow": [
+    [
+      594.2159423828125,
+      427.0767822265625
+    ],
+    [
+      1964.780517578125,
+      427.9596862792969
+    ],
+    [
+      1967.886474609375,
+      1852.1134033203125
+    ],
+    [
+      584.897705078125,
+      1852.135009765625
+    ]
+  ],
+  "match_vis_path": null,
+  "roi_vis_path": null
+}

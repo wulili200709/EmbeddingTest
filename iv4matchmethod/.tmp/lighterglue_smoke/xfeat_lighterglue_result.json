@@ -1,0 +1,70 @@
+{
+  "matcher": "lighterglue",
+  "template_image": "D:\\Git\\matchtemplate\\iv4matchmethod\\demo_data\\user_images\\template.png",
+  "template_annotation": "D:\\Git\\matchtemplate\\iv4matchmethod\\demo_data\\user_images\\template_annotation.json",
+  "search_image": "D:\\Git\\matchtemplate\\iv4matchmethod\\demo_data\\user_images\\test.png",
+  "keypoints_template": 4096,
+  "keypoints_search": 4096,
+  "matches": 1444,
+  "inliers": 199,
+  "inlier_ratio": 0.13781163434903046,
+  "homography": [
+    [
+      0.9695517447891332,
+      -0.04933457730461277,
+      101.16669704219605
+    ],
+    [
+      0.021411412510194492,
+      0.9717165054785787,
+      -42.43811802935702
+    ],
+    [
+      -9.308638429189207e-06,
+      -8.763837751785622e-06,
+      0.9999999999999999
+    ]
+  ],
+  "roi_follow": [
+    [
+      901.8278198242188,
+      609.7039794921875
+    ],
+    [
+      927.6710205078125,
+      656.064697265625
+    ],
+    [
+      992.9462280273438,
+      616.19775390625
+    ],
+    [
+      976.9760131835938,
+      570.1240844726562
+    ],
+    [
+      901.8278198242188,
+      609.7039794921875
+    ]
+  ],
+  "bbox_follow": [
+    [
+      619.8762817382812,
+      408.41204833984375
+    ],
+    [
+      1991.9305419921875,
+      443.8811950683594
+    ],
+    [
+      1945.0556640625,
+      1878.474853515625
+    ],
+    [
+      556.1649169921875,
+      1823.775390625
+    ]
+  ],
+  "match_vis_path": null,
+  "roi_vis_path": null
+}

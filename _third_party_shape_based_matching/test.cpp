@@ -339,7 +339,7 @@ void angle_test(string mode = "test", bool use_rot = true){
         Mat test_img = imread(prefix+"case1/test.png");
         assert(!test_img.empty() && "check your img path");
 
-        int padding = 250;
+        int padding = 100;
         cv::Mat padded_img = cv::Mat(test_img.rows + 2*padding,
                                      test_img.cols + 2*padding, test_img.type(), cv::Scalar::all(0));
         test_img.copyTo(padded_img(Rect(padding, padding, test_img.cols, test_img.rows)));
@@ -357,7 +357,7 @@ void angle_test(string mode = "test", bool use_rot = true){
 
         Timer timer;
         auto matches = detector.match(img, 90, ids);
-        timer.out();
+        timer.out("match total time");
 
         if(img.channels() == 1) cvtColor(img, img, cv::COLOR_GRAY2BGR);
 
@@ -545,8 +545,6 @@ void MIPP_test(){
 
 int main(){
     std::cout << "prefix: " << prefix << std::endl;
-    scale_test("test");
     angle_test("test", true);
-    noise_test("test");
     return 0;
 }
