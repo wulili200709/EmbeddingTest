@@ -6,6 +6,7 @@ Find objects in scene using a prebuilt line2Dup-like template model.
 from __future__ import annotations
 
 import argparse
+import time
 from pathlib import Path
 from typing import List
 
@@ -46,17 +47,41 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="If >0, crop scene to (h//stride*stride, w//stride*stride) before matching.",
     )
+    parser.add_argument(
+        "--benchmark",
+        action="store_true",
+        help="Print stage timings for load/read/crop/match/NMS/draw/save/total.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
+    t_total_start = time.perf_counter()
     args = parse_args()
 
-    detector = load_detector_model(args.model)
+    bench: dict[str, float] = {
+        "model_load_s": 0.0,
+        "scene_read_s": 0.0,
+        "scene_mask_read_s": 0.0,
+        "crop_s": 0.0,
+        "match_s": 0.0,
+        "nms_s": 0.0,
+        "draw_s": 0.0,
+        "save_s": 0.0,
+    }
+    match_attempts = 0
 
+    t0 = time.perf_counter()
+    detector = load_detector_model(args.model)
+    bench["model_load_s"] = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
     scene = cv2.imread(args.scene, cv2.IMREAD_COLOR)
+    bench["scene_read_s"] = time.perf_counter() - t0
     if scene is None:
         raise FileNotFoundError(f"Failed to read scene: {args.scene}")
+
+    t0 = time.perf_counter()
     if int(args.crop_stride) > 0:
         stride = int(args.crop_stride)
         h, w = scene.shape[:2]
@@ -64,10 +89,13 @@ def main() -> int:
         w2 = (w // stride) * stride
         if h2 > 0 and w2 > 0:
             scene = scene[:h2, :w2].copy()
+    bench["crop_s"] = time.perf_counter() - t0
 
     scene_mask = None
     if args.scene_mask:
+        t0 = time.perf_counter()
         scene_mask = cv2.imread(args.scene_mask, cv2.IMREAD_GRAYSCALE)
+        bench["scene_mask_read_s"] = time.perf_counter() - t0
         if scene_mask is None:
             raise FileNotFoundError(f"Failed to read scene mask: {args.scene_mask}")
 
@@ -76,9 +104,15 @@ def main() -> int:
         class_ids = detector.class_ids()
 
     def run_once(threshold: float):
+        nonlocal match_attempts
+        match_attempts += 1
+        t0 = time.perf_counter()
         ms = detector.match(scene, threshold=threshold, class_ids=class_ids, mask=scene_mask)
+        bench["match_s"] += time.perf_counter() - t0
+        t0 = time.perf_counter()
         ms = nms_matches(detector, ms, iou_threshold=args.nms_iou)
         ms.sort(key=lambda m: m.similarity, reverse=True)
+        bench["nms_s"] += time.perf_counter() - t0
         return ms
 
     used_threshold = float(args.threshold)
@@ -110,8 +144,12 @@ def main() -> int:
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
+    t0 = time.perf_counter()
     overlay = draw_matches(detector, scene, matches, topk=args.topk)
+    bench["draw_s"] = time.perf_counter() - t0
+    t0 = time.perf_counter()
     ok = cv2.imwrite(str(out), overlay)
+    bench["save_s"] = time.perf_counter() - t0
     if not ok:
         raise RuntimeError(f"Failed to write output: {out}")
 
@@ -119,6 +157,18 @@ def main() -> int:
     print(f"threshold_used={used_threshold:.2f}")
     print(f"raw_matches={len(matches)}")
     print(f"saved={out}")
+    if args.benchmark:
+        total_s = time.perf_counter() - t_total_start
+        print(f"benchmark.match_attempts={match_attempts}")
+        print(f"benchmark.model_load_s={bench['model_load_s']:.6f}")
+        print(f"benchmark.scene_read_s={bench['scene_read_s']:.6f}")
+        print(f"benchmark.scene_mask_read_s={bench['scene_mask_read_s']:.6f}")
+        print(f"benchmark.crop_s={bench['crop_s']:.6f}")
+        print(f"benchmark.match_s={bench['match_s']:.6f}")
+        print(f"benchmark.nms_s={bench['nms_s']:.6f}")
+        print(f"benchmark.draw_s={bench['draw_s']:.6f}")
+        print(f"benchmark.save_s={bench['save_s']:.6f}")
+        print(f"benchmark.total_s={total_s:.6f}")
     return 0
 
 

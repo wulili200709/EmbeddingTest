@@ -63,6 +63,9 @@ class SceneLevelData:
     height: int
     T: int
     response_maps: List[np.ndarray]
+    linear_memories: List[np.ndarray]
+    memory_width: int
+    memory_height: int
 
 
 def to_gray(image: np.ndarray) -> np.ndarray:
@@ -244,6 +247,65 @@ def compute_response_maps(spread_img: np.ndarray) -> List[np.ndarray]:
     return response_maps
 
 
+def linearize_response_map(response_map: np.ndarray, T: int) -> np.ndarray:
+    h, w = response_map.shape[:2]
+    if h % T != 0 or w % T != 0:
+        raise ValueError("response_map shape must be divisible by T")
+    mem_h = h // T
+    mem_w = w // T
+    linearized = response_map.reshape(mem_h, T, mem_w, T).transpose(1, 3, 0, 2).reshape(T * T, mem_h * mem_w)
+    return np.ascontiguousarray(linearized)
+
+
+def access_linear_memory(
+    linear_memories: Sequence[np.ndarray],
+    label: int,
+    x: int,
+    y: int,
+    T: int,
+    memory_width: int,
+) -> Tuple[np.ndarray, int]:
+    memory_grid = linear_memories[label]
+    grid_index = (y % T) * T + (x % T)
+    memory = memory_grid[grid_index]
+    lm_index = (y // T) * memory_width + (x // T)
+    return memory, lm_index
+
+
+def memory_patch_view(
+    memory: np.ndarray,
+    base_index: int,
+    rows: int,
+    cols: int,
+    row_stride: int,
+) -> Optional[np.ndarray]:
+    if rows <= 0 or cols <= 0 or base_index < 0:
+        return None
+    required = base_index + (rows - 1) * row_stride + cols
+    if required > memory.size:
+        return None
+    base = memory[base_index:required]
+    itemsize = base.dtype.itemsize
+    return np.lib.stride_tricks.as_strided(
+        base,
+        shape=(rows, cols),
+        strides=(row_stride * itemsize, itemsize),
+        writeable=False,
+    )
+
+
+def accumulator_dtype(num_features: int) -> np.dtype:
+    return np.uint8 if int(num_features) < 64 else np.uint16
+
+
+def raw_similarity_threshold(threshold: float, num_features: int) -> float:
+    return float(threshold) * (4.0 * max(1, int(num_features))) / 100.0
+
+
+def similarity_from_raw(raw_score: float, num_features: int) -> float:
+    return float(raw_score) * (100.0 / (4.0 * max(1, int(num_features))))
+
+
 def select_scattered_features(
     candidates: List[Tuple[float, Feature]],
     num_features: int,
@@ -360,6 +422,7 @@ class ColorGradientPyramid:
         self.angle_ori = angle_ori
 
     def pyr_down(self) -> None:
+        self.num_features = max(1, self.num_features // 2)
         self.src = cv2.pyrDown(self.src)
         self.mask = cv2.resize(self.mask, (self.src.shape[1], self.src.shape[0]), interpolation=cv2.INTER_NEAREST)
         self.pyramid_level += 1
@@ -419,79 +482,77 @@ class ColorGradientPyramid:
 
 
 def similarity_full(
-    response_maps: Sequence[np.ndarray],
+    scene_level: SceneLevelData,
     templ: TemplateLevel,
-    width: int,
-    height: int,
-    T: int,
 ) -> np.ndarray:
     if not templ.features:
-        return np.empty((0, 0), dtype=np.float32)
+        return np.empty((0, 0), dtype=np.uint16)
 
-    W = width // T
-    H = height // T
+    T = scene_level.T
+    W = scene_level.memory_width
+    H = scene_level.memory_height
     wf = (templ.width - 1) // T + 1
     hf = (templ.height - 1) // T + 1
     span_x = W - wf
     span_y = H - hf
     if span_x < 0 or span_y < 0:
-        return np.empty((0, 0), dtype=np.float32)
+        return np.empty((0, 0), dtype=np.uint16)
 
-    dst = np.zeros((span_y + 1, span_x + 1), dtype=np.float32)
-    y_len = (span_y + 1) * T
-    x_len = (span_x + 1) * T
+    dst = np.zeros((span_y + 1, span_x + 1), dtype=accumulator_dtype(len(templ.features)))
 
     for f in templ.features:
-        if f.label < 0 or f.label >= len(response_maps):
+        if f.label < 0 or f.label >= len(scene_level.linear_memories):
             continue
-        rm = response_maps[f.label]
-        y0 = f.y
-        x0 = f.x
-        y1 = y0 + y_len
-        x1 = x0 + x_len
-        if y0 < 0 or x0 < 0 or y1 > height or x1 > width:
+        if f.x < 0 or f.y < 0 or f.x >= scene_level.width or f.y >= scene_level.height:
             continue
-        patch = rm[y0:y1:T, x0:x1:T]
-        if patch.shape != dst.shape:
+        memory, base_index = access_linear_memory(
+            scene_level.linear_memories,
+            f.label,
+            f.x,
+            f.y,
+            T,
+            W,
+        )
+        patch = memory_patch_view(memory, base_index, span_y + 1, span_x + 1, W)
+        if patch is None:
             continue
-        dst += patch.astype(np.float32)
-
-    dst *= (100.0 / (4.0 * max(1, len(templ.features))))
+        np.add(dst, patch, out=dst, casting="unsafe")
     return dst
 
 
 def similarity_local(
-    response_maps: Sequence[np.ndarray],
+    scene_level: SceneLevelData,
     templ: TemplateLevel,
-    width: int,
-    height: int,
-    T: int,
     center_xy: Tuple[int, int],
 ) -> np.ndarray:
     if not templ.features:
-        return np.empty((0, 0), dtype=np.float32)
+        return np.empty((0, 0), dtype=np.uint16)
 
+    T = scene_level.T
     center_x, center_y = center_xy
     offset_x = (center_x // T - 8) * T
     offset_y = (center_y // T - 8) * T
-    dst = np.zeros((16, 16), dtype=np.float32)
+    dst = np.zeros((16, 16), dtype=accumulator_dtype(len(templ.features)))
 
     for f in templ.features:
-        if f.label < 0 or f.label >= len(response_maps):
+        if f.label < 0 or f.label >= len(scene_level.linear_memories):
             continue
-        rm = response_maps[f.label]
         x0 = f.x + offset_x
         y0 = f.y + offset_y
-        x1 = x0 + 16 * T
-        y1 = y0 + 16 * T
-        if x0 < 0 or y0 < 0 or x1 > width or y1 > height:
+        if x0 < 0 or y0 < 0 or x0 >= scene_level.width or y0 >= scene_level.height:
             continue
-        patch = rm[y0:y1:T, x0:x1:T]
-        if patch.shape != dst.shape:
+        memory, base_index = access_linear_memory(
+            scene_level.linear_memories,
+            f.label,
+            x0,
+            y0,
+            T,
+            scene_level.memory_width,
+        )
+        patch = memory_patch_view(memory, base_index, 16, 16, scene_level.memory_width)
+        if patch is None:
             continue
-        dst += patch.astype(np.float32)
-
-    dst *= (100.0 / (4.0 * max(1, len(templ.features))))
+        np.add(dst, patch, out=dst, casting="unsafe")
     return dst
 
 
@@ -637,7 +698,18 @@ class Line2DupLikeDetector:
             quant = quant[:h, :w]
             spread = spread_or(quant, T)
             response_maps = compute_response_maps(spread)
-            scene_levels.append(SceneLevelData(width=w, height=h, T=T, response_maps=response_maps))
+            linear_memories = [linearize_response_map(rm, T) for rm in response_maps]
+            scene_levels.append(
+                SceneLevelData(
+                    width=w,
+                    height=h,
+                    T=T,
+                    response_maps=response_maps,
+                    linear_memories=linear_memories,
+                    memory_width=w // T,
+                    memory_height=h // T,
+                )
+            )
 
         if len(scene_levels) != self.pyramid_levels:
             return []
@@ -671,27 +743,18 @@ class Line2DupLikeDetector:
         template_pyramids: Sequence[List[TemplateLevel]],
         out_matches: List[Match],
     ) -> None:
-        # In line2Dup-style coarse-to-fine search, using the same high threshold at every
-        # pyramid stage can drop valid matches too early. Use a lower internal threshold for
-        # candidate propagation, then keep the user threshold as final filtering criterion.
         final_threshold = float(threshold)
         coarse_threshold = float(final_threshold)
-        if final_threshold >= 35.0:
-            # Empirically, valid instances can score much lower on the coarsest stage than on
-            # the final stage. Keep internal threshold around [35, final], with 90 -> 45.
-            coarse_threshold = min(final_threshold, max(35.0, final_threshold - 45.0))
 
         for template_id, tp in enumerate(template_pyramids):
             lowest_idx = self.pyramid_levels - 1
             lowest_scene = scene_levels[lowest_idx]
             lowest_templ = tp[lowest_idx]
+            lowest_num_features = len(lowest_templ.features)
 
             sim_map = similarity_full(
-                lowest_scene.response_maps,
+                lowest_scene,
                 lowest_templ,
-                lowest_scene.width,
-                lowest_scene.height,
-                lowest_scene.T,
             )
             if sim_map.size == 0:
                 continue
@@ -699,11 +762,12 @@ class Line2DupLikeDetector:
             candidates: List[Match] = []
             low_T = lowest_scene.T
             off = offset_from_T(low_T)
-            ys, xs = np.where(sim_map > coarse_threshold)
+            coarse_raw_threshold = raw_similarity_threshold(coarse_threshold, lowest_num_features)
+            ys, xs = np.where(sim_map > coarse_raw_threshold)
             for r, c in zip(ys.tolist(), xs.tolist()):
                 x = int(c * low_T + off)
                 y = int(r * low_T + off)
-                score = float(sim_map[r, c])
+                score = similarity_from_raw(sim_map[r, c], lowest_num_features)
                 candidates.append(Match(x=x, y=y, similarity=score, class_id=class_id, template_id=template_id))
 
             if not candidates:
@@ -742,6 +806,8 @@ class Line2DupLikeDetector:
                     continue
 
                 refined: List[Match] = []
+                num_features = len(templ.features)
+                coarse_raw_threshold = raw_similarity_threshold(coarse_threshold, num_features)
                 for m in candidates:
                     x = m.x * 2 + 1
                     y = m.y * 2 + 1
@@ -751,21 +817,19 @@ class Line2DupLikeDetector:
                     y = min(y, max_y)
 
                     local = similarity_local(
-                        scene.response_maps,
+                        scene,
                         templ,
-                        scene.width,
-                        scene.height,
-                        T,
                         (x, y),
                     )
                     if local.size == 0:
                         continue
                     best_idx = int(np.argmax(local))
                     best_r, best_c = divmod(best_idx, local.shape[1])
-                    best_score = float(local[best_r, best_c])
-                    if best_score < coarse_threshold:
+                    best_raw_score = float(local[best_r, best_c])
+                    if best_raw_score < coarse_raw_threshold:
                         continue
 
+                    best_score = similarity_from_raw(best_raw_score, num_features)
                     new_x = (x // T - 8 + best_c) * T + off
                     new_y = (y // T - 8 + best_r) * T + off
                     refined.append(
