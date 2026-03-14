@@ -537,6 +537,7 @@ class CreateTemplateTab(ttk.Frame):
             base_levels = clone_levels(self.template_levels)
             detector.class_templates[class_id] = []
             detector.class_meta[class_id] = []
+            detector.invalidate_native_cache(class_id)
             for angle_deg, scale in pose_infos:
                 transformed = self._transform_levels_for_pose(
                     base_levels=base_levels,
@@ -1401,6 +1402,7 @@ class EditTemplateTab(ttk.Frame):
         if item.level < 0 or item.level >= self.detector.pyramid_levels:
             return
         self.detector.class_templates[item.class_id][item.template_id][item.level].features = item.features
+        self.detector.invalidate_native_cache(item.class_id)
         self.class_var.set(item.class_id)
         self._on_class_changed()
         self.template_id_var.set(item.template_id)

@@ -9,8 +9,10 @@ https://github.com/meiqua/shape_based_matching
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import math
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -159,6 +161,31 @@ def _load_similarity_lut() -> np.ndarray:
 
 
 SIMILARITY_LUT = _load_similarity_lut()
+
+_NATIVE_BUILD_INSTRUCTIONS = (
+    "line2dup_native is required for detector.match(), add_template(), and add_template_rotate().\n"
+    "Build the OpenCV-backed extension with:\n"
+    "py -3 -m pip install -U setuptools wheel pybind11\n"
+    "py -3 setup.py build_ext --inplace\n"
+    "This build expects OpenCV at C:\\Users\\ADMIN\\tools\\opencv\\build."
+)
+_LINE2DUP_NATIVE: Any = None
+_OPENCV_DLL_HANDLE: Any = None
+
+
+def _load_native_matcher() -> Any:
+    global _LINE2DUP_NATIVE, _OPENCV_DLL_HANDLE
+    if _LINE2DUP_NATIVE is not None:
+        return _LINE2DUP_NATIVE
+    if os.name == "nt" and hasattr(os, "add_dll_directory"):
+        dll_dir = Path(r"C:\Users\ADMIN\tools\opencv\build\x64\vc16\bin")
+        if dll_dir.exists() and _OPENCV_DLL_HANDLE is None:
+            _OPENCV_DLL_HANDLE = os.add_dll_directory(str(dll_dir))
+    try:
+        _LINE2DUP_NATIVE = importlib.import_module("line2dup_native")
+    except Exception as exc:  # pragma: no cover - exercised via runtime import failures
+        raise RuntimeError(f"{_NATIVE_BUILD_INSTRUCTIONS}\nOriginal import error: {exc}") from exc
+    return _LINE2DUP_NATIVE
 
 
 def hysteresis_gradient(
@@ -571,6 +598,73 @@ class Line2DupLikeDetector:
         self.strong_threshold = float(strong_threshold)
         self.class_templates: Dict[str, List[List[TemplateLevel]]] = {}
         self.class_meta: Dict[str, List[Dict[str, float]]] = {}
+        self._native_detector: Any = None
+        self._native_dirty = True
+
+    def invalidate_native_cache(self, class_id: Optional[str] = None) -> None:
+        self._native_dirty = True
+
+    def _create_native_detector(self) -> Any:
+        native_matcher = _load_native_matcher()
+        return native_matcher.NativeDetector(
+            int(self.num_features),
+            [int(t) for t in self.T_at_level],
+            float(self.weak_threshold),
+            float(self.strong_threshold),
+        )
+
+    @staticmethod
+    def _template_pyramid_to_native(tp: Sequence[TemplateLevel]) -> List[Dict[str, Any]]:
+        return [_template_level_to_dict(level) for level in tp]
+
+    @staticmethod
+    def _template_pyramid_from_native(levels_raw: Sequence[Dict[str, Any]]) -> List[TemplateLevel]:
+        return [_template_level_from_dict(level) for level in levels_raw]
+
+    def _ensure_class_containers(self, class_id: str) -> None:
+        if class_id not in self.class_templates:
+            self.class_templates[class_id] = []
+        if class_id not in self.class_meta:
+            self.class_meta[class_id] = []
+
+    def _ensure_class_meta_length(self, class_id: str, size: int) -> None:
+        self._ensure_class_containers(class_id)
+        while len(self.class_meta[class_id]) < size:
+            self.class_meta[class_id].append({})
+
+    def _set_template_meta(self, class_id: str, template_id: int, metadata: Optional[Dict[str, float]]) -> None:
+        self._ensure_class_meta_length(class_id, template_id + 1)
+        self.class_meta[class_id][template_id] = dict(metadata) if isinstance(metadata, dict) else {}
+
+    def _import_python_templates_to_native(self) -> Any:
+        native_detector = self._create_native_detector()
+        native_detector.clear_classes()
+        for class_id, template_pyramids in self.class_templates.items():
+            native_detector.replace_class_templates(
+                class_id,
+                [self._template_pyramid_to_native(tp) for tp in template_pyramids],
+            )
+        self._native_detector = native_detector
+        self._native_dirty = False
+        return native_detector
+
+    def _ensure_native_detector_synced(self) -> Any:
+        if self._native_detector is None or self._native_dirty:
+            return self._import_python_templates_to_native()
+        return self._native_detector
+
+    def _append_template_from_native(self, native_detector: Any, class_id: str, template_id: int) -> None:
+        levels_raw = native_detector.export_template_pyramid(class_id, int(template_id))
+        if not levels_raw:
+            raise RuntimeError(f"Native detector did not return template pyramid: class={class_id}, id={template_id}")
+        self._ensure_class_containers(class_id)
+        template_pyramid = self._template_pyramid_from_native(levels_raw)
+        if template_id == len(self.class_templates[class_id]):
+            self.class_templates[class_id].append(template_pyramid)
+            return
+        while len(self.class_templates[class_id]) <= template_id:
+            self.class_templates[class_id].append([])
+        self.class_templates[class_id][template_id] = template_pyramid
 
     def add_template(
         self,
@@ -580,32 +674,16 @@ class Line2DupLikeDetector:
         num_features: Optional[int] = None,
         metadata: Optional[Dict[str, float]] = None,
     ) -> int:
-        if class_id not in self.class_templates:
-            self.class_templates[class_id] = []
-            self.class_meta[class_id] = []
-
         nfeat = int(num_features) if num_features is not None and num_features > 0 else self.num_features
-        qp = ColorGradientPyramid(
-            source,
-            object_mask,
-            weak_threshold=self.weak_threshold,
-            num_features=nfeat,
-            strong_threshold=self.strong_threshold,
-        )
-
-        tp: List[TemplateLevel] = []
-        for l in range(self.pyramid_levels):
-            if l > 0:
-                qp.pyr_down()
-            templ = qp.extract_template()
-            if templ is None:
-                return -1
-            tp.append(templ)
-
-        crop_templates(tp)
-        template_id = len(self.class_templates[class_id])
-        self.class_templates[class_id].append(tp)
-        self.class_meta[class_id].append(metadata or {})
+        self._ensure_class_containers(class_id)
+        native_detector = self._ensure_native_detector_synced()
+        mask = ensure_mask(object_mask, source.shape[:2]) if object_mask is not None else None
+        template_id = int(native_detector.add_template(source, class_id, mask, nfeat))
+        if template_id < 0:
+            return -1
+        self._append_template_from_native(native_detector, class_id, template_id)
+        self._set_template_meta(class_id, template_id, metadata)
+        self._native_dirty = False
         return template_id
 
     def add_template_rotate(
@@ -626,38 +704,21 @@ class Line2DupLikeDetector:
             tl = base_tp[0].tl_x
             tt = base_tp[0].tl_y
             center = (tl + base_tp[0].width * 0.5, tt + base_tp[0].height * 0.5)
-
-        tp: List[TemplateLevel] = []
-        c_x, c_y = center
-        for l in range(self.pyramid_levels):
-            if l > 0:
-                c_x *= 0.5
-                c_y *= 0.5
-            rotated_features: List[Feature] = []
-            level_base = base_tp[l]
-            ang_rad = -theta_deg / 180.0 * math.pi
-            for f in level_base.features:
-                px = f.x + level_base.tl_x
-                py = f.y + level_base.tl_y
-                rx, ry = rotate_point((px, py), (c_x, c_y), ang_rad)
-                theta_new = (f.theta - theta_deg) % 360.0
-                label = int(theta_new * 16.0 / 360.0 + 0.5) & 7
-                rotated_features.append(Feature(x=int(round(rx)), y=int(round(ry)), label=label, theta=theta_new))
-            tp.append(
-                TemplateLevel(
-                    width=-1,
-                    height=-1,
-                    tl_x=0,
-                    tl_y=0,
-                    pyramid_level=l,
-                    features=rotated_features,
-                )
+        native_detector = self._ensure_native_detector_synced()
+        template_id = int(
+            native_detector.add_template_rotate(
+                class_id,
+                int(zero_id),
+                float(theta_deg),
+                float(center[0]),
+                float(center[1]),
             )
-
-        crop_templates(tp)
-        template_id = len(self.class_templates[class_id])
-        self.class_templates[class_id].append(tp)
-        self.class_meta[class_id].append(metadata or {})
+        )
+        if template_id < 0:
+            return -1
+        self._append_template_from_native(native_detector, class_id, template_id)
+        self._set_template_meta(class_id, template_id, metadata)
+        self._native_dirty = False
         return template_id
 
     def get_templates(self, class_id: str, template_id: int) -> List[TemplateLevel]:
@@ -676,52 +737,37 @@ class Line2DupLikeDetector:
         class_ids: Optional[Sequence[str]] = None,
         mask: Optional[np.ndarray] = None,
     ) -> List[Match]:
-        quantizer = ColorGradientPyramid(
-            source,
-            mask,
-            weak_threshold=self.weak_threshold,
-            num_features=self.num_features,
-            strong_threshold=self.strong_threshold,
-        )
-
-        scene_levels: List[SceneLevelData] = []
-        for l in range(self.pyramid_levels):
-            if l > 0:
-                quantizer.pyr_down()
-            T = self.T_at_level[l]
-            quant = quantizer.quantize()
-            h, w = quant.shape[:2]
-            h = (h // T) * T
-            w = (w // T) * T
-            if h <= 0 or w <= 0:
-                continue
-            quant = quant[:h, :w]
-            spread = spread_or(quant, T)
-            response_maps = compute_response_maps(spread)
-            linear_memories = [linearize_response_map(rm, T) for rm in response_maps]
-            scene_levels.append(
-                SceneLevelData(
-                    width=w,
-                    height=h,
-                    T=T,
-                    response_maps=response_maps,
-                    linear_memories=linear_memories,
-                    memory_width=w // T,
-                    memory_height=h // T,
-                )
-            )
-
-        if len(scene_levels) != self.pyramid_levels:
+        if not self.class_templates:
             return []
-
         if class_ids is None or len(class_ids) == 0:
             class_ids = self.class_ids()
+        if not class_ids:
+            return []
 
-        matches: List[Match] = []
-        for class_id in class_ids:
-            if class_id not in self.class_templates:
-                continue
-            self._match_class(scene_levels, float(threshold), class_id, self.class_templates[class_id], matches)
+        align = max((int(t) * (1 << idx)) for idx, t in enumerate(self.T_at_level)) if self.T_at_level else 1
+        h, w = source.shape[:2]
+        h2 = (h // align) * align
+        w2 = (w // align) * align
+        if h2 <= 0 or w2 <= 0:
+            return []
+        scene = source if (h2 == h and w2 == w) else source[:h2, :w2].copy()
+        scene_mask = None
+        if mask is not None:
+            full_mask = ensure_mask(mask, source.shape[:2])
+            scene_mask = full_mask if (h2 == h and w2 == w) else full_mask[:h2, :w2].copy()
+
+        native_detector = self._ensure_native_detector_synced()
+        native_matches = native_detector.match(scene, float(threshold), list(class_ids), scene_mask)
+        matches = [
+            Match(
+                x=int(x),
+                y=int(y),
+                similarity=float(similarity),
+                class_id=str(native_class_id),
+                template_id=int(template_id),
+            )
+            for x, y, similarity, native_class_id, template_id in native_matches
+        ]
 
         matches.sort(key=lambda m: m.similarity, reverse=True)
 
@@ -734,120 +780,6 @@ class Line2DupLikeDetector:
             seen.add(key)
             deduped.append(m)
         return deduped
-
-    def _match_class(
-        self,
-        scene_levels: Sequence[SceneLevelData],
-        threshold: float,
-        class_id: str,
-        template_pyramids: Sequence[List[TemplateLevel]],
-        out_matches: List[Match],
-    ) -> None:
-        final_threshold = float(threshold)
-        coarse_threshold = float(final_threshold)
-
-        for template_id, tp in enumerate(template_pyramids):
-            lowest_idx = self.pyramid_levels - 1
-            lowest_scene = scene_levels[lowest_idx]
-            lowest_templ = tp[lowest_idx]
-            lowest_num_features = len(lowest_templ.features)
-
-            sim_map = similarity_full(
-                lowest_scene,
-                lowest_templ,
-            )
-            if sim_map.size == 0:
-                continue
-
-            candidates: List[Match] = []
-            low_T = lowest_scene.T
-            off = offset_from_T(low_T)
-            coarse_raw_threshold = raw_similarity_threshold(coarse_threshold, lowest_num_features)
-            ys, xs = np.where(sim_map > coarse_raw_threshold)
-            for r, c in zip(ys.tolist(), xs.tolist()):
-                x = int(c * low_T + off)
-                y = int(r * low_T + off)
-                score = similarity_from_raw(sim_map[r, c], lowest_num_features)
-                candidates.append(Match(x=x, y=y, similarity=score, class_id=class_id, template_id=template_id))
-
-            if not candidates:
-                continue
-
-            for l in range(self.pyramid_levels - 2, -1, -1):
-                scene = scene_levels[l]
-                templ = tp[l]
-                T = scene.T
-                border = 8 * T
-                off = offset_from_T(T)
-                max_x = scene.width - templ.width - border
-                max_y = scene.height - templ.height - border
-                if max_x <= border or max_y <= border:
-                    # Fallback for large templates / small scenes: local 16x16 refinement window
-                    # cannot fit near borders, so we only propagate coarse positions to finer level.
-                    # This keeps same-image and near-full-frame matching usable.
-                    max_tl_x = max(0, int(scene.width - templ.width - 1))
-                    max_tl_y = max(0, int(scene.height - templ.height - 1))
-                    propagated: List[Match] = []
-                    for m in candidates:
-                        x = int(np.clip(m.x * 2 + 1, 0, max_tl_x))
-                        y = int(np.clip(m.y * 2 + 1, 0, max_tl_y))
-                        propagated.append(
-                            Match(
-                                x=x,
-                                y=y,
-                                similarity=float(m.similarity),
-                                class_id=class_id,
-                                template_id=template_id,
-                            )
-                        )
-                    candidates = propagated
-                    if not candidates:
-                        break
-                    continue
-
-                refined: List[Match] = []
-                num_features = len(templ.features)
-                coarse_raw_threshold = raw_similarity_threshold(coarse_threshold, num_features)
-                for m in candidates:
-                    x = m.x * 2 + 1
-                    y = m.y * 2 + 1
-                    x = max(x, border)
-                    y = max(y, border)
-                    x = min(x, max_x)
-                    y = min(y, max_y)
-
-                    local = similarity_local(
-                        scene,
-                        templ,
-                        (x, y),
-                    )
-                    if local.size == 0:
-                        continue
-                    best_idx = int(np.argmax(local))
-                    best_r, best_c = divmod(best_idx, local.shape[1])
-                    best_raw_score = float(local[best_r, best_c])
-                    if best_raw_score < coarse_raw_threshold:
-                        continue
-
-                    best_score = similarity_from_raw(best_raw_score, num_features)
-                    new_x = (x // T - 8 + best_c) * T + off
-                    new_y = (y // T - 8 + best_r) * T + off
-                    refined.append(
-                        Match(
-                            x=int(new_x),
-                            y=int(new_y),
-                            similarity=best_score,
-                            class_id=class_id,
-                            template_id=template_id,
-                        )
-                    )
-                candidates = refined
-                if not candidates:
-                    break
-
-            for m in candidates:
-                if float(m.similarity) >= final_threshold:
-                    out_matches.append(m)
 
 
 class ShapeInfoProducer:
@@ -983,6 +915,7 @@ def detector_from_dict(data: Dict[str, Any]) -> Line2DupLikeDetector:
 
     detector.class_templates = {}
     detector.class_meta = {}
+    detector.invalidate_native_cache()
 
     for class_id, packed_templates in classes.items():
         detector.class_templates[class_id] = []

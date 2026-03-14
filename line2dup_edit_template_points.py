@@ -186,6 +186,7 @@ class EditorState:
         if item.level < 0 or item.level >= self.detector.pyramid_levels:
             return False
         self.detector.class_templates[item.class_id][item.template_id][item.level].features = item.features
+        self.detector.invalidate_native_cache(item.class_id)
         if item.class_id in self.class_ids:
             self.class_index = self.class_ids.index(item.class_id)
         self.template_id = item.template_id
@@ -204,6 +205,7 @@ class EditorState:
         lb = int(label) % 8
         theta = label_to_angle_deg(lb) if theta_deg is None else float(theta_deg)
         tl.features.append(Feature(x=x_rel, y=y_rel, label=lb, theta=theta))
+        self.detector.invalidate_native_cache(self.class_id)
         self.dirty = True
 
     def delete_nearest_abs(self, x_abs: int, y_abs: int) -> bool:
@@ -226,6 +228,7 @@ class EditorState:
             return False
         self.push_undo()
         del tl.features[best_idx]
+        self.detector.invalidate_native_cache(self.class_id)
         self.hover_index = None
         self.dirty = True
         return True

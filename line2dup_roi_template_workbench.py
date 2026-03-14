@@ -261,6 +261,7 @@ class WorkbenchState:
                 }
             ]
         }
+        detector.invalidate_native_cache()
         save_detector_model(detector, str(self.out_model))
 
         # Save preview image for quick verification.
