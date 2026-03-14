@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from pathlib import Path
+import time
 from typing import List, Optional, Sequence, Tuple
 
 import cv2
@@ -193,6 +194,14 @@ class RoiRect:
 
 
 @dataclass
+class MaskRect:
+    x: int
+    y: int
+    w: int
+    h: int
+
+
+@dataclass
 class UndoItem:
     class_id: str
     template_id: int
@@ -207,6 +216,7 @@ class CreateTemplateTab(ttk.Frame):
         self.image_bgr: Optional[np.ndarray] = None
         self.image_path = ""
         self.roi: Optional[RoiRect] = None
+        self.mask_rects: List[MaskRect] = []
         self.template_levels: List[TemplateLevel] = []
 
         self.drag_kind: Optional[str] = None
@@ -335,9 +345,12 @@ class CreateTemplateTab(ttk.Frame):
         tool_row.grid(row=row, column=0, sticky="w")
         ttk.Radiobutton(tool_row, text="Select ROI", value="roi", variable=self.tool_var, command=self._refresh_canvas).pack(side="left")
         ttk.Radiobutton(tool_row, text="Edit Points", value="point", variable=self.tool_var, command=self._refresh_canvas).pack(side="left", padx=(8, 0))
+        ttk.Radiobutton(tool_row, text="Edit Mask", value="mask", variable=self.tool_var, command=self._refresh_canvas).pack(side="left", padx=(8, 0))
         row += 1
 
         ttk.Button(control, text="Extract Points From ROI", command=self.extract_points).grid(row=row, column=0, sticky="ew", pady=(8, 0))
+        row += 1
+        ttk.Button(control, text="Clear Masks", command=self.clear_masks).grid(row=row, column=0, sticky="ew", pady=(4, 0))
         row += 1
         ttk.Button(control, text="Reset ROI", command=self.reset_roi).grid(row=row, column=0, sticky="ew", pady=(4, 0))
         row += 1
@@ -383,6 +396,7 @@ class CreateTemplateTab(ttk.Frame):
         self.image_path = path
         self.image_label.configure(text=path)
         self.roi = None
+        self.mask_rects = []
         self.template_levels = []
         self.level_var.set(0)
         self.level_spin.configure(from_=0, to=0)
@@ -408,11 +422,21 @@ class CreateTemplateTab(ttk.Frame):
 
     def reset_roi(self) -> None:
         self.roi = None
+        self.mask_rects = []
         self.template_levels = []
         self.level_var.set(0)
         self.level_spin.configure(from_=0, to=0)
         self.tool_var.set("roi")
         self.status_var.set("ROI reset. Drag left mouse to select a new ROI.")
+        self._refresh_canvas()
+
+    def clear_masks(self) -> None:
+        if not self.mask_rects:
+            self.status_var.set("No mask rectangles to clear.")
+            return
+        self.mask_rects = []
+        self._drop_points_inside_masks()
+        self.status_var.set("Mask rectangles cleared.")
         self._refresh_canvas()
 
     def extract_points(self) -> None:
@@ -434,7 +458,7 @@ class CreateTemplateTab(ttk.Frame):
         strong = float(max(1.0, self.strong_thresh_var.get()))
 
         roi_img = self.image_bgr[self.roi.y : self.roi.y + self.roi.h, self.roi.x : self.roi.x + self.roi.w].copy()
-        mask = np.full((roi_img.shape[0], roi_img.shape[1]), 255, dtype=np.uint8)
+        mask = self._build_roi_mask()
 
         detector = Line2DupLikeDetector(
             num_features=num_features,
@@ -468,7 +492,7 @@ class CreateTemplateTab(ttk.Frame):
         self.level_var.set(0)
         self.tool_var.set("point")
         self.status_var.set(
-            f"Extracted {len(self.template_levels[0].features)} points at level0. "
+            f"Extracted {len(self.template_levels[0].features)} points at level0 with {len(self.mask_rects)} mask rects. "
             f"L0 is editable; L1+ are auto-scaled from L0. Right-drag box deletes selected points."
         )
         self._refresh_canvas()
@@ -532,7 +556,16 @@ class CreateTemplateTab(ttk.Frame):
             strong_threshold=strong_threshold,
         )
         roi_img = self.image_bgr[self.roi.y : self.roi.y + self.roi.h, self.roi.x : self.roi.x + self.roi.w].copy()
-        roi_mask = np.full((roi_img.shape[0], roi_img.shape[1]), 255, dtype=np.uint8)
+        roi_mask = self._build_roi_mask()
+        mask_meta = [
+            {
+                "x": int(rect.x),
+                "y": int(rect.y),
+                "w": int(rect.w),
+                "h": int(rect.h),
+            }
+            for rect in self.mask_rects
+        ]
 
         kept = 0
         skipped = 0
@@ -575,6 +608,7 @@ class CreateTemplateTab(ttk.Frame):
                         "roi_y": int(self.roi.y),
                         "roi_w": int(self.roi.w),
                         "roi_h": int(self.roi.h),
+                        "mask_rects": mask_meta,
                     }
                 )
                 kept += 1
@@ -611,6 +645,7 @@ class CreateTemplateTab(ttk.Frame):
                         "roi_y": int(self.roi.y),
                         "roi_w": int(self.roi.w),
                         "roi_h": int(self.roi.h),
+                        "mask_rects": mask_meta,
                     },
                 )
                 if tid >= 0:
@@ -905,7 +940,7 @@ class CreateTemplateTab(ttk.Frame):
         return out
 
     def _in_roi_view(self) -> bool:
-        return self.roi is not None and self.tool_var.get() == "point"
+        return self.roi is not None and self.tool_var.get() in {"point", "mask"}
 
     def _level_roi_image(self) -> np.ndarray:
         if self.image_bgr is None or self.roi is None:
@@ -924,7 +959,121 @@ class CreateTemplateTab(ttk.Frame):
             return []
         return [(int(f.x + tl.tl_x), int(f.y + tl.tl_y)) for f in tl.features]
 
+    def _build_roi_mask(self) -> np.ndarray:
+        if self.roi is None:
+            return np.zeros((1, 1), dtype=np.uint8)
+        mask = np.full((self.roi.h, self.roi.w), 255, dtype=np.uint8)
+        for rect in self.mask_rects:
+            x1 = max(0, min(int(rect.x), self.roi.w))
+            y1 = max(0, min(int(rect.y), self.roi.h))
+            x2 = max(x1, min(int(rect.x + rect.w), self.roi.w))
+            y2 = max(y1, min(int(rect.y + rect.h), self.roi.h))
+            if x2 > x1 and y2 > y1:
+                mask[y1:y2, x1:x2] = 0
+        return mask
+
+    def _display_mask_rects(self) -> List[MaskRect]:
+        rects: List[MaskRect] = []
+        lv = max(0, int(self.level_var.get()))
+        scale = max(1, 1 << lv)
+        for rect in self.mask_rects:
+            x1 = int(rect.x // scale)
+            y1 = int(rect.y // scale)
+            x2 = int((rect.x + rect.w + scale - 1) // scale)
+            y2 = int((rect.y + rect.h + scale - 1) // scale)
+            x2 = max(x2, x1 + 1)
+            y2 = max(y2, y1 + 1)
+            rects.append(MaskRect(x=x1, y=y1, w=x2 - x1, h=y2 - y1))
+        return rects
+
+    def _point_is_masked(self, x_abs: int, y_abs: int) -> bool:
+        for rect in self._display_mask_rects():
+            if rect.x <= x_abs < rect.x + rect.w and rect.y <= y_abs < rect.y + rect.h:
+                return True
+        return False
+
+    def _drop_points_inside_masks(self) -> None:
+        if not self.template_levels or not self.mask_rects:
+            return
+        tl = self.template_levels[0]
+        kept: List[Feature] = []
+        for f in tl.features:
+            keep = True
+            for rect in self.mask_rects:
+                if rect.x <= int(f.x) < rect.x + rect.w and rect.y <= int(f.y) < rect.y + rect.h:
+                    keep = False
+                    break
+            if keep:
+                kept.append(f)
+        if len(kept) != len(tl.features):
+            tl.features = kept
+            self._sync_levels_from_level0(total_levels=len(self.template_levels))
+
+    def _add_mask_rect(self, x0_abs: int, y0_abs: int, x1_abs: int, y1_abs: int) -> bool:
+        if self.roi is None:
+            return False
+        lv = max(0, int(self.level_var.get()))
+        scale = max(1, 1 << lv)
+        xa0 = int(round(min(x0_abs, x1_abs) * scale))
+        ya0 = int(round(min(y0_abs, y1_abs) * scale))
+        xb0 = int(round(max(x0_abs, x1_abs) * scale))
+        yb0 = int(round(max(y0_abs, y1_abs) * scale))
+
+        xa0 = max(0, min(xa0, self.roi.w))
+        ya0 = max(0, min(ya0, self.roi.h))
+        xb0 = max(0, min(xb0, self.roi.w))
+        yb0 = max(0, min(yb0, self.roi.h))
+        w = max(0, xb0 - xa0)
+        h = max(0, yb0 - ya0)
+        if w < scale or h < scale:
+            self.status_var.set("Mask rectangle too small.")
+            return False
+
+        self.mask_rects.append(MaskRect(x=xa0, y=ya0, w=w, h=h))
+        self._drop_points_inside_masks()
+        self.status_var.set(f"Added mask rectangle. masks={len(self.mask_rects)}")
+        return True
+
+    def _delete_nearest_mask(self, x_abs: int, y_abs: int) -> bool:
+        if not self.mask_rects:
+            return False
+        lv = max(0, int(self.level_var.get()))
+        scale = max(1, 1 << lv)
+        x0 = int(round(x_abs * scale))
+        y0 = int(round(y_abs * scale))
+        tol = 10.0 * scale
+        best_idx = -1
+        best_d2 = 1e18
+        for i, rect in enumerate(self.mask_rects):
+            rx1 = int(rect.x)
+            ry1 = int(rect.y)
+            rx2 = int(rect.x + rect.w)
+            ry2 = int(rect.y + rect.h)
+            dx = 0.0
+            dy = 0.0
+            if x0 < rx1:
+                dx = float(rx1 - x0)
+            elif x0 > rx2:
+                dx = float(x0 - rx2)
+            if y0 < ry1:
+                dy = float(ry1 - y0)
+            elif y0 > ry2:
+                dy = float(y0 - ry2)
+            d2 = dx * dx + dy * dy
+            if d2 < best_d2:
+                best_d2 = d2
+                best_idx = i
+        if best_idx < 0 or best_d2 > tol * tol:
+            return False
+        del self.mask_rects[best_idx]
+        self._drop_points_inside_masks()
+        self.status_var.set(f"Deleted mask rectangle. masks={len(self.mask_rects)}")
+        return True
+
     def _update_hover(self, x_abs: int, y_abs: int) -> None:
+        if self.tool_var.get() == "mask":
+            self.hover_index = None
+            return
         tl = self._current_level_template()
         if tl is None or not tl.features:
             self.hover_index = None
@@ -949,6 +1098,9 @@ class CreateTemplateTab(ttk.Frame):
             return
         if int(self.level_var.get()) != 0:
             self.status_var.set("Only L0 is editable. Switch View Level to 0.")
+            return
+        if self._point_is_masked(x_abs, y_abs):
+            self.status_var.set("Cannot add point inside masked area.")
             return
         xr = int(round(x_abs - tl.tl_x))
         yr = int(round(y_abs - tl.tl_y))
@@ -1030,6 +1182,10 @@ class CreateTemplateTab(ttk.Frame):
             self.drag_kind = "point"
             self.drag_start = (x, y)
             self.drag_end = (x, y)
+        elif self.tool_var.get() == "mask" and self.roi is not None:
+            self.drag_kind = "mask"
+            self.drag_start = (x, y)
+            self.drag_end = (x, y)
         self._refresh_canvas()
 
     def _on_left_move(self, event: tk.Event) -> None:
@@ -1058,6 +1214,7 @@ class CreateTemplateTab(ttk.Frame):
             h = max(0, yb - ya)
             if w >= 4 and h >= 4:
                 self.roi = RoiRect(x=xa, y=ya, w=w, h=h)
+                self.mask_rects = []
                 self.template_levels = []
                 self.level_var.set(0)
                 self.level_spin.configure(from_=0, to=0)
@@ -1079,6 +1236,10 @@ class CreateTemplateTab(ttk.Frame):
             else:
                 lb = int(self.label_var.get()) % 8
                 self._add_point(sx, sy, lb, theta_deg=label_to_angle_deg(lb))
+        elif self.drag_kind == "mask" and self.roi is not None:
+            sx, sy = self.drag_start
+            ex, ey = self.drag_end
+            self._add_mask_rect(sx, sy, ex, ey)
 
         self.drag_kind = None
         self.drag_start = None
@@ -1086,7 +1247,14 @@ class CreateTemplateTab(ttk.Frame):
         self._refresh_canvas()
 
     def _on_right_down(self, event: tk.Event) -> None:
-        if self.tool_var.get() != "point" or self.roi is None:
+        if self.roi is None:
+            return
+        if self.tool_var.get() == "mask":
+            self.drag_kind = "mask_delete"
+            self.drag_start = self._canvas_to_image(event)
+            self.drag_end = self.drag_start
+            return
+        if self.tool_var.get() != "point":
             return
         if int(self.level_var.get()) != 0:
             self.status_var.set("Only L0 is editable. Switch View Level to 0.")
@@ -1100,6 +1268,8 @@ class CreateTemplateTab(ttk.Frame):
         self._refresh_canvas()
 
     def _on_right_move(self, event: tk.Event) -> None:
+        if self.drag_kind == "mask_delete":
+            return
         if self.drag_kind != "erase":
             return
         x, y = self._canvas_to_image(event)
@@ -1107,6 +1277,14 @@ class CreateTemplateTab(ttk.Frame):
         self._refresh_canvas()
 
     def _on_right_up(self, event: tk.Event) -> None:
+        if self.drag_kind == "mask_delete":
+            x, y = self._canvas_to_image(event)
+            self._delete_nearest_mask(x, y)
+            self.drag_kind = None
+            self.drag_start = None
+            self.drag_end = None
+            self._refresh_canvas()
+            return
         if self.drag_kind != "erase" or self.drag_start is None:
             return
         x, y = self._canvas_to_image(event)
@@ -1126,11 +1304,14 @@ class CreateTemplateTab(ttk.Frame):
         self._refresh_canvas()
 
     def _on_motion(self, event: tk.Event) -> None:
-        if self.tool_var.get() != "point":
+        if self.tool_var.get() not in {"point", "mask"}:
             return
         x, y = self._canvas_to_image(event)
-        self._update_hover(x, y)
-        if self.drag_kind == "point":
+        if self.tool_var.get() == "point":
+            self._update_hover(x, y)
+        else:
+            self.hover_index = None
+        if self.drag_kind in {"point", "mask"}:
             self.drag_end = (x, y)
         self._refresh_canvas()
 
@@ -1162,6 +1343,24 @@ class CreateTemplateTab(ttk.Frame):
 
         if self._in_roi_view():
             canvas = self._level_roi_image().copy()
+            mask_rects = self._display_mask_rects()
+            if mask_rects:
+                overlay = canvas.copy()
+                for rect in mask_rects:
+                    x1 = int(rect.x)
+                    y1 = int(rect.y)
+                    x2 = int(rect.x + rect.w)
+                    y2 = int(rect.y + rect.h)
+                    cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 255), -1)
+                canvas = cv2.addWeighted(overlay, 0.22, canvas, 0.78, 0.0)
+                for rect in mask_rects:
+                    x1 = int(rect.x)
+                    y1 = int(rect.y)
+                    x2 = int(rect.x + rect.w)
+                    y2 = int(rect.y + rect.h)
+                    cv2.rectangle(canvas, (x1, y1), (x2, y2), (20, 20, 220), 1, cv2.LINE_AA)
+                    cv2.line(canvas, (x1, y1), (x2, y2), (20, 20, 220), 1, cv2.LINE_AA)
+                    cv2.line(canvas, (x2, y1), (x1, y2), (20, 20, 220), 1, cv2.LINE_AA)
             tl = self._current_level_template()
             if tl is not None:
                 x1 = int(tl.tl_x)
@@ -1192,6 +1391,12 @@ class CreateTemplateTab(ttk.Frame):
                     lb = int(self.label_var.get()) % 8
                 color = orientation_palette_bgr()[lb]
                 cv2.arrowedLine(canvas, (sx, sy), (ex, ey), color, 1, cv2.LINE_AA, 0, 0.35)
+            elif self.drag_kind == "mask" and self.drag_start is not None and self.drag_end is not None:
+                x1, y1, x2, y2 = normalize_drag_rect(self.drag_start, self.drag_end)
+                overlay = canvas.copy()
+                cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 255), -1)
+                canvas = cv2.addWeighted(overlay, 0.18, canvas, 0.82, 0.0)
+                cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 0, 255), 1, cv2.LINE_AA)
             elif self.drag_kind == "erase" and self.drag_start is not None and self.drag_end is not None:
                 x1, y1, x2, y2 = normalize_drag_rect(self.drag_start, self.drag_end)
                 cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 128, 255), 1, cv2.LINE_AA)
@@ -1207,6 +1412,15 @@ class CreateTemplateTab(ttk.Frame):
                 1,
                 cv2.LINE_AA,
             )
+            for rect in self.mask_rects:
+                x1 = int(self.roi.x + rect.x)
+                y1 = int(self.roi.y + rect.y)
+                x2 = int(self.roi.x + rect.x + rect.w)
+                y2 = int(self.roi.y + rect.y + rect.h)
+                overlay = canvas.copy()
+                cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 255), -1)
+                canvas = cv2.addWeighted(overlay, 0.12, canvas, 0.88, 0.0)
+                cv2.rectangle(canvas, (x1, y1), (x2, y2), (20, 20, 220), 1, cv2.LINE_AA)
         if self.drag_kind == "roi" and self.drag_start is not None and self.drag_end is not None:
             x0, y0 = self.drag_start
             x1, y1 = self.drag_end
@@ -2020,10 +2234,14 @@ class FindTemplateTab(ttk.Frame):
             messagebox.showwarning("No scene", "Please open scene image first.")
             return
 
+        total_t0 = time.perf_counter()
         threshold = float(np.clip(self.threshold_var.get(), 0.0, 100.0))
         crop_stride = int(max(0, self.crop_stride_var.get()))
         nms_iou = float(np.clip(self.nms_iou_var.get(), 0.0, 1.0))
         topk = int(max(1, self.topk_var.get()))
+        match_ms = 0.0
+        nms_ms = 0.0
+        attempts = 0
 
         scene_for_match = self.scene_bgr
         if crop_stride > 0:
@@ -2040,14 +2258,20 @@ class FindTemplateTab(ttk.Frame):
             class_ids = [class_choice]
 
         def match_once(th: float):
+            nonlocal match_ms, nms_ms, attempts
+            attempts += 1
+            t0 = time.perf_counter()
             ms = self.detector.match(
                 scene_for_match,
                 threshold=th,
                 class_ids=class_ids,
                 mask=self.scene_mask,
             )
+            match_ms += (time.perf_counter() - t0) * 1000.0
+            t1 = time.perf_counter()
             ms = nms_matches(self.detector, ms, iou_threshold=nms_iou)
             ms.sort(key=lambda m: m.similarity, reverse=True)
+            nms_ms += (time.perf_counter() - t1) * 1000.0
             return ms
 
         used_threshold = threshold
@@ -2062,11 +2286,22 @@ class FindTemplateTab(ttk.Frame):
                     break
                 cur -= 5
 
+        draw_t0 = time.perf_counter()
         overlay = draw_matches(self.detector, scene_for_match, matches, topk=topk)
+        draw_ms = (time.perf_counter() - draw_t0) * 1000.0
+        total_ms = (time.perf_counter() - total_t0) * 1000.0
         self.result_bgr = overlay
         self._refresh_canvas()
 
         self.result_list.delete(0, tk.END)
+        self.result_list.insert(
+            tk.END,
+            (
+                f"[time] total={total_ms:.0f}ms "
+                f"match={match_ms:.0f}ms nms={nms_ms:.0f}ms "
+                f"draw={draw_ms:.0f}ms attempts={attempts}"
+            ),
+        )
         shown = min(topk, len(matches))
         for i in range(shown):
             m = matches[i]
@@ -2082,7 +2317,8 @@ class FindTemplateTab(ttk.Frame):
 
         self.status_var.set(
             f"Match done. total={len(matches)}, shown={shown}, threshold_used={used_threshold:.1f}, "
-            f"stride={crop_stride}."
+            f"stride={crop_stride}, time={total_ms:.0f}ms "
+            f"(match={match_ms:.0f}, nms={nms_ms:.0f}, draw={draw_ms:.0f})."
         )
 
     def save_overlay(self) -> None:
