@@ -9,6 +9,8 @@ https://github.com/meiqua/shape_based_matching
 from __future__ import annotations
 
 import argparse
+import base64
+import copy
 import importlib
 import json
 import math
@@ -59,6 +61,7 @@ class Match:
     refined_angle_deg: Optional[float] = None
     refined_fitness: Optional[float] = None
     refined_rmse: Optional[float] = None
+    refined_quad: Optional[List[Tuple[float, float]]] = None
 
 
 @dataclass
@@ -256,6 +259,28 @@ def _load_native_matcher(backend: str = "original", required: bool = True) -> An
             raise RuntimeError(f"{module_name} is unavailable.\n{_native_build_instructions()}\nOriginal import error: {exc}") from exc
         return None
     return _NATIVE_MODULES[backend]
+
+
+def ensure_native_backends_available(backends: Sequence[str] = ("original", "fusion", "sim3")) -> None:
+    for backend in backends:
+        _load_native_matcher(backend=backend, required=True)
+
+
+def create_native_detector(
+    num_features: int,
+    T_levels: Sequence[int],
+    weak_threshold: float,
+    strong_threshold: float,
+    *,
+    backend: str = "original",
+) -> Any:
+    native_matcher = _load_native_matcher(backend=backend, required=True)
+    return native_matcher.NativeDetector(
+        int(num_features),
+        [int(t) for t in T_levels],
+        float(weak_threshold),
+        float(strong_threshold),
+    )
 
 
 def hysteresis_gradient(
@@ -666,10 +691,19 @@ class Line2DupLikeDetector:
         self.pyramid_levels = len(self.T_at_level)
         self.weak_threshold = float(weak_threshold)
         self.strong_threshold = float(strong_threshold)
-        self.class_templates: Dict[str, List[List[TemplateLevel]]] = {}
+        self.backend_templates: Dict[str, Dict[str, List[List[TemplateLevel]]]] = {
+            backend: {} for backend in NATIVE_BACKEND_TO_MODULE
+        }
+        self.class_templates = self.backend_templates["original"]
         self.class_meta: Dict[str, List[Dict[str, float]]] = {}
+        self.class_sources: Dict[str, Dict[str, Any]] = {}
+        self.original_editor_levels: Dict[str, List[TemplateLevel]] = {}
         self._native_detectors: Dict[str, Any] = {}
         self._native_dirty = True
+
+    def _reset_template_storage(self) -> None:
+        self.backend_templates = {backend: {} for backend in NATIVE_BACKEND_TO_MODULE}
+        self.class_templates = self.backend_templates["original"]
 
     def invalidate_native_cache(self, class_id: Optional[str] = None) -> None:
         self._native_dirty = True
@@ -695,10 +729,14 @@ class Line2DupLikeDetector:
         return [_template_level_from_dict(level) for level in levels_raw]
 
     def _ensure_class_containers(self, class_id: str) -> None:
-        if class_id not in self.class_templates:
-            self.class_templates[class_id] = []
+        for backend_store in self.backend_templates.values():
+            if class_id not in backend_store:
+                backend_store[class_id] = []
         if class_id not in self.class_meta:
             self.class_meta[class_id] = []
+
+    def _backend_store(self, backend: str) -> Dict[str, List[List[TemplateLevel]]]:
+        return self.backend_templates[_normalize_backend_name(backend)]
 
     def _ensure_class_meta_length(self, class_id: str, size: int) -> None:
         self._ensure_class_containers(class_id)
@@ -709,11 +747,39 @@ class Line2DupLikeDetector:
         self._ensure_class_meta_length(class_id, template_id + 1)
         self.class_meta[class_id][template_id] = dict(metadata) if isinstance(metadata, dict) else {}
 
+    def set_backend_templates(
+        self,
+        class_id: str,
+        template_pyramids: Sequence[Sequence[TemplateLevel]],
+        *,
+        backend: str = "original",
+    ) -> None:
+        backend = _normalize_backend_name(backend)
+        self._ensure_class_containers(class_id)
+        self.backend_templates[backend][class_id] = [clone_template_levels(tp) for tp in template_pyramids]
+        self.invalidate_native_cache(class_id)
+
+    def set_class_source(self, class_id: str, source_info: Dict[str, Any]) -> None:
+        self._ensure_class_containers(class_id)
+        self.class_sources[class_id] = copy.deepcopy(source_info)
+
+    def get_class_source(self, class_id: str) -> Dict[str, Any]:
+        info = self.class_sources.get(class_id, {})
+        return copy.deepcopy(info)
+
+    def set_original_editor_levels(self, class_id: str, levels: Sequence[TemplateLevel]) -> None:
+        self._ensure_class_containers(class_id)
+        self.original_editor_levels[class_id] = clone_template_levels(levels)
+
+    def get_original_editor_levels(self, class_id: str) -> List[TemplateLevel]:
+        levels = self.original_editor_levels.get(class_id, [])
+        return clone_template_levels(levels)
+
     def _import_python_templates_to_native(self, backend: str = "original") -> Any:
         backend = _normalize_backend_name(backend)
         native_detector = self._create_native_detector(backend=backend)
         native_detector.clear_classes()
-        for class_id, template_pyramids in self.class_templates.items():
+        for class_id, template_pyramids in self.backend_templates[backend].items():
             native_detector.replace_class_templates(
                 class_id,
                 [self._template_pyramid_to_native(tp) for tp in template_pyramids],
@@ -735,18 +801,20 @@ class Line2DupLikeDetector:
             return self._import_python_templates_to_native(backend=backend)
         return native_detector
 
-    def _append_template_from_native(self, native_detector: Any, class_id: str, template_id: int) -> None:
+    def _append_template_from_native(self, native_detector: Any, class_id: str, template_id: int, *, backend: str = "original") -> None:
+        backend = _normalize_backend_name(backend)
         levels_raw = native_detector.export_template_pyramid(class_id, int(template_id))
         if not levels_raw:
             raise RuntimeError(f"Native detector did not return template pyramid: class={class_id}, id={template_id}")
         self._ensure_class_containers(class_id)
         template_pyramid = self._template_pyramid_from_native(levels_raw)
-        if template_id == len(self.class_templates[class_id]):
-            self.class_templates[class_id].append(template_pyramid)
+        store = self.backend_templates[backend][class_id]
+        if template_id == len(store):
+            store.append(template_pyramid)
             return
-        while len(self.class_templates[class_id]) <= template_id:
-            self.class_templates[class_id].append([])
-        self.class_templates[class_id][template_id] = template_pyramid
+        while len(store) <= template_id:
+            store.append([])
+        store[template_id] = template_pyramid
 
     def add_template(
         self,
@@ -755,20 +823,24 @@ class Line2DupLikeDetector:
         object_mask: Optional[np.ndarray] = None,
         num_features: Optional[int] = None,
         metadata: Optional[Dict[str, float]] = None,
+        backend: str = "original",
     ) -> int:
+        backend = _normalize_backend_name(backend)
         nfeat = int(num_features) if num_features is not None and num_features > 0 else self.num_features
         self._ensure_class_containers(class_id)
-        native_detector = self._ensure_native_detector_synced(backend="original", required=False)
+        native_detector = self._ensure_native_detector_synced(backend=backend, required=(backend != "original"))
         if native_detector is not None:
             mask = ensure_mask(object_mask, source.shape[:2]) if object_mask is not None else None
             template_id = int(native_detector.add_template(source, class_id, mask, nfeat))
             if template_id < 0:
                 return -1
-            self._append_template_from_native(native_detector, class_id, template_id)
+            self._append_template_from_native(native_detector, class_id, template_id, backend=backend)
             self._set_template_meta(class_id, template_id, metadata)
             self._native_dirty = False
             return template_id
 
+        if backend != "original":
+            raise RuntimeError(f"{backend} backend is unavailable.\n{_native_build_instructions()}")
         if "original" in _NATIVE_MODULE_ERRORS:
             _warn_native_fallback("original", _NATIVE_MODULE_ERRORS["original"])
         return self._add_template_python(source, class_id, object_mask, nfeat, metadata)
@@ -801,8 +873,7 @@ class Line2DupLikeDetector:
         crop_templates(tp)
         template_id = len(self.class_templates[class_id])
         self.class_templates[class_id].append(tp)
-        self._ensure_class_meta_length(class_id, template_id)
-        self.class_meta[class_id].append(dict(metadata) if isinstance(metadata, dict) else {})
+        self._set_template_meta(class_id, template_id, metadata)
         self._native_dirty = True
         self._native_detectors.clear()
         return template_id
@@ -839,7 +910,7 @@ class Line2DupLikeDetector:
             )
             if template_id < 0:
                 return -1
-            self._append_template_from_native(native_detector, class_id, template_id)
+            self._append_template_from_native(native_detector, class_id, template_id, backend="original")
             self._set_template_meta(class_id, template_id, metadata)
             self._native_dirty = False
             return template_id
@@ -887,20 +958,28 @@ class Line2DupLikeDetector:
         crop_templates(tp)
         template_id = len(self.class_templates[class_id])
         self.class_templates[class_id].append(tp)
-        self._ensure_class_meta_length(class_id, template_id)
-        self.class_meta[class_id].append(dict(metadata) if isinstance(metadata, dict) else {})
+        self._set_template_meta(class_id, template_id, metadata)
         self._native_dirty = True
         self._native_detectors.clear()
         return template_id
 
-    def get_templates(self, class_id: str, template_id: int) -> List[TemplateLevel]:
-        return self.class_templates[class_id][template_id]
+    def get_templates(self, class_id: str, template_id: int, backend: str = "original") -> List[TemplateLevel]:
+        backend = _normalize_backend_name(backend)
+        return self.backend_templates[backend][class_id][template_id]
 
     def get_template_meta(self, class_id: str, template_id: int) -> Dict[str, float]:
         return self.class_meta[class_id][template_id]
 
     def class_ids(self) -> List[str]:
-        return list(self.class_templates.keys())
+        out: List[str] = []
+        seen = set()
+        for mapping in [self.class_sources, self.class_meta, *self.backend_templates.values()]:
+            for class_id in mapping.keys():
+                if class_id in seen:
+                    continue
+                seen.add(class_id)
+                out.append(class_id)
+        return out
 
     def match(
         self,
@@ -911,10 +990,14 @@ class Line2DupLikeDetector:
         backend: str = "original",
     ) -> List[Match]:
         backend = _normalize_backend_name(backend)
-        if not self.class_templates:
+        backend_store = self.backend_templates[backend]
+        if not backend_store:
             return []
         if class_ids is None or len(class_ids) == 0:
-            class_ids = self.class_ids()
+            class_ids = [class_id for class_id in self.class_ids() if backend_store.get(class_id)]
+        if not class_ids:
+            return []
+        class_ids = [class_id for class_id in class_ids if backend_store.get(class_id)]
         if not class_ids:
             return []
 
@@ -1136,6 +1219,49 @@ def _apply_affine_transform_point(transform: np.ndarray, x: float, y: float) -> 
     return tx, ty
 
 
+def _display_canvas_size_for_template(
+    detector: Line2DupLikeDetector,
+    class_id: str,
+    template_id: int,
+    backend: str,
+) -> Tuple[int, int]:
+    backend = _normalize_backend_name(backend)
+    templ0 = detector.get_templates(class_id, template_id, backend=backend)[0]
+    meta = detector.get_template_meta(class_id, template_id)
+    source_info = detector.class_sources.get(class_id, {})
+    original_mode = str(source_info.get("original_mode", "auto")) if isinstance(source_info, dict) else "auto"
+
+    if backend == "original" and original_mode == "manual_points":
+        return max(1, int(templ0.width) + 1), max(1, int(templ0.height) + 1)
+
+    canvas_w = int(meta.get("canvas_w", meta.get("roi_w", int(templ0.width) + 1)))
+    canvas_h = int(meta.get("canvas_h", meta.get("roi_h", int(templ0.height) + 1)))
+    canvas_w = max(canvas_w, int(templ0.width) + 1)
+    canvas_h = max(canvas_h, int(templ0.height) + 1)
+    return canvas_w, canvas_h
+
+
+def _template_display_quad(
+    detector: Line2DupLikeDetector,
+    class_id: str,
+    template_id: int,
+    backend: str,
+    match_x: int,
+    match_y: int,
+) -> List[Tuple[float, float]]:
+    backend = _normalize_backend_name(backend)
+    templ0 = detector.get_templates(class_id, template_id, backend=backend)[0]
+    canvas_w, canvas_h = _display_canvas_size_for_template(detector, class_id, template_id, backend)
+    x0 = float(match_x - int(templ0.tl_x))
+    y0 = float(match_y - int(templ0.tl_y))
+    return [
+        (x0, y0),
+        (x0 + float(canvas_w - 1), y0),
+        (x0 + float(canvas_w - 1), y0 + float(canvas_h - 1)),
+        (x0, y0 + float(canvas_h - 1)),
+    ]
+
+
 def refine_matches_sim3(
     detector: Line2DupLikeDetector,
     source: np.ndarray,
@@ -1152,6 +1278,14 @@ def refine_matches_sim3(
         info = native_detector.refine_match(source, match.class_id, int(match.template_id), int(match.x), int(match.y))
         transform = np.array(info.get("transform", np.eye(3, dtype=np.float32)), dtype=np.float32)
         meta = detector.get_template_meta(match.class_id, match.template_id)
+        raw_quad = _template_display_quad(
+            detector,
+            match.class_id,
+            int(match.template_id),
+            "sim3",
+            int(match.x),
+            int(match.y),
+        )
         base_scale = float(meta.get("scale", 1.0))
         base_angle = float(meta.get("angle", 0.0))
         match.backend = "sim3"
@@ -1160,6 +1294,7 @@ def refine_matches_sim3(
         match.refined_angle_deg = base_angle + float(info.get("delta_angle_deg", 0.0))
         match.refined_fitness = float(info.get("fitness", 0.0))
         match.refined_rmse = float(info.get("rmse", 0.0))
+        match.refined_quad = [_apply_affine_transform_point(transform, x, y) for x, y in raw_quad]
     return time.perf_counter() - started
 
 
@@ -1253,24 +1388,94 @@ def _template_level_from_dict(data: Dict[str, Any]) -> TemplateLevel:
     )
 
 
+def clone_template_levels(levels: Sequence[TemplateLevel]) -> List[TemplateLevel]:
+    cloned: List[TemplateLevel] = []
+    for level in levels:
+        cloned.append(
+            TemplateLevel(
+                width=int(level.width),
+                height=int(level.height),
+                tl_x=int(level.tl_x),
+                tl_y=int(level.tl_y),
+                pyramid_level=int(level.pyramid_level),
+                features=[
+                    Feature(
+                        x=int(feature.x),
+                        y=int(feature.y),
+                        label=int(feature.label),
+                        theta=float(feature.theta),
+                    )
+                    for feature in level.features
+                ],
+            )
+        )
+    return cloned
+
+
+def encode_png_base64(image: Optional[np.ndarray]) -> str:
+    if image is None:
+        return ""
+    ok, buf = cv2.imencode(".png", image)
+    if not ok:
+        raise ValueError("Failed to encode image as PNG.")
+    return base64.b64encode(buf.tobytes()).decode("ascii")
+
+
+def decode_png_base64(data: str, flags: int = cv2.IMREAD_UNCHANGED) -> Optional[np.ndarray]:
+    if not data:
+        return None
+    raw = base64.b64decode(data.encode("ascii"))
+    arr = np.frombuffer(raw, dtype=np.uint8)
+    image = cv2.imdecode(arr, flags)
+    if image is None:
+        raise ValueError("Failed to decode PNG data from model.")
+    return image
+
+
 def detector_to_dict(detector: Line2DupLikeDetector) -> Dict[str, Any]:
     classes: Dict[str, Any] = {}
-    for class_id, template_pyramids in detector.class_templates.items():
+    for class_id in detector.class_ids():
         metas = detector.class_meta.get(class_id, [])
-        packed_templates: List[Dict[str, Any]] = []
-        for tid, tp in enumerate(template_pyramids):
-            meta = metas[tid] if tid < len(metas) else {}
-            packed_templates.append(
+        source_info = detector.class_sources.get(class_id, {})
+        pose_infos = copy.deepcopy(source_info.get("pose_infos", {})) if isinstance(source_info, dict) else {}
+        if not isinstance(pose_infos, dict):
+            pose_infos = {}
+        if "items" not in pose_infos or not isinstance(pose_infos.get("items"), list):
+            pose_infos["items"] = [
+                {
+                    "angle": float(meta.get("angle", 0.0)),
+                    "scale": float(meta.get("scale", 1.0)),
+                }
+                for meta in metas
+            ]
+        if "ui" not in pose_infos or not isinstance(pose_infos.get("ui"), dict):
+            pose_infos["ui"] = {}
+
+        packed_backends: Dict[str, List[Dict[str, Any]]] = {}
+        for backend in NATIVE_BACKEND_TO_MODULE:
+            template_pyramids = detector.backend_templates.get(backend, {}).get(class_id, [])
+            packed_backends[backend] = [
                 {
                     "template_id": int(tid),
-                    "meta": dict(meta) if isinstance(meta, dict) else {},
                     "levels": [_template_level_to_dict(lv) for lv in tp],
                 }
-            )
-        classes[class_id] = packed_templates
+                for tid, tp in enumerate(template_pyramids)
+            ]
+
+        classes[class_id] = {
+            "source": copy.deepcopy(source_info.get("source", {})) if isinstance(source_info, dict) else {},
+            "pose_infos": pose_infos,
+            "original_mode": str(source_info.get("original_mode", "auto")) if isinstance(source_info, dict) else "auto",
+            "meta": [dict(meta) if isinstance(meta, dict) else {} for meta in metas],
+            "backends": packed_backends,
+            "original_editor_levels": [
+                _template_level_to_dict(level)
+                for level in detector.original_editor_levels.get(class_id, [])
+            ],
+        }
 
     return {
-        "format": "line2dup_like_model_v1",
+        "format": "line2dup_like_model_v2",
         "params": {
             "num_features": int(detector.num_features),
             "T_levels": [int(t) for t in detector.T_at_level],
@@ -1282,6 +1487,12 @@ def detector_to_dict(detector: Line2DupLikeDetector) -> Dict[str, Any]:
 
 
 def detector_from_dict(data: Dict[str, Any]) -> Line2DupLikeDetector:
+    model_format = str(data.get("format", "")).strip()
+    if model_format == "line2dup_like_model_v1":
+        raise ValueError("Model format line2dup_like_model_v1 is no longer supported. Recreate the model as v2.")
+    if model_format != "line2dup_like_model_v2":
+        raise ValueError(f"Unsupported model format: {model_format or '(missing format)'}")
+
     params = data.get("params", {})
     detector = Line2DupLikeDetector(
         num_features=int(params.get("num_features", 128)),
@@ -1294,26 +1505,77 @@ def detector_from_dict(data: Dict[str, Any]) -> Line2DupLikeDetector:
     if not isinstance(classes, dict):
         raise ValueError("Invalid model format: classes must be a dict.")
 
-    detector.class_templates = {}
+    detector._reset_template_storage()
     detector.class_meta = {}
+    detector.class_sources = {}
+    detector.original_editor_levels = {}
     detector.invalidate_native_cache()
 
-    for class_id, packed_templates in classes.items():
-        detector.class_templates[class_id] = []
-        detector.class_meta[class_id] = []
-        if not isinstance(packed_templates, list):
-            continue
-        for item in packed_templates:
-            levels_raw = item.get("levels", []) if isinstance(item, dict) else []
-            levels = [_template_level_from_dict(x) for x in levels_raw]
-            if len(levels) != detector.pyramid_levels:
+    for class_id, class_entry in classes.items():
+        if not isinstance(class_entry, dict):
+            raise ValueError(f"Invalid class entry for '{class_id}'.")
+        detector._ensure_class_containers(class_id)
+
+        source_block = class_entry.get("source", {})
+        pose_block = class_entry.get("pose_infos", {})
+        if not isinstance(source_block, dict):
+            source_block = {}
+        if not isinstance(pose_block, dict):
+            pose_block = {}
+        detector.class_sources[class_id] = {
+            "source": copy.deepcopy(source_block),
+            "pose_infos": {
+                "items": copy.deepcopy(pose_block.get("items", [])) if isinstance(pose_block.get("items", []), list) else [],
+                "ui": copy.deepcopy(pose_block.get("ui", {})) if isinstance(pose_block.get("ui", {}), dict) else {},
+            },
+            "original_mode": str(class_entry.get("original_mode", "auto")),
+        }
+
+        backends_raw = class_entry.get("backends", {})
+        if not isinstance(backends_raw, dict):
+            raise ValueError(f"Invalid backends block for class '{class_id}'.")
+
+        expected_templates = 0
+        for backend in NATIVE_BACKEND_TO_MODULE:
+            packed_templates = backends_raw.get(backend, [])
+            if not isinstance(packed_templates, list):
+                raise ValueError(f"Backend '{backend}' templates for class '{class_id}' must be a list.")
+            parsed_templates: List[List[TemplateLevel]] = []
+            for item in packed_templates:
+                levels_raw = item.get("levels", []) if isinstance(item, dict) else []
+                levels = [_template_level_from_dict(x) for x in levels_raw]
+                if len(levels) != detector.pyramid_levels:
+                    raise ValueError(
+                        f"Template levels mismatch for class '{class_id}' backend '{backend}': "
+                        f"expected {detector.pyramid_levels}, got {len(levels)}"
+                    )
+                parsed_templates.append(levels)
+            detector.backend_templates[backend][class_id] = parsed_templates
+            expected_templates = max(expected_templates, len(parsed_templates))
+
+        meta_items = class_entry.get("meta", [])
+        if not isinstance(meta_items, list):
+            raise ValueError(f"Meta block for class '{class_id}' must be a list.")
+        detector.class_meta[class_id] = [dict(item) if isinstance(item, dict) else {} for item in meta_items]
+        if expected_templates > 0 and len(detector.class_meta[class_id]) != expected_templates:
+            raise ValueError(
+                f"Meta/template count mismatch for class '{class_id}': "
+                f"meta={len(detector.class_meta[class_id])}, templates={expected_templates}"
+            )
+
+        editor_levels_raw = class_entry.get("original_editor_levels", [])
+        if editor_levels_raw:
+            editor_levels = [_template_level_from_dict(x) for x in editor_levels_raw]
+            if len(editor_levels) != detector.pyramid_levels:
                 raise ValueError(
-                    f"Template levels mismatch for class '{class_id}': "
-                    f"expected {detector.pyramid_levels}, got {len(levels)}"
+                    f"original_editor_levels mismatch for class '{class_id}': "
+                    f"expected {detector.pyramid_levels}, got {len(editor_levels)}"
                 )
-            meta = item.get("meta", {}) if isinstance(item, dict) else {}
-            detector.class_templates[class_id].append(levels)
-            detector.class_meta[class_id].append(dict(meta) if isinstance(meta, dict) else {})
+            detector.original_editor_levels[class_id] = editor_levels
+        elif detector.backend_templates["original"].get(class_id):
+            detector.original_editor_levels[class_id] = clone_template_levels(
+                detector.backend_templates["original"][class_id][0]
+            )
 
     return detector
 
@@ -1336,6 +1598,33 @@ def load_detector_model(model_path: str) -> Line2DupLikeDetector:
     return detector_from_dict(data)
 
 
+def match_quad(detector: Line2DupLikeDetector, match: Match) -> List[Tuple[float, float]]:
+    corners = _template_display_quad(
+        detector,
+        match.class_id,
+        int(match.template_id),
+        match.backend,
+        int(match.x),
+        int(match.y),
+    )
+    if match.refined_quad:
+        return [(float(x), float(y)) for x, y in match.refined_quad]
+    if match.refined_transform is not None:
+        return [_apply_affine_transform_point(match.refined_transform, x, y) for x, y in corners]
+    return corners
+
+
+def match_bbox(detector: Line2DupLikeDetector, match: Match) -> List[int]:
+    quad = match_quad(detector, match)
+    xs = [float(x) for x, _y in quad]
+    ys = [float(y) for _x, y in quad]
+    x1 = int(math.floor(min(xs)))
+    y1 = int(math.floor(min(ys)))
+    x2 = int(math.ceil(max(xs)))
+    y2 = int(math.ceil(max(ys)))
+    return [x1, y1, max(1, x2 - x1), max(1, y2 - y1)]
+
+
 def nms_matches(
     detector: Line2DupLikeDetector,
     matches: Sequence[Match],
@@ -1348,8 +1637,7 @@ def nms_matches(
     boxes: List[List[int]] = []
     scores: List[float] = []
     for m in matches:
-        templ0 = detector.get_templates(m.class_id, m.template_id)[0]
-        boxes.append([int(m.x), int(m.y), int(max(1, templ0.width)), int(max(1, templ0.height))])
+        boxes.append(match_bbox(detector, m))
         scores.append(float(m.similarity))
 
     keep = cv2.dnn.NMSBoxes(boxes, scores, score_threshold=score_threshold, nms_threshold=iou_threshold)
@@ -1377,7 +1665,7 @@ def draw_matches(
     draw_n = min(topk, len(matches))
     for i in range(draw_n):
         m = matches[i]
-        t0 = detector.get_templates(m.class_id, m.template_id)[0]
+        t0 = detector.get_templates(m.class_id, m.template_id, backend=m.backend)[0]
         meta = detector.get_template_meta(m.class_id, m.template_id)
         color = palette[i % len(palette)]
         refined_transform = m.refined_transform
@@ -1408,14 +1696,8 @@ def draw_matches(
 
         # Draw stable template bbox (width/height from matched template).
         # Using minAreaRect on sparse/one-sided feature clouds may degenerate to a near-line.
-        corners = [
-            (float(m.x), float(m.y)),
-            (float(m.x + t0.width), float(m.y)),
-            (float(m.x + t0.width), float(m.y + t0.height)),
-            (float(m.x), float(m.y + t0.height)),
-        ]
-        if refined_transform is not None:
-            corners = [_apply_affine_transform_point(refined_transform, x, y) for x, y in corners]
+        corners = match_quad(detector, m)
+        if m.refined_quad or refined_transform is not None:
             pts_i = np.array([[int(round(x)), int(round(y))] for x, y in corners], dtype=np.int32).reshape(-1, 1, 2)
             cv2.polylines(out, [pts_i], isClosed=True, color=color, thickness=2, lineType=cv2.LINE_AA)
             tx = int(round(corners[0][0]))

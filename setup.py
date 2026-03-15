@@ -33,6 +33,14 @@ def common_compile_args() -> list[str]:
     return ["/O2", "/EHsc", "/std:c++17"] if os.name == "nt" else ["-O3", "-std=c++17"]
 
 
+def openmp_compile_args() -> list[str]:
+    return ["/openmp"] if os.name == "nt" else ["-fopenmp"]
+
+
+def openmp_link_args() -> list[str]:
+    return [] if os.name == "nt" else ["-fopenmp"]
+
+
 def build_backend_extension(
     *,
     module_name: str,
@@ -40,6 +48,8 @@ def build_backend_extension(
     extra_sources: list[str] | None = None,
     extra_include_dirs: list[Path] | None = None,
     extra_define_macros: list[tuple[str, str | None]] | None = None,
+    extra_compile_args: list[str] | None = None,
+    extra_link_args: list[str] | None = None,
 ) -> Extension:
     require_path(OPENCV_INCLUDE_DIR, "OpenCV include dir")
     require_path(OPENCV_LIB_DIR, "OpenCV lib dir")
@@ -73,6 +83,10 @@ def build_backend_extension(
     if extra_include_dirs:
         include_dirs.extend(str(path) for path in extra_include_dirs)
 
+    compile_args = common_compile_args()
+    if extra_compile_args:
+        compile_args.extend(extra_compile_args)
+
     return Extension(
         name=module_name,
         sources=sources,
@@ -80,7 +94,8 @@ def build_backend_extension(
         library_dirs=[str(OPENCV_LIB_DIR)],
         libraries=[OPENCV_WORLD_LIB],
         language="c++",
-        extra_compile_args=common_compile_args(),
+        extra_compile_args=compile_args,
+        extra_link_args=list(extra_link_args or []),
         define_macros=define_macros,
     )
 
@@ -94,6 +109,8 @@ def build_extensions() -> list[Extension]:
         build_backend_extension(
             module_name="line2dup_fusion_native",
             backend_root=FUSION_ROOT,
+            extra_compile_args=openmp_compile_args(),
+            extra_link_args=openmp_link_args(),
         ),
         build_backend_extension(
             module_name="line2dup_sim3_native",

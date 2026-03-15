@@ -29,8 +29,13 @@ from line2dup_like_matcher import (
     Line2DupLikeDetector,
     ShapeInfoProducer,
     TemplateLevel,
+    clone_template_levels,
+    create_native_detector,
     crop_templates,
+    decode_png_base64,
     draw_matches,
+    encode_png_base64,
+    ensure_native_backends_available,
     label_to_theta_deg as matcher_label_to_theta_deg,
     load_detector_model,
     nms_matches,
@@ -104,20 +109,502 @@ def arrow_endpoint(x: int, y: int, theta_deg: float, length: float) -> Tuple[int
 
 
 def clone_levels(levels: Sequence[TemplateLevel]) -> List[TemplateLevel]:
-    out: List[TemplateLevel] = []
-    for lv in levels:
-        feats = [Feature(x=int(f.x), y=int(f.y), label=int(f.label), theta=float(f.theta)) for f in lv.features]
+    return clone_template_levels(levels)
+
+
+def build_mask_from_rects(width: int, height: int, mask_rects: Sequence[MaskRect]) -> np.ndarray:
+    mask = np.full((max(1, int(height)), max(1, int(width))), 255, dtype=np.uint8)
+    for rect in mask_rects:
+        x1 = max(0, min(int(rect.x), int(width)))
+        y1 = max(0, min(int(rect.y), int(height)))
+        x2 = max(x1, min(int(rect.x + rect.w), int(width)))
+        y2 = max(y1, min(int(rect.y + rect.h), int(height)))
+        if x2 > x1 and y2 > y1:
+            mask[y1:y2, x1:x2] = 0
+    return mask
+
+
+def pose_infos_from_ui_values(
+    angle_start: float,
+    angle_end: float,
+    angle_step: float,
+    scale_start: float,
+    scale_end: float,
+    scale_step: float,
+) -> List[Tuple[float, float]]:
+    if scale_start <= 0.0 or scale_end <= 0.0:
+        raise ValueError("scale start/end must be > 0")
+
+    angles = expand_numeric_range(angle_start, angle_end, angle_step)
+    scales = expand_numeric_range(scale_start, scale_end, scale_step)
+    infos: List[Tuple[float, float]] = []
+    seen = set()
+    for scale in scales:
+        for angle in angles:
+            angle_norm = float((float(angle) % 360.0 + 360.0) % 360.0)
+            if abs(angle_norm - 360.0) < 1e-9:
+                angle_norm = 0.0
+            key = (round(angle_norm, 6), round(float(scale), 6))
+            if key in seen:
+                continue
+            seen.add(key)
+            infos.append((angle_norm, float(scale)))
+    if not infos:
+        infos = [(0.0, 1.0)]
+    return infos
+
+
+def roi_level_shapes_from_image(image_bgr: np.ndarray, total_levels: int) -> List[Tuple[int, int]]:
+    img = image_bgr.copy()
+    shapes: List[Tuple[int, int]] = []
+    for _ in range(max(1, int(total_levels))):
+        h, w = img.shape[:2]
+        shapes.append((int(w), int(h)))
+        if h < 2 or w < 2:
+            continue
+        img = cv2.pyrDown(img)
+    return shapes
+
+
+def sync_levels_from_level0(level0: TemplateLevel, shapes: Sequence[Tuple[int, int]]) -> List[TemplateLevel]:
+    if not shapes:
+        return []
+    w0, h0 = shapes[0]
+    max_x0 = max(0, int(w0) - 1)
+    max_y0 = max(0, int(h0) - 1)
+    l0_feats: List[Feature] = []
+    l0_seen = set()
+    for feature in level0.features:
+        x0 = int(np.clip(int(feature.x) + int(level0.tl_x), 0, max_x0))
+        y0 = int(np.clip(int(feature.y) + int(level0.tl_y), 0, max_y0))
+        key = (x0, y0, int(feature.label) & 7)
+        if key in l0_seen:
+            continue
+        l0_seen.add(key)
+        l0_feats.append(Feature(x=x0, y=y0, label=int(feature.label) & 7, theta=float(feature.theta)))
+
+    out: List[TemplateLevel] = [
+        TemplateLevel(
+            width=max_x0,
+            height=max_y0,
+            tl_x=0,
+            tl_y=0,
+            pyramid_level=0,
+            features=l0_feats,
+        )
+    ]
+
+    for level_index in range(1, len(shapes)):
+        w, h = shapes[level_index]
+        max_x = max(0, int(w) - 1)
+        max_y = max(0, int(h) - 1)
+        div = float(1 << level_index)
+        feats: List[Feature] = []
+        seen = set()
+        for feature in l0_feats:
+            x = int(round(float(feature.x) / div))
+            y = int(round(float(feature.y) / div))
+            x = int(np.clip(x, 0, max_x))
+            y = int(np.clip(y, 0, max_y))
+            key = (x, y, int(feature.label) & 7)
+            if key in seen:
+                continue
+            seen.add(key)
+            feats.append(Feature(x=x, y=y, label=int(feature.label) & 7, theta=float(feature.theta)))
         out.append(
             TemplateLevel(
-                width=int(lv.width),
-                height=int(lv.height),
-                tl_x=int(lv.tl_x),
-                tl_y=int(lv.tl_y),
-                pyramid_level=int(lv.pyramid_level),
+                width=max_x,
+                height=max_y,
+                tl_x=0,
+                tl_y=0,
+                pyramid_level=level_index,
                 features=feats,
             )
         )
     return out
+
+
+def normalize_extracted_levels_to_roi(levels: Sequence[TemplateLevel], roi_image_bgr: np.ndarray) -> List[TemplateLevel]:
+    if not levels:
+        return []
+    shapes = roi_level_shapes_from_image(roi_image_bgr, len(levels))
+    if not shapes:
+        return []
+    level0 = clone_levels([levels[0]])[0]
+    w0, h0 = shapes[0]
+    max_x0 = max(0, int(w0) - 1)
+    max_y0 = max(0, int(h0) - 1)
+    for feature in level0.features:
+        feature.x = int(np.clip(int(feature.x) + int(level0.tl_x), 0, max_x0))
+        feature.y = int(np.clip(int(feature.y) + int(level0.tl_y), 0, max_y0))
+    level0.tl_x = 0
+    level0.tl_y = 0
+    level0.width = max_x0
+    level0.height = max_y0
+    return sync_levels_from_level0(level0, shapes)
+
+
+def transform_levels_for_pose(
+    base_levels: Sequence[TemplateLevel],
+    angle_deg: float,
+    scale: float,
+    *,
+    auto_crop: bool = False,
+    adapt_feature_count: bool = False,
+) -> List[TemplateLevel]:
+    out: List[TemplateLevel] = []
+    ang_rad = -float(angle_deg) / 180.0 * float(np.pi)
+    c = float(np.cos(ang_rad))
+    s = float(np.sin(ang_rad))
+    sc = float(scale)
+
+    for base in base_levels:
+        x_min = int(base.tl_x)
+        y_min = int(base.tl_y)
+        x_max = int(base.tl_x + base.width)
+        y_max = int(base.tl_y + base.height)
+        w = int(base.width) + 1
+        h = int(base.height) + 1
+        cx = float(x_min + w * 0.5)
+        cy = float(y_min + h * 0.5)
+
+        def _xf(px: float, py: float) -> Tuple[float, float]:
+            dx = (px - cx) * sc
+            dy = (py - cy) * sc
+            rx = c * dx - s * dy + cx
+            ry = s * dx + c * dy + cy
+            return rx, ry
+
+        corners = [
+            (float(x_min), float(y_min)),
+            (float(x_max), float(y_min)),
+            (float(x_max), float(y_max)),
+            (float(x_min), float(y_max)),
+        ]
+        tc = [_xf(px, py) for px, py in corners]
+        canvas_x_min = int(np.floor(min(p[0] for p in tc)))
+        canvas_y_min = int(np.floor(min(p[1] for p in tc)))
+        canvas_x_max = int(np.ceil(max(p[0] for p in tc)))
+        canvas_y_max = int(np.ceil(max(p[1] for p in tc)))
+        if canvas_x_max < canvas_x_min:
+            canvas_x_max = canvas_x_min
+        if canvas_y_max < canvas_y_min:
+            canvas_y_max = canvas_y_min
+
+        feats: List[Feature] = []
+        seen = set()
+        for feature in base.features:
+            px = float(feature.x + base.tl_x)
+            py = float(feature.y + base.tl_y)
+            rx, ry = _xf(px, py)
+            xi = int(round(rx))
+            yi = int(round(ry))
+            base_theta = float(feature.theta)
+            if not np.isfinite(base_theta):
+                base_theta = label_to_angle_deg(int(feature.label))
+            theta = (base_theta - float(angle_deg)) % 360.0
+            label = angle_deg_to_label(theta)
+            xr = int(xi - canvas_x_min)
+            yr = int(yi - canvas_y_min)
+            if xr < 0 or yr < 0:
+                continue
+            key = (xr, yr, label)
+            if key in seen:
+                continue
+            seen.add(key)
+            feats.append(Feature(x=xr, y=yr, label=label, theta=theta))
+
+        if adapt_feature_count:
+            s_clamped = float(np.clip(scale, 0.05, 1.0))
+            target = max(8, int(round(len(base.features) * s_clamped)))
+            if len(feats) > target:
+                feats = feats[:target]
+
+        out.append(
+            TemplateLevel(
+                width=int(canvas_x_max - canvas_x_min),
+                height=int(canvas_y_max - canvas_y_min),
+                tl_x=0,
+                tl_y=0,
+                pyramid_level=int(base.pyramid_level),
+                features=feats,
+            )
+        )
+    if auto_crop and out and all(len(level.features) > 0 for level in out):
+        crop_templates(out)
+    return out
+
+
+def transform_image_and_mask_expanded(
+    image_bgr: np.ndarray,
+    mask: np.ndarray,
+    angle_deg: float,
+    scale: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    h, w = image_bgr.shape[:2]
+    center = (float(w) * 0.5, float(h) * 0.5)
+    mat = cv2.getRotationMatrix2D(center, float(angle_deg), float(scale))
+
+    corners = np.array(
+        [
+            [0.0, 0.0, 1.0],
+            [float(w - 1), 0.0, 1.0],
+            [float(w - 1), float(h - 1), 1.0],
+            [0.0, float(h - 1), 1.0],
+        ],
+        dtype=np.float32,
+    )
+    transformed = (mat @ corners.T).T
+    min_x = float(np.floor(np.min(transformed[:, 0])))
+    min_y = float(np.floor(np.min(transformed[:, 1])))
+    max_x = float(np.ceil(np.max(transformed[:, 0])))
+    max_y = float(np.ceil(np.max(transformed[:, 1])))
+    new_w = max(1, int(max_x - min_x + 1.0))
+    new_h = max(1, int(max_y - min_y + 1.0))
+
+    mat[0, 2] -= min_x
+    mat[1, 2] -= min_y
+    out_img = cv2.warpAffine(image_bgr, mat, (new_w, new_h), flags=cv2.INTER_LINEAR)
+    out_mask = cv2.warpAffine(mask, mat, (new_w, new_h), flags=cv2.INTER_NEAREST)
+    out_mask = (out_mask > 0).astype(np.uint8) * 255
+    return out_img, out_mask
+
+
+def make_class_source_payload(
+    roi_img: np.ndarray,
+    roi_mask: np.ndarray,
+    roi_rect: RoiRect,
+    mask_rects: Sequence[MaskRect],
+    pose_infos: Sequence[Tuple[float, float]],
+    pose_ui: dict,
+    original_mode: str,
+) -> dict:
+    return {
+        "source": {
+            "roi_png": encode_png_base64(roi_img),
+            "mask_png": encode_png_base64(roi_mask),
+            "roi_x": int(roi_rect.x),
+            "roi_y": int(roi_rect.y),
+            "roi_w": int(roi_rect.w),
+            "roi_h": int(roi_rect.h),
+            "mask_rects": [
+                {"x": int(rect.x), "y": int(rect.y), "w": int(rect.w), "h": int(rect.h)}
+                for rect in mask_rects
+            ],
+        },
+        "pose_infos": {
+            "items": [{"angle": float(angle), "scale": float(scale)} for angle, scale in pose_infos],
+            "ui": {
+                "angle_start": float(pose_ui.get("angle_start", 0.0)),
+                "angle_end": float(pose_ui.get("angle_end", 0.0)),
+                "angle_step": float(pose_ui.get("angle_step", 10.0)),
+                "scale_start": float(pose_ui.get("scale_start", 1.0)),
+                "scale_end": float(pose_ui.get("scale_end", 1.0)),
+                "scale_step": float(pose_ui.get("scale_step", 0.05)),
+            },
+        },
+        "original_mode": str(original_mode),
+    }
+
+
+def load_class_source_assets(detector: Line2DupLikeDetector, class_id: str) -> Tuple[dict, np.ndarray, np.ndarray, RoiRect, List[MaskRect]]:
+    source_info = detector.get_class_source(class_id)
+    source_block = source_info.get("source", {}) if isinstance(source_info, dict) else {}
+    if not isinstance(source_block, dict):
+        raise ValueError(f"Model class '{class_id}' does not contain editable source information.")
+    roi_img = decode_png_base64(str(source_block.get("roi_png", "")), cv2.IMREAD_COLOR)
+    roi_mask = decode_png_base64(str(source_block.get("mask_png", "")), cv2.IMREAD_GRAYSCALE)
+    if roi_img is None or roi_mask is None:
+        raise ValueError(f"Model class '{class_id}' is missing embedded ROI image or mask.")
+    roi_rect = RoiRect(
+        x=int(source_block.get("roi_x", 0)),
+        y=int(source_block.get("roi_y", 0)),
+        w=int(source_block.get("roi_w", roi_img.shape[1])),
+        h=int(source_block.get("roi_h", roi_img.shape[0])),
+    )
+    mask_rects = [
+        MaskRect(
+            x=int(item.get("x", 0)),
+            y=int(item.get("y", 0)),
+            w=int(item.get("w", 0)),
+            h=int(item.get("h", 0)),
+        )
+        for item in source_block.get("mask_rects", [])
+        if isinstance(item, dict)
+    ]
+    return source_info, roi_img, roi_mask, roi_rect, mask_rects
+
+
+def build_multi_backend_detector(
+    *,
+    class_id: str,
+    roi_img: np.ndarray,
+    roi_rect: RoiRect,
+    mask_rects: Sequence[MaskRect],
+    pose_infos: Sequence[Tuple[float, float]],
+    pose_ui: dict,
+    levels: Sequence[int],
+    num_features: int,
+    weak_threshold: float,
+    strong_threshold: float,
+    original_mode: str,
+    original_editor_levels: Optional[Sequence[TemplateLevel]] = None,
+) -> Tuple[Line2DupLikeDetector, int, int]:
+    ensure_native_backends_available(("original", "fusion", "sim3"))
+    roi_mask = build_mask_from_rects(roi_img.shape[1], roi_img.shape[0], mask_rects)
+
+    detector = Line2DupLikeDetector(
+        num_features=num_features,
+        T_levels=levels,
+        weak_threshold=weak_threshold,
+        strong_threshold=strong_threshold,
+    )
+    detector.set_class_source(
+        class_id,
+        make_class_source_payload(
+            roi_img=roi_img,
+            roi_mask=roi_mask,
+            roi_rect=roi_rect,
+            mask_rects=mask_rects,
+            pose_infos=pose_infos,
+            pose_ui=pose_ui,
+            original_mode=original_mode,
+        ),
+    )
+
+    if original_editor_levels:
+        base_editor_levels = clone_levels(original_editor_levels)
+    else:
+        original_native_for_editor = create_native_detector(
+            num_features=num_features,
+            T_levels=levels,
+            weak_threshold=weak_threshold,
+            strong_threshold=strong_threshold,
+            backend="original",
+        )
+        editor_tid = int(original_native_for_editor.add_template(roi_img, class_id, roi_mask, int(num_features)))
+        if editor_tid < 0:
+            raise RuntimeError("Failed to extract the base Original template from ROI.")
+        editor_levels_raw = original_native_for_editor.export_template_pyramid(class_id, editor_tid)
+        base_editor_levels = normalize_extracted_levels_to_roi(
+            Line2DupLikeDetector._template_pyramid_from_native(editor_levels_raw),
+            roi_img,
+        )
+    detector.set_original_editor_levels(class_id, base_editor_levels)
+
+    original_native = None
+    if original_mode != "manual_points":
+        original_native = create_native_detector(
+            num_features=num_features,
+            T_levels=levels,
+            weak_threshold=weak_threshold,
+            strong_threshold=strong_threshold,
+            backend="original",
+        )
+    fusion_native = create_native_detector(
+        num_features=num_features,
+        T_levels=levels,
+        weak_threshold=weak_threshold,
+        strong_threshold=strong_threshold,
+        backend="fusion",
+    )
+    sim3_native = create_native_detector(
+        num_features=num_features,
+        T_levels=levels,
+        weak_threshold=weak_threshold,
+        strong_threshold=strong_threshold,
+        backend="sim3",
+    )
+
+    backend_templates = {backend: [] for backend in BACKEND_LABEL_TO_KEY.values()}
+    metas: List[dict] = []
+    kept = 0
+    skipped = 0
+
+    for angle_deg, scale in pose_infos:
+        src_i, mask_i = transform_image_and_mask_expanded(roi_img, roi_mask, float(angle_deg), float(scale))
+        nfeat = max(16, int(round(float(num_features) * float(scale))))
+
+        if original_mode == "manual_points":
+            original_tp = transform_levels_for_pose(
+                base_editor_levels,
+                angle_deg=float(angle_deg),
+                scale=float(scale),
+                auto_crop=False,
+                adapt_feature_count=True,
+            )
+            if (not original_tp) or any(len(level.features) <= 0 for level in original_tp):
+                skipped += 1
+                continue
+        else:
+            original_tid = int(original_native.add_template(src_i, class_id, mask_i, nfeat))
+            if original_tid < 0:
+                skipped += 1
+                continue
+            original_tp = Line2DupLikeDetector._template_pyramid_from_native(
+                original_native.export_template_pyramid(class_id, original_tid)
+            )
+
+        fusion_tid = int(fusion_native.add_template(src_i, class_id, mask_i, nfeat))
+        if fusion_tid < 0:
+            skipped += 1
+            continue
+        sim3_tid = int(sim3_native.add_template(src_i, class_id, mask_i, nfeat))
+        if sim3_tid < 0:
+            skipped += 1
+            continue
+
+        fusion_tp = Line2DupLikeDetector._template_pyramid_from_native(
+            fusion_native.export_template_pyramid(class_id, fusion_tid)
+        )
+        sim3_tp = Line2DupLikeDetector._template_pyramid_from_native(
+            sim3_native.export_template_pyramid(class_id, sim3_tid)
+        )
+
+        backend_templates["original"].append(original_tp)
+        backend_templates["fusion"].append(fusion_tp)
+        backend_templates["sim3"].append(sim3_tp)
+        metas.append(
+            {
+                "angle": float(angle_deg),
+                "scale": float(scale),
+                "roi_x": int(roi_rect.x),
+                "roi_y": int(roi_rect.y),
+                "roi_w": int(roi_rect.w),
+                "roi_h": int(roi_rect.h),
+                "canvas_w": int(src_i.shape[1]),
+                "canvas_h": int(src_i.shape[0]),
+                "mask_rects": [
+                    {"x": int(rect.x), "y": int(rect.y), "w": int(rect.w), "h": int(rect.h)}
+                    for rect in mask_rects
+                ],
+            }
+        )
+        kept += 1
+
+    if kept <= 0:
+        raise RuntimeError("All angle/scale variants became empty for at least one backend.")
+
+    for backend_key, templates in backend_templates.items():
+        detector.set_backend_templates(class_id, templates, backend=backend_key)
+    detector.class_meta[class_id] = metas
+    return detector, kept, skipped
+
+
+def copy_detector_class(src: Line2DupLikeDetector, dst: Line2DupLikeDetector, class_id: str) -> None:
+    source_info = src.get_class_source(class_id)
+    if source_info:
+        dst.set_class_source(class_id, source_info)
+    editor_levels = src.get_original_editor_levels(class_id)
+    if editor_levels:
+        dst.set_original_editor_levels(class_id, editor_levels)
+    dst.class_meta[class_id] = [dict(item) if isinstance(item, dict) else {} for item in src.class_meta.get(class_id, [])]
+    for backend_key in BACKEND_LABEL_TO_KEY.values():
+        dst.set_backend_templates(
+            class_id,
+            src.backend_templates.get(backend_key, {}).get(class_id, []),
+            backend=backend_key,
+        )
 
 
 def bgr_to_photo(image_bgr: np.ndarray) -> tk.PhotoImage:
@@ -226,6 +713,7 @@ class CreateTemplateTab(ttk.Frame):
         self.roi: Optional[RoiRect] = None
         self.mask_rects: List[MaskRect] = []
         self.template_levels: List[TemplateLevel] = []
+        self.manual_points_dirty = False
 
         self.drag_kind: Optional[str] = None
         self.drag_start: Optional[Tuple[int, int]] = None
@@ -406,6 +894,7 @@ class CreateTemplateTab(ttk.Frame):
         self.roi = None
         self.mask_rects = []
         self.template_levels = []
+        self.manual_points_dirty = False
         self.level_var.set(0)
         self.level_spin.configure(from_=0, to=0)
         self.tool_var.set("roi")
@@ -432,6 +921,7 @@ class CreateTemplateTab(ttk.Frame):
         self.roi = None
         self.mask_rects = []
         self.template_levels = []
+        self.manual_points_dirty = False
         self.level_var.set(0)
         self.level_spin.configure(from_=0, to=0)
         self.tool_var.set("roi")
@@ -493,6 +983,7 @@ class CreateTemplateTab(ttk.Frame):
 
         # Editing baseline is always level-0 (full-resolution ROI).
         self.template_levels = [extracted_levels[0]]
+        self.manual_points_dirty = False
         self._force_levels_to_roi_extent()
         self._sync_levels_from_level0(total_levels=len(levels))
         max_level = max(0, len(self.template_levels) - 1)
@@ -557,31 +1048,10 @@ class CreateTemplateTab(ttk.Frame):
         num_features = int(max(8, self.num_features_var.get()))
         weak_threshold = float(max(1.0, self.weak_thresh_var.get()))
         strong_threshold = float(max(1.0, self.strong_thresh_var.get()))
-        detector = Line2DupLikeDetector(
-            num_features=num_features,
-            T_levels=levels,
-            weak_threshold=weak_threshold,
-            strong_threshold=strong_threshold,
-        )
         roi_img = self.image_bgr[self.roi.y : self.roi.y + self.roi.h, self.roi.x : self.roi.x + self.roi.w].copy()
-        roi_mask = self._build_roi_mask()
-        mask_meta = [
-            {
-                "x": int(rect.x),
-                "y": int(rect.y),
-                "w": int(rect.w),
-                "h": int(rect.h),
-            }
-            for rect in self.mask_rects
-        ]
+        use_manual_points = bool(self.manual_points_dirty and len(self.template_levels) > 0)
 
-        kept = 0
-        skipped = 0
-        first_success_tid = -1
-        first_success_src: Optional[np.ndarray] = None
-        use_manual_points = len(self.template_levels) > 0
-
-        if use_manual_points and len(self.template_levels) != len(levels):
+        if len(self.template_levels) > 0 and len(self.template_levels) != len(levels):
             messagebox.showerror(
                 "Levels mismatch",
                 "Current edited points were extracted with a different levels setting.\n"
@@ -589,80 +1059,34 @@ class CreateTemplateTab(ttk.Frame):
             )
             return
 
-        if use_manual_points:
-            base_levels = clone_levels(self.template_levels)
-            detector.class_templates[class_id] = []
-            detector.class_meta[class_id] = []
-            detector.invalidate_native_cache(class_id)
-            for angle_deg, scale in pose_infos:
-                transformed = self._transform_levels_for_pose(
-                    base_levels=base_levels,
-                    angle_deg=float(angle_deg),
-                    scale=float(scale),
-                    # Keep expanded canvas for transformed variants (do not crop back).
-                    auto_crop=False,
-                    adapt_feature_count=True,
-                )
-                if (not transformed) or any(len(lv.features) <= 0 for lv in transformed):
-                    skipped += 1
-                    continue
+        original_mode = "manual_points" if use_manual_points else "auto"
+        pose_ui = {
+            "angle_start": float(self.angle_start_var.get()),
+            "angle_end": float(self.angle_end_var.get()),
+            "angle_step": float(self.angle_step_var.get()),
+            "scale_start": float(self.scale_start_var.get()),
+            "scale_end": float(self.scale_end_var.get()),
+            "scale_step": float(self.scale_step_var.get()),
+        }
 
-                detector.class_templates[class_id].append(transformed)
-                detector.class_meta[class_id].append(
-                    {
-                        "angle": float(angle_deg),
-                        "scale": float(scale),
-                        "roi_x": int(self.roi.x),
-                        "roi_y": int(self.roi.y),
-                        "roi_w": int(self.roi.w),
-                        "roi_h": int(self.roi.h),
-                        "mask_rects": mask_meta,
-                    }
-                )
-                kept += 1
-                if first_success_tid < 0:
-                    first_success_tid = len(detector.class_templates[class_id]) - 1
-                    l0 = transformed[0]
-                    ph = max(1, int(l0.height) + 1)
-                    pw = max(1, int(l0.width) + 1)
-                    first_success_src = np.zeros((ph, pw, 3), dtype=np.uint8)
-        else:
-            producer = ShapeInfoProducer(roi_img, roi_mask)
-            a0 = float(self.angle_start_var.get())
-            a1 = float(self.angle_end_var.get())
-            s0 = float(self.scale_start_var.get())
-            s1 = float(self.scale_end_var.get())
-            producer.angle_range = [a0, a1] if abs(a1 - a0) > 1e-9 else [a0]
-            producer.scale_range = [s0, s1] if abs(s1 - s0) > 1e-9 else [s0]
-            producer.angle_step = float(max(1e-6, self.angle_step_var.get()))
-            producer.scale_step = float(max(1e-6, self.scale_step_var.get()))
-            infos = producer.produce_infos()
-            for info in infos:
-                src_i = producer.src_of(info)
-                mask_i = producer.mask_of(info)
-                nfeat = max(16, int(round(float(num_features) * float(info.scale))))
-                tid = detector.add_template(
-                    src_i,
-                    class_id=class_id,
-                    object_mask=mask_i,
-                    num_features=nfeat,
-                    metadata={
-                        "angle": float(info.angle),
-                        "scale": float(info.scale),
-                        "roi_x": int(self.roi.x),
-                        "roi_y": int(self.roi.y),
-                        "roi_w": int(self.roi.w),
-                        "roi_h": int(self.roi.h),
-                        "mask_rects": mask_meta,
-                    },
-                )
-                if tid >= 0:
-                    kept += 1
-                    if first_success_tid < 0:
-                        first_success_tid = int(tid)
-                        first_success_src = src_i.copy()
-                else:
-                    skipped += 1
+        try:
+            detector, kept, skipped = build_multi_backend_detector(
+                class_id=class_id,
+                roi_img=roi_img,
+                roi_rect=self.roi,
+                mask_rects=self.mask_rects,
+                pose_infos=pose_infos,
+                pose_ui=pose_ui,
+                levels=levels,
+                num_features=num_features,
+                weak_threshold=weak_threshold,
+                strong_threshold=strong_threshold,
+                original_mode=original_mode,
+                original_editor_levels=self.template_levels if use_manual_points else None,
+            )
+        except Exception as exc:
+            messagebox.showerror("Build error", str(exc))
+            return
 
         if kept <= 0:
             messagebox.showerror(
@@ -674,22 +1098,24 @@ class CreateTemplateTab(ttk.Frame):
 
         save_detector_model(detector, out_path)
 
-        if first_success_tid >= 0 and first_success_src is not None:
-            preview = first_success_src
-            tl = detector.get_templates(class_id, first_success_tid)[0]
-            x1 = int(tl.tl_x)
-            y1 = int(tl.tl_y)
-            x2 = int(tl.tl_x + tl.width)
-            y2 = int(tl.tl_y + tl.height)
-            cv2.rectangle(preview, (x1, y1), (x2, y2), (0, 255, 255), 1, cv2.LINE_AA)
-            palette = orientation_palette_bgr()
-            for f in tl.features:
-                px = int(f.x + tl.tl_x)
-                py = int(f.y + tl.tl_y)
-                color = palette[int(f.label) % len(palette)]
-                cv2.drawMarker(preview, (px, py), color, markerType=cv2.MARKER_CROSS, markerSize=7, thickness=1, line_type=cv2.LINE_AA)
-        else:
-            preview = self._render_image()
+        preview_meta = detector.get_template_meta(class_id, 0)
+        preview = ShapeInfoProducer.transform(
+            roi_img,
+            float(preview_meta.get("angle", 0.0)),
+            float(preview_meta.get("scale", 1.0)),
+        ).copy()
+        tl = detector.get_templates(class_id, 0, backend="original")[0]
+        x1 = int(tl.tl_x)
+        y1 = int(tl.tl_y)
+        x2 = int(tl.tl_x + tl.width)
+        y2 = int(tl.tl_y + tl.height)
+        cv2.rectangle(preview, (x1, y1), (x2, y2), (0, 255, 255), 1, cv2.LINE_AA)
+        palette = orientation_palette_bgr()
+        for f in tl.features:
+            px = int(f.x + tl.tl_x)
+            py = int(f.y + tl.tl_y)
+            color = palette[int(f.label) % len(palette)]
+            cv2.drawMarker(preview, (px, py), color, markerType=cv2.MARKER_CROSS, markerSize=7, thickness=1, line_type=cv2.LINE_AA)
         preview_path = str(Path(out_path).with_name(f"{Path(out_path).stem}_preview.png"))
         cv2.imwrite(preview_path, preview)
 
@@ -1117,6 +1543,7 @@ class CreateTemplateTab(ttk.Frame):
         lb = int(label) % 8
         theta = label_to_angle_deg(lb) if theta_deg is None else float(theta_deg)
         tl.features.append(Feature(x=xr, y=yr, label=lb, theta=theta))
+        self.manual_points_dirty = True
         self._sync_levels_from_level0(total_levels=len(self.template_levels))
 
     def _delete_nearest(self, x_abs: int, y_abs: int) -> bool:
@@ -1140,6 +1567,7 @@ class CreateTemplateTab(ttk.Frame):
             return False
         del tl.features[best_idx]
         self.hover_index = None
+        self.manual_points_dirty = True
         self._sync_levels_from_level0(total_levels=len(self.template_levels))
         return True
 
@@ -1164,6 +1592,7 @@ class CreateTemplateTab(ttk.Frame):
             return 0
         tl.features = keep
         self.hover_index = None
+        self.manual_points_dirty = True
         self._sync_levels_from_level0(total_levels=len(self.template_levels))
         return deleted
 
@@ -1224,6 +1653,7 @@ class CreateTemplateTab(ttk.Frame):
                 self.roi = RoiRect(x=xa, y=ya, w=w, h=h)
                 self.mask_rects = []
                 self.template_levels = []
+                self.manual_points_dirty = False
                 self.level_var.set(0)
                 self.level_spin.configure(from_=0, to=0)
                 self.status_var.set(f"ROI set: x={xa}, y={ya}, w={w}, h={h}. Click 'Extract Points From ROI'.")
@@ -2047,10 +2477,13 @@ class FindTemplateTab(ttk.Frame):
         self.crop_stride_var = tk.IntVar(value=0)
         self.nms_iou_var = tk.DoubleVar(value=0.50)
         self.topk_var = tk.IntVar(value=20)
+        self.icp_candidates_var = tk.IntVar(value=20)
         self.auto_sweep_var = tk.BooleanVar(value=True)
         self.backend_var = tk.StringVar(value="Original")
         self.zoom_var = tk.DoubleVar(value=1.5)
         self.out_image_var = tk.StringVar(value="")
+        self.backend_thresholds = {key: 90.0 for _label, key in BACKEND_ITEMS}
+        self._last_backend_label = "Original"
 
         row = 0
         ttk.Label(control, text="Find With Model").grid(row=row, column=0, sticky="w")
@@ -2099,6 +2532,7 @@ class FindTemplateTab(ttk.Frame):
             width=24,
         )
         self.backend_combo.grid(row=row, column=0, sticky="ew")
+        self.backend_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_backend_changed())
         row += 1
 
         ttk.Label(control, text="Threshold").grid(row=row, column=0, sticky="w", pady=(6, 0))
@@ -2119,6 +2553,11 @@ class FindTemplateTab(ttk.Frame):
         ttk.Label(control, text="Top K").grid(row=row, column=0, sticky="w", pady=(6, 0))
         row += 1
         ttk.Spinbox(control, from_=1, to=500, increment=1, textvariable=self.topk_var, width=10).grid(row=row, column=0, sticky="w")
+        row += 1
+
+        ttk.Label(control, text="ICP Candidates").grid(row=row, column=0, sticky="w", pady=(6, 0))
+        row += 1
+        ttk.Spinbox(control, from_=1, to=500, increment=1, textvariable=self.icp_candidates_var, width=10).grid(row=row, column=0, sticky="w")
         row += 1
 
         ttk.Checkbutton(control, text="Auto Threshold Sweep", variable=self.auto_sweep_var).grid(row=row, column=0, sticky="w", pady=(6, 0))
@@ -2167,6 +2606,19 @@ class FindTemplateTab(ttk.Frame):
         self.class_combo.configure(values=values)
         if self.class_choice_var.get() not in values:
             self.class_choice_var.set("ALL")
+
+    def _on_backend_changed(self) -> None:
+        previous_key = None
+        for label, key in BACKEND_ITEMS:
+            if label == getattr(self, "_last_backend_label", self.backend_var.get().strip()):
+                previous_key = key
+                break
+        if previous_key is not None:
+            self.backend_thresholds[previous_key] = float(self.threshold_var.get())
+        current_label = self.backend_var.get().strip()
+        current_key = BACKEND_LABEL_TO_KEY.get(current_label, "original")
+        self.threshold_var.set(float(self.backend_thresholds.get(current_key, 90.0)))
+        self._last_backend_label = current_label
 
     def open_model(self) -> None:
         path = filedialog.askopenfilename(
@@ -2260,20 +2712,25 @@ class FindTemplateTab(ttk.Frame):
         crop_stride = int(max(0, self.crop_stride_var.get()))
         nms_iou = float(np.clip(self.nms_iou_var.get(), 0.0, 1.0))
         topk = int(max(1, self.topk_var.get()))
+        icp_candidates = int(max(1, self.icp_candidates_var.get()))
         backend_key = BACKEND_LABEL_TO_KEY.get(self.backend_var.get().strip(), "original")
         backend_label = BACKEND_KEY_TO_LABEL.get(backend_key, "Original")
+        self.backend_thresholds[backend_key] = threshold
         match_ms = 0.0
         nms_ms = 0.0
         refine_ms = 0.0
         attempts = 0
 
         scene_for_match = self.scene_bgr
+        scene_mask_for_match = self.scene_mask
         if crop_stride > 0:
             h, w = scene_for_match.shape[:2]
             h2 = (h // crop_stride) * crop_stride
             w2 = (w // crop_stride) * crop_stride
             if h2 > 0 and w2 > 0:
                 scene_for_match = scene_for_match[:h2, :w2].copy()
+                if scene_mask_for_match is not None:
+                    scene_mask_for_match = scene_mask_for_match[:h2, :w2].copy()
 
         class_choice = self.class_choice_var.get().strip()
         if class_choice == "" or class_choice == "ALL":
@@ -2281,22 +2738,23 @@ class FindTemplateTab(ttk.Frame):
         else:
             class_ids = [class_choice]
 
+        if backend_key == "fusion" and scene_mask_for_match is not None:
+            messagebox.showerror("Fusion backend", "Fusion backend does not support scene mask. Clear the scene mask or switch backend.")
+            return
+
         def match_once(th: float):
-            nonlocal match_ms, nms_ms, attempts
+            nonlocal match_ms, attempts
             attempts += 1
             t0 = time.perf_counter()
             ms = self.detector.match(
                 scene_for_match,
                 threshold=th,
                 class_ids=class_ids,
-                mask=self.scene_mask,
+                mask=None if backend_key == "fusion" else scene_mask_for_match,
                 backend=backend_key,
             )
             match_ms += (time.perf_counter() - t0) * 1000.0
-            t1 = time.perf_counter()
-            ms = nms_matches(self.detector, ms, iou_threshold=nms_iou)
             ms.sort(key=lambda m: m.similarity, reverse=True)
-            nms_ms += (time.perf_counter() - t1) * 1000.0
             return ms
 
         used_threshold = threshold
@@ -2311,9 +2769,33 @@ class FindTemplateTab(ttk.Frame):
                     break
                 cur -= 5
 
+        if backend_key == "sim3" and matches:
+            refine_pool = matches[: min(len(matches), icp_candidates)]
+            refine_ms = refine_matches_sim3(self.detector, scene_for_match, refine_pool) * 1000.0
+            refine_pool.sort(
+                key=lambda m: (
+                    -float(m.refined_fitness if m.refined_fitness is not None else -1.0),
+                    float(m.refined_rmse if m.refined_rmse is not None else 1e9),
+                    -float(m.similarity),
+                )
+            )
+            t1 = time.perf_counter()
+            matches = nms_matches(self.detector, refine_pool, iou_threshold=nms_iou)
+            matches.sort(
+                key=lambda m: (
+                    -float(m.refined_fitness if m.refined_fitness is not None else -1.0),
+                    float(m.refined_rmse if m.refined_rmse is not None else 1e9),
+                    -float(m.similarity),
+                )
+            )
+            nms_ms += (time.perf_counter() - t1) * 1000.0
+        else:
+            t1 = time.perf_counter()
+            matches = nms_matches(self.detector, matches, iou_threshold=nms_iou)
+            matches.sort(key=lambda m: m.similarity, reverse=True)
+            nms_ms += (time.perf_counter() - t1) * 1000.0
+
         shown = min(topk, len(matches))
-        if backend_key == "sim3" and shown > 0:
-            refine_ms = refine_matches_sim3(self.detector, scene_for_match, matches[:shown]) * 1000.0
 
         draw_t0 = time.perf_counter()
         overlay = draw_matches(self.detector, scene_for_match, matches, topk=topk)
@@ -2355,7 +2837,7 @@ class FindTemplateTab(ttk.Frame):
         self.status_var.set(
             f"Match done. backend={backend_label}, total={len(matches)}, shown={shown}, "
             f"threshold_used={used_threshold:.1f}, stride={crop_stride}, time={total_ms:.0f}ms "
-            f"(match={match_ms:.0f}, nms={nms_ms:.0f}, refine={refine_ms:.0f}, draw={draw_ms:.0f})."
+            f"(match={match_ms:.0f}, nms={nms_ms:.0f}, refine={refine_ms:.0f}, draw={draw_ms:.0f}, icp_candidates={icp_candidates})."
         )
 
     def save_overlay(self) -> None:
@@ -2423,6 +2905,843 @@ class FindTemplateTab(ttk.Frame):
         self.canvas.configure(scrollregion=(0, 0, w, h))
 
 
+class EditTemplateTabV2(ttk.Frame):
+    def __init__(self, master: tk.Misc) -> None:
+        super().__init__(master)
+
+        self.detector: Optional[Line2DupLikeDetector] = None
+        self.model_path = ""
+        self.class_states: dict[str, dict] = {}
+        self.current_class_id = ""
+        self.undo_stack: List[UndoItem] = []
+
+        self.image_bgr: Optional[np.ndarray] = None
+        self.roi: Optional[RoiRect] = None
+        self.source_roi_rect: Optional[RoiRect] = None
+        self.mask_rects: List[MaskRect] = []
+        self.template_levels: List[TemplateLevel] = []
+
+        self.drag_kind: Optional[str] = None
+        self.drag_start: Optional[Tuple[int, int]] = None
+        self.drag_end: Optional[Tuple[int, int]] = None
+        self.hover_index: Optional[int] = None
+
+        self._photo: Optional[tk.PhotoImage] = None
+        self._canvas_image_id: Optional[int] = None
+        self._last_render_w = 320
+        self._last_render_h = 240
+
+        self._build_ui()
+        self._refresh_canvas()
+
+    def _build_ui(self) -> None:
+        self.columnconfigure(1, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        control = ttk.Frame(self, padding=8)
+        control.grid(row=0, column=0, sticky="ns")
+        view = ttk.Frame(self, padding=(0, 8, 8, 8))
+        view.grid(row=0, column=1, sticky="nsew")
+        view.columnconfigure(0, weight=1)
+        view.rowconfigure(0, weight=1)
+
+        self.status_var = tk.StringVar(value="Load a v2 model to edit embedded ROI/mask/pose data.")
+        self.class_var = tk.StringVar(value="")
+        self.tool_var = tk.StringVar(value="point")
+        self.level_var = tk.IntVar(value=0)
+        self.label_var = tk.IntVar(value=0)
+        self.zoom_var = tk.DoubleVar(value=2.0)
+        self.out_model_var = tk.StringVar(value="")
+        self.angle_start_var = tk.DoubleVar(value=0.0)
+        self.angle_end_var = tk.DoubleVar(value=0.0)
+        self.angle_step_var = tk.DoubleVar(value=10.0)
+        self.scale_start_var = tk.DoubleVar(value=1.0)
+        self.scale_end_var = tk.DoubleVar(value=1.0)
+        self.scale_step_var = tk.DoubleVar(value=0.05)
+
+        row = 0
+        ttk.Label(control, text="Edit Existing Model (rebuild Fusion / sim3 on save)").grid(row=row, column=0, sticky="w")
+        row += 1
+
+        ttk.Button(control, text="Open Model...", command=self.open_model).grid(row=row, column=0, sticky="ew", pady=(6, 0))
+        row += 1
+        self.model_label = ttk.Label(control, text="(no model)", width=36, wraplength=260)
+        self.model_label.grid(row=row, column=0, sticky="w")
+        row += 1
+
+        ttk.Button(control, text="Output Model...", command=self.select_output_model).grid(row=row, column=0, sticky="ew", pady=(8, 0))
+        row += 1
+        self.out_label = ttk.Label(control, text="(overwrite input model)", width=36, wraplength=260)
+        self.out_label.grid(row=row, column=0, sticky="w")
+        row += 1
+
+        ttk.Separator(control, orient="horizontal").grid(row=row, column=0, sticky="ew", pady=6)
+        row += 1
+
+        ttk.Label(control, text="Class").grid(row=row, column=0, sticky="w")
+        row += 1
+        self.class_combo = ttk.Combobox(control, textvariable=self.class_var, values=[], state="readonly", width=24)
+        self.class_combo.grid(row=row, column=0, sticky="ew")
+        self.class_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_class_changed())
+        row += 1
+
+        ttk.Label(control, text="Level").grid(row=row, column=0, sticky="w", pady=(6, 0))
+        row += 1
+        self.level_spin = ttk.Spinbox(control, from_=0, to=0, increment=1, textvariable=self.level_var, width=10, command=self._refresh_canvas)
+        self.level_spin.grid(row=row, column=0, sticky="w")
+        row += 1
+
+        ttk.Label(control, text="Label For Short Drag").grid(row=row, column=0, sticky="w", pady=(6, 0))
+        row += 1
+        ttk.Spinbox(control, from_=0, to=7, increment=1, textvariable=self.label_var, width=10).grid(row=row, column=0, sticky="w")
+        row += 1
+
+        ttk.Label(control, text="Zoom").grid(row=row, column=0, sticky="w", pady=(6, 0))
+        row += 1
+        ttk.Scale(control, from_=ZOOM_MIN, to=ZOOM_MAX, orient="horizontal", variable=self.zoom_var, command=lambda _e: self._refresh_canvas()).grid(row=row, column=0, sticky="ew")
+        row += 1
+
+        ttk.Label(control, text="Angle Start / End / Step").grid(row=row, column=0, sticky="w", pady=(6, 0))
+        row += 1
+        angle_row = ttk.Frame(control)
+        angle_row.grid(row=row, column=0, sticky="w")
+        ttk.Spinbox(angle_row, from_=-3600, to=3600, increment=1, textvariable=self.angle_start_var, width=8).pack(side="left")
+        ttk.Spinbox(angle_row, from_=-3600, to=3600, increment=1, textvariable=self.angle_end_var, width=8).pack(side="left", padx=(4, 0))
+        ttk.Spinbox(angle_row, from_=0.1, to=3600, increment=1, textvariable=self.angle_step_var, width=8).pack(side="left", padx=(4, 0))
+        row += 1
+
+        ttk.Label(control, text="Scale Start / End / Step").grid(row=row, column=0, sticky="w", pady=(6, 0))
+        row += 1
+        scale_row = ttk.Frame(control)
+        scale_row.grid(row=row, column=0, sticky="w")
+        ttk.Spinbox(scale_row, from_=0.01, to=100, increment=0.01, textvariable=self.scale_start_var, width=8).pack(side="left")
+        ttk.Spinbox(scale_row, from_=0.01, to=100, increment=0.01, textvariable=self.scale_end_var, width=8).pack(side="left", padx=(4, 0))
+        ttk.Spinbox(scale_row, from_=0.001, to=100, increment=0.01, textvariable=self.scale_step_var, width=8).pack(side="left", padx=(4, 0))
+        row += 1
+
+        ttk.Label(control, text="Tool").grid(row=row, column=0, sticky="w", pady=(6, 0))
+        row += 1
+        tool_row = ttk.Frame(control)
+        tool_row.grid(row=row, column=0, sticky="w")
+        ttk.Radiobutton(tool_row, text="Edit Points", value="point", variable=self.tool_var, command=self._refresh_canvas).pack(side="left")
+        ttk.Radiobutton(tool_row, text="Edit Mask", value="mask", variable=self.tool_var, command=self._refresh_canvas).pack(side="left", padx=(8, 0))
+        row += 1
+
+        ttk.Label(control, text="Original points only affect Original backend.", wraplength=260, foreground="#7a5a00").grid(
+            row=row, column=0, sticky="w", pady=(6, 0)
+        )
+        row += 1
+
+        ttk.Button(control, text="Undo", command=self.undo).grid(row=row, column=0, sticky="ew", pady=(8, 0))
+        row += 1
+        ttk.Button(control, text="Clear Masks", command=self.clear_masks).grid(row=row, column=0, sticky="ew", pady=(4, 0))
+        row += 1
+        ttk.Button(control, text="Save Model", command=self.save_model).grid(row=row, column=0, sticky="ew", pady=(4, 0))
+        row += 1
+
+        ttk.Separator(control, orient="horizontal").grid(row=row, column=0, sticky="ew", pady=8)
+        row += 1
+        ttk.Label(control, textvariable=self.status_var, wraplength=260, foreground="#2f7d32").grid(row=row, column=0, sticky="w")
+
+        self.canvas = tk.Canvas(view, bg="#1d1d1d", highlightthickness=0)
+        xbar = ttk.Scrollbar(view, orient="horizontal", command=self.canvas.xview)
+        ybar = ttk.Scrollbar(view, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(xscrollcommand=xbar.set, yscrollcommand=ybar.set)
+
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        ybar.grid(row=0, column=1, sticky="ns")
+        xbar.grid(row=1, column=0, sticky="ew")
+
+        self.canvas.bind("<ButtonPress-1>", self._on_left_down)
+        self.canvas.bind("<B1-Motion>", self._on_left_move)
+        self.canvas.bind("<ButtonRelease-1>", self._on_left_up)
+        self.canvas.bind("<ButtonPress-3>", self._on_right_down)
+        self.canvas.bind("<B3-Motion>", self._on_right_move)
+        self.canvas.bind("<ButtonRelease-3>", self._on_right_up)
+        self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)
+        self.canvas.bind("<Button-4>", self._on_mouse_wheel)
+        self.canvas.bind("<Button-5>", self._on_mouse_wheel)
+        self.canvas.bind("<Motion>", self._on_motion)
+
+    def open_model(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Open model",
+            filetypes=[("JSON", "*.json"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            detector = load_detector_model(path)
+        except Exception as exc:
+            messagebox.showerror("Load error", str(exc))
+            return
+
+        class_states: dict[str, dict] = {}
+        for class_id in detector.class_ids():
+            try:
+                source_info, roi_img, _roi_mask, roi_rect, mask_rects = load_class_source_assets(detector, class_id)
+            except Exception:
+                continue
+            pose_ui = source_info.get("pose_infos", {}).get("ui", {}) if isinstance(source_info, dict) else {}
+            editor_levels = detector.get_original_editor_levels(class_id)
+            if not editor_levels and detector.backend_templates.get("original", {}).get(class_id):
+                editor_levels = normalize_extracted_levels_to_roi(
+                    detector.get_templates(class_id, 0, backend="original"),
+                    roi_img,
+                )
+            class_states[class_id] = {
+                "image_bgr": roi_img,
+                "source_roi_rect": roi_rect,
+                "mask_rects": [MaskRect(x=int(rect.x), y=int(rect.y), w=int(rect.w), h=int(rect.h)) for rect in mask_rects],
+                "template_levels": clone_levels(editor_levels),
+                "pose_ui": {
+                    "angle_start": float(pose_ui.get("angle_start", 0.0)),
+                    "angle_end": float(pose_ui.get("angle_end", 0.0)),
+                    "angle_step": float(pose_ui.get("angle_step", 10.0)),
+                    "scale_start": float(pose_ui.get("scale_start", 1.0)),
+                    "scale_end": float(pose_ui.get("scale_end", 1.0)),
+                    "scale_step": float(pose_ui.get("scale_step", 0.05)),
+                },
+                "original_mode": str(source_info.get("original_mode", "auto")),
+                "points_dirty": False,
+                "mask_dirty": False,
+            }
+        if not class_states:
+            messagebox.showerror("Invalid model", "No editable v2 classes found in model.")
+            return
+
+        self.detector = detector
+        self.class_states = class_states
+        self.model_path = path
+        self.model_label.configure(text=path)
+        self.out_model_var.set(path)
+        self.out_label.configure(text=path)
+        class_ids = list(class_states.keys())
+        self.class_combo.configure(values=class_ids)
+        self.class_var.set(class_ids[0])
+        self.undo_stack = []
+        self._on_class_changed()
+        self.status_var.set("Model loaded. Edit embedded ROI points or masks, then save to rebuild all backends.")
+        self._refresh_canvas()
+
+    def select_output_model(self) -> None:
+        initial = self.out_model_var.get().strip() or self.model_path
+        path = filedialog.asksaveasfilename(
+            title="Output model path",
+            initialfile=Path(initial).name if initial else "template_model.json",
+            defaultextension=".json",
+            filetypes=[("JSON", "*.json"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        self.out_model_var.set(path)
+        self.out_label.configure(text=path)
+
+    def _capture_current_state(self) -> None:
+        if not self.current_class_id or self.current_class_id not in self.class_states:
+            return
+        state = self.class_states[self.current_class_id]
+        state["image_bgr"] = self.image_bgr.copy() if self.image_bgr is not None else None
+        if self.source_roi_rect is not None:
+            state["source_roi_rect"] = RoiRect(
+                x=int(self.source_roi_rect.x),
+                y=int(self.source_roi_rect.y),
+                w=int(self.source_roi_rect.w),
+                h=int(self.source_roi_rect.h),
+            )
+        state["mask_rects"] = [MaskRect(x=int(rect.x), y=int(rect.y), w=int(rect.w), h=int(rect.h)) for rect in self.mask_rects]
+        state["template_levels"] = clone_levels(self.template_levels)
+        state["pose_ui"] = {
+            "angle_start": float(self.angle_start_var.get()),
+            "angle_end": float(self.angle_end_var.get()),
+            "angle_step": float(self.angle_step_var.get()),
+            "scale_start": float(self.scale_start_var.get()),
+            "scale_end": float(self.scale_end_var.get()),
+            "scale_step": float(self.scale_step_var.get()),
+        }
+
+    def _on_class_changed(self) -> None:
+        if self.detector is None or not self.class_states:
+            return
+        self._capture_current_state()
+        class_id = self.class_var.get().strip()
+        if not class_id or class_id not in self.class_states:
+            return
+        state = self.class_states[class_id]
+        self.current_class_id = class_id
+        self.image_bgr = state["image_bgr"].copy() if state.get("image_bgr") is not None else None
+        self.source_roi_rect = RoiRect(
+            x=int(state["source_roi_rect"].x),
+            y=int(state["source_roi_rect"].y),
+            w=int(state["source_roi_rect"].w),
+            h=int(state["source_roi_rect"].h),
+        )
+        self.roi = RoiRect(0, 0, int(self.image_bgr.shape[1]), int(self.image_bgr.shape[0])) if self.image_bgr is not None else None
+        self.mask_rects = [MaskRect(x=int(rect.x), y=int(rect.y), w=int(rect.w), h=int(rect.h)) for rect in state["mask_rects"]]
+        self.template_levels = clone_levels(state["template_levels"])
+        pose_ui = state["pose_ui"]
+        self.angle_start_var.set(float(pose_ui.get("angle_start", 0.0)))
+        self.angle_end_var.set(float(pose_ui.get("angle_end", 0.0)))
+        self.angle_step_var.set(float(pose_ui.get("angle_step", 10.0)))
+        self.scale_start_var.set(float(pose_ui.get("scale_start", 1.0)))
+        self.scale_end_var.set(float(pose_ui.get("scale_end", 1.0)))
+        self.scale_step_var.set(float(pose_ui.get("scale_step", 0.05)))
+        self.level_spin.configure(from_=0, to=max(0, len(self.template_levels) - 1))
+        self.level_var.set(0)
+        self.tool_var.set("point")
+        self.hover_index = None
+        self._refresh_canvas()
+
+    def _current_template_level(self) -> Optional[TemplateLevel]:
+        if not self.template_levels:
+            return None
+        level_index = max(0, min(int(self.level_var.get()), len(self.template_levels) - 1))
+        self.level_var.set(level_index)
+        return self.template_levels[level_index]
+
+    def _get_abs_points(self) -> List[Tuple[int, int]]:
+        tl = self._current_template_level()
+        if tl is None:
+            return []
+        return [(int(feature.x + tl.tl_x), int(feature.y + tl.tl_y)) for feature in tl.features]
+
+    def _level_roi_image(self) -> np.ndarray:
+        if self.image_bgr is None:
+            return np.zeros((240, 320, 3), dtype=np.uint8)
+        img = self.image_bgr.copy()
+        for _ in range(max(0, int(self.level_var.get()))):
+            if img.shape[0] < 2 or img.shape[1] < 2:
+                break
+            img = cv2.pyrDown(img)
+        return img
+
+    def _build_roi_mask(self) -> np.ndarray:
+        if self.roi is None:
+            return np.zeros((1, 1), dtype=np.uint8)
+        return build_mask_from_rects(self.roi.w, self.roi.h, self.mask_rects)
+
+    def _display_mask_rects(self) -> List[MaskRect]:
+        rects: List[MaskRect] = []
+        level = max(0, int(self.level_var.get()))
+        scale = max(1, 1 << level)
+        for rect in self.mask_rects:
+            x1 = int(rect.x // scale)
+            y1 = int(rect.y // scale)
+            x2 = int((rect.x + rect.w + scale - 1) // scale)
+            y2 = int((rect.y + rect.h + scale - 1) // scale)
+            rects.append(MaskRect(x=x1, y=y1, w=max(1, x2 - x1), h=max(1, y2 - y1)))
+        return rects
+
+    def _point_is_masked(self, x_abs: int, y_abs: int) -> bool:
+        for rect in self._display_mask_rects():
+            if rect.x <= x_abs < rect.x + rect.w and rect.y <= y_abs < rect.y + rect.h:
+                return True
+        return False
+
+    def _sync_levels_from_level0(self) -> None:
+        if not self.template_levels or self.image_bgr is None:
+            return
+        shapes = roi_level_shapes_from_image(self.image_bgr, len(self.template_levels))
+        self.template_levels = sync_levels_from_level0(self.template_levels[0], shapes)
+
+    def _drop_points_inside_masks(self) -> None:
+        if not self.template_levels or not self.mask_rects:
+            return
+        level0 = self.template_levels[0]
+        kept: List[Feature] = []
+        for feature in level0.features:
+            keep = True
+            for rect in self.mask_rects:
+                if rect.x <= int(feature.x) < rect.x + rect.w and rect.y <= int(feature.y) < rect.y + rect.h:
+                    keep = False
+                    break
+            if keep:
+                kept.append(feature)
+        if len(kept) != len(level0.features):
+            level0.features = kept
+            self._sync_levels_from_level0()
+
+    def _add_mask_rect(self, x0_abs: int, y0_abs: int, x1_abs: int, y1_abs: int) -> bool:
+        if self.roi is None:
+            return False
+        level = max(0, int(self.level_var.get()))
+        scale = max(1, 1 << level)
+        xa0 = int(round(min(x0_abs, x1_abs) * scale))
+        ya0 = int(round(min(y0_abs, y1_abs) * scale))
+        xb0 = int(round(max(x0_abs, x1_abs) * scale))
+        yb0 = int(round(max(y0_abs, y1_abs) * scale))
+        xa0 = max(0, min(xa0, self.roi.w))
+        ya0 = max(0, min(ya0, self.roi.h))
+        xb0 = max(0, min(xb0, self.roi.w))
+        yb0 = max(0, min(yb0, self.roi.h))
+        w = max(0, xb0 - xa0)
+        h = max(0, yb0 - ya0)
+        if w < scale or h < scale:
+            self.status_var.set("Mask rectangle too small.")
+            return False
+        self.mask_rects.append(MaskRect(x=xa0, y=ya0, w=w, h=h))
+        self._drop_points_inside_masks()
+        if self.current_class_id in self.class_states:
+            self.class_states[self.current_class_id]["mask_dirty"] = True
+        self.status_var.set(f"Added mask rectangle. masks={len(self.mask_rects)}")
+        return True
+
+    def _delete_nearest_mask(self, x_abs: int, y_abs: int) -> bool:
+        if not self.mask_rects:
+            return False
+        level = max(0, int(self.level_var.get()))
+        scale = max(1, 1 << level)
+        x0 = int(round(x_abs * scale))
+        y0 = int(round(y_abs * scale))
+        tol = 10.0 * scale
+        best_idx = -1
+        best_d2 = 1e18
+        for i, rect in enumerate(self.mask_rects):
+            rx1 = int(rect.x)
+            ry1 = int(rect.y)
+            rx2 = int(rect.x + rect.w)
+            ry2 = int(rect.y + rect.h)
+            dx = 0.0
+            dy = 0.0
+            if x0 < rx1:
+                dx = float(rx1 - x0)
+            elif x0 > rx2:
+                dx = float(x0 - rx2)
+            if y0 < ry1:
+                dy = float(ry1 - y0)
+            elif y0 > ry2:
+                dy = float(y0 - ry2)
+            d2 = dx * dx + dy * dy
+            if d2 < best_d2:
+                best_d2 = d2
+                best_idx = i
+        if best_idx < 0 or best_d2 > tol * tol:
+            return False
+        del self.mask_rects[best_idx]
+        self._drop_points_inside_masks()
+        if self.current_class_id in self.class_states:
+            self.class_states[self.current_class_id]["mask_dirty"] = True
+        self.status_var.set(f"Deleted mask rectangle. masks={len(self.mask_rects)}")
+        return True
+
+    def _push_undo(self) -> None:
+        tl = self._current_template_level()
+        if tl is None:
+            return
+        snapshot = [Feature(x=int(f.x), y=int(f.y), label=int(f.label), theta=float(f.theta)) for f in tl.features]
+        self.undo_stack.append(UndoItem(class_id=self.class_var.get().strip(), template_id=0, level=int(self.level_var.get()), features=snapshot))
+        if len(self.undo_stack) > 200:
+            self.undo_stack.pop(0)
+
+    def undo(self) -> None:
+        if self.detector is None or not self.undo_stack:
+            return
+        item = self.undo_stack.pop()
+        if item.class_id != self.class_var.get().strip():
+            return
+        if item.level < 0 or item.level >= len(self.template_levels):
+            return
+        self.template_levels[item.level].features = item.features
+        self._sync_levels_from_level0()
+        if self.current_class_id in self.class_states:
+            self.class_states[self.current_class_id]["points_dirty"] = True
+        self.level_var.set(item.level)
+        self.status_var.set("Undo complete.")
+        self._refresh_canvas()
+
+    def clear_masks(self) -> None:
+        if not self.mask_rects:
+            self.status_var.set("No mask rectangles to clear.")
+            return
+        self.mask_rects = []
+        if self.current_class_id in self.class_states:
+            self.class_states[self.current_class_id]["mask_dirty"] = True
+        self.status_var.set("Mask rectangles cleared.")
+        self._refresh_canvas()
+
+    def _update_hover(self, x_abs: int, y_abs: int) -> None:
+        if self.tool_var.get() == "mask":
+            self.hover_index = None
+            return
+        tl = self._current_template_level()
+        if tl is None or not tl.features:
+            self.hover_index = None
+            return
+        best_idx = -1
+        best_d2 = 1e18
+        for i, (px, py) in enumerate(self._get_abs_points()):
+            dx = float(px - x_abs)
+            dy = float(py - y_abs)
+            d2 = dx * dx + dy * dy
+            if d2 < best_d2:
+                best_d2 = d2
+                best_idx = i
+        self.hover_index = best_idx if best_idx >= 0 and best_d2 <= 8.0 * 8.0 else None
+
+    def _add_feature(self, x_abs: int, y_abs: int, label: int, theta_deg: Optional[float]) -> None:
+        tl = self._current_template_level()
+        if tl is None:
+            return
+        if int(self.level_var.get()) != 0:
+            self.status_var.set("Only L0 is editable. Switch Level to 0.")
+            return
+        if self._point_is_masked(x_abs, y_abs):
+            self.status_var.set("Cannot add point inside masked area.")
+            return
+        self._push_undo()
+        xr = int(round(x_abs - tl.tl_x))
+        yr = int(round(y_abs - tl.tl_y))
+        xr = max(0, min(xr, int(tl.width)))
+        yr = max(0, min(yr, int(tl.height)))
+        lb = int(label) % 8
+        theta = label_to_angle_deg(lb) if theta_deg is None else float(theta_deg)
+        tl.features.append(Feature(x=xr, y=yr, label=lb, theta=theta))
+        self._sync_levels_from_level0()
+        if self.current_class_id in self.class_states:
+            self.class_states[self.current_class_id]["points_dirty"] = True
+
+    def _delete_nearest(self, x_abs: int, y_abs: int) -> bool:
+        tl = self._current_template_level()
+        if tl is None or not tl.features:
+            return False
+        if int(self.level_var.get()) != 0:
+            self.status_var.set("Only L0 is editable. Switch Level to 0.")
+            return False
+        best_idx = -1
+        best_d2 = 1e18
+        pts = self._get_abs_points()
+        for i, (px, py) in enumerate(pts):
+            dx = float(px - x_abs)
+            dy = float(py - y_abs)
+            d2 = dx * dx + dy * dy
+            if d2 < best_d2:
+                best_d2 = d2
+                best_idx = i
+        if best_idx < 0 or best_d2 > 8.0 * 8.0:
+            return False
+        self._push_undo()
+        del tl.features[best_idx]
+        self._sync_levels_from_level0()
+        if self.current_class_id in self.class_states:
+            self.class_states[self.current_class_id]["points_dirty"] = True
+        self.hover_index = None
+        return True
+
+    def _delete_points_in_box(self, start: Tuple[int, int], end: Tuple[int, int]) -> int:
+        tl = self._current_template_level()
+        if tl is None or not tl.features:
+            return 0
+        if int(self.level_var.get()) != 0:
+            self.status_var.set("Only L0 is editable. Switch Level to 0.")
+            return 0
+        x1, y1, x2, y2 = normalize_drag_rect(start, end)
+        pts = self._get_abs_points()
+        keep: List[Feature] = []
+        deleted = 0
+        for i, feat in enumerate(tl.features):
+            px, py = pts[i]
+            if x1 <= int(px) <= x2 and y1 <= int(py) <= y2:
+                deleted += 1
+                continue
+            keep.append(feat)
+        if deleted <= 0:
+            return 0
+        self._push_undo()
+        tl.features = keep
+        self._sync_levels_from_level0()
+        if self.current_class_id in self.class_states:
+            self.class_states[self.current_class_id]["points_dirty"] = True
+        self.hover_index = None
+        return deleted
+
+    def save_model(self) -> None:
+        if self.detector is None:
+            messagebox.showwarning("No model", "Please open model first.")
+            return
+        self._capture_current_state()
+        out_path = self.out_model_var.get().strip() or self.model_path
+        if not out_path:
+            self.select_output_model()
+            out_path = self.out_model_var.get().strip() or self.model_path
+            if not out_path:
+                return
+
+        final_detector = Line2DupLikeDetector(
+            num_features=self.detector.num_features,
+            T_levels=self.detector.T_at_level,
+            weak_threshold=self.detector.weak_threshold,
+            strong_threshold=self.detector.strong_threshold,
+        )
+        build_lines: List[str] = []
+
+        for class_id in self.detector.class_ids():
+            if class_id not in self.class_states:
+                copy_detector_class(self.detector, final_detector, class_id)
+                continue
+            state = self.class_states[class_id]
+            pose_ui = state["pose_ui"]
+            try:
+                pose_infos = pose_infos_from_ui_values(
+                    float(pose_ui.get("angle_start", 0.0)),
+                    float(pose_ui.get("angle_end", 0.0)),
+                    float(pose_ui.get("angle_step", 10.0)),
+                    float(pose_ui.get("scale_start", 1.0)),
+                    float(pose_ui.get("scale_end", 1.0)),
+                    float(pose_ui.get("scale_step", 0.05)),
+                )
+            except Exception as exc:
+                messagebox.showerror("Invalid angle/scale range", f"{class_id}: {exc}")
+                return
+
+            original_mode = "manual_points" if state.get("points_dirty") or str(state.get("original_mode", "auto")) == "manual_points" else "auto"
+            try:
+                rebuilt, kept, skipped = build_multi_backend_detector(
+                    class_id=class_id,
+                    roi_img=state["image_bgr"],
+                    roi_rect=state["source_roi_rect"],
+                    mask_rects=state["mask_rects"],
+                    pose_infos=pose_infos,
+                    pose_ui=pose_ui,
+                    levels=self.detector.T_at_level,
+                    num_features=self.detector.num_features,
+                    weak_threshold=self.detector.weak_threshold,
+                    strong_threshold=self.detector.strong_threshold,
+                    original_mode=original_mode,
+                    original_editor_levels=state["template_levels"] if original_mode == "manual_points" else None,
+                )
+            except Exception as exc:
+                messagebox.showerror("Build error", f"{class_id}: {exc}")
+                return
+            copy_detector_class(rebuilt, final_detector, class_id)
+            build_lines.append(f"{class_id}: templates={kept} skipped={skipped} mode={original_mode}")
+
+        save_detector_model(final_detector, out_path)
+        self.detector = final_detector
+        self.model_path = out_path
+        self.model_label.configure(text=out_path)
+        self.out_model_var.set(out_path)
+        self.out_label.configure(text=out_path)
+
+        reloaded_states: dict[str, dict] = {}
+        for class_id in final_detector.class_ids():
+            try:
+                source_info, roi_img, _roi_mask, roi_rect, mask_rects = load_class_source_assets(final_detector, class_id)
+            except Exception:
+                continue
+            pose_ui = source_info.get("pose_infos", {}).get("ui", {}) if isinstance(source_info, dict) else {}
+            reloaded_states[class_id] = {
+                "image_bgr": roi_img,
+                "source_roi_rect": roi_rect,
+                "mask_rects": [MaskRect(x=int(rect.x), y=int(rect.y), w=int(rect.w), h=int(rect.h)) for rect in mask_rects],
+                "template_levels": final_detector.get_original_editor_levels(class_id),
+                "pose_ui": {
+                    "angle_start": float(pose_ui.get("angle_start", 0.0)),
+                    "angle_end": float(pose_ui.get("angle_end", 0.0)),
+                    "angle_step": float(pose_ui.get("angle_step", 10.0)),
+                    "scale_start": float(pose_ui.get("scale_start", 1.0)),
+                    "scale_end": float(pose_ui.get("scale_end", 1.0)),
+                    "scale_step": float(pose_ui.get("scale_step", 0.05)),
+                },
+                "original_mode": str(source_info.get("original_mode", "auto")),
+                "points_dirty": False,
+                "mask_dirty": False,
+            }
+        self.class_states = reloaded_states
+        self.class_combo.configure(values=list(self.class_states.keys()))
+        if self.class_var.get().strip() not in self.class_states:
+            self.class_var.set(next(iter(self.class_states.keys()), ""))
+        self._on_class_changed()
+        self.status_var.set(f"Saved model: {out_path}")
+        messagebox.showinfo("Saved", f"Model saved:\n{out_path}\n\n" + "\n".join(build_lines))
+
+    def _canvas_to_image(self, event: tk.Event) -> Tuple[int, int]:
+        zoom = max(1e-6, float(self.zoom_var.get()))
+        return int(round(float(self.canvas.canvasx(event.x)) / zoom)), int(round(float(self.canvas.canvasy(event.y)) / zoom))
+
+    def _on_left_down(self, event: tk.Event) -> None:
+        if self.image_bgr is None:
+            return
+        x, y = self._canvas_to_image(event)
+        if self.tool_var.get() == "point":
+            if int(self.level_var.get()) != 0:
+                self.status_var.set("Only L0 is editable. Switch Level to 0.")
+                return
+            self.drag_kind = "point"
+        else:
+            self.drag_kind = "mask"
+        self.drag_start = (x, y)
+        self.drag_end = (x, y)
+        self._refresh_canvas()
+
+    def _on_left_move(self, event: tk.Event) -> None:
+        if self.drag_kind not in {"point", "mask"}:
+            return
+        self.drag_end = self._canvas_to_image(event)
+        self._refresh_canvas()
+
+    def _on_left_up(self, event: tk.Event) -> None:
+        if self.drag_kind not in {"point", "mask"} or self.drag_start is None:
+            return
+        self.drag_end = self._canvas_to_image(event)
+        if self.drag_kind == "point":
+            sx, sy = self.drag_start
+            ex, ey = self.drag_end
+            dx = ex - sx
+            dy = ey - sy
+            dist = float(np.hypot(dx, dy))
+            if dist >= 2.0:
+                theta = float(np.degrees(np.arctan2(float(dy), float(dx))))
+                label = angle_deg_to_label(theta)
+                self.label_var.set(label)
+                self._add_feature(sx, sy, label, theta_deg=theta)
+            else:
+                label = int(self.label_var.get()) % 8
+                self._add_feature(sx, sy, label, theta_deg=label_to_angle_deg(label))
+        else:
+            sx, sy = self.drag_start
+            ex, ey = self.drag_end
+            self._add_mask_rect(sx, sy, ex, ey)
+        self.drag_kind = None
+        self.drag_start = None
+        self.drag_end = None
+        self._refresh_canvas()
+
+    def _on_right_down(self, event: tk.Event) -> None:
+        if self.image_bgr is None:
+            return
+        x, y = self._canvas_to_image(event)
+        if self.tool_var.get() == "mask":
+            self.drag_kind = "mask_delete"
+        else:
+            if int(self.level_var.get()) != 0:
+                self.status_var.set("Only L0 is editable. Switch Level to 0.")
+                return
+            self.drag_kind = "erase"
+        self.drag_start = (x, y)
+        self.drag_end = (x, y)
+        self._refresh_canvas()
+
+    def _on_right_move(self, event: tk.Event) -> None:
+        if self.drag_kind != "erase":
+            return
+        self.drag_end = self._canvas_to_image(event)
+        self._refresh_canvas()
+
+    def _on_right_up(self, event: tk.Event) -> None:
+        if self.drag_kind == "mask_delete":
+            x, y = self._canvas_to_image(event)
+            self._delete_nearest_mask(x, y)
+            self.drag_kind = None
+            self.drag_start = None
+            self.drag_end = None
+            self._refresh_canvas()
+            return
+        if self.drag_kind != "erase" or self.drag_start is None:
+            return
+        self.drag_end = self._canvas_to_image(event)
+        if drag_is_click(self.drag_start, self.drag_end):
+            if self._delete_nearest(*self.drag_end):
+                self.status_var.set("Point deleted.")
+        else:
+            deleted = self._delete_points_in_box(self.drag_start, self.drag_end)
+            self.status_var.set(f"Deleted {deleted} points in selection." if deleted > 0 else "No points in selection.")
+        self.drag_kind = None
+        self.drag_start = None
+        self.drag_end = None
+        self._refresh_canvas()
+
+    def _on_motion(self, event: tk.Event) -> None:
+        if self.image_bgr is None:
+            return
+        x, y = self._canvas_to_image(event)
+        self._update_hover(x, y)
+        if self.drag_kind in {"point", "mask"}:
+            self.drag_end = (x, y)
+        self._refresh_canvas()
+
+    def _on_mouse_wheel(self, event: tk.Event) -> None:
+        old_zoom = float(self.zoom_var.get())
+        delta = wheel_delta(event)
+        if delta == 0:
+            return
+        factor = 1.12 if delta > 0 else 1.0 / 1.12
+        new_zoom = max(ZOOM_MIN, min(ZOOM_MAX, old_zoom * factor))
+        if abs(new_zoom - old_zoom) < 1e-9:
+            return
+        self.zoom_var.set(new_zoom)
+        self._refresh_canvas()
+        keep_canvas_point_stable_after_zoom(
+            self.canvas,
+            event,
+            old_zoom=old_zoom,
+            new_zoom=new_zoom,
+            content_w=self._last_render_w,
+            content_h=self._last_render_h,
+        )
+
+    def _render_image(self) -> np.ndarray:
+        if self.image_bgr is None:
+            blank = np.zeros((240, 320, 3), dtype=np.uint8)
+            cv2.putText(blank, "Open v2 model", (78, 125), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (180, 180, 180), 1, cv2.LINE_AA)
+            return blank
+        canvas = self._level_roi_image().copy()
+        for rect in self._display_mask_rects():
+            overlay = canvas.copy()
+            x1 = int(rect.x)
+            y1 = int(rect.y)
+            x2 = int(rect.x + rect.w)
+            y2 = int(rect.y + rect.h)
+            cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 255), -1)
+            canvas = cv2.addWeighted(overlay, 0.22, canvas, 0.78, 0.0)
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), (20, 20, 220), 1, cv2.LINE_AA)
+        tl = self._current_template_level()
+        if tl is None:
+            return canvas
+        cv2.rectangle(canvas, (int(tl.tl_x), int(tl.tl_y)), (int(tl.tl_x + tl.width), int(tl.tl_y + tl.height)), (0, 255, 255), 1, cv2.LINE_AA)
+        palette = orientation_palette_bgr()
+        for i, (px, py) in enumerate(self._get_abs_points()):
+            feature = tl.features[i]
+            color = palette[int(feature.label) % 8]
+            theta = float(feature.theta) if np.isfinite(feature.theta) else label_to_angle_deg(int(feature.label))
+            p2 = arrow_endpoint(int(px), int(py), theta, 8.0)
+            if self.hover_index is not None and i == self.hover_index:
+                cv2.circle(canvas, (int(px), int(py)), 6, (255, 255, 255), 1, cv2.LINE_AA)
+            cv2.arrowedLine(canvas, (int(px), int(py)), p2, color, 1, cv2.LINE_AA, 0, 0.35)
+            cv2.circle(canvas, (int(px), int(py)), 1, color, -1, cv2.LINE_AA)
+        if self.drag_kind == "point" and self.drag_start is not None and self.drag_end is not None:
+            sx, sy = self.drag_start
+            ex, ey = self.drag_end
+            label = angle_deg_to_label(np.degrees(np.arctan2(float(ey - sy), float(ex - sx)))) if abs(ex - sx) + abs(ey - sy) > 0 else int(self.label_var.get()) % 8
+            cv2.arrowedLine(canvas, (sx, sy), (ex, ey), palette[label], 1, cv2.LINE_AA, 0, 0.35)
+        elif self.drag_kind == "mask" and self.drag_start is not None and self.drag_end is not None:
+            x1, y1, x2, y2 = normalize_drag_rect(self.drag_start, self.drag_end)
+            overlay = canvas.copy()
+            cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 255), -1)
+            canvas = cv2.addWeighted(overlay, 0.18, canvas, 0.82, 0.0)
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 0, 255), 1, cv2.LINE_AA)
+        elif self.drag_kind == "erase" and self.drag_start is not None and self.drag_end is not None:
+            x1, y1, x2, y2 = normalize_drag_rect(self.drag_start, self.drag_end)
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 128, 255), 1, cv2.LINE_AA)
+        return canvas
+
+    def _refresh_canvas(self) -> None:
+        image = self._render_image()
+        zoom = max(ZOOM_MIN, float(self.zoom_var.get()))
+        if abs(zoom - 1.0) > 1e-6:
+            image = cv2.resize(image, None, fx=zoom, fy=zoom, interpolation=cv2.INTER_NEAREST)
+        self._photo = bgr_to_photo(image)
+        self._last_render_w = int(image.shape[1])
+        self._last_render_h = int(image.shape[0])
+        if self._canvas_image_id is None:
+            self._canvas_image_id = self.canvas.create_image(0, 0, image=self._photo, anchor="nw")
+        else:
+            self.canvas.itemconfigure(self._canvas_image_id, image=self._photo)
+        self.canvas.configure(scrollregion=(0, 0, self._last_render_w, self._last_render_h))
+
+
+EditTemplateTab = EditTemplateTabV2
+
+
 class TemplateWorkbenchApp(tk.Tk):
     def __init__(
         self,
@@ -2469,7 +3788,32 @@ class TemplateWorkbenchApp(tk.Tk):
                 out_path = preload_out_model or preload_model
                 self.edit_tab.out_model_var.set(out_path)
                 self.edit_tab.out_label.configure(text=out_path)
-                class_ids = det.class_ids()
+                class_states: dict[str, dict] = {}
+                for class_id in det.class_ids():
+                    try:
+                        source_info, roi_img, _roi_mask, roi_rect, mask_rects = load_class_source_assets(det, class_id)
+                    except Exception:
+                        continue
+                    pose_ui = source_info.get("pose_infos", {}).get("ui", {}) if isinstance(source_info, dict) else {}
+                    class_states[class_id] = {
+                        "image_bgr": roi_img,
+                        "source_roi_rect": roi_rect,
+                        "mask_rects": [MaskRect(x=int(rect.x), y=int(rect.y), w=int(rect.w), h=int(rect.h)) for rect in mask_rects],
+                        "template_levels": det.get_original_editor_levels(class_id),
+                        "pose_ui": {
+                            "angle_start": float(pose_ui.get("angle_start", 0.0)),
+                            "angle_end": float(pose_ui.get("angle_end", 0.0)),
+                            "angle_step": float(pose_ui.get("angle_step", 10.0)),
+                            "scale_start": float(pose_ui.get("scale_start", 1.0)),
+                            "scale_end": float(pose_ui.get("scale_end", 1.0)),
+                            "scale_step": float(pose_ui.get("scale_step", 0.05)),
+                        },
+                        "original_mode": str(source_info.get("original_mode", "auto")),
+                        "points_dirty": False,
+                        "mask_dirty": False,
+                    }
+                self.edit_tab.class_states = class_states
+                class_ids = list(class_states.keys())
                 if class_ids:
                     self.edit_tab.class_combo.configure(values=class_ids)
                     self.edit_tab.class_var.set(class_ids[0])
@@ -2480,13 +3824,6 @@ class TemplateWorkbenchApp(tk.Tk):
                 self.find_tab._reset_class_combo()
             except Exception:
                 pass
-
-        if preload_template_image:
-            img = cv2.imread(preload_template_image, cv2.IMREAD_COLOR)
-            if img is not None:
-                self.edit_tab.template_image = img
-                self.edit_tab.template_img_label.configure(text=preload_template_image)
-                self.edit_tab._refresh_canvas()
 
         if preload_scene:
             scene = cv2.imread(preload_scene, cv2.IMREAD_COLOR)
