@@ -3,31 +3,99 @@
   "flags": {},
   "shapes": [
     {
-      "label": "roi",
+      "label": "roi1",
       "points": [
         [
-          611.0,
-          1061.0
+          599.0,
+          634.0
         ],
         [
-          611.0,
-          1206.0
+          1724.0,
+          634.0
         ],
         [
-          1697.0,
-          1193.0
+          1724.0,
+          753.0
         ],
         [
-          1701.0,
-          1061.0
-        ],
-        [
-          611.0,
-          1061.0
+          599.0,
+          753.0
         ]
       ],
       "group_id": null,
       "shape_type": "polygon",
+      "flags": {}
+    },
+    {
+      "label": "roi2",
+      "points": [
+        [
+          609.0,
+          1072.0
+        ],
+        [
+          1724.0,
+          1072.0
+        ],
+        [
+          1724.0,
+          1199.0
+        ],
+        [
+          609.0,
+          1199.0
+        ]
+      ],
+      "group_id": null,
+      "shape_type": "polygon",
+      "flags": {}
+    },
+    {
+      "label": "roi3",
+      "points": [
+        [
+          887.0,
+          1053.0
+        ],
+        [
+          1017.0,
+          1207.0
+        ]
+      ],
+      "group_id": null,
+      "shape_type": "rectangle",
+      "flags": {}
+    },
+    {
+      "label": "roi4",
+      "points": [
+        [
+          1026.0,
+          1060.0
+        ],
+        [
+          1151.0,
+          1202.0
+        ]
+      ],
+      "group_id": null,
+      "shape_type": "rectangle",
+      "flags": {}
+    },
+    {
+      "label": "roi5",
+      "points": [
+        [
+          1168.0,
+          1055.0
+        ],
+        [
+          1288.0,
+          1202.0
+        ]
+      ],
+      "group_id": null,
+      "shape_type": "rectangle",
       "flags": {}
     }
   ],

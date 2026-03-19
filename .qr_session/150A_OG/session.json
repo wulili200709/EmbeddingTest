@@ -1,0 +1,25 @@
+{
+  "ok_files": [
+    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/ok/1.bmp",
+    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/6.bmp"
+  ],
+  "ng_files": [
+    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/10.bmp",
+    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/14.bmp"
+  ],
+  "test_files": [
+    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/10.bmp",
+    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/11.bmp",
+    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/14.bmp",
+    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/15.bmp",
+    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/16.bmp",
+    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/17.bmp",
+    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/18.bmp",
+    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/2.bmp",
+    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/3.bmp",
+    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/4.bmp",
+    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/6.bmp"
+  ],
+  "ref_image": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/ok/1.bmp",
+  "loc_method": "line2dup"
+}

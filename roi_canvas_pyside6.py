@@ -1,19 +1,6 @@
-"""
-roi_canvas_pyside6.py
-
-可复用的 PySide6 ROI 画布组件：
-- 用 QLabel 显示图片
-- 支持 rect / polygon 两种 ROI 绘制
-- ROI 坐标统一保存在原图坐标系（非缩放坐标）
-
-说明：
-- 这个模块只负责“画/编辑 ROI + 坐标换算 + 可视化叠加”
-- ROI 的保存/读取（例如 labelme json）放在调用方（如 qr_core）处理
-"""
-
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -23,46 +10,68 @@ def pixmap_from_path(path: str) -> QtGui.QPixmap:
     return QtGui.QPixmap(path)
 
 
+def _enum_to_int(value: object) -> int:
+    return int(getattr(value, "value", value))
+
+
 @dataclass
 class ShapeState:
-    # rect: xywh; polygon: points
-    shape_type: str = "rect"  # "rect" | "polygon"
+    shape_type: str = "rect"
     xywh: Optional[Tuple[int, int, int, int]] = None
     points: Optional[List[Tuple[float, float]]] = None
 
 
+@dataclass
+class OverlayShape:
+    shape_type: str
+    xywh: Optional[Tuple[int, int, int, int]] = None
+    points: Optional[List[Tuple[float, float]]] = None
+    segments: Optional[List[Tuple[Tuple[float, float], Tuple[float, float]]]] = None
+    color: QtGui.QColor = field(default_factory=lambda: QtGui.QColor(0, 128, 255))
+    width: float = 1.0
+    dash: bool = True
+
+
 class RoiCanvas(QtWidgets.QLabel):
-    """
-    用 QLabel 显示图片，并支持鼠标拖拽画矩形 ROI / 点击画 polygon ROI。
-    ROI 统一保存为原图坐标（不是缩放坐标）。
-    """
-
     shapesChanged = QtCore.Signal()
+    imagePressed = QtCore.Signal(int, int, int)
+    imageMoved = QtCore.Signal(int, int, int)
+    imageReleased = QtCore.Signal(int, int, int)
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.setBackgroundRole(QtGui.QPalette.Base)
         self.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Ignored)
         self.setScaledContents(False)
         self.setMouseTracking(True)
+        self.setFocusPolicy(QtCore.Qt.StrongFocus)
 
         self._img_path: Optional[str] = None
         self._pixmap: Optional[QtGui.QPixmap] = None
         self._scaled_pm: Optional[QtGui.QPixmap] = None
         self._scale: float = 1.0
-        self._offset = QtCore.QPoint(0, 0)  # top-left of scaled image inside label
+        self._offset = QtCore.QPoint(0, 0)
+        self._zoom: float = 1.0
+        self._zoom_min: float = 0.2
+        self._zoom_max: float = 8.0
 
         self._dragging = False
         self._p0 = QtCore.QPoint()
         self._p1 = QtCore.QPoint()
 
         self.roi = ShapeState()
-        self.draw_shape = "rect"  # "rect" or "polygon"
-
-        # polygon drawing
+        self.draw_shape = "rect"
+        self._overlays: List[OverlayShape] = []
         self._poly_pts: List[Tuple[float, float]] = []
-        self._mouse_pos: Optional[Tuple[int, int]] = None  # 原图坐标（用于显示实时线段）
-        self.setFocusPolicy(QtCore.Qt.StrongFocus)
+        self._mouse_pos: Optional[Tuple[int, int]] = None
+        self._interaction_enabled = True
+
+        self._roi_color = QtGui.QColor(0, 255, 0)
+        self._roi_dash = False
+        self._roi_width = 2.0
+        self._preview_color = QtGui.QColor(255, 0, 0)
+        self._preview_dash = True
+        self._preview_width = 2.0
 
     def has_image(self) -> bool:
         return self._pixmap is not None and self._img_path is not None
@@ -79,9 +88,40 @@ class RoiCanvas(QtWidgets.QLabel):
         self._p1 = QtCore.QPoint()
         self._poly_pts = []
         self._mouse_pos = None
+        self._overlays = []
+        self._zoom = 1.0
         self._update_scaled_pixmap()
         self.update()
         self.shapesChanged.emit()
+
+    def clear_image(self) -> None:
+        self._img_path = None
+        self._pixmap = None
+        self._scaled_pm = None
+        self._scale = 1.0
+        self._offset = QtCore.QPoint(0, 0)
+        self._zoom = 1.0
+        self.roi = ShapeState()
+        self._dragging = False
+        self._p0 = QtCore.QPoint()
+        self._p1 = QtCore.QPoint()
+        self._poly_pts = []
+        self._mouse_pos = None
+        self._overlays = []
+        self.setPixmap(QtGui.QPixmap())
+        self.update()
+        self.shapesChanged.emit()
+
+    def zoom_factor(self) -> float:
+        return float(self._zoom)
+
+    def set_zoom(self, zoom: float) -> None:
+        self._zoom = max(self._zoom_min, min(self._zoom_max, float(zoom)))
+        self._update_scaled_pixmap()
+        self.update()
+
+    def reset_zoom(self) -> None:
+        self.set_zoom(1.0)
 
     def clear_roi(self) -> None:
         self.roi.xywh = None
@@ -93,12 +133,13 @@ class RoiCanvas(QtWidgets.QLabel):
 
     def set_roi_rect(self, xywh: Optional[Tuple[int, int, int, int]]) -> None:
         if xywh is None:
+            self.roi.shape_type = "rect"
             self.roi.xywh = None
             self.roi.points = None
-            return
-        self.roi.shape_type = "rect"
-        self.roi.xywh = xywh
-        self.roi.points = None
+        else:
+            self.roi.shape_type = "rect"
+            self.roi.xywh = tuple(int(v) for v in xywh)
+            self.roi.points = None
         self._poly_pts = []
         self._mouse_pos = None
         self.update()
@@ -106,22 +147,67 @@ class RoiCanvas(QtWidgets.QLabel):
 
     def set_roi_polygon(self, points: Optional[List[Tuple[float, float]]]) -> None:
         if not points or len(points) < 3:
+            self.roi.shape_type = "polygon"
             self.roi.points = None
             self.roi.xywh = None
-            return
-        self.roi.shape_type = "polygon"
-        self.roi.points = list(points)
-        self.roi.xywh = None
+        else:
+            self.roi.shape_type = "polygon"
+            self.roi.points = [(float(x), float(y)) for x, y in points]
+            self.roi.xywh = None
         self._poly_pts = []
         self._mouse_pos = None
         self.update()
         self.shapesChanged.emit()
 
-    def resizeEvent(self, e: QtGui.QResizeEvent):
-        super().resizeEvent(e)
+    def set_overlays(self, overlays: Optional[List[OverlayShape]]) -> None:
+        self._overlays = list(overlays or [])
+        self.update()
+
+    def set_interaction_enabled(self, enabled: bool) -> None:
+        self._interaction_enabled = bool(enabled)
+
+    def set_roi_style(
+        self,
+        *,
+        roi_color: Optional[QtGui.QColor] = None,
+        roi_dash: Optional[bool] = None,
+        roi_width: Optional[float] = None,
+        preview_color: Optional[QtGui.QColor] = None,
+        preview_dash: Optional[bool] = None,
+        preview_width: Optional[float] = None,
+    ) -> None:
+        if roi_color is not None:
+            self._roi_color = QtGui.QColor(roi_color)
+        if roi_dash is not None:
+            self._roi_dash = bool(roi_dash)
+        if roi_width is not None:
+            self._roi_width = float(roi_width)
+        if preview_color is not None:
+            self._preview_color = QtGui.QColor(preview_color)
+        if preview_dash is not None:
+            self._preview_dash = bool(preview_dash)
+        if preview_width is not None:
+            self._preview_width = float(preview_width)
+        self.update()
+
+    def roi_xywh(self) -> Optional[Tuple[int, int, int, int]]:
+        if self.roi.shape_type == "rect" and self.roi.xywh is not None:
+            return self.roi.xywh
+        if self.roi.shape_type == "polygon" and self.roi.points:
+            xs = [float(x) for x, _y in self.roi.points]
+            ys = [float(y) for _x, y in self.roi.points]
+            x0 = int(round(min(xs)))
+            y0 = int(round(min(ys)))
+            x1 = int(round(max(xs)))
+            y1 = int(round(max(ys)))
+            return x0, y0, max(1, x1 - x0), max(1, y1 - y0)
+        return None
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
         self._update_scaled_pixmap()
 
-    def _update_scaled_pixmap(self):
+    def _update_scaled_pixmap(self) -> None:
         if self._pixmap is None:
             self.setPixmap(QtGui.QPixmap())
             self._scaled_pm = None
@@ -136,22 +222,17 @@ class RoiCanvas(QtWidgets.QLabel):
         if pm_w <= 0 or pm_h <= 0:
             return
 
-        scale = min(label_w / pm_w, label_h / pm_h)
+        scale = min(label_w / pm_w, label_h / pm_h) * float(self._zoom)
         new_w = max(1, int(pm_w * scale))
         new_h = max(1, int(pm_h * scale))
         scaled = self._pixmap.scaled(new_w, new_h, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
         self._scaled_pm = scaled
         self._scale = float(scale)
-        off_x = int((label_w - new_w) / 2)
-        off_y = int((label_h - new_h) / 2)
-        self._offset = QtCore.QPoint(off_x, off_y)
+        self._offset = QtCore.QPoint(int((label_w - new_w) / 2), int((label_h - new_h) / 2))
         self.setPixmap(scaled)
         self.setAlignment(QtCore.Qt.AlignCenter)
 
     def _pos_to_image_xy(self, pos: QtCore.QPoint) -> Optional[Tuple[int, int]]:
-        """
-        把 label 上的坐标映射回原图像素坐标。
-        """
         if self._pixmap is None or self._scaled_pm is None:
             return None
         x = pos.x() - self._offset.x()
@@ -164,22 +245,22 @@ class RoiCanvas(QtWidgets.QLabel):
         iy = max(0, min(iy, self._pixmap.height() - 1))
         return ix, iy
 
-    def mousePressEvent(self, e: QtGui.QMouseEvent):
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         if not self.has_image():
             return
+        image_xy = self._pos_to_image_xy(event.position().toPoint())
+        if image_xy is not None:
+            self.imagePressed.emit(_enum_to_int(event.button()), int(image_xy[0]), int(image_xy[1]))
+        if not self._interaction_enabled:
+            return
 
-        # polygon: left click add point, right click finish
         if self.draw_shape == "polygon":
-            if e.button() == QtCore.Qt.LeftButton:
-                p = self._pos_to_image_xy(e.position().toPoint())
-                if p is None:
-                    return
-                self._poly_pts.append((float(p[0]), float(p[1])))
+            if event.button() == QtCore.Qt.LeftButton and image_xy is not None:
+                self._poly_pts.append((float(image_xy[0]), float(image_xy[1])))
                 self.update()
                 self.shapesChanged.emit()
                 return
-            if e.button() == QtCore.Qt.RightButton:
-                # finish polygon (need >=3 points)
+            if event.button() == QtCore.Qt.RightButton:
                 if len(self._poly_pts) >= 3:
                     self.roi.shape_type = "polygon"
                     self.roi.points = list(self._poly_pts)
@@ -190,32 +271,37 @@ class RoiCanvas(QtWidgets.QLabel):
                 self.shapesChanged.emit()
                 return
 
-        # rect
-        if e.button() == QtCore.Qt.LeftButton:
-            p = self._pos_to_image_xy(e.position().toPoint())
-            if p is not None:
-                self._dragging = True
-                self._p0 = QtCore.QPoint(*p)
-                self._p1 = QtCore.QPoint(*p)
-                self.update()
-
-    def mouseMoveEvent(self, e: QtGui.QMouseEvent):
-        if self._dragging and self.has_image():
-            p = self._pos_to_image_xy(e.position().toPoint())
-            if p is not None:
-                self._p1 = QtCore.QPoint(*p)
-                self.update()
-        # polygon模式下跟踪鼠标位置，用于显示实时线段
-        if self.draw_shape == "polygon" and self.has_image() and self._poly_pts:
-            self._mouse_pos = self._pos_to_image_xy(e.position().toPoint())
+        if event.button() == QtCore.Qt.LeftButton and image_xy is not None:
+            self._dragging = True
+            self._p0 = QtCore.QPoint(*image_xy)
+            self._p1 = QtCore.QPoint(*image_xy)
             self.update()
 
-    def mouseReleaseEvent(self, e: QtGui.QMouseEvent):
-        if e.button() == QtCore.Qt.LeftButton and self._dragging and self.has_image():
+    def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
+        image_xy = self._pos_to_image_xy(event.position().toPoint()) if self.has_image() else None
+        if image_xy is not None:
+            self.imageMoved.emit(_enum_to_int(event.buttons()), int(image_xy[0]), int(image_xy[1]))
+        if not self._interaction_enabled:
+            return
+
+        if self._dragging and image_xy is not None:
+            self._p1 = QtCore.QPoint(*image_xy)
+            self.update()
+        if self.draw_shape == "polygon" and self.has_image() and self._poly_pts:
+            self._mouse_pos = image_xy
+            self.update()
+
+    def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
+        image_xy = self._pos_to_image_xy(event.position().toPoint()) if self.has_image() else None
+        if image_xy is not None:
+            self.imageReleased.emit(_enum_to_int(event.button()), int(image_xy[0]), int(image_xy[1]))
+        if not self._interaction_enabled:
+            return
+
+        if event.button() == QtCore.Qt.LeftButton and self._dragging and self.has_image():
             self._dragging = False
-            p = self._pos_to_image_xy(e.position().toPoint())
-            if p is not None:
-                self._p1 = QtCore.QPoint(*p)
+            if image_xy is not None:
+                self._p1 = QtCore.QPoint(*image_xy)
             x0, y0 = self._p0.x(), self._p0.y()
             x1, y1 = self._p1.x(), self._p1.y()
             x = min(x0, x1)
@@ -232,81 +318,136 @@ class RoiCanvas(QtWidgets.QLabel):
             self.update()
             self.shapesChanged.emit()
 
-    def keyPressEvent(self, e: QtGui.QKeyEvent):
-        # polygon editing
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         if self.draw_shape == "polygon":
-            if e.key() == QtCore.Qt.Key_Escape:
+            if event.key() == QtCore.Qt.Key_Escape:
                 self._poly_pts = []
                 self._mouse_pos = None
                 self.update()
                 self.shapesChanged.emit()
                 return
-            if e.key() in (QtCore.Qt.Key_Backspace, QtCore.Qt.Key_Delete):
-                if self._poly_pts:
-                    self._poly_pts.pop()
-                    self.update()
-                    self.shapesChanged.emit()
+            if event.key() in (QtCore.Qt.Key_Backspace, QtCore.Qt.Key_Delete) and self._poly_pts:
+                self._poly_pts.pop()
+                self.update()
+                self.shapesChanged.emit()
                 return
-        super().keyPressEvent(e)
+        super().keyPressEvent(event)
 
-    def paintEvent(self, e: QtGui.QPaintEvent):
-        super().paintEvent(e)
+    def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
+        if not self.has_image():
+            super().wheelEvent(event)
+            return
+        delta = event.angleDelta().y()
+        if delta == 0:
+            event.ignore()
+            return
+        factor = 1.15 if delta > 0 else (1.0 / 1.15)
+        self.set_zoom(self._zoom * factor)
+        event.accept()
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:
+        super().paintEvent(event)
         if not self.has_image():
             return
 
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
 
-        def draw_rect(xywh, color):
+        def draw_rect(xywh: Tuple[int, int, int, int], color: QtGui.QColor, width: float = 2.0, dash: bool = False) -> None:
             x, y, w, h = xywh
             sx = int(round(x * self._scale)) + self._offset.x()
             sy = int(round(y * self._scale)) + self._offset.y()
             sw = int(round(w * self._scale))
             sh = int(round(h * self._scale))
-            pen = QtGui.QPen(color, 2)
+            pen = QtGui.QPen(color)
+            pen.setWidthF(float(width))
+            pen.setStyle(QtCore.Qt.DashLine if dash else QtCore.Qt.SolidLine)
             painter.setPen(pen)
             painter.drawRect(QtCore.QRect(sx, sy, sw, sh))
 
-        def draw_poly(points, color):
-            pen = QtGui.QPen(color, 2)
+        def draw_poly(points: List[Tuple[float, float]], color: QtGui.QColor, width: float = 2.0, dash: bool = False) -> None:
+            pen = QtGui.QPen(color)
+            pen.setWidthF(float(width))
+            pen.setStyle(QtCore.Qt.DashLine if dash else QtCore.Qt.SolidLine)
             painter.setPen(pen)
-            qpts = []
-            for x, y in points:
-                sx = int(round(x * self._scale)) + self._offset.x()
-                sy = int(round(y * self._scale)) + self._offset.y()
-                qpts.append(QtCore.QPoint(sx, sy))
+            qpts = [
+                QtCore.QPoint(
+                    int(round(x * self._scale)) + self._offset.x(),
+                    int(round(y * self._scale)) + self._offset.y(),
+                )
+                for x, y in points
+            ]
             if len(qpts) >= 2:
                 painter.drawPolyline(QtGui.QPolygon(qpts))
 
-        # ROI (green)
+        def draw_points(points: List[Tuple[float, float]], color: QtGui.QColor, size: float = 2.0) -> None:
+            pen = QtGui.QPen(color)
+            pen.setWidthF(max(1.0, float(size)))
+            painter.setPen(pen)
+            qpts = [
+                QtCore.QPoint(
+                    int(round(x * self._scale)) + self._offset.x(),
+                    int(round(y * self._scale)) + self._offset.y(),
+                )
+                for x, y in points
+            ]
+            if qpts:
+                painter.drawPoints(QtGui.QPolygon(qpts))
+
+        def draw_segments(
+            segments: List[Tuple[Tuple[float, float], Tuple[float, float]]],
+            color: QtGui.QColor,
+            width: float = 1.0,
+            dash: bool = False,
+        ) -> None:
+            pen = QtGui.QPen(color)
+            pen.setWidthF(float(width))
+            pen.setStyle(QtCore.Qt.DashLine if dash else QtCore.Qt.SolidLine)
+            painter.setPen(pen)
+            for p0, p1 in segments:
+                sx0 = int(round(p0[0] * self._scale)) + self._offset.x()
+                sy0 = int(round(p0[1] * self._scale)) + self._offset.y()
+                sx1 = int(round(p1[0] * self._scale)) + self._offset.x()
+                sy1 = int(round(p1[1] * self._scale)) + self._offset.y()
+                painter.drawLine(sx0, sy0, sx1, sy1)
+
+        if self._scaled_pm is not None and self._overlays:
+            for overlay in self._overlays:
+                if overlay.shape_type == "rect" and overlay.xywh is not None:
+                    draw_rect(overlay.xywh, overlay.color, width=overlay.width, dash=overlay.dash)
+                elif overlay.shape_type == "polygon" and overlay.points is not None:
+                    draw_poly(overlay.points + [overlay.points[0]], overlay.color, width=overlay.width, dash=overlay.dash)
+                elif overlay.shape_type == "points" and overlay.points is not None:
+                    draw_points(overlay.points, overlay.color, size=overlay.width)
+                elif overlay.shape_type == "segments" and overlay.segments is not None:
+                    draw_segments(overlay.segments, overlay.color, width=overlay.width, dash=overlay.dash)
+
         if self._scaled_pm is not None:
             if self.roi.shape_type == "rect" and self.roi.xywh is not None:
-                draw_rect(self.roi.xywh, QtGui.QColor(0, 255, 0))
-            if self.roi.shape_type == "polygon" and self.roi.points is not None:
-                draw_poly(self.roi.points + [self.roi.points[0]], QtGui.QColor(0, 255, 0))
+                draw_rect(self.roi.xywh, self._roi_color, width=self._roi_width, dash=self._roi_dash)
+            elif self.roi.shape_type == "polygon" and self.roi.points is not None:
+                draw_poly(self.roi.points + [self.roi.points[0]], self._roi_color, width=self._roi_width, dash=self._roi_dash)
 
-        # current polygon points (yellow)
         if self._scaled_pm is not None and self._poly_pts:
-            draw_poly(self._poly_pts, QtGui.QColor(255, 255, 0))
-            # 画点
+            draw_poly(self._poly_pts, self._preview_color, width=self._preview_width, dash=self._preview_dash)
+            painter.setBrush(QtGui.QBrush(self._preview_color))
+            painter.setPen(QtGui.QPen(self._preview_color, 1))
             for x, y in self._poly_pts:
                 sx = int(round(x * self._scale)) + self._offset.x()
                 sy = int(round(y * self._scale)) + self._offset.y()
-                painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 0)))
-                painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 0), 1))
                 painter.drawEllipse(QtCore.QPoint(sx, sy), 3, 3)
-            # 显示从最后一个点到鼠标的实时线段
             if self._mouse_pos is not None:
                 last_x, last_y = self._poly_pts[-1]
                 last_sx = int(round(last_x * self._scale)) + self._offset.x()
                 last_sy = int(round(last_y * self._scale)) + self._offset.y()
                 mouse_sx = int(round(self._mouse_pos[0] * self._scale)) + self._offset.x()
                 mouse_sy = int(round(self._mouse_pos[1] * self._scale)) + self._offset.y()
-                pen = QtGui.QPen(QtGui.QColor(255, 255, 0, 128), 1, QtCore.Qt.DashLine)
+                ghost = QtGui.QColor(self._preview_color)
+                ghost.setAlpha(128)
+                pen = QtGui.QPen(ghost, 1, QtCore.Qt.DashLine if self._preview_dash else QtCore.Qt.SolidLine)
                 painter.setPen(pen)
                 painter.drawLine(last_sx, last_sy, mouse_sx, mouse_sy)
 
-        # draw current dragging box
         if self._dragging and self._scaled_pm is not None:
             x0, y0 = self._p0.x(), self._p0.y()
             x1, y1 = self._p1.x(), self._p1.y()
@@ -318,7 +459,10 @@ class RoiCanvas(QtWidgets.QLabel):
             sy = int(round(y * self._scale)) + self._offset.y()
             sw = int(round(w * self._scale))
             sh = int(round(h * self._scale))
-            pen = QtGui.QPen(QtGui.QColor(255, 0, 0), 2, QtCore.Qt.DashLine)
+            pen = QtGui.QPen(
+                self._preview_color,
+                int(self._preview_width),
+                QtCore.Qt.DashLine if self._preview_dash else QtCore.Qt.SolidLine,
+            )
             painter.setPen(pen)
             painter.drawRect(QtCore.QRect(sx, sy, sw, sh))
-

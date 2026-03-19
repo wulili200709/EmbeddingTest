@@ -15,21 +15,34 @@ from __future__ import annotations
 
 import os
 import json
+import time
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from PIL import Image
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+import line2dup_locator
+from line2dup_recipe import Line2DupRecipe
+from line2dup_template_page_pyside6 import Line2DupTemplateDialog
 import qr_core
+from roi_canvas_pyside6 import OverlayShape, RoiCanvas
 
 
 SUPPORTED_BACKBONES = ["efficientnet_b0", "mobilenet_v3_small", "mobilenet_v3_large"]
 SUPPORTED_SCORE_MODES = ["proto", "topk"]
-SUPPORTED_LOC_MODES = ["none", "template", "orb"]
+SUPPORTED_LOC_MODES = ["none", "template", "orb", "shape_model", "line2dup"]
 SUPPORTED_SHAPES = ["rect", "polygon"]
+ROI_OVERLAY_PALETTE = [
+    QtGui.QColor(255, 215, 0),
+    QtGui.QColor(255, 64, 128),
+    QtGui.QColor(0, 0, 255),
+    QtGui.QColor(0, 255, 128),
+    QtGui.QColor(255, 128, 0),
+    QtGui.QColor(128, 255, 0),
+]
 
 
 def _find_default_dir(name: str) -> str:
@@ -340,7 +353,7 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
         self.setWindowTitle("Quick Register (OK/NG) - ROI 标注/训练/测试")
 
-        self._session_dir = os.path.join(os.getcwd(), ".qr_session")
+        self._session_dir = os.path.join(os.path.dirname(__file__), ".qr_session")
         self._products_json = os.path.join(self._session_dir, "products.json")
         
         # 加载产品配置
@@ -360,6 +373,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.test_files: List[str] = []
 
         self.model: Optional[qr_core.RegisterModel] = None
+        self.ref_image: Optional[str] = None
+        self.loc_method: str = "template"
+        self.line2dup_recipe: Optional[Line2DupRecipe] = None
+        self._line2dup_match_ms_by_image: Dict[str, float] = {}
+        self._line2dup_autogen_ms_by_image: Dict[str, float] = {}
 
         self._build_ui()
         self._refresh_lists()
@@ -481,7 +499,7 @@ class MainWindow(QtWidgets.QMainWindow):
         right = QtWidgets.QVBoxLayout()
         root.addLayout(right, 1)
 
-        self.canvas = ImageCanvas()
+        self.canvas = RoiCanvas()
         self.canvas.setMinimumSize(640, 480)
         self.canvas.shapesChanged.connect(self._on_shapes_changed)
         right.addWidget(self.canvas, 2)
@@ -493,6 +511,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cmb_shape.setCurrentText("rect")
         self.cmb_shape.currentTextChanged.connect(self._on_shape_changed)
         roi_bar.addWidget(self.cmb_shape)
+
+        roi_bar.addWidget(QtWidgets.QLabel("标注："))
+        self.cmb_label = QtWidgets.QComboBox()
+        self.cmb_label.addItems(["roi", "anchor", "anchor_mask"])
+        self.cmb_label.setCurrentText("roi")
+        self.cmb_label.currentTextChanged.connect(self._on_label_changed)
+        roi_bar.addWidget(self.cmb_label)
 
         self.btn_save = QtWidgets.QPushButton("保存标注 -> labelme json")
         self.btn_save.clicked.connect(self._save_current_rect)
@@ -506,10 +531,47 @@ class MainWindow(QtWidgets.QMainWindow):
         roi_bar.addWidget(self.btn_clear_session)
         right.addLayout(roi_bar)
 
+        auto_box = QtWidgets.QGroupBox("自动 ROI")
+        auto_l = QtWidgets.QGridLayout(auto_box)
+        self.lbl_ref = QtWidgets.QLabel("参考图：未设置")
+        self.btn_set_ref = QtWidgets.QPushButton("设为参考图(当前)")
+        self.btn_set_ref.clicked.connect(self._set_ref_from_current)
+        self.btn_pick_ref = QtWidgets.QPushButton("选择参考图…")
+        self.btn_pick_ref.clicked.connect(self._pick_ref_image)
+        self.btn_build_shape = QtWidgets.QPushButton("生成模板")
+        self.btn_build_shape.clicked.connect(self._build_shape_model)
+        self.btn_edit_line2dup = QtWidgets.QPushButton("line2dup 模板页")
+        self.btn_edit_line2dup.clicked.connect(self._open_line2dup_template_page)
+        auto_l.addWidget(self.lbl_ref, 0, 0, 1, 3)
+        auto_l.addWidget(self.btn_set_ref, 1, 0)
+        auto_l.addWidget(self.btn_pick_ref, 1, 1)
+        auto_l.addWidget(self.btn_build_shape, 1, 2)
+        auto_l.addWidget(self.btn_edit_line2dup, 2, 2)
+
+        auto_l.addWidget(QtWidgets.QLabel("定位方式："), 2, 0)
+        self.cmb_loc = QtWidgets.QComboBox()
+        self.cmb_loc.addItems(SUPPORTED_LOC_MODES)
+        self.cmb_loc.setCurrentText(self.loc_method)
+        self.cmb_loc.currentTextChanged.connect(self._on_loc_method_changed)
+        auto_l.addWidget(self.cmb_loc, 2, 1)
+
+        self.chk_only_missing = QtWidgets.QCheckBox("仅缺失ROI")
+        self.chk_only_missing.setChecked(True)
+        auto_l.addWidget(self.chk_only_missing, 3, 2)
+
+        self.btn_autogen = QtWidgets.QPushButton("批量生成ROI(当前列表)")
+        self.btn_autogen.clicked.connect(self._autogen_roi_current_tab)
+        self.btn_autogen_all = QtWidgets.QPushButton("批量生成ROI(全部列表)")
+        self.btn_autogen_all.clicked.connect(self._autogen_roi_all)
+        auto_l.addWidget(self.btn_autogen, 4, 0, 1, 2)
+        auto_l.addWidget(self.btn_autogen_all, 4, 2)
+        right.addWidget(auto_box)
+        self._update_loc_ui()
 
 
-        self.table = QtWidgets.QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["文件", "Pred", "diff", "sim_ok", "sim_ng", "json"])
+
+        self.table = QtWidgets.QTableWidget(0, 8)
+        self.table.setHorizontalHeaderLabels(["文件", "Pred", "diff", "sim_ok", "sim_ng", "match_ms", "total_ms", "json"])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.table.cellClicked.connect(self._on_table_click)
@@ -526,6 +588,123 @@ class MainWindow(QtWidgets.QMainWindow):
         fill(self.ok_list, self.ok_files)
         fill(self.ng_list, self.ng_files)
         fill(self.test_list, self.test_files)
+
+    def _current_label(self) -> str:
+        return self.cmb_label.currentText()
+
+    def _update_save_label_text(self) -> None:
+        label = self._current_label()
+        self.btn_save.setText(f"保存标注({label}) -> labelme json")
+
+    def _set_overlay_shapes(self, img_path: str, current_label: str) -> None:
+        j = qr_core.labelme_json_of_image(img_path)
+        overlays: List[OverlayShape] = []
+
+        recipe = self.line2dup_recipe
+        if recipe is None and os.path.exists(self._line2dup_recipe_path):
+            try:
+                recipe = line2dup_locator.load_recipe_for_product(self._product_dir)
+                self.line2dup_recipe = recipe
+            except Exception:
+                recipe = None
+        if self.loc_method == "line2dup" and recipe is not None and recipe.search_points:
+            points = [
+                (float(pt[0]), float(pt[1]))
+                for pt in (recipe.search_points or [])
+                if isinstance(pt, (list, tuple)) and len(pt) >= 2
+            ]
+            if len(points) >= 2:
+                if str(recipe.search_shape_type or "rectangle") == "rectangle" and len(points) == 2:
+                    (x0, y0), (x1, y1) = points[:2]
+                    x = int(round(min(x0, x1)))
+                    y = int(round(min(y0, y1)))
+                    w = max(1, int(round(abs(x1 - x0))))
+                    h = max(1, int(round(abs(y1 - y0))))
+                    overlays.append(
+                        OverlayShape(
+                            shape_type="rect",
+                            xywh=(x, y, w, h),
+                            color=QtGui.QColor(0, 0, 255),
+                            width=0.5,
+                            dash=False,
+                        )
+                    )
+                elif len(points) >= 3:
+                    overlays.append(
+                        OverlayShape(
+                            shape_type="polygon",
+                            points=points,
+                            color=QtGui.QColor(0, 0, 255),
+                            width=0.5,
+                            dash=False,
+                        )
+                    )
+
+        if not os.path.exists(j):
+            self.canvas.set_overlays(overlays)
+            return
+
+        def add_shape(label: str, color: QtGui.QColor, *, width: int = 2, dash: bool = False) -> None:
+            poly_pts = qr_core.try_read_polygon_points_from_labelme(j, label)
+            if poly_pts and len(poly_pts) >= 3:
+                overlays.append(OverlayShape(shape_type="polygon", points=poly_pts, color=color, width=width, dash=dash))
+                return
+            xywh = qr_core.try_read_xywh_from_labelme(j, label)
+            if xywh:
+                overlays.append(OverlayShape(shape_type="rect", xywh=xywh, color=color, width=width, dash=dash))
+
+        seen_labels = set()
+        for idx, label in enumerate(qr_core.sorted_label_names_from_labelme(j, label_prefix="roi")):
+            if label == current_label:
+                continue
+            seen_labels.add(label)
+            add_shape(label, ROI_OVERLAY_PALETTE[idx % len(ROI_OVERLAY_PALETTE)], width=2, dash=False)
+
+        for label, color, dash in [
+            ("anchor", QtGui.QColor(0, 255, 255), True),
+            ("roi", QtGui.QColor(255, 165, 0), False),
+            ("anchor_mask", QtGui.QColor(255, 0, 0), True),
+        ]:
+            if label == current_label or label in seen_labels:
+                continue
+            add_shape(label, color, width=2, dash=dash)
+
+        self.canvas.set_overlays(overlays)
+
+    def _load_shape_for_label(self, img_path: str, label_name: str) -> None:
+        self.canvas.clear_roi()
+        j = qr_core.labelme_json_of_image(img_path)
+        loaded = False
+        if os.path.exists(j):
+            poly_pts = qr_core.try_read_polygon_points_from_labelme(j, label_name)
+            if poly_pts and len(poly_pts) >= 3:
+                self.canvas.set_roi_polygon(poly_pts)
+                self.cmb_shape.setCurrentText("polygon")
+                loaded = True
+            xywh = qr_core.try_read_xywh_from_labelme(j, label_name)
+            if xywh:
+                self.canvas.set_roi_rect(xywh)
+                self.cmb_shape.setCurrentText("rect")
+                loaded = True
+        self._set_overlay_shapes(img_path, label_name)
+        if not loaded:
+            self._on_shapes_changed()
+
+    def _load_canvas_image(self, path: str) -> None:
+        self.canvas.set_image(path, pixmap=_pixmap_from_path(path))
+        self._load_shape_for_label(path, self._current_label())
+
+    def _set_status_for_current_image(self, path: str) -> None:
+        match_ms = self._line2dup_match_ms_by_image.get(path)
+        total_ms = self._line2dup_autogen_ms_by_image.get(path)
+        if match_ms is None and total_ms is None:
+            return
+        parts = [f"当前图：{os.path.basename(path)}"]
+        if match_ms is not None:
+            parts.append(f"模板匹配={match_ms:.1f}ms")
+        if total_ms is not None:
+            parts.append(f"生成ROI={total_ms:.1f}ms")
+        self.lbl_status.setText("状态：" + "  ".join(parts))
 
     def _current_selected_path(self) -> Optional[str]:
         tab = self.tabs.currentIndex()
@@ -556,17 +735,20 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_select_ok(self):
         p = self._current_selected_path()
         if p:
-            self.canvas.load_image(p)
+            self._load_canvas_image(p)
+            self._set_status_for_current_image(p)
 
     def _on_select_ng(self):
         p = self._current_selected_path()
         if p:
-            self.canvas.load_image(p)
+            self._load_canvas_image(p)
+            self._set_status_for_current_image(p)
 
     def _on_select_test(self):
         p = self._current_selected_path()
         if p:
-            self.canvas.load_image(p)
+            self._load_canvas_image(p)
+            self._set_status_for_current_image(p)
 
     def _add_images_to(self, kind: str):
         files, _ = QtWidgets.QFileDialog.getOpenFileNames(
@@ -617,39 +799,53 @@ class MainWindow(QtWidgets.QMainWindow):
         if index == 0 and self.ok_files:
             self.ok_list.setCurrentRow(0)
             # 强制加载图片，即使已经选中第0行
-            self.canvas.load_image(self.ok_files[0])
+            self._load_canvas_image(self.ok_files[0])
         elif index == 1 and self.ng_files:
             self.ng_list.setCurrentRow(0)
             # 强制加载图片，即使已经选中第0行
-            self.canvas.load_image(self.ng_files[0])
+            self._load_canvas_image(self.ng_files[0])
         elif index == 2 and self.test_files:
             self.test_list.setCurrentRow(0)
             # 强制加载图片，即使已经选中第0行
-            self.canvas.load_image(self.test_files[0])
+            self._load_canvas_image(self.test_files[0])
 
     def _on_shape_changed(self):
+        if self._current_label() == "anchor_mask" and self.cmb_shape.currentText() != "polygon":
+            # anchor_mask 只允许 polygon
+            self.cmb_shape.setCurrentText("polygon")
+            return
         self.canvas.draw_shape = self.cmb_shape.currentText()
         # 清空当前正在画的 polygon 点，避免混乱
         self.canvas._poly_pts = []
         self.canvas.update()
         self._on_shapes_changed()
 
+    def _on_label_changed(self):
+        label = self._current_label()
+        if label == "anchor_mask":
+            self.cmb_shape.setCurrentText("polygon")
+            self.cmb_shape.setEnabled(False)
+        else:
+            self.cmb_shape.setEnabled(True)
+        self._update_save_label_text()
+        p = self.canvas.image_path()
+        if p:
+            self._load_shape_for_label(p, label)
+
     def _clear_current_rect(self):
         # 清空正在画的 polygon 点
-        self.canvas._poly_pts = []
-        self.canvas.roi.xywh = None
-        self.canvas.roi.points = None
+        self.canvas.clear_roi()
 
         # 如果已经保存过 json，则同步从 json 删除该标注（否则切图会被读回来，看起来像“清不掉”）
         p = self.canvas.image_path()
         if p is not None:
             try:
-                deleted = qr_core.delete_labelme_shape(p, label_name="roi")
+                deleted = qr_core.delete_labelme_shape(p, label_name=self._current_label())
             except Exception:
                 deleted = False
             if deleted:
                 # 重新加载，确保 UI 与 json 一致
-                self.canvas.load_image(p)
+                self._load_canvas_image(p)
                 return
 
         self.canvas.update()
@@ -666,15 +862,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _roi_xywh_from_canvas(self) -> Optional[Tuple[int, int, int, int]]:
         """Extract ROI bounding box from canvas (needed for testing)"""
-        st = self.canvas.roi
-        if st.shape_type == "rect" and st.xywh is not None:
-            return st.xywh
-        if st.shape_type == "polygon" and st.points:
-            xs = [p[0] for p in st.points]
-            ys = [p[1] for p in st.points]
-            x0, x1 = min(xs), max(xs)
-            y0, y1 = min(ys), max(ys)
-            return int(round(x0)), int(round(y0)), max(1, int(round(x1 - x0))), max(1, int(round(y1 - y0)))
+        roi = self.canvas.roi_xywh()
+        if roi is not None:
+            return roi
+        # fallback: try load from json (roi label)
+        p = self.canvas.image_path()
+        if p:
+            j = qr_core.labelme_json_of_image(p)
+            if os.path.exists(j):
+                xywh = qr_core.try_read_xywh_from_labelme(j, "roi")
+                if xywh:
+                    return xywh
         return None
 
 
@@ -683,21 +881,338 @@ class MainWindow(QtWidgets.QMainWindow):
         if p is None:
             return
         st = self.canvas.roi
+        label_name = self._current_label()
+
+        if label_name == "anchor_mask" and st.shape_type != "polygon":
+            QtWidgets.QMessageBox.warning(self, "提示", "anchor_mask 只能用多边形标注（polygon）")
+            return
 
         if st.shape_type == "rect":
             if st.xywh is None:
                 QtWidgets.QMessageBox.warning(self, "提示", "请先拖拽画出矩形标注")
                 return
-            jpath = qr_core.upsert_labelme_rect(p, st.xywh, label_name="roi")
+            jpath = qr_core.upsert_labelme_rect(p, st.xywh, label_name=label_name)
         else:
             if not st.points or len(st.points) < 3:
                 QtWidgets.QMessageBox.warning(self, "提示", "多边形至少需要 3 个点（左键点选加点，右键结束）")
                 return
-            jpath = qr_core.upsert_labelme_polygon(p, st.points, label_name="roi")
+            jpath = qr_core.upsert_labelme_polygon(p, st.points, label_name=label_name)
 
-        QtWidgets.QMessageBox.information(self, "已保存", f"已更新 labelme json：\n{jpath}\n(label=roi, type={st.shape_type})")
+        QtWidgets.QMessageBox.information(
+            self,
+            "已保存",
+            f"已更新 labelme json：\n{jpath}\n(label={label_name}, type={st.shape_type})",
+        )
         # reload to ensure consistent
-        self.canvas.load_image(p)
+        self._load_canvas_image(p)
+
+    def _set_reference(self, path: str) -> None:
+        self.ref_image = path
+        if self.lbl_ref is not None:
+            self.lbl_ref.setText(f"参考图：{os.path.basename(path)}")
+            self.lbl_ref.setToolTip(path)
+        try:
+            recipe = line2dup_locator.load_recipe_for_product(self._product_dir)
+            recipe.reference_image = path
+            recipe.model_path = self._line2dup_model_path
+            line2dup_locator.save_recipe_for_product(self._product_dir, recipe)
+            self.line2dup_recipe = recipe
+        except Exception:
+            pass
+        self._save_session()
+
+    def _set_ref_from_current(self):
+        p = self.canvas.image_path()
+        if not p:
+            QtWidgets.QMessageBox.warning(self, "提示", "请先在右侧打开一张图片")
+            return
+        self._set_reference(p)
+
+    def _pick_ref_image(self):
+        p, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "选择参考图",
+            "",
+            "Images (*.jpg *.jpeg *.png *.bmp *.tif *.tiff *.webp)",
+        )
+        if not p:
+            return
+        self._set_reference(p)
+
+    def _open_line2dup_template_page(self):
+        initial = self.ref_image or self.canvas.image_path() or ""
+        dlg = Line2DupTemplateDialog(
+            product_name=self.current_product,
+            product_dir=self._product_dir,
+            initial_image_path=initial,
+            parent=self,
+        )
+        dlg.modelSaved.connect(self._on_line2dup_model_saved)
+        dlg.exec()
+
+    def _on_line2dup_model_saved(self, model_path: str, recipe_path: str) -> None:
+        try:
+            self.line2dup_recipe = line2dup_locator.load_recipe_for_product(self._product_dir)
+        except Exception:
+            self.line2dup_recipe = None
+        msg = f"状态：line2dup 模型已保存 {os.path.basename(model_path)}"
+        self.lbl_status.setText(msg)
+
+    def _update_loc_ui(self) -> None:
+        method = self.loc_method
+        if hasattr(self, "btn_build_shape"):
+            self.btn_build_shape.setVisible(method == "shape_model")
+        if hasattr(self, "btn_edit_line2dup"):
+            self.btn_edit_line2dup.setVisible(method == "line2dup")
+
+    def _build_shape_model(self):
+        if not self.ref_image or not os.path.exists(self.ref_image):
+            QtWidgets.QMessageBox.warning(self, "提示", "请先设置参考图")
+            return
+        ref_json = qr_core.labelme_json_of_image(self.ref_image)
+        if not os.path.exists(ref_json):
+            QtWidgets.QMessageBox.warning(self, "提示", "参考图缺少标注 json（需要 anchor + roi）")
+            return
+        if qr_core.try_read_xywh_from_labelme(ref_json, "anchor") is None:
+            QtWidgets.QMessageBox.warning(self, "提示", "参考图缺少 anchor 标注")
+            return
+        if qr_core.try_read_xywh_from_labelme(ref_json, "roi") is None:
+            QtWidgets.QMessageBox.warning(self, "提示", "参考图缺少 roi 标注")
+            return
+        try:
+            model_path = qr_core.create_shape_model_from_reference(
+                ref_img_path=self.ref_image,
+                model_path=self._shape_model_path,
+                anchor_label="anchor",
+                anchor_mask_label="anchor_mask",
+            )
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "生成模板失败", str(e))
+            return
+        QtWidgets.QMessageBox.information(self, "生成模板完成", f"已保存模板：\n{model_path}")
+
+    def _on_loc_method_changed(self, method: str):
+        self.loc_method = method
+        self._update_loc_ui()
+        self._save_session()
+
+    def _line2dup_output_labels(self) -> List[str]:
+        recipe = self.line2dup_recipe
+        if recipe is None and os.path.exists(self._line2dup_recipe_path):
+            try:
+                recipe = line2dup_locator.load_recipe_for_product(self._product_dir)
+                self.line2dup_recipe = recipe
+            except Exception:
+                recipe = None
+        if recipe is not None and recipe.reference_regions:
+            labels = [
+                str(region.get("output_label") or region.get("reference_label") or "")
+                for region in (recipe.reference_regions or [])
+                if isinstance(region, dict)
+            ]
+            labels = [label for label in labels if label]
+            if labels:
+                return labels
+        return ["roi"]
+
+    def _missing_roi_files(self, paths: List[str]) -> List[str]:
+        missing: List[str] = []
+        labels = self._line2dup_output_labels() if self.loc_method == "line2dup" else ["roi"]
+        for p in paths:
+            j = qr_core.labelme_json_of_image(p)
+            if not os.path.exists(j):
+                missing.append(p)
+                continue
+            if any(qr_core.read_shape_from_labelme(j, label) is None for label in labels):
+                missing.append(p)
+        return missing
+
+    def _resolve_autogen_targets(
+        self,
+        paths: List[str],
+        *,
+        only_missing: bool,
+        silent: bool,
+    ) -> List[str]:
+        self._skip_empty_autogen_message = False
+        if not paths:
+            return []
+        missing = self._missing_roi_files(paths)
+        if not missing:
+            if not silent:
+                QtWidgets.QMessageBox.information(self, "提示", "这些图片已经存在 ROI。")
+                self._skip_empty_autogen_message = True
+            return []
+
+        missing_set = set(missing)
+        existing = [p for p in paths if p not in missing_set]
+        if not existing or silent:
+            return list(missing) if only_missing else list(paths)
+
+        default_button = (
+            QtWidgets.QMessageBox.StandardButton.No
+            if only_missing
+            else QtWidgets.QMessageBox.StandardButton.Yes
+        )
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            "覆盖已存在ROI？",
+            (
+                f"当前列表中已有 ROI 的图片有 {len(existing)} 张。\n"
+                "是否覆盖并重新创建这些 ROI？\n\n"
+                "选择“是”将重建整个列表；选择“否”只创建缺失 ROI；选择“取消”终止。"
+            ),
+            QtWidgets.QMessageBox.StandardButton.Yes
+            | QtWidgets.QMessageBox.StandardButton.No
+            | QtWidgets.QMessageBox.StandardButton.Cancel,
+            default_button,
+        )
+        if reply == QtWidgets.QMessageBox.StandardButton.Cancel:
+            self._skip_empty_autogen_message = True
+            return []
+        if reply == QtWidgets.QMessageBox.StandardButton.No:
+            return list(missing)
+        return list(paths)
+
+    def _autogen_roi_for_images(self, paths: List[str], only_missing: bool, silent: bool = False) -> None:
+        if not paths:
+            if not silent:
+                QtWidgets.QMessageBox.information(self, "提示", "没有可处理的图片")
+            return
+        ref_image = self.ref_image
+        method = self.loc_method
+        if method == "line2dup":
+            try:
+                recipe = line2dup_locator.load_recipe_for_product(self._product_dir)
+                self.line2dup_recipe = recipe
+            except Exception as exc:
+                QtWidgets.QMessageBox.warning(self, "提示", f"无法加载 line2dup recipe：{exc}")
+                return
+            if recipe.reference_image and os.path.exists(recipe.reference_image):
+                ref_image = recipe.reference_image
+                if self.ref_image != ref_image:
+                    self._set_reference(ref_image)
+            if not os.path.exists(self._line2dup_model_path):
+                QtWidgets.QMessageBox.warning(self, "提示", "当前产品还没有 line2dup 模型，请先创建模板。")
+                return
+            labels = self._line2dup_output_labels()
+            recipe_region_labels = {
+                str(region.get("output_label") or region.get("reference_label") or "").strip()
+                for region in (recipe.reference_regions or [])
+                if isinstance(region, dict)
+            }
+            recipe_region_labels.discard("")
+            if (not ref_image or not os.path.exists(ref_image)) and not recipe_region_labels:
+                QtWidgets.QMessageBox.warning(self, "提示", "line2dup 需要参考图或已保存的参考 ROI。")
+                return
+            missing_labels: List[str] = []
+            if labels:
+                missing_labels = [label for label in labels if label not in recipe_region_labels]
+                if missing_labels:
+                    ref_json = qr_core.labelme_json_of_image(ref_image) if ref_image else ""
+                    if not ref_json or not os.path.exists(ref_json):
+                        QtWidgets.QMessageBox.warning(
+                            self,
+                            "提示",
+                            f"参考图缺少 labelme json，且 recipe 中也没有这些参考ROI：{', '.join(missing_labels)}",
+                        )
+                        return
+                    missing_labels = [
+                        label
+                        for label in missing_labels
+                        if qr_core.read_shape_from_labelme(ref_json, label) is None
+                    ]
+                    if missing_labels:
+                        QtWidgets.QMessageBox.warning(
+                            self,
+                            "提示",
+                            f"参考图缺少参考ROI标注：{', '.join(missing_labels)}",
+                        )
+                        return
+        else:
+            if not ref_image or not os.path.exists(ref_image):
+                QtWidgets.QMessageBox.warning(self, "提示", "请先设置参考图")
+                return
+
+            ref_json = qr_core.labelme_json_of_image(ref_image)
+            if not os.path.exists(ref_json):
+                QtWidgets.QMessageBox.warning(self, "提示", "参考图缺少标注 json（需要 anchor + roi）")
+                return
+            if qr_core.try_read_xywh_from_labelme(ref_json, "anchor") is None:
+                QtWidgets.QMessageBox.warning(self, "提示", "参考图缺少 anchor 标注")
+                return
+            if qr_core.try_read_xywh_from_labelme(ref_json, "roi") is None:
+                QtWidgets.QMessageBox.warning(self, "提示", "参考图缺少 roi 标注")
+                return
+
+        todo = self._resolve_autogen_targets(paths, only_missing=only_missing, silent=silent)
+        if not todo:
+            if getattr(self, "_skip_empty_autogen_message", False):
+                self._skip_empty_autogen_message = False
+                return
+            if not silent:
+                QtWidgets.QMessageBox.information(self, "提示", "这些图片已存在 ROI")
+            return
+
+        ok = 0
+        errs: List[str] = []
+        for p in todo:
+            try:
+                if method == "shape_model":
+                    qr_core.autogen_roi_json_from_shape_model(
+                        tgt_img_path=p,
+                        ref_img_path=ref_image,
+                        model_path=self._shape_model_path,
+                        anchor_label="anchor",
+                        roi_label="roi",
+                        anchor_mask_label="anchor_mask",
+                    )
+                elif method == "line2dup":
+                    run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
+                        tgt_img_path=p,
+                        ref_img_path=ref_image,
+                        product_dir=self._product_dir,
+                    )
+                    self._line2dup_match_ms_by_image[p] = float(run.locate_ms)
+                    self._line2dup_autogen_ms_by_image[p] = float(run.total_ms)
+                else:
+                    qr_core.autogen_roi_json_from_reference(
+                        tgt_img_path=p,
+                        ref_img_path=ref_image,
+                        method=method,
+                        anchor_label="anchor",
+                        roi_label="roi",
+                    )
+                ok += 1
+            except Exception as e:
+                errs.append(f"{os.path.basename(p)}: {e}")
+
+        if not silent:
+            msg = f"自动 ROI 完成：成功 {ok} / 失败 {len(errs)}"
+            if errs:
+                msg += "\n\n失败示例（前10）：\n" + "\n".join(errs[:10])
+            QtWidgets.QMessageBox.information(self, "完成", msg)
+            if ok:
+                self.lbl_status.setText(f"状态：当前列表已生成ROI，成功 {ok} 张，失败 {len(errs)} 张")
+
+        cur = self.canvas.image_path()
+        if cur and cur in todo:
+            self._load_canvas_image(cur)
+            self._set_status_for_current_image(cur)
+
+    def _autogen_roi_current_tab(self):
+        tab = self.tabs.currentIndex()
+        if tab == 0:
+            paths = list(self.ok_files)
+        elif tab == 1:
+            paths = list(self.ng_files)
+        else:
+            paths = list(self.test_files)
+        self._autogen_roi_for_images(paths, only_missing=self.chk_only_missing.isChecked())
+
+    def _autogen_roi_all(self):
+        paths = list(self.ok_files) + list(self.ng_files) + list(self.test_files)
+        self._autogen_roi_for_images(paths, only_missing=self.chk_only_missing.isChecked())
 
     def _load_products(self) -> dict:
         """加载产品配置，如果不存在则创建默认"""
@@ -717,7 +1232,12 @@ class MainWindow(QtWidgets.QMainWindow):
         """根据当前产品更新路径"""
         product_dir = os.path.join(self._session_dir, self.current_product)
         os.makedirs(product_dir, exist_ok=True)
+        self._product_dir = product_dir
         self._session_json = os.path.join(product_dir, "session.json")
+        self._shape_model_path = os.path.join(product_dir, "shape_model.npz")
+        paths = line2dup_locator.product_paths(product_dir)
+        self._line2dup_model_path = paths.model_path
+        self._line2dup_recipe_path = paths.recipe_path
 
     def _save_products(self):
         """保存产品配置"""
@@ -743,11 +1263,17 @@ class MainWindow(QtWidgets.QMainWindow):
         
         # 清空当前状态
         self.model = None
+        self.line2dup_recipe = None
+        self.ref_image = None
+        self._line2dup_match_ms_by_image = {}
+        self._line2dup_autogen_ms_by_image = {}
         self.ok_files = []
         self.ng_files = []
         self.test_files = []
         self.table.setRowCount(0)
         self.canvas.clear()
+        self.lbl_ref.setText("参考图：未设置")
+        self.lbl_ref.setToolTip("")
         self.lbl_status.setText("状态：已切换产品")
         
         # 加载新产品的会话
@@ -815,16 +1341,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.model = None
         self.table.setRowCount(0)
         # 检查 json 是否齐全
-        missing = []
-        for p in list(self.ok_files) + list(self.ng_files):
-            j = qr_core.labelme_json_of_image(p)
-            if not os.path.exists(j):
-                missing.append(os.path.basename(p))
+        label_names = self._line2dup_output_labels() if self.loc_method == "line2dup" else ["roi"]
+        candidate_paths = list(self.ok_files) + list(self.ng_files)
+        missing_paths = self._missing_roi_files(candidate_paths)
+        if missing_paths and self.loc_method == "line2dup":
+            try:
+                self._autogen_roi_for_images(missing_paths, only_missing=False, silent=True)
+                missing_paths = self._missing_roi_files(candidate_paths)
+            except Exception:
+                pass
+        missing = [os.path.basename(p) for p in missing_paths]
         if missing:
             QtWidgets.QMessageBox.warning(
                 self,
                 "缺少ROI标注",
-                "需要每张 OK/NG 图都有同名 json(roi)。\n请逐张打开图片 -> 画 ROI -> 保存。\n缺少：\n"
+                f"需要每张 OK/NG 图都具备这些 ROI：{', '.join(label_names)}。\n请逐张打开图片 -> 画 ROI -> 保存。\n缺少：\n"
                 + "\n".join(missing[:50]),
             )
             return
@@ -842,7 +1373,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 score_mode=mode,
                 margin=margin,
                 topk=topk,
-                label_name="roi",
+                label_name=label_names[0],
+                label_names=label_names,
             )
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "训练失败", str(e))
@@ -867,30 +1399,93 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.model is None:
             QtWidgets.QMessageBox.warning(self, "提示", "请先训练/注册（OK+NG）")
             return
-        
-        # 测试当前画布上的图片和ROI
+
         p = self.canvas.image_path()
-        roi = self._roi_xywh_from_canvas()
-        if p is None or not os.path.exists(p) or roi is None:
-            QtWidgets.QMessageBox.warning(self, "提示", "请先打开一张测试图片，并在图上画 ROI")
+
+        if p is None or not os.path.exists(p):
+            QtWidgets.QMessageBox.warning(self, "提示", "请先打开一张测试图片")
             return
-        
+
+        total_t0 = time.perf_counter()
+        match_ms: Optional[float] = None
+        if self.loc_method == "line2dup":
+            try:
+                recipe = self.line2dup_recipe
+                if recipe is None and os.path.exists(self._line2dup_recipe_path):
+                    recipe = line2dup_locator.load_recipe_for_product(self._product_dir)
+                    self.line2dup_recipe = recipe
+                ref_image = self.ref_image
+                if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
+                    ref_image = recipe.reference_image
+                if ref_image and os.path.exists(ref_image):
+                    run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
+                        tgt_img_path=p,
+                        ref_img_path=ref_image,
+                        product_dir=self._product_dir,
+                    )
+                    match_ms = float(run.locate_ms)
+                    self._line2dup_match_ms_by_image[p] = match_ms
+                    self._line2dup_autogen_ms_by_image[p] = float(run.total_ms)
+                    self._load_canvas_image(p)
+            except Exception:
+                pass
+        elif p and self.ref_image and os.path.exists(self.ref_image):
+            try:
+                self._autogen_roi_for_images([p], only_missing=True, silent=True)
+                self._load_canvas_image(p)
+            except Exception:
+                pass
+
+        labels = self.model.effective_label_names()
+        roi = self._roi_xywh_from_canvas() if len(labels) == 1 else None
+        if len(labels) == 1 and roi is None:
+            j = qr_core.labelme_json_of_image(p)
+            if not os.path.exists(j):
+                QtWidgets.QMessageBox.warning(self, "提示", "请先打开一张测试图片，并在图上画 ROI")
+                return
+
         feat_net, _ = qr_core.load_backbone(self.model.backbone, device=self.model.device)
         try:
-            e = qr_core.embed_one(p, feat_net, label_name=self.model.label_name, device=self.model.device, roi_xywh=roi)
+            if len(labels) > 1:
+                e = qr_core.embed_many(p, feat_net, labels, device=self.model.device)
+            else:
+                e = qr_core.embed_one(
+                    p,
+                    feat_net,
+                    label_name=labels[0],
+                    device=self.model.device,
+                    roi_xywh=roi,
+                )
             pred, diff, sim_ok, sim_ng = qr_core.predict_one_with_model(e, self.model)
         except Exception as ex:
             QtWidgets.QMessageBox.critical(self, "测试失败", str(ex))
             return
+        total_ms = (time.perf_counter() - total_t0) * 1000.0
         
         self.table.setRowCount(0)
         self.table.insertRow(0)
-        vals = [os.path.basename(p), pred, f"{diff:.4f}", f"{sim_ok:.4f}", f"{sim_ng:.4f}", os.path.basename(qr_core.labelme_json_of_image(p))]
+        vals = [
+            os.path.basename(p),
+            pred,
+            f"{diff:.4f}",
+            f"{sim_ok:.4f}",
+            f"{sim_ng:.4f}",
+            f"{match_ms:.1f}" if match_ms is not None else "",
+            f"{total_ms:.1f}",
+            os.path.basename(qr_core.labelme_json_of_image(p)),
+        ]
         for c, v in enumerate(vals):
             item = QtWidgets.QTableWidgetItem(v)
             if c == 0:
                 item.setData(QtCore.Qt.UserRole, p)
             self.table.setItem(0, c, item)
+        self.lbl_status.setText(
+            "状态："
+            + f"TEST={os.path.basename(p)}  pred={pred}  diff={diff:.4f}  "
+            + (f"模板匹配={match_ms:.1f}ms  " if match_ms is not None else "")
+            + f"总耗时={total_ms:.1f}ms"
+        )
+        self._load_canvas_image(p)
         self._save_session()
 
     def _on_table_click(self, row: int, _col: int):
@@ -900,7 +1495,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         p = it.data(QtCore.Qt.UserRole)
         if isinstance(p, str) and os.path.exists(p):
-            self.canvas.load_image(p)
+            self._load_canvas_image(p)
+            self._set_status_for_current_image(p)
 
 
     def _save_session(self):
@@ -910,6 +1506,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "ok_files": self.ok_files,
             "ng_files": self.ng_files,
             "test_files": self.test_files,
+            "ref_image": self.ref_image,
+            "loc_method": self.loc_method,
         }
         with open(self._session_json, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -929,6 +1527,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ok_files = _filter_exists(data.get("ok_files", []))
         self.ng_files = _filter_exists(data.get("ng_files", []))
         self.test_files = _filter_exists(data.get("test_files", []))
+        ref_image = data.get("ref_image", "")
+        self.ref_image = ref_image if isinstance(ref_image, str) and os.path.exists(ref_image) else None
+        if self.ref_image:
+            self.lbl_ref.setText(f"参考图：{os.path.basename(self.ref_image)}")
+            self.lbl_ref.setToolTip(self.ref_image)
+        loc_method = str(data.get("loc_method", self.loc_method))
+        if loc_method in SUPPORTED_LOC_MODES:
+            self.loc_method = loc_method
+            self.cmb_loc.setCurrentText(loc_method)
         self._refresh_lists()
 
         # 不再从session.json恢复训练参数，参数将在加载模型时恢复
@@ -946,6 +1553,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
             except Exception:
                 self.model = None
+        if os.path.exists(self._line2dup_recipe_path):
+            try:
+                self.line2dup_recipe = line2dup_locator.load_recipe_for_product(self._product_dir)
+                if not self.ref_image and self.line2dup_recipe.reference_image and os.path.exists(self.line2dup_recipe.reference_image):
+                    self.ref_image = self.line2dup_recipe.reference_image
+                    self.lbl_ref.setText(f"参考图：{os.path.basename(self.ref_image)}")
+                    self.lbl_ref.setToolTip(self.ref_image)
+            except Exception:
+                self.line2dup_recipe = None
 
     def _clear_session(self):
         ret = QtWidgets.QMessageBox.question(self, "清空会话", "确定清空会话（列表/参考图/模型缓存）吗？")
@@ -955,7 +1571,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ng_files = []
         self.test_files = []
         self.model = None
+        self.line2dup_recipe = None
         self.ref_image = None
+        self._line2dup_match_ms_by_image = {}
+        self._line2dup_autogen_ms_by_image = {}
         self.lbl_ref.setText("参考图：未设置")
         self.lbl_status.setText("状态：未训练")
         self.table.setRowCount(0)
@@ -963,8 +1582,6 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             if os.path.exists(self._session_json):
                 os.remove(self._session_json)
-            if os.path.exists(self._model_npz):
-                os.remove(self._model_npz)
         except Exception:
             pass
 

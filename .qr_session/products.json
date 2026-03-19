@@ -3,7 +3,9 @@
     "Default",
     "Screw",
     "Block",
-    "Metal"
+    "Metal",
+    "150A_OG",
+    "250A_OG"
   ],
-  "current_product": "Metal"
+  "current_product": "250A_OG"
 }

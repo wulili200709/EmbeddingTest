@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import time
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -90,11 +91,13 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.template is None or args.image is None:
+        print("[1/3] use synthetic sample ...", flush=True)
         tpl, mask, img = _make_synthetic()
         tpl_path = None
         img_path = None
         mask_u8 = mask
     else:
+        print("[1/3] load images ...", flush=True)
         tpl_path = Path(args.template)
         img_path = Path(args.image)
         tpl = _read_gray(tpl_path)
@@ -105,13 +108,20 @@ def main() -> None:
 
     model_path: Optional[Path] = Path(args.model) if args.model else None
 
+    t0 = time.perf_counter()
     if model_path and model_path.exists():
+        print("[2/3] load model ...", flush=True)
         model = ScaledShapeModel.load(model_path)
     else:
+        print("[2/3] create model ...", flush=True)
         model = ScaledShapeModel.create(tpl, mask=mask_u8)
         if model_path:
             model.save(model_path)
+            print(f"      model saved: {model_path}", flush=True)
+    t_model = time.perf_counter() - t0
 
+    print("[3/3] find in scene ...", flush=True)
+    t1 = time.perf_counter()
     rows, cols, angs, scs, scores = model.find(
         img,
         angle_start=args.angle_start,
@@ -125,6 +135,7 @@ def main() -> None:
         num_levels=args.num_levels,
         greediness=args.greediness,
     )
+    t_find = time.perf_counter() - t1
 
     out = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
     for i in range(len(scores)):
@@ -144,6 +155,7 @@ def main() -> None:
     cv2.imwrite(str(out_path), out)
 
     print("matches =", len(scores))
+    print(f"time: model={t_model:.3f}s find={t_find:.3f}s total={(t_model+t_find):.3f}s")
     for i in range(len(scores)):
         print(
             f"[{i}] row={rows[i]:.2f} col={cols[i]:.2f} angle(rad)={angs[i]:.4f} scale={scs[i]:.4f} score={scores[i]:.4f}"
@@ -153,4 +165,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -1,5 +1,7 @@
 {
   "ok_files": [],
   "ng_files": [],
-  "test_files": []
+  "test_files": [],
+  "ref_image": null,
+  "loc_method": "line2dup"
 }

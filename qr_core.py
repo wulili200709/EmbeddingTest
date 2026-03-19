@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import glob
 import json
+import math
 import os
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence, Tuple
@@ -27,6 +28,11 @@ try:
     import cv2  # type: ignore
 except Exception:  # pragma: no cover
     cv2 = None
+
+try:
+    from shape_model_like import ScaledShapeModel
+except Exception:  # pragma: no cover
+    ScaledShapeModel = None
 
 
 def get_device() -> str:
@@ -270,6 +276,34 @@ def read_shape_from_labelme(labelme_json_path: str, label_name: str) -> Optional
     return None
 
 
+def list_shapes_from_labelme(labelme_json_path: str, label_prefix: Optional[str] = None) -> List[dict]:
+    with open(labelme_json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    shapes = []
+    for s in data.get("shapes", []):
+        if not isinstance(s, dict):
+            continue
+        label = str(s.get("label", ""))
+        if label_prefix and not label.startswith(label_prefix):
+            continue
+        shapes.append(s)
+    return shapes
+
+
+def sorted_label_names_from_labelme(labelme_json_path: str, label_prefix: str = "roi") -> List[str]:
+    labels = [str(s.get("label", "")) for s in list_shapes_from_labelme(labelme_json_path, label_prefix=label_prefix)]
+
+    def _sort_key(name: str):
+        suffix = name[len(label_prefix) :]
+        if suffix.isdigit():
+            return (0, int(suffix))
+        if name == label_prefix:
+            return (0, 0)
+        return (1, name)
+
+    return sorted([name for name in labels if name], key=_sort_key)
+
+
 def try_read_polygon_points_from_labelme(labelme_json_path: str, label_name: str) -> Optional[List[Tuple[float, float]]]:
     """
     读取 polygon 的 points；如果不是 polygon 或不存在，返回 None。
@@ -494,6 +528,176 @@ def autogen_roi_json_from_reference(
     raise ValueError(f"Unknown method: {method}")
 
 
+def _require_shape_model():
+    _require_cv2()
+    if ScaledShapeModel is None:
+        raise RuntimeError("shape_model_like 不可用，无法使用 shape_model 模式")
+
+
+def _rect_xywh_to_points(xywh: Tuple[int, int, int, int]) -> List[Tuple[float, float]]:
+    x, y, w, h = xywh
+    return [
+        (float(x), float(y)),
+        (float(x + w), float(y)),
+        (float(x + w), float(y + h)),
+        (float(x), float(y + h)),
+    ]
+
+
+def _shape_points_from_labelme(labelme_json_path: str, label_name: str) -> Optional[List[Tuple[float, float]]]:
+    poly_pts = try_read_polygon_points_from_labelme(labelme_json_path, label_name)
+    if poly_pts and len(poly_pts) >= 3:
+        return poly_pts
+    xywh = try_read_xywh_from_labelme(labelme_json_path, label_name)
+    if xywh:
+        return _rect_xywh_to_points(xywh)
+    return None
+
+
+def _mask_from_points(h: int, w: int, points: Sequence[Tuple[float, float]], fill_value: int = 255) -> np.ndarray:
+    _require_cv2()
+    assert cv2 is not None
+    mask = np.zeros((int(h), int(w)), dtype=np.uint8)
+    if not points:
+        return mask
+    pts = np.asarray(points, dtype=np.float32)
+    if pts.ndim != 2 or pts.shape[1] != 2:
+        raise ValueError("Invalid polygon points")
+    pts[:, 0] = np.clip(pts[:, 0], 0, w - 1)
+    pts[:, 1] = np.clip(pts[:, 1], 0, h - 1)
+    pts_i = np.round(pts).astype(np.int32).reshape(-1, 1, 2)
+    cv2.fillPoly(mask, [pts_i], int(fill_value))
+    return mask
+
+
+def _transform_points(
+    points_xy: Sequence[Tuple[float, float]],
+    origin_rc: Tuple[float, float],
+    row: float,
+    col: float,
+    angle: float,
+    scale: float,
+) -> List[Tuple[float, float]]:
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+    orow, ocol = origin_rc
+    out: List[Tuple[float, float]] = []
+    for x, y in points_xy:
+        dcol = float(x) - float(ocol)
+        drow = float(y) - float(orow)
+        col_f = float(col) + scale * (cos_a * dcol - sin_a * drow)
+        row_f = float(row) + scale * (sin_a * dcol + cos_a * drow)
+        out.append((col_f, row_f))
+    return out
+
+
+def create_shape_model_from_reference(
+    ref_img_path: str,
+    model_path: str,
+    *,
+    anchor_label: str = "anchor",
+    anchor_mask_label: str = "anchor_mask",
+    nbins: int = 30,
+    canny1: int = 50,
+    canny2: int = 150,
+) -> str:
+    _require_shape_model()
+    assert cv2 is not None
+
+    ref = cv2.imread(ref_img_path, cv2.IMREAD_GRAYSCALE)
+    if ref is None:
+        raise FileNotFoundError(ref_img_path)
+
+    ref_json = labelme_json_of_image(ref_img_path)
+    if not os.path.exists(ref_json):
+        raise FileNotFoundError(f"参考图缺少 json：{ref_json}")
+
+    anchor_pts = _shape_points_from_labelme(ref_json, anchor_label)
+    if not anchor_pts:
+        raise RuntimeError("参考图缺少 anchor 标注")
+
+    mask = _mask_from_points(ref.shape[0], ref.shape[1], anchor_pts, fill_value=255)
+    exclude_pts = _shape_points_from_labelme(ref_json, anchor_mask_label)
+    if exclude_pts:
+        exclude = _mask_from_points(ref.shape[0], ref.shape[1], exclude_pts, fill_value=255)
+        mask[exclude > 0] = 0
+
+    model = ScaledShapeModel.create(ref, mask=mask, nbins=nbins, canny1=canny1, canny2=canny2)
+    os.makedirs(os.path.dirname(model_path) or ".", exist_ok=True)
+    model.save(model_path)
+    return model_path
+
+
+def autogen_roi_json_from_shape_model(
+    tgt_img_path: str,
+    ref_img_path: str,
+    model_path: str,
+    *,
+    anchor_label: str = "anchor",
+    roi_label: str = "roi",
+    anchor_mask_label: str = "anchor_mask",
+    angle_start: float = -math.pi,
+    angle_extent: float = math.pi * 2.0,
+    scale_min: float = 0.8,
+    scale_max: float = 1.2,
+    min_score: float = 0.18,
+    num_matches: int = 1,
+    max_overlap: float = 0.3,
+) -> str:
+    _require_shape_model()
+    assert cv2 is not None
+
+    if not os.path.exists(model_path):
+        create_shape_model_from_reference(
+            ref_img_path,
+            model_path,
+            anchor_label=anchor_label,
+            anchor_mask_label=anchor_mask_label,
+        )
+
+    model = ScaledShapeModel.load(model_path)
+
+    tgt = cv2.imread(tgt_img_path, cv2.IMREAD_GRAYSCALE)
+    if tgt is None:
+        raise FileNotFoundError(tgt_img_path)
+
+    rows, cols, angs, scs, _scores = model.find(
+        tgt,
+        angle_start=angle_start,
+        angle_extent=angle_extent,
+        scale_min=scale_min,
+        scale_max=scale_max,
+        min_score=min_score,
+        num_matches=num_matches,
+        max_overlap=max_overlap,
+    )
+    if rows.size == 0:
+        raise RuntimeError("shape_model 未匹配到目标")
+
+    row = float(rows[0])
+    col = float(cols[0])
+    angle = float(angs[0])
+    scale = float(scs[0])
+
+    ref_json = labelme_json_of_image(ref_img_path)
+    if not os.path.exists(ref_json):
+        raise FileNotFoundError(f"参考图缺少 json：{ref_json}")
+
+    roi_pts = _shape_points_from_labelme(ref_json, roi_label)
+    if not roi_pts:
+        raise RuntimeError("参考图缺少 roi 标注")
+
+    anchor_pts = _shape_points_from_labelme(ref_json, anchor_label)
+
+    tgt_roi_pts = _transform_points(roi_pts, model.origin_rc, row, col, angle, scale)
+    if anchor_pts:
+        tgt_anchor_pts = _transform_points(anchor_pts, model.origin_rc, row, col, angle, scale)
+        upsert_labelme_polygon(tgt_img_path, tgt_anchor_pts, label_name=anchor_label)
+
+    jpath = upsert_labelme_polygon(tgt_img_path, tgt_roi_pts, label_name=roi_label)
+    return jpath
+
+
 @torch.no_grad()
 def embed_one(
     img_path: str,
@@ -511,21 +715,63 @@ def embed_one(
         img = img_raw.convert("RGB")
     W, H = img.size
 
+    roi_img: Optional[Image.Image] = None
     if roi_xywh is None:
         jpath = labelme_json_of_image(img_path)
         if not os.path.exists(jpath):
             raise FileNotFoundError(f"缺少 labelme json：{jpath}")
-        x, y, w, h = read_roi_from_labelme(jpath, label_name=label_name)
+        shape = read_shape_from_labelme(jpath, label_name=label_name)
+        if shape and str(shape.get("shape_type", "rectangle")) == "polygon":
+            pts = np.asarray(shape.get("points", []), dtype=np.float32)
+            if pts.shape[0] >= 3 and cv2 is not None:
+                x_min, y_min = pts.min(axis=0)
+                x_max, y_max = pts.max(axis=0)
+                x = int(round(float(x_min)))
+                y = int(round(float(y_min)))
+                w = int(round(float(x_max - x_min)))
+                h = int(round(float(y_max - y_min)))
+                x, y, w, h = clamp_roi_xywh(x, y, w, h, W=W, H=H)
+                img_np = np.array(img)
+                crop = img_np[y : y + h, x : x + w].copy()
+                rel_pts = np.round(pts - np.array([[x, y]], dtype=np.float32)).astype(np.int32)
+                mask = np.zeros((h, w), dtype=np.uint8)
+                cv2.fillPoly(mask, [rel_pts], 255)
+                crop[mask == 0] = 0
+                roi_img = Image.fromarray(crop)
+            else:
+                x, y, w, h = read_roi_from_labelme(jpath, label_name=label_name)
+        else:
+            x, y, w, h = read_roi_from_labelme(jpath, label_name=label_name)
     else:
         x, y, w, h = roi_xywh
 
-    x, y, w, h = clamp_roi_xywh(x, y, w, h, W=W, H=H)
-    roi = img.crop((x, y, x + w, y + h))
-    t = TF(roi).unsqueeze(0).to(device)  # [1,3,224,224]
+    if roi_img is None:
+        x, y, w, h = clamp_roi_xywh(x, y, w, h, W=W, H=H)
+        roi_img = img.crop((x, y, x + w, y + h))
+    t = TF(roi_img).unsqueeze(0).to(device)  # [1,3,224,224]
     f = feat_net(t)  # [1,C,H,W]
     f = F.adaptive_avg_pool2d(f, 1).flatten(1)  # [1,C]
     f = F.normalize(f, dim=1)  # L2 normalize
     return f[0].detach().cpu().numpy()
+
+
+def embed_many(
+    img_path: str,
+    feat_net,
+    label_names: Sequence[str],
+    device: Optional[str] = None,
+) -> np.ndarray:
+    labels = [str(name) for name in label_names if str(name).strip()]
+    if not labels:
+        raise ValueError("label_names cannot be empty")
+    parts = [embed_one(img_path, feat_net, label_name=label, device=device) for label in labels]
+    if len(parts) == 1:
+        return parts[0]
+    vec = np.concatenate(parts, axis=0)
+    norm = float(np.linalg.norm(vec))
+    if norm > 0:
+        vec = vec / norm
+    return vec
 
 
 def score_topk(e: np.ndarray, bank: np.ndarray, k: int = 3) -> float:
@@ -546,6 +792,7 @@ class RegisterModel:
     margin: float
     topk: int
     label_name: str = "roi"
+    label_names: Optional[List[str]] = None
     device: str = "cpu"
 
     ok_proto: Optional[np.ndarray] = None  # [1,C]
@@ -555,6 +802,12 @@ class RegisterModel:
 
     def is_ready(self) -> bool:
         return self.ok_bank is not None and self.ng_bank is not None and self.ok_bank.size > 0 and self.ng_bank.size > 0
+
+    def effective_label_names(self) -> List[str]:
+        labels = [str(name) for name in (self.label_names or []) if str(name).strip()]
+        if labels:
+            return labels
+        return [str(self.label_name or "roi")]
 
 
 def save_register_model_npz(model: RegisterModel, npz_path: str):
@@ -577,6 +830,7 @@ def save_register_model_npz(model: RegisterModel, npz_path: str):
         margin=np.array([float(model.margin)], dtype=np.float32),
         topk=np.array([int(model.topk)], dtype=np.int32),
         label_name=np.array([model.label_name]),
+        label_names=np.array(model.effective_label_names()),
         device=np.array([model.device]),
         ok_proto=ok_proto.astype(np.float32),
         ng_proto=ng_proto.astype(np.float32),
@@ -593,6 +847,7 @@ def load_register_model_npz(npz_path: str) -> RegisterModel:
         margin=float(z["margin"][0]),
         topk=int(z["topk"][0]),
         label_name=str(z["label_name"][0]),
+        label_names=[str(v) for v in z["label_names"]] if "label_names" in z.files else [str(z["label_name"][0])],
         device=str(z["device"][0]),
         ok_proto=z["ok_proto"],
         ng_proto=z["ng_proto"],
@@ -610,15 +865,19 @@ def train_register_model(
     margin: float = 0.02,
     topk: int = 3,
     label_name: str = "roi",
+    label_names: Optional[Sequence[str]] = None,
     device: Optional[str] = None,
 ) -> RegisterModel:
     if not ok_files or not ng_files:
         raise RuntimeError("OK/NG 都需要至少 1 张图片")
     device = device or get_device()
     feat_net, _ = load_backbone(backbone, device=device)
+    labels = [str(name) for name in (label_names or [label_name]) if str(name).strip()]
+    if not labels:
+        labels = ["roi"]
 
-    ok_emb = np.stack([embed_one(p, feat_net, label_name=label_name, device=device) for p in ok_files])
-    ng_emb = np.stack([embed_one(p, feat_net, label_name=label_name, device=device) for p in ng_files])
+    ok_emb = np.stack([embed_many(p, feat_net, labels, device=device) for p in ok_files])
+    ng_emb = np.stack([embed_many(p, feat_net, labels, device=device) for p in ng_files])
 
     ok_proto = ok_emb.mean(axis=0, keepdims=True)
     ok_proto = ok_proto / np.linalg.norm(ok_proto, axis=1, keepdims=True)
@@ -630,7 +889,8 @@ def train_register_model(
         score_mode=score_mode,
         margin=float(margin),
         topk=int(topk),
-        label_name=label_name,
+        label_name=labels[0],
+        label_names=labels,
         device=device,
         ok_proto=ok_proto,
         ng_proto=ng_proto,
@@ -696,4 +956,3 @@ def predict_one(
     diff = sim_ok - sim_ng
     pred = "OK" if diff >= margin else "NG"
     return pred, float(diff), sim_ok, sim_ng
-

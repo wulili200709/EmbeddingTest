@@ -3,31 +3,35 @@
   "flags": {},
   "shapes": [
     {
-      "label": "roi",
+      "label": "roi1",
       "points": [
         [
-          611.0,
-          1061.0
+          602.0,
+          636.0
         ],
         [
-          611.0,
-          1206.0
-        ],
-        [
-          1697.0,
-          1193.0
-        ],
-        [
-          1701.0,
-          1061.0
-        ],
-        [
-          611.0,
-          1061.0
+          1727.0,
+          755.0
         ]
       ],
       "group_id": null,
-      "shape_type": "polygon",
+      "shape_type": "rectangle",
+      "flags": {}
+    },
+    {
+      "label": "roi2",
+      "points": [
+        [
+          612.0,
+          1074.0
+        ],
+        [
+          1727.0,
+          1201.0
+        ]
+      ],
+      "group_id": null,
+      "shape_type": "rectangle",
       "flags": {}
     }
   ],
