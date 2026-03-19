@@ -177,6 +177,7 @@ _DEFAULT_OPENCV_BUILD_ROOT = Path(r"C:\Users\ADMIN\tools\opencv\build")
 NATIVE_BACKEND_TO_MODULE = {
     "original": "line2dup_native",
     "fusion": "line2dup_fusion_native",
+    "fusionv2": "line2dup_fusionv2_native",
     "sim3": "line2dup_sim3_native",
 }
 _NATIVE_MODULES: Dict[str, Any] = {}
@@ -213,6 +214,8 @@ def _normalize_backend_name(backend: str) -> str:
         return "original"
     if key in {"fusion", "fused"}:
         return "fusion"
+    if key in {"fusionv2", "fusion_v2", "fused_v2"}:
+        return "fusionv2"
     if key in {"sim3", "icp", "icp(sim3)", "sim3_icp"}:
         return "sim3"
     raise ValueError(f"Unsupported backend: {backend}")
@@ -261,7 +264,7 @@ def _load_native_matcher(backend: str = "original", required: bool = True) -> An
     return _NATIVE_MODULES[backend]
 
 
-def ensure_native_backends_available(backends: Sequence[str] = ("original", "fusion", "sim3")) -> None:
+def ensure_native_backends_available(backends: Sequence[str] = ("original", "fusion", "fusionv2", "sim3")) -> None:
     for backend in backends:
         _load_native_matcher(backend=backend, required=True)
 

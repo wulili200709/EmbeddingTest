@@ -46,13 +46,42 @@ from line2dup_like_matcher import (
 
 ZOOM_MIN = 0.2
 ZOOM_MAX = 16.0
+SIDEBAR_WIDTH = 320
 BACKEND_ITEMS = [
     ("Original", "original"),
     ("Fusion", "fusion"),
+    ("Fusion V2", "fusionv2"),
     ("ICP (sim3)", "sim3"),
 ]
 BACKEND_LABEL_TO_KEY = {label: key for label, key in BACKEND_ITEMS}
 BACKEND_KEY_TO_LABEL = {key: label for label, key in BACKEND_ITEMS}
+
+
+class ScrollableSidebar(ttk.Frame):
+    def __init__(self, master: tk.Misc, *, width: int = SIDEBAR_WIDTH, padding: int | Tuple[int, int, int, int] = 8) -> None:
+        super().__init__(master)
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+
+        self.canvas = tk.Canvas(self, highlightthickness=0, borderwidth=0, width=int(width))
+        self.vbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.vbar.set)
+
+        self.canvas.grid(row=0, column=0, sticky="ns")
+        self.vbar.grid(row=0, column=1, sticky="ns")
+
+        self.content = ttk.Frame(self.canvas, padding=padding)
+        self.content.columnconfigure(0, weight=1)
+        self._window_id = self.canvas.create_window((0, 0), window=self.content, anchor="nw")
+
+        self.content.bind("<Configure>", self._on_content_configure)
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+
+    def _on_content_configure(self, _event: tk.Event) -> None:
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _on_canvas_configure(self, event: tk.Event) -> None:
+        self.canvas.itemconfigure(self._window_id, width=max(1, int(event.width)))
 
 
 def parse_levels(arg: str) -> List[int]:
@@ -450,7 +479,7 @@ def build_multi_backend_detector(
     original_mode: str,
     original_editor_levels: Optional[Sequence[TemplateLevel]] = None,
 ) -> Tuple[Line2DupLikeDetector, int, int]:
-    ensure_native_backends_available(("original", "fusion", "sim3"))
+    ensure_native_backends_available(("original", "fusion", "fusionv2", "sim3"))
     roi_mask = build_mask_from_rects(roi_img.shape[1], roi_img.shape[0], mask_rects)
 
     detector = Line2DupLikeDetector(
@@ -508,6 +537,13 @@ def build_multi_backend_detector(
         strong_threshold=strong_threshold,
         backend="fusion",
     )
+    fusionv2_native = create_native_detector(
+        num_features=num_features,
+        T_levels=levels,
+        weak_threshold=weak_threshold,
+        strong_threshold=strong_threshold,
+        backend="fusionv2",
+    )
     sim3_native = create_native_detector(
         num_features=num_features,
         T_levels=levels,
@@ -549,6 +585,10 @@ def build_multi_backend_detector(
         if fusion_tid < 0:
             skipped += 1
             continue
+        fusionv2_tid = int(fusionv2_native.add_template(src_i, class_id, mask_i, nfeat))
+        if fusionv2_tid < 0:
+            skipped += 1
+            continue
         sim3_tid = int(sim3_native.add_template(src_i, class_id, mask_i, nfeat))
         if sim3_tid < 0:
             skipped += 1
@@ -557,12 +597,16 @@ def build_multi_backend_detector(
         fusion_tp = Line2DupLikeDetector._template_pyramid_from_native(
             fusion_native.export_template_pyramid(class_id, fusion_tid)
         )
+        fusionv2_tp = Line2DupLikeDetector._template_pyramid_from_native(
+            fusionv2_native.export_template_pyramid(class_id, fusionv2_tid)
+        )
         sim3_tp = Line2DupLikeDetector._template_pyramid_from_native(
             sim3_native.export_template_pyramid(class_id, sim3_tid)
         )
 
         backend_templates["original"].append(original_tp)
         backend_templates["fusion"].append(fusion_tp)
+        backend_templates["fusionv2"].append(fusionv2_tp)
         backend_templates["sim3"].append(sim3_tp)
         metas.append(
             {
@@ -732,8 +776,9 @@ class CreateTemplateTab(ttk.Frame):
         self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
 
-        control = ttk.Frame(self, padding=8)
-        control.grid(row=0, column=0, sticky="ns")
+        control_sidebar = ScrollableSidebar(self)
+        control_sidebar.grid(row=0, column=0, sticky="ns")
+        control = control_sidebar.content
         view = ttk.Frame(self, padding=(0, 8, 8, 8))
         view.grid(row=0, column=1, sticky="nsew")
         view.columnconfigure(0, weight=1)
@@ -1910,8 +1955,9 @@ class EditTemplateTab(ttk.Frame):
         self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
 
-        control = ttk.Frame(self, padding=8)
-        control.grid(row=0, column=0, sticky="ns")
+        control_sidebar = ScrollableSidebar(self)
+        control_sidebar.grid(row=0, column=0, sticky="ns")
+        control = control_sidebar.content
         view = ttk.Frame(self, padding=(0, 8, 8, 8))
         view.grid(row=0, column=1, sticky="nsew")
         view.columnconfigure(0, weight=1)
@@ -2464,8 +2510,9 @@ class FindTemplateTab(ttk.Frame):
         self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
 
-        control = ttk.Frame(self, padding=8)
-        control.grid(row=0, column=0, sticky="ns")
+        control_sidebar = ScrollableSidebar(self)
+        control_sidebar.grid(row=0, column=0, sticky="ns")
+        control = control_sidebar.content
         view = ttk.Frame(self, padding=(0, 8, 8, 8))
         view.grid(row=0, column=1, sticky="nsew")
         view.columnconfigure(0, weight=1)
@@ -2738,8 +2785,11 @@ class FindTemplateTab(ttk.Frame):
         else:
             class_ids = [class_choice]
 
-        if backend_key == "fusion" and scene_mask_for_match is not None:
-            messagebox.showerror("Fusion backend", "Fusion backend does not support scene mask. Clear the scene mask or switch backend.")
+        if backend_key in {"fusion", "fusionv2"} and scene_mask_for_match is not None:
+            messagebox.showerror(
+                "Fusion backend",
+                "Fusion backends do not support scene mask. Clear the scene mask or switch backend.",
+            )
             return
 
         def match_once(th: float):
@@ -2750,7 +2800,7 @@ class FindTemplateTab(ttk.Frame):
                 scene_for_match,
                 threshold=th,
                 class_ids=class_ids,
-                mask=None if backend_key == "fusion" else scene_mask_for_match,
+                mask=None if backend_key in {"fusion", "fusionv2"} else scene_mask_for_match,
                 backend=backend_key,
             )
             match_ms += (time.perf_counter() - t0) * 1000.0
@@ -2938,8 +2988,9 @@ class EditTemplateTabV2(ttk.Frame):
         self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
 
-        control = ttk.Frame(self, padding=8)
-        control.grid(row=0, column=0, sticky="ns")
+        control_sidebar = ScrollableSidebar(self)
+        control_sidebar.grid(row=0, column=0, sticky="ns")
+        control = control_sidebar.content
         view = ttk.Frame(self, padding=(0, 8, 8, 8))
         view.grid(row=0, column=1, sticky="nsew")
         view.columnconfigure(0, weight=1)
@@ -2960,7 +3011,7 @@ class EditTemplateTabV2(ttk.Frame):
         self.scale_step_var = tk.DoubleVar(value=0.05)
 
         row = 0
-        ttk.Label(control, text="Edit Existing Model (rebuild Fusion / sim3 on save)").grid(row=row, column=0, sticky="w")
+        ttk.Label(control, text="Edit Existing Model (rebuild Fusion / Fusion V2 / sim3 on save)").grid(row=row, column=0, sticky="w")
         row += 1
 
         ttk.Button(control, text="Open Model...", command=self.open_model).grid(row=row, column=0, sticky="ew", pady=(6, 0))

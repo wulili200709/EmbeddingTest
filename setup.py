@@ -58,7 +58,7 @@ def _remove_readonly(func, path: str, _exc) -> None:
 
 
 def prepare_backend_root(module_name: str, backend_root: Path) -> Path:
-    if module_name not in {"line2dup_fusion_native", "line2dup_sim3_native"}:
+    if module_name not in {"line2dup_fusion_native", "line2dup_fusionv2_native", "line2dup_sim3_native"}:
         return backend_root
 
     patched_root = PATCHED_BACKEND_ROOT / module_name
@@ -66,7 +66,7 @@ def prepare_backend_root(module_name: str, backend_root: Path) -> Path:
         shutil.rmtree(patched_root, onerror=_remove_readonly)
     shutil.copytree(backend_root, patched_root, ignore=shutil.ignore_patterns(".git", "build_bench"))
 
-    if module_name == "line2dup_fusion_native":
+    if module_name in {"line2dup_fusion_native", "line2dup_fusionv2_native"}:
         line2dup_cpp = patched_root / "line2Dup.cpp"
         text = line2dup_cpp.read_text(encoding="utf-8")
         openmp_old = """#pragma omp declare reduction \\
@@ -206,6 +206,15 @@ def build_extensions() -> list[Extension]:
             backend_root=FUSION_ROOT,
             extra_compile_args=openmp_compile_args(),
             extra_link_args=openmp_link_args(),
+        ),
+        build_backend_extension(
+            module_name="line2dup_fusionv2_native",
+            backend_root=FUSION_ROOT,
+            extra_compile_args=openmp_compile_args(),
+            extra_link_args=openmp_link_args(),
+            extra_define_macros=[
+                ("LINE2DUP_ENABLE_FUSION_V2", "1"),
+            ],
         ),
         build_backend_extension(
             module_name="line2dup_sim3_native",
