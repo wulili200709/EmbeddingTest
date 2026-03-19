@@ -33,6 +33,10 @@
 
 # Visual Studio 2019 cache/options directory
 .vs/
+bench-out/
+build-vs/
+build-vs-mfc/
+build-vs-mfc-1444/
 *.sdf
 bin/
 obj/
