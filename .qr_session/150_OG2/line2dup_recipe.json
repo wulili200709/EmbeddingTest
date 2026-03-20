@@ -17,12 +17,12 @@
   "reference_shape_type": "rectangle",
   "reference_points": [
     [
-      926.0,
-      772.0
+      950.0,
+      818.0
     ],
     [
-      1290.0,
-      885.0
+      1348.0,
+      851.0
     ]
   ],
   "reference_regions": [
@@ -32,12 +32,12 @@
       "shape_type": "rectangle",
       "points": [
         [
-          926.0,
-          772.0
+          950.0,
+          818.0
         ],
         [
-          1290.0,
-          885.0
+          1348.0,
+          851.0
         ]
       ]
     }

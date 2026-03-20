@@ -1251,3 +1251,159 @@ meanintensity
 meanhsv_h
 meanhsv_v
 meanhsv_s
+
+
+Embedding + backbone 的方案适合纹理/表面缺陷（如划痕、脏污、变形）这类难以用规则描述的任务。对于"有无某颜色物体"这类任务，用颜色阈值或 HSV 分割才是正确工具
+对颜色敏感的网络/方案
+专门为颜色设计的架构
+网络	颜色敏感原因
+ColorNet	专门在 Lab 色彩空间训练
+SqueezeNet	浅层保留更多颜色信息（不像深层网络颜色被抽象掉）
+CNN 浅层特征（layer1）	第一层卷积就是颜色/边缘检测，越浅越感知颜色
+4. 实用建议：在你的系统里，提取浅层特征
+python
+# 不用最终的 features，只取第1-2个 block
+feat_shallow = list(backbone.features.children())[:3]  # 浅层
+深层网络越靠后语义越强、颜色越弱；越靠前颜色信息越丰富。
+
+# 网络层数
+ efficientnet_b0 为例，m.features 是完整的 9 个 block（features[0]~features[8]），全部都用了：
+features[0]  Conv+BN+Act         32ch   ← 浅层，颜色/边缘
+features[1]  MBConv              16ch
+features[2]  MBConv              24ch
+features[3]  MBConv              40ch
+features[4]  MBConv              80ch
+features[5]  MBConv              112ch
+features[6]  MBConv              192ch
+features[7]  MBConv              320ch
+features[8]  Conv+BN+Act        1280ch  ← 深层，语义/纹理（现在输出的就是这层）
+现在输出的是 1280ch 的最深层特征，颜色信息已经基本被抽象掉了。
+
+改浅层只需改 
+
+load_backbone
+ 1 处，共 2 行
+文件：
+
+qr_core.py
+，
+
+load_backbone
+ 函数，第 49~50 行（以 efficientnet_b0 为例）：
+
+python
+# 现在（全层，1280ch 深层语义）
+feat = m.features
+out_ch = 1280
+# 改成（只取前3层，24ch 浅层颜色）
+feat = torch.nn.Sequential(*list(m.features.children())[:3])
+out_ch = 24
+各 backbone 推荐参数：
+
+backbone	推荐取前几层	对应 out_ch
+efficientnet_b0	[:3]	24
+mobilenet_v3_small	[:3]	24
+mobilenet_v3_large	[:3]	24
+
+
+MobileNetV3-Small 的 features 共 9 个 block（features[0]~features[8]）：
+
+features[0]  Conv+BN+Hardswish    16ch   ← 浅层颜色
+features[1]  InvertedResidual     16ch
+features[2]  InvertedResidual     24ch
+features[3]  InvertedResidual     24ch
+features[4]  InvertedResidual     40ch
+features[5]  InvertedResidual     40ch
+features[6]  InvertedResidual     40ch
+features[7]  InvertedResidual     48ch
+features[8]  Conv+BN+Hardswish   576ch   ← 现在输出的是这层（576ch）
+MobileNetV3-Large 的 features 共 16 个 block（features[0]~features[15]），现在输出 960ch。
+
+现在代码用了全部层，输出的是最后那层最深的语义特征（576ch 或 960ch），颜色信息已高度抽象。
+
+如果要改浅层，取 [:3]，输出从 576ch 降到 24ch，但颜色敏感度大幅提升
+
+MobileNetV3-Large 的 features 共 16 个 block（features[0]~features[15]）：
+
+features[0]   Conv+BN+Hardswish    16ch   ← 浅层颜色
+features[1]   InvertedResidual     16ch
+features[2]   InvertedResidual     24ch
+features[3]   InvertedResidual     24ch
+features[4]   InvertedResidual     40ch
+features[5]   InvertedResidual     40ch
+features[6]   InvertedResidual     40ch
+features[7]   InvertedResidual     80ch
+features[8]   InvertedResidual     80ch
+features[9]   InvertedResidual     80ch
+features[10]  InvertedResidual     80ch
+features[11]  InvertedResidual    112ch
+features[12]  InvertedResidual    112ch
+features[13]  InvertedResidual    160ch
+features[14]  InvertedResidual    160ch
+features[15]  Conv+BN+Hardswish   960ch  ← 现在输出的是这层（960ch）
+比 Small 多了足足 7 层，语义更强、颜色更弱。
+
+三个网络层数对比：
+
+backbone	总层数	现在输出通道	取[:3]后输出
+efficientnet_b0	9层	1280ch	24ch
+mobilenet_v3_small	9层	576ch	24ch
+mobilenet_v3_large	16层	960ch	24ch
+
+# 二维图实际含义解释
+坐标轴是什么？
+Dimension 1 / Dimension 2 没有任何物理含义。
+
+t-SNE 把每张图的高维 embedding（24维向量）强行压缩到 2D，尽量让"原来在高维空间距离近的点，在二维里也近"。坐标数值本身（-300、100 等）没有意义，只有点与点之间的相对距离有意义
+
+
+# 颜色直方图是什么？
+把 ROI 里每种颜色的像素数量统计出来，变成一个向量：
+
+HSV 色相(H) 分成36个桶(每10°一档):
+[红多少, 橙多少, 黄多少, 绿多少, 蓝多少, ...]
+              ↓
+         一个 36 维向量
+再加饱和度(S) 分成32桶:
+         最终约 68 维向量
+
+OK样本（有灰色密封圈）:
+histogram → [黄色占多, 灰色占少]  → OK 原型向量
+NG样本（没有密封圈）:
+histogram → [黄色占100%]          → NG 原型向量
+测试图: 
+histogram → 与OK向量比距离 vs 与NG向量比距离
+
+
+因为用的是巴氏距离（Bhattacharyya Distance），它是一种"距离"而不是"相似度"：
+
+距离 vs 相似度
+指标类型	值越小	值越大
+距离（如巴氏距离）	越相似	越不同
+相似度（如余弦相似度）	越不同	越相似
+巴氏距离的直觉解释
+想象两个直方图是两座"山丘"：
+
+OK 原型直方图:           测试图直方图:
+  ██                        ██
+  ██  ██                    ██  ██
+  ██  ██  ██                ██  ██  ██
+灰  黄  橙  ...           灰  黄  橙  ...
+← 两座山形状几乎一样 → 距离小（相似）
+NG 原型直方图:           测试图直方图:
+          ██                ██
+      ██  ██                ██  ██
+  _   ██  ██  ██            ██  ██  ██
+灰  黄  橙  ...           灰  黄  橙  ...
+← 两座山形状差很多 → 距离大（不相似）
+巴氏距离本质上是计算两个直方图重叠面积，重叠越多距离越小。
+
+对应你的结果
+Image__10-05-33.bmp (OK图有灰色密封圈):
+  dist_ok = 0.2349  ← 与 OK 原型很像（距离近）
+  dist_ng = 0.7924  ← 与 NG 原型不像（距离远）
+  → 判 OK ✓
+Image__10-05-50.bmp (NG图没有密封圈):
+  dist_ok = 0.6084  ← 与 OK 原型不像
+  dist_ng = 0.0315  ← 与 NG 原型极其相似（0.03 ≈ 几乎一样）
+  → 判 NG ✓

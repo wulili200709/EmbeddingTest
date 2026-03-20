@@ -1,0 +1,17 @@
+{
+  "algorithm": "meanintensity",
+  "score_mode": "proto",
+  "margin": 0.02,
+  "topk": 3,
+  "traditional_models": {
+    "meanintensity": {
+      "algorithm": "meanintensity",
+      "threshold": 63.19179153442383,
+      "ok_when": "less_equal",
+      "ok_mean": 62.40907414754232,
+      "ng_mean": 91.22793197631836,
+      "accuracy": 1.0,
+      "roi_label": "roi1"
+    }
+  }
+}

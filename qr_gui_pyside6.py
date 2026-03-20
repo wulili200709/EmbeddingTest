@@ -31,13 +31,23 @@ from embedding_analysis_dialog import EmbeddingAnalysisDialog
 import line2dup_locator
 from line2dup_recipe import Line2DupRecipe
 from line2dup_template_page_pyside6 import Line2DupTemplateDialog
+from product_params import ProductRuntimeParams, load_product_params, save_product_params
 import qr_core
 from roi_canvas_pyside6 import OverlayShape, RoiCanvas
+from traditional_algorithms import (
+    TRADITIONAL_ALGORITHMS,
+    TraditionalThresholdModel,
+    compute_roi_metrics,
+    is_traditional_algorithm,
+    metric_value,
+    train_threshold_model,
+)
 
 
-SUPPORTED_BACKBONES = ["efficientnet_b0", "mobilenet_v3_small", "mobilenet_v3_large"]
+SUPPORTED_EMBEDDING_ALGORITHMS = ["efficientnet_b0", "mobilenet_v3_small", "mobilenet_v3_large"]
+SUPPORTED_ALGORITHMS = SUPPORTED_EMBEDDING_ALGORITHMS + TRADITIONAL_ALGORITHMS
 SUPPORTED_SCORE_MODES = ["proto", "topk"]
-SUPPORTED_LOC_MODES = ["none", "template", "orb", "shape_model", "line2dup"]
+SUPPORTED_LOC_MODES = ["line2dup"]
 SUPPORTED_SHAPES = ["rect", "polygon"]
 ROI_OVERLAY_PALETTE = [
     QtGui.QColor(255, 215, 0),
@@ -378,10 +388,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.model: Optional[qr_core.RegisterModel] = None
         self.ref_image: Optional[str] = None
-        self.loc_method: str = "template"
+        self.loc_method: str = "line2dup"
         self.line2dup_recipe: Optional[Line2DupRecipe] = None
+        self.product_params = ProductRuntimeParams()
         self._line2dup_match_ms_by_image: Dict[str, float] = {}
         self._line2dup_autogen_ms_by_image: Dict[str, float] = {}
+        self._current_result_rows: List[Dict[str, object]] = []
+        self._updating_runtime_params = False
 
         self._build_ui()
         self._refresh_lists()
@@ -468,21 +481,25 @@ class MainWindow(QtWidgets.QMainWindow):
         # controls
         box = QtWidgets.QGroupBox("参数")
         form = QtWidgets.QFormLayout(box)
-        self.cmb_backbone = QtWidgets.QComboBox()
-        self.cmb_backbone.addItems(SUPPORTED_BACKBONES)
-        self.cmb_backbone.currentTextChanged.connect(self._on_backbone_changed)
+        self.cmb_algorithm = QtWidgets.QComboBox()
+        self.cmb_algorithm.addItems(SUPPORTED_ALGORITHMS)
+        self.cmb_algorithm.currentTextChanged.connect(self._on_algorithm_changed)
+        self.cmb_backbone = self.cmb_algorithm
         self.cmb_mode = QtWidgets.QComboBox()
         self.cmb_mode.addItems(SUPPORTED_SCORE_MODES)
+        self.cmb_mode.currentTextChanged.connect(self._on_runtime_params_changed)
         self.spin_margin = QtWidgets.QDoubleSpinBox()
         self.spin_margin.setDecimals(4)
         self.spin_margin.setSingleStep(0.005)
         self.spin_margin.setRange(-1.0, 1.0)
         self.spin_margin.setValue(0.02)
+        self.spin_margin.valueChanged.connect(self._on_runtime_params_changed)
         self.spin_topk = QtWidgets.QSpinBox()
         self.spin_topk.setRange(1, 50)
         self.spin_topk.setValue(3)
-        form.addRow("BACKBONE", self.cmb_backbone)
-        form.addRow("算法", self.cmb_mode)
+        self.spin_topk.valueChanged.connect(self._on_runtime_params_changed)
+        form.addRow("算法", self.cmb_algorithm)
+        form.addRow("判定方式", self.cmb_mode)
         form.addRow("Margin", self.spin_margin)
         form.addRow("TopK(仅topk)", self.spin_topk)
         left.addWidget(box, 0)
@@ -492,6 +509,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_train.clicked.connect(self._train)
         self.btn_test = QtWidgets.QPushButton("测试 TEST")
         self.btn_test.clicked.connect(self._run_test)
+        self.btn_export_test = QtWidgets.QPushButton("保存测试结果")
+        self.btn_export_test.clicked.connect(self._export_current_results_csv)
         self.btn_validate_margin = QtWidgets.QPushButton("验证/建议Margin")
         self.btn_validate_margin.clicked.connect(self._run_margin_validation)
         self.btn_embedding_analysis = QtWidgets.QPushButton("特征分析")
@@ -500,6 +519,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_baseline_debug.clicked.connect(self._run_traditional_baseline_debug)
         act.addWidget(self.btn_train)
         act.addWidget(self.btn_test)
+        act.addWidget(self.btn_export_test)
         act.addWidget(self.btn_validate_margin)
         act.addWidget(self.btn_embedding_analysis)
         act.addWidget(self.btn_baseline_debug)
@@ -518,6 +538,7 @@ class MainWindow(QtWidgets.QMainWindow):
         right.addWidget(self.canvas, 2)
 
         roi_bar = QtWidgets.QHBoxLayout()
+        self._manual_roi_bar = roi_bar
         roi_bar.addWidget(QtWidgets.QLabel("形状："))
         self.cmb_shape = QtWidgets.QComboBox()
         self.cmb_shape.addItems(SUPPORTED_SHAPES)
@@ -546,6 +567,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         auto_box = QtWidgets.QGroupBox("自动 ROI")
         auto_l = QtWidgets.QGridLayout(auto_box)
+        self._auto_roi_layout = auto_l
         self.lbl_ref = QtWidgets.QLabel("参考图：未设置")
         self.btn_set_ref = QtWidgets.QPushButton("设为参考图(当前)")
         self.btn_set_ref.clicked.connect(self._set_ref_from_current)
@@ -583,11 +605,21 @@ class MainWindow(QtWidgets.QMainWindow):
         auto_l.addWidget(self.btn_clear_roi_batch, 5, 0, 1, 2)
         right.addWidget(auto_box)
         self._update_loc_ui()
+        for index in [0, 1, 2, 3, 4, 5]:
+            item = self._manual_roi_bar.itemAt(index)
+            if item is not None and item.widget() is not None:
+                item.widget().setVisible(False)
+        for pos in [(1, 0), (1, 1), (1, 2), (2, 0), (2, 1)]:
+            item = self._auto_roi_layout.itemAtPosition(*pos)
+            if item is not None and item.widget() is not None:
+                item.widget().setVisible(False)
 
 
 
-        self.table = QtWidgets.QTableWidget(0, 9)
-        self.table.setHorizontalHeaderLabels(["文件", "GT", "Pred", "diff", "sim_ok", "sim_ng", "match_ms", "total_ms", "json"])
+        self.table = QtWidgets.QTableWidget(0, 11)
+        self.table.setHorizontalHeaderLabels(
+            ["文件", "GT", "Pred", "diff", "sim_ok", "sim_ng", "value", "threshold", "match_ms", "total_ms", "json"]
+        )
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.table.cellClicked.connect(self._on_table_click)
@@ -1317,6 +1349,7 @@ class MainWindow(QtWidgets.QMainWindow):
         os.makedirs(product_dir, exist_ok=True)
         self._product_dir = product_dir
         self._session_json = os.path.join(product_dir, "session.json")
+        self._product_params_path = os.path.join(product_dir, "product_params.json")
         self._shape_model_path = os.path.join(product_dir, "shape_model.npz")
         paths = line2dup_locator.product_paths(product_dir)
         self._line2dup_model_path = paths.model_path
@@ -1354,6 +1387,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ng_files = []
         self.test_files = []
         self.table.setRowCount(0)
+        self._current_result_rows = []
         self.canvas.clear_image()
         self.lbl_ref.setText("参考图：未设置")
         self.lbl_ref.setToolTip("")
@@ -1394,36 +1428,101 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cmb_product.setCurrentText(name)
         # 切换逻辑会自动触发
 
-    def _on_backbone_changed(self, backbone: str):
-        """Backbone切换时自动加载对应的模型，并恢复该模型的训练参数"""
-        if not backbone:
+    def _current_algorithm(self) -> str:
+        return str(self.cmb_algorithm.currentText() or "").strip()
+
+    def _is_embedding_algorithm(self, algorithm: Optional[str] = None) -> bool:
+        return not is_traditional_algorithm(algorithm or self._current_algorithm())
+
+    def _embedding_model_path(self, algorithm: str) -> str:
+        return os.path.join(self._product_dir, f"register_model_{algorithm}.npz")
+
+    def _load_runtime_params(self) -> None:
+        self.product_params = load_product_params(self._product_params_path)
+        algorithm = str(self.product_params.algorithm or "")
+        if algorithm not in SUPPORTED_ALGORITHMS:
+            self.product_params.algorithm = SUPPORTED_EMBEDDING_ALGORITHMS[0]
+        if str(self.product_params.score_mode or "") not in SUPPORTED_SCORE_MODES:
+            self.product_params.score_mode = SUPPORTED_SCORE_MODES[0]
+        self.product_params.topk = max(1, int(self.product_params.topk))
+        self.product_params.margin = float(self.product_params.margin)
+
+    def _save_runtime_params(self) -> None:
+        save_product_params(self.product_params, self._product_params_path)
+
+    def _apply_runtime_params_to_ui(self) -> None:
+        self._updating_runtime_params = True
+        try:
+            algorithm = self.product_params.algorithm if self.product_params.algorithm in SUPPORTED_ALGORITHMS else SUPPORTED_ALGORITHMS[0]
+            score_mode = self.product_params.score_mode if self.product_params.score_mode in SUPPORTED_SCORE_MODES else SUPPORTED_SCORE_MODES[0]
+            self.cmb_algorithm.setCurrentText(algorithm)
+            self.cmb_mode.setCurrentText(score_mode)
+            self.spin_margin.setValue(float(self.product_params.margin))
+            self.spin_topk.setValue(max(1, int(self.product_params.topk)))
+        finally:
+            self._updating_runtime_params = False
+        self._update_runtime_widgets()
+
+    def _update_runtime_widgets(self) -> None:
+        embedding = self._is_embedding_algorithm()
+        self.cmb_mode.setEnabled(embedding)
+        self.spin_topk.setEnabled(embedding and self.cmb_mode.currentText() == "topk")
+        self.btn_validate_margin.setEnabled(embedding)
+        self.btn_embedding_analysis.setEnabled(embedding)
+
+    def _on_runtime_params_changed(self, *args) -> None:
+        if self._updating_runtime_params:
             return
-        # 使用当前产品目录
-        product_dir = os.path.join(self._session_dir, self.current_product)
-        model_file = os.path.join(product_dir, f"register_model_{backbone}.npz")
-        if os.path.exists(model_file):
-            try:
-                self.model = qr_core.load_register_model_npz(model_file)
-                # 从模型中恢复训练参数到UI
-                self.cmb_mode.setCurrentText(self.model.score_mode)
-                self.spin_margin.setValue(self.model.margin)
-                self.spin_topk.setValue(self.model.topk)
-                self.lbl_status.setText(
-                    f"状态：已加载模型  backbone={self.model.backbone}  mode={self.model.score_mode}  "
-                    f"margin={self.model.margin:.4f}  topk={self.model.topk}"
-                )
-            except Exception as e:
-                self.model = None
-                self.lbl_status.setText(f"状态：加载{backbone}模型失败 - {e}")
-        else:
+        self.product_params.algorithm = self._current_algorithm()
+        self.product_params.score_mode = self.cmb_mode.currentText()
+        self.product_params.margin = float(self.spin_margin.value())
+        self.product_params.topk = int(self.spin_topk.value())
+        if self.model is not None and self._is_embedding_algorithm():
+            self.model.score_mode = self.product_params.score_mode
+            self.model.margin = self.product_params.margin
+            self.model.topk = self.product_params.topk
+        self._save_runtime_params()
+        self._update_runtime_widgets()
+
+    def _load_embedding_model_for_algorithm(self, algorithm: str) -> None:
+        if not self._is_embedding_algorithm(algorithm):
             self.model = None
-            self.lbl_status.setText(f"状态：{backbone}模型未训练")
+            self.lbl_status.setText(f"状态：当前算法={algorithm}，使用传统阈值方法")
+            return
+
+        model_file = self._embedding_model_path(algorithm)
+        if not os.path.exists(model_file):
+            self.model = None
+            self.lbl_status.setText(f"状态：{algorithm} 模型未训练")
+            return
+
+        self.model = qr_core.load_register_model_npz(model_file)
+        self.model.score_mode = self.product_params.score_mode
+        self.model.margin = float(self.product_params.margin)
+        self.model.topk = int(self.product_params.topk)
+        self.lbl_status.setText(
+            f"状态：已加载模型  algorithm={algorithm}  mode={self.model.score_mode}  "
+            f"margin={self.model.margin:.4f}  topk={self.model.topk}"
+        )
+
+    def _on_algorithm_changed(self, algorithm: str):
+        if self._updating_runtime_params:
+            return
+        if not algorithm:
+            return
+        self.product_params.algorithm = algorithm
+        self._save_runtime_params()
+        self._update_runtime_widgets()
+        try:
+            self._load_embedding_model_for_algorithm(algorithm)
+        except Exception as exc:
+            self.model = None
+            self.lbl_status.setText(f"状态：加载算法 {algorithm} 失败 - {exc}")
 
     def _train(self):
-        # 每次点击都视为“新注册”
         self.model = None
         self.table.setRowCount(0)
-        # 检查 json 是否齐全
+        self._current_result_rows = []
         label_names = self._line2dup_output_labels() if self.loc_method == "line2dup" else ["roi"]
         candidate_paths = list(self.ok_files) + list(self.ng_files)
         missing_paths = self._missing_roi_files(candidate_paths)
@@ -1443,40 +1542,73 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             return
 
-        backbone = self.cmb_backbone.currentText()
+        algorithm = self._current_algorithm()
         mode = self.cmb_mode.currentText()
         margin = float(self.spin_margin.value())
         topk = int(self.spin_topk.value())
+        self.product_params.algorithm = algorithm
+        self.product_params.score_mode = mode
+        self.product_params.margin = margin
+        self.product_params.topk = topk
 
         try:
-            self.model = qr_core.train_register_model(
-                self.ok_files,
-                self.ng_files,
-                backbone=backbone,
-                score_mode=mode,
-                margin=margin,
-                topk=topk,
-                label_name=label_names[0],
-                label_names=label_names,
-            )
+            if self._is_embedding_algorithm(algorithm):
+                self.model = qr_core.train_register_model(
+                    self.ok_files,
+                    self.ng_files,
+                    backbone=algorithm,
+                    score_mode=mode,
+                    margin=margin,
+                    topk=topk,
+                    label_name=label_names[0],
+                    label_names=label_names,
+                )
+                qr_core.save_register_model_npz(self.model, self._embedding_model_path(algorithm))
+                self.lbl_status.setText(
+                    f"状态：已训练  algorithm={algorithm}  mode={mode}  margin={margin:.4f}  topk={topk}"
+                )
+                message = "OK/NG 注册完成，可以开始测试。"
+            else:
+                threshold_model, train_rows = train_threshold_model(
+                    self.ok_files,
+                    self.ng_files,
+                    algorithm,
+                    preferred_label=label_names[0],
+                )
+                self.product_params.traditional_models[algorithm] = threshold_model.to_dict()
+                rows: List[Dict[str, object]] = []
+                for sample in train_rows:
+                    pred, diff = threshold_model.predict(float(sample["value"]))
+                    rows.append(
+                        {
+                            "file_path": str(sample.get("file_path", "")),
+                            "file_name": str(sample.get("file_name", "")),
+                            "gt": str(sample.get("gt", "")),
+                            "pred": pred,
+                            "diff": float(diff),
+                            "sim_ok": None,
+                            "sim_ng": None,
+                            "value": float(sample["value"]),
+                            "threshold": float(threshold_model.threshold),
+                            "match_ms": None,
+                            "total_ms": None,
+                            "json_name": os.path.basename(qr_core.labelme_json_of_image(str(sample.get("file_path", "")))),
+                        }
+                    )
+                self._populate_results_table(rows)
+                self.lbl_status.setText(
+                    f"状态：已训练传统算法  algorithm={algorithm}  threshold={threshold_model.threshold:.4f}  "
+                    f"ok_when={threshold_model.ok_when}  acc={threshold_model.accuracy:.4f}"
+                )
+                message = "传统算法阈值模型训练完成，可以开始测试。"
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "训练失败", str(e))
             return
 
-        self.lbl_status.setText(
-            f"状态：已训练  backbone={backbone}  mode={mode}  margin={margin:.4f}  topk={topk}"
-        )
-        # 自动保存：重启后可直接测试（根据backbone保存不同文件）
-        try:
-            product_dir = os.path.join(self._session_dir, self.current_product)
-            os.makedirs(product_dir, exist_ok=True)
-            assert self.model is not None
-            model_file = os.path.join(product_dir, f"register_model_{backbone}.npz")
-            qr_core.save_register_model_npz(self.model, model_file)
-            self._save_session()
-        except Exception as e:
-            QtWidgets.QMessageBox.warning(self, "保存会话失败", str(e))
-        QtWidgets.QMessageBox.information(self, "训练完成", "OK/NG 注册完成，可以开始测试。")
+        self._save_runtime_params()
+        self._save_session()
+        self._update_runtime_widgets()
+        QtWidgets.QMessageBox.information(self, "训练完成", message)
 
     def _predict_image(
         self,
@@ -1485,11 +1617,10 @@ class MainWindow(QtWidgets.QMainWindow):
         feat_net=None,
         prefer_canvas_roi: bool = False,
     ) -> Dict[str, object]:
-        if self.model is None:
-            raise RuntimeError("model is not loaded")
         if not os.path.exists(path):
             raise FileNotFoundError(path)
 
+        algorithm = self._current_algorithm()
         total_t0 = time.perf_counter()
         match_ms: Optional[float] = None
         if self.loc_method == "line2dup":
@@ -1512,28 +1643,52 @@ class MainWindow(QtWidgets.QMainWindow):
         elif self.ref_image and os.path.exists(self.ref_image):
             self._autogen_roi_for_images([path], only_missing=True, silent=True)
 
-        labels = self.model.effective_label_names()
+        labels = self._line2dup_output_labels() if self.loc_method == "line2dup" else ["roi"]
         roi = None
         if prefer_canvas_roi and len(labels) == 1 and self.canvas.image_path() == path:
             roi = self._roi_xywh_from_canvas()
-        if len(labels) == 1 and roi is None:
-            j = qr_core.labelme_json_of_image(path)
-            if not os.path.exists(j):
-                raise FileNotFoundError(f"缺少 labelme json: {j}")
 
-        if feat_net is None:
-            feat_net, _ = qr_core.load_backbone(self.model.backbone, device=self.model.device)
-        if len(labels) > 1:
-            e = qr_core.embed_many(path, feat_net, labels, device=self.model.device)
+        if self._is_embedding_algorithm(algorithm):
+            if self.model is None or self.model.backbone != algorithm:
+                self._load_embedding_model_for_algorithm(algorithm)
+            if self.model is None:
+                raise RuntimeError(f"algorithm model not loaded: {algorithm}")
+            self.model.score_mode = self.product_params.score_mode
+            self.model.margin = float(self.product_params.margin)
+            self.model.topk = int(self.product_params.topk)
+
+            if len(labels) == 1 and roi is None:
+                j = qr_core.labelme_json_of_image(path)
+                if not os.path.exists(j):
+                    raise FileNotFoundError(f"缺少 labelme json: {j}")
+
+            if feat_net is None:
+                feat_net, _ = qr_core.load_backbone(self.model.backbone, device=self.model.device)
+            if len(labels) > 1:
+                e = qr_core.embed_many(path, feat_net, labels, device=self.model.device)
+            else:
+                e = qr_core.embed_one(
+                    path,
+                    feat_net,
+                    label_name=labels[0],
+                    device=self.model.device,
+                    roi_xywh=roi,
+                )
+            pred, diff, sim_ok, sim_ng = qr_core.predict_one_with_model(e, self.model)
+            value: Optional[float] = None
+            threshold: Optional[float] = None
         else:
-            e = qr_core.embed_one(
-                path,
-                feat_net,
-                label_name=labels[0],
-                device=self.model.device,
-                roi_xywh=roi,
-            )
-        pred, diff, sim_ok, sim_ng = qr_core.predict_one_with_model(e, self.model)
+            model_dict = self.product_params.traditional_models.get(algorithm)
+            if not isinstance(model_dict, dict):
+                raise RuntimeError(f"传统算法 {algorithm} 尚未训练")
+            threshold_model = TraditionalThresholdModel.from_dict(model_dict)
+            metrics = compute_roi_metrics(path, preferred_label=threshold_model.roi_label or labels[0])
+            value = metric_value(metrics, algorithm)
+            pred, diff = threshold_model.predict(value)
+            sim_ok = None
+            sim_ng = None
+            threshold = float(threshold_model.threshold)
+
         total_ms = (time.perf_counter() - total_t0) * 1000.0
         return {
             "file_path": path,
@@ -1541,14 +1696,17 @@ class MainWindow(QtWidgets.QMainWindow):
             "gt": "",
             "pred": pred,
             "diff": float(diff),
-            "sim_ok": float(sim_ok),
-            "sim_ng": float(sim_ng),
+            "sim_ok": float(sim_ok) if sim_ok is not None else None,
+            "sim_ng": float(sim_ng) if sim_ng is not None else None,
+            "value": float(value) if value is not None else None,
+            "threshold": float(threshold) if threshold is not None else None,
             "match_ms": match_ms,
             "total_ms": float(total_ms),
             "json_name": os.path.basename(qr_core.labelme_json_of_image(path)),
         }
 
     def _populate_results_table(self, rows: List[Dict[str, object]]) -> None:
+        self._current_result_rows = list(rows)
         self.table.setRowCount(0)
         for row_idx, row in enumerate(rows):
             self.table.insertRow(row_idx)
@@ -1559,6 +1717,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 f"{float(row.get('diff', 0.0)):.4f}" if row.get("diff") is not None else "",
                 f"{float(row.get('sim_ok', 0.0)):.4f}" if row.get("sim_ok") is not None else "",
                 f"{float(row.get('sim_ng', 0.0)):.4f}" if row.get("sim_ng") is not None else "",
+                f"{float(row.get('value', 0.0)):.4f}" if row.get("value") is not None else "",
+                f"{float(row.get('threshold', 0.0)):.4f}" if row.get("threshold") is not None else "",
                 f"{float(row.get('match_ms', 0.0)):.1f}" if row.get("match_ms") is not None else "",
                 f"{float(row.get('total_ms', 0.0)):.1f}" if row.get("total_ms") is not None else "",
                 str(row.get("json_name", "")),
@@ -1658,15 +1818,16 @@ class MainWindow(QtWidgets.QMainWindow):
         report_dir = os.path.join(self._product_dir, "margin_reports")
         os.makedirs(report_dir, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base = f"margin_report_{self.cmb_backbone.currentText()}_{stamp}"
+        base = f"margin_report_{self._current_algorithm()}_{stamp}"
         json_path = os.path.join(report_dir, base + ".json")
         csv_path = os.path.join(report_dir, base + ".csv")
 
         payload = {
             "product": self.current_product,
-            "backbone": self.cmb_backbone.currentText(),
+            "algorithm": self._current_algorithm(),
             "score_mode": self.cmb_mode.currentText(),
             "topk": int(self.spin_topk.value()),
+            "margin": float(self.spin_margin.value()),
             "loc_method": self.loc_method,
             "summary": summary,
             "rows": rows,
@@ -1676,7 +1837,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         with open(csv_path, "w", encoding="utf-8-sig", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["file", "gt", "pred", "diff", "sim_ok", "sim_ng", "match_ms", "total_ms", "json"])
+            writer.writerow(
+                ["file", "gt", "pred", "diff", "sim_ok", "sim_ng", "value", "threshold", "match_ms", "total_ms", "json"]
+            )
             for row in rows:
                 writer.writerow(
                     [
@@ -1686,6 +1849,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         row.get("diff", ""),
                         row.get("sim_ok", ""),
                         row.get("sim_ng", ""),
+                        row.get("value", ""),
+                        row.get("threshold", ""),
                         row.get("match_ms", ""),
                         row.get("total_ms", ""),
                         row.get("json_name", ""),
@@ -1878,7 +2043,97 @@ class MainWindow(QtWidgets.QMainWindow):
             f"JSON:\n{json_path}\n\nCSV:\n{csv_path}",
         )
 
+    def _daily_test_log_path(self) -> str:
+        log_dir = os.path.join(self._product_dir, "test_logs")
+        os.makedirs(log_dir, exist_ok=True)
+        return os.path.join(log_dir, datetime.now().strftime("%Y%m%d") + ".csv")
+
+    def _append_test_log(self, row: Dict[str, object]) -> str:
+        csv_path = self._daily_test_log_path()
+        fields = [
+            "timestamp",
+            "product",
+            "algorithm",
+            "score_mode",
+            "margin",
+            "topk",
+            "file_name",
+            "gt",
+            "pred",
+            "diff",
+            "sim_ok",
+            "sim_ng",
+            "value",
+            "threshold",
+            "match_ms",
+            "total_ms",
+            "json_name",
+        ]
+        file_exists = os.path.exists(csv_path)
+        with open(csv_path, "a", encoding="utf-8-sig", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fields)
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(
+                {
+                    "timestamp": datetime.now().isoformat(timespec="seconds"),
+                    "product": self.current_product,
+                    "algorithm": self._current_algorithm(),
+                    "score_mode": self.cmb_mode.currentText(),
+                    "margin": float(self.spin_margin.value()),
+                    "topk": int(self.spin_topk.value()),
+                    "file_name": row.get("file_name", ""),
+                    "gt": row.get("gt", ""),
+                    "pred": row.get("pred", ""),
+                    "diff": row.get("diff", ""),
+                    "sim_ok": row.get("sim_ok", ""),
+                    "sim_ng": row.get("sim_ng", ""),
+                    "value": row.get("value", ""),
+                    "threshold": row.get("threshold", ""),
+                    "match_ms": row.get("match_ms", ""),
+                    "total_ms": row.get("total_ms", ""),
+                    "json_name": row.get("json_name", ""),
+                }
+            )
+        return csv_path
+
+    def _export_current_results_csv(self) -> None:
+        if not self._current_result_rows:
+            QtWidgets.QMessageBox.information(self, "提示", "当前没有可导出的测试结果")
+            return
+        export_dir = os.path.join(self._product_dir, "test_exports")
+        os.makedirs(export_dir, exist_ok=True)
+        csv_path = os.path.join(export_dir, f"test_result_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+        with open(csv_path, "w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["file", "gt", "pred", "diff", "sim_ok", "sim_ng", "value", "threshold", "match_ms", "total_ms", "json"])
+            for row in self._current_result_rows:
+                writer.writerow(
+                    [
+                        row.get("file_name", ""),
+                        row.get("gt", ""),
+                        row.get("pred", ""),
+                        row.get("diff", ""),
+                        row.get("sim_ok", ""),
+                        row.get("sim_ng", ""),
+                        row.get("value", ""),
+                        row.get("threshold", ""),
+                        row.get("match_ms", ""),
+                        row.get("total_ms", ""),
+                        row.get("json_name", ""),
+                    ]
+                )
+        QtWidgets.QMessageBox.information(self, "导出完成", f"测试结果已导出到：\n{csv_path}")
+
     def _run_margin_validation(self):
+        if not self._is_embedding_algorithm():
+            QtWidgets.QMessageBox.information(self, "提示", "传统算法不支持 Margin 建议，请切回嵌入式算法")
+            return
+        if self.model is None or self.model.backbone != self._current_algorithm():
+            try:
+                self._load_embedding_model_for_algorithm(self._current_algorithm())
+            except Exception:
+                pass
         if self.model is None:
             QtWidgets.QMessageBox.warning(self, "提示", "请先训练/注册（OK+NG）")
             return
@@ -1927,38 +2182,54 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def _run_test(self):
-        if self.model is None:
-            QtWidgets.QMessageBox.warning(self, "提示", "请先训练/注册（OK+NG）")
-            return
-
         p = self.canvas.image_path()
-
         if p is None or not os.path.exists(p):
             QtWidgets.QMessageBox.warning(self, "提示", "请先打开一张测试图片")
             return
 
+        algorithm = self._current_algorithm()
+        if self._is_embedding_algorithm(algorithm):
+            if self.model is None or self.model.backbone != algorithm:
+                try:
+                    self._load_embedding_model_for_algorithm(algorithm)
+                except Exception:
+                    pass
+            if self.model is None:
+                QtWidgets.QMessageBox.warning(self, "提示", "请先训练/注册（OK+NG）")
+                return
+
         try:
-            feat_net, _ = qr_core.load_backbone(self.model.backbone, device=self.model.device)
+            feat_net = None
+            if self._is_embedding_algorithm(algorithm) and self.model is not None:
+                feat_net, _ = qr_core.load_backbone(self.model.backbone, device=self.model.device)
             row = self._predict_image(p, feat_net=feat_net, prefer_canvas_roi=True)
         except Exception as ex:
             QtWidgets.QMessageBox.critical(self, "测试失败", str(ex))
             return
 
         self._populate_results_table([row])
+        log_path = self._append_test_log(row)
+        metric_text = ""
+        if row.get("value") is not None:
+            metric_text = f"  value={float(row['value']):.4f}  threshold={float(row.get('threshold', 0.0)):.4f}"
         self.lbl_status.setText(
             "状态："
-            + f"TEST={os.path.basename(p)}  pred={row['pred']}  diff={float(row['diff']):.4f}  "
-            + (f"模板匹配={float(row['match_ms']):.1f}ms  " if row.get("match_ms") is not None else "")
-            + f"总耗时={float(row['total_ms']):.1f}ms"
+            + f"TEST={os.path.basename(p)}  pred={row['pred']}  diff={float(row['diff']):.4f}"
+            + metric_text
+            + (f"  模板匹配={float(row['match_ms']):.1f}ms" if row.get("match_ms") is not None else "")
+            + f"  总耗时={float(row['total_ms']):.1f}ms  日志={os.path.basename(log_path)}"
         )
         self._load_canvas_image(p)
         self._save_session()
 
     def _open_embedding_analysis_dialog(self):
+        if not self._is_embedding_algorithm():
+            QtWidgets.QMessageBox.information(self, "提示", "传统算法没有 embedding 可视化，请切回嵌入式算法")
+            return
         dialog = EmbeddingAnalysisDialog(
             session_root=self._session_dir,
             initial_product=self.current_product,
-            initial_backbone=self.cmb_backbone.currentText(),
+            initial_backbone=self._current_algorithm(),
             parent=self,
         )
         dialog.exec()
@@ -1975,26 +2246,27 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
     def _save_session(self):
-        """只保存文件列表，训练参数随模型保存在.npz中"""
         os.makedirs(self._session_dir, exist_ok=True)
         data = {
             "ok_files": self.ok_files,
             "ng_files": self.ng_files,
             "test_files": self.test_files,
             "ref_image": self.ref_image,
-            "loc_method": self.loc_method,
+            "loc_method": "line2dup",
         }
         with open(self._session_json, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
     def _try_load_session_on_start(self):
-        if not os.path.exists(self._session_json):
-            return
-        try:
-            with open(self._session_json, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception:
-            return
+        self._load_runtime_params()
+        self._apply_runtime_params_to_ui()
+        data: Dict[str, object] = {}
+        if os.path.exists(self._session_json):
+            try:
+                with open(self._session_json, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                data = {}
 
         def _filter_exists(xs):
             return [p for p in xs if isinstance(p, str) and os.path.exists(p)]
@@ -2007,27 +2279,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.ref_image:
             self.lbl_ref.setText(f"参考图：{os.path.basename(self.ref_image)}")
             self.lbl_ref.setToolTip(self.ref_image)
-        loc_method = str(data.get("loc_method", self.loc_method))
-        if loc_method in SUPPORTED_LOC_MODES:
-            self.loc_method = loc_method
-            self.cmb_loc.setCurrentText(loc_method)
+        self.loc_method = "line2dup"
+        self.cmb_loc.setCurrentText(self.loc_method)
         self._refresh_lists()
-
-        # 不再从session.json恢复训练参数，参数将在加载模型时恢复
-
-        # 自动加载模型（重启可继续测试）- 根据当前backbone加载对应模型
-        current_backbone = self.cmb_backbone.currentText()
-        product_dir = os.path.join(self._session_dir, self.current_product)
-        model_file = os.path.join(product_dir, f"register_model_{current_backbone}.npz")
-        if os.path.exists(model_file):
-            try:
-                self.model = qr_core.load_register_model_npz(model_file)
-                self.lbl_status.setText(
-                    f"状态：已加载模型  backbone={self.model.backbone}  mode={self.model.score_mode}  "
-                    f"margin={self.model.margin:.4f}  topk={self.model.topk}"
-                )
-            except Exception:
-                self.model = None
         if os.path.exists(self._line2dup_recipe_path):
             try:
                 self.line2dup_recipe = line2dup_locator.load_recipe_for_product(self._product_dir)
@@ -2037,6 +2291,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.lbl_ref.setToolTip(self.ref_image)
             except Exception:
                 self.line2dup_recipe = None
+        try:
+            self._load_embedding_model_for_algorithm(self._current_algorithm())
+        except Exception:
+            self.model = None
 
     def _clear_session(self):
         ret = QtWidgets.QMessageBox.question(self, "清空会话", "确定清空会话（列表/参考图/模型缓存）吗？")
@@ -2053,6 +2311,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_ref.setText("参考图：未设置")
         self.lbl_status.setText("状态：未训练")
         self.table.setRowCount(0)
+        self._current_result_rows = []
         self._refresh_lists()
         try:
             if os.path.exists(self._session_json):

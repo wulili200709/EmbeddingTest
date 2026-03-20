@@ -18,6 +18,7 @@ except Exception:  # pragma: no cover - fallback to PCA
     TSNE = None
 
 import qr_core
+from product_params import load_product_params
 
 
 @dataclass
@@ -206,6 +207,12 @@ def load_product_analysis(
     session_file = os.path.join(product_dir, "session.json")
     ok_files, ng_files, _ = load_session_lists(session_file)
     model = qr_core.load_register_model_npz(model_path)
+    params_path = os.path.join(product_dir, "product_params.json")
+    params = load_product_params(params_path)
+    if params.algorithm == backbone:
+        model.score_mode = params.score_mode
+        model.margin = float(params.margin)
+        model.topk = int(params.topk)
     if not model.is_ready():
         raise RuntimeError("register model is not ready")
 
