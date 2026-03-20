@@ -1,0 +1,498 @@
+{
+  "product": "150A_OG",
+  "tab": "TEST",
+  "rows": [
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/11.bmp",
+      "file_name": "11.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        1043,
+        655,
+        250,
+        286
+      ],
+      "mean_intensity": 76.07719421386719,
+      "min_intensity": 12.0,
+      "valley_depth": 22.12915802001953,
+      "valley_width": 174,
+      "profile_std": 10.246777534484863,
+      "max_drop": 4.188812255859375,
+      "profile_len": 249
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/14.bmp",
+      "file_name": "14.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        1008,
+        964,
+        315,
+        205
+      ],
+      "mean_intensity": 75.94810485839844,
+      "min_intensity": 11.0,
+      "valley_depth": 23.517127990722656,
+      "valley_width": 228,
+      "profile_std": 10.466253280639648,
+      "max_drop": 3.5,
+      "profile_len": 314
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/15.bmp",
+      "file_name": "15.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        1126,
+        977,
+        205,
+        315
+      ],
+      "mean_intensity": 76.21385192871094,
+      "min_intensity": 10.0,
+      "valley_depth": 22.209457397460938,
+      "valley_width": 139,
+      "profile_std": 9.582773208618164,
+      "max_drop": 5.25,
+      "profile_len": 204
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/16.bmp",
+      "file_name": "16.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        1370,
+        948,
+        343,
+        99
+      ],
+      "mean_intensity": 74.89257049560547,
+      "min_intensity": 10.0,
+      "valley_depth": 27.728519439697266,
+      "valley_width": 137,
+      "profile_std": 10.981793403625488,
+      "max_drop": 10.925003051757812,
+      "profile_len": 342
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/17.bmp",
+      "file_name": "17.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        1028,
+        1075,
+        98,
+        342
+      ],
+      "mean_intensity": 101.8293228149414,
+      "min_intensity": 23.0,
+      "valley_depth": 16.65821075439453,
+      "valley_width": 4,
+      "profile_std": 3.540879249572754,
+      "max_drop": 5.738090515136719,
+      "profile_len": 98
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/18.bmp",
+      "file_name": "18.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        1138,
+        1169,
+        205,
+        315
+      ],
+      "mean_intensity": 101.48564147949219,
+      "min_intensity": 30.0,
+      "valley_depth": 9.493927001953125,
+      "valley_width": 9,
+      "profile_std": 2.8426122665405273,
+      "max_drop": 6.75,
+      "profile_len": 204
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/2.bmp",
+      "file_name": "2.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        942,
+        1049,
+        205,
+        315
+      ],
+      "mean_intensity": 101.567138671875,
+      "min_intensity": 33.0,
+      "valley_depth": 12.119514465332031,
+      "valley_width": 9,
+      "profile_std": 3.0973246097564697,
+      "max_drop": 4.583335876464844,
+      "profile_len": 204
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/3.bmp",
+      "file_name": "3.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        1050,
+        987,
+        286,
+        249
+      ],
+      "mean_intensity": 103.75509643554688,
+      "min_intensity": 26.0,
+      "valley_depth": 45.209842681884766,
+      "valley_width": 4,
+      "profile_std": 5.982065677642822,
+      "max_drop": 6.333332061767578,
+      "profile_len": 286
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/4.bmp",
+      "file_name": "4.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        857,
+        1085,
+        334,
+        154
+      ],
+      "mean_intensity": 102.84967041015625,
+      "min_intensity": 35.0,
+      "valley_depth": 31.88866424560547,
+      "valley_width": 3,
+      "profile_std": 4.771931171417236,
+      "max_drop": 14.5,
+      "profile_len": 334
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/6.bmp",
+      "file_name": "6.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        861,
+        1085,
+        334,
+        154
+      ],
+      "mean_intensity": 102.60301971435547,
+      "min_intensity": 35.0,
+      "valley_depth": 20.97515106201172,
+      "valley_width": 5,
+      "profile_std": 4.60093879699707,
+      "max_drop": 5.986274719238281,
+      "profile_len": 334
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-05-09.bmp",
+      "file_name": "Image__2026-03-20__10-05-09.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        1295,
+        1051,
+        154,
+        334
+      ],
+      "mean_intensity": 102.43099975585938,
+      "min_intensity": 32.0,
+      "valley_depth": 8.892036437988281,
+      "valley_width": 13,
+      "profile_std": 2.9420995712280273,
+      "max_drop": 5.099998474121094,
+      "profile_len": 153
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-05-20.bmp",
+      "file_name": "Image__2026-03-20__10-05-20.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        1294,
+        1065,
+        205,
+        315
+      ],
+      "mean_intensity": 101.92793273925781,
+      "min_intensity": 43.0,
+      "valley_depth": 10.181495666503906,
+      "valley_width": 10,
+      "profile_std": 3.0708155632019043,
+      "max_drop": 3.4153900146484375,
+      "profile_len": 204
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-05-28.bmp",
+      "file_name": "Image__2026-03-20__10-05-28.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        1182,
+        1137,
+        205,
+        315
+      ],
+      "mean_intensity": 101.96054077148438,
+      "min_intensity": 22.0,
+      "valley_depth": 9.269111633300781,
+      "valley_width": 10,
+      "profile_std": 2.6356921195983887,
+      "max_drop": 3.5435867309570312,
+      "profile_len": 204
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-05-33.bmp",
+      "file_name": "Image__2026-03-20__10-05-33.bmp",
+      "roi_label": "",
+      "bbox_xywh": "",
+      "mean_intensity": "",
+      "min_intensity": "",
+      "valley_depth": "",
+      "valley_width": "",
+      "profile_std": "",
+      "max_drop": "",
+      "profile_len": "",
+      "error": "缺少 labelme json: C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-05-33.json"
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-05-36.bmp",
+      "file_name": "Image__2026-03-20__10-05-36.bmp",
+      "roi_label": "",
+      "bbox_xywh": "",
+      "mean_intensity": "",
+      "min_intensity": "",
+      "valley_depth": "",
+      "valley_width": "",
+      "profile_std": "",
+      "max_drop": "",
+      "profile_len": "",
+      "error": "缺少 labelme json: C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-05-36.json"
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-05-40.bmp",
+      "file_name": "Image__2026-03-20__10-05-40.bmp",
+      "roi_label": "",
+      "bbox_xywh": "",
+      "mean_intensity": "",
+      "min_intensity": "",
+      "valley_depth": "",
+      "valley_width": "",
+      "profile_std": "",
+      "max_drop": "",
+      "profile_len": "",
+      "error": "缺少 labelme json: C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-05-40.json"
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-05-50.bmp",
+      "file_name": "Image__2026-03-20__10-05-50.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        1324,
+        1043,
+        98,
+        342
+      ],
+      "mean_intensity": 76.79116821289062,
+      "min_intensity": 7.0,
+      "valley_depth": 39.98997497558594,
+      "valley_width": 20,
+      "profile_std": 13.293746948242188,
+      "max_drop": 7.468254089355469,
+      "profile_len": 98
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-05-54.bmp",
+      "file_name": "Image__2026-03-20__10-05-54.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        1407,
+        1048,
+        99,
+        342
+      ],
+      "mean_intensity": 77.17575073242188,
+      "min_intensity": 8.0,
+      "valley_depth": 33.72426223754883,
+      "valley_width": 27,
+      "profile_std": 11.546527862548828,
+      "max_drop": 13.166664123535156,
+      "profile_len": 98
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-05-57.bmp",
+      "file_name": "Image__2026-03-20__10-05-57.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        1363,
+        1071,
+        205,
+        315
+      ],
+      "mean_intensity": 77.22622680664062,
+      "min_intensity": 12.0,
+      "valley_depth": 30.658233642578125,
+      "valley_width": 131,
+      "profile_std": 12.468055725097656,
+      "max_drop": 7.4949493408203125,
+      "profile_len": 205
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-06-00.bmp",
+      "file_name": "Image__2026-03-20__10-06-00.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        1413,
+        1034,
+        334,
+        154
+      ],
+      "mean_intensity": 76.50003814697266,
+      "min_intensity": 8.0,
+      "valley_depth": 23.083724975585938,
+      "valley_width": 247,
+      "profile_std": 10.830095291137695,
+      "max_drop": 8.494773864746094,
+      "profile_len": 333
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-06-03.bmp",
+      "file_name": "Image__2026-03-20__10-06-03.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        1431,
+        1040,
+        341,
+        40
+      ],
+      "mean_intensity": 80.23724365234375,
+      "min_intensity": 9.0,
+      "valley_depth": 24.561508178710938,
+      "valley_width": 130,
+      "profile_std": 11.159071922302246,
+      "max_drop": 16.974998474121094,
+      "profile_len": 341
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-06-07.bmp",
+      "file_name": "Image__2026-03-20__10-06-07.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        1135,
+        841,
+        287,
+        249
+      ],
+      "mean_intensity": 77.12374114990234,
+      "min_intensity": 9.0,
+      "valley_depth": 22.385841369628906,
+      "valley_width": 112,
+      "profile_std": 9.839412689208984,
+      "max_drop": 6.242424011230469,
+      "profile_len": 286
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-06-12.bmp",
+      "file_name": "Image__2026-03-20__10-06-12.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        978,
+        605,
+        154,
+        334
+      ],
+      "mean_intensity": 76.78340911865234,
+      "min_intensity": 7.0,
+      "valley_depth": 28.44027328491211,
+      "valley_width": 23,
+      "profile_std": 9.393082618713379,
+      "max_drop": 6.7015838623046875,
+      "profile_len": 154
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-06-16.bmp",
+      "file_name": "Image__2026-03-20__10-06-16.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        823,
+        591,
+        99,
+        342
+      ],
+      "mean_intensity": 76.07252502441406,
+      "min_intensity": 11.0,
+      "valley_depth": 44.00829315185547,
+      "valley_width": 41,
+      "profile_std": 16.360410690307617,
+      "max_drop": 6.844444274902344,
+      "profile_len": 98
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-06-19.bmp",
+      "file_name": "Image__2026-03-20__10-06-19.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        547,
+        707,
+        250,
+        286
+      ],
+      "mean_intensity": 75.0479965209961,
+      "min_intensity": 12.0,
+      "valley_depth": 20.492095947265625,
+      "valley_width": 176,
+      "profile_std": 9.267221450805664,
+      "max_drop": 2.8398666381835938,
+      "profile_len": 249
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-06-26.bmp",
+      "file_name": "Image__2026-03-20__10-06-26.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        773,
+        929,
+        334,
+        154
+      ],
+      "mean_intensity": 79.71743774414062,
+      "min_intensity": 12.0,
+      "valley_depth": 26.225135803222656,
+      "valley_width": 198,
+      "profile_std": 10.641408920288086,
+      "max_drop": 4.302330017089844,
+      "profile_len": 334
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-06-30.bmp",
+      "file_name": "Image__2026-03-20__10-06-30.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        727,
+        1004,
+        333,
+        154
+      ],
+      "mean_intensity": 75.8758773803711,
+      "min_intensity": 9.0,
+      "valley_depth": 22.380874633789062,
+      "valley_width": 245,
+      "profile_std": 10.327685356140137,
+      "max_drop": 4.3704376220703125,
+      "profile_len": 333
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-06-34.bmp",
+      "file_name": "Image__2026-03-20__10-06-34.bmp",
+      "roi_label": "roi1",
+      "bbox_xywh": [
+        886,
+        1041,
+        205,
+        315
+      ],
+      "mean_intensity": 76.93698120117188,
+      "min_intensity": 8.0,
+      "valley_depth": 25.298606872558594,
+      "valley_width": 136,
+      "profile_std": 10.791326522827148,
+      "max_drop": 5.256416320800781,
+      "profile_len": 204
+    }
+  ]
+}

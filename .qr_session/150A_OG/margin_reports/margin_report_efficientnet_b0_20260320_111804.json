@@ -1,0 +1,107 @@
+{
+  "product": "150A_OG",
+  "backbone": "efficientnet_b0",
+  "score_mode": "topk",
+  "topk": 3,
+  "loc_method": "line2dup",
+  "summary": {
+    "current_margin": 0.02,
+    "current_accuracy": 1.0,
+    "current_confusion": {
+      "tp_ok": 3,
+      "tn_ng": 3,
+      "fp_ok_as_ng": 0,
+      "fp_ng_as_ok": 0
+    },
+    "suggested_margin": 0.007967442274093628,
+    "suggested_accuracy": 1.0,
+    "suggested_confusion": {
+      "tp_ok": 3,
+      "tn_ng": 3,
+      "fp_ng_as_ok": 0,
+      "fp_ok_as_ng": 0
+    },
+    "ok_diff_min": 0.08851712942123413,
+    "ok_diff_max": 0.18181413412094116,
+    "ng_diff_min": -0.15749943256378174,
+    "ng_diff_max": -0.07258224487304688,
+    "safe_range": [
+      -0.07258224487304688,
+      0.08851712942123413
+    ]
+  },
+  "rows": [
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-05-09.bmp",
+      "file_name": "Image__2026-03-20__10-05-09.bmp",
+      "gt": "OK",
+      "pred": "OK",
+      "diff": 0.18181413412094116,
+      "sim_ok": 0.9210354685783386,
+      "sim_ng": 0.7392213344573975,
+      "match_ms": 461.6258000023663,
+      "total_ms": 657.1598000009544,
+      "json_name": "Image__2026-03-20__10-05-09.json"
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-05-20.bmp",
+      "file_name": "Image__2026-03-20__10-05-20.bmp",
+      "gt": "OK",
+      "pred": "OK",
+      "diff": 0.1260828971862793,
+      "sim_ok": 0.9277000427246094,
+      "sim_ng": 0.8016171455383301,
+      "match_ms": 599.5457000099123,
+      "total_ms": 796.0686000005808,
+      "json_name": "Image__2026-03-20__10-05-20.json"
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-05-28.bmp",
+      "file_name": "Image__2026-03-20__10-05-28.bmp",
+      "gt": "OK",
+      "pred": "OK",
+      "diff": 0.08851712942123413,
+      "sim_ok": 0.9147765636444092,
+      "sim_ng": 0.826259434223175,
+      "match_ms": 472.615600010613,
+      "total_ms": 665.2525999816135,
+      "json_name": "Image__2026-03-20__10-05-28.json"
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/11.bmp",
+      "file_name": "11.bmp",
+      "gt": "NG",
+      "pred": "NG",
+      "diff": -0.07883572578430176,
+      "sim_ok": 0.8104896545410156,
+      "sim_ng": 0.8893253803253174,
+      "match_ms": 432.55490000592545,
+      "total_ms": 638.9382999914233,
+      "json_name": "11.json"
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/14.bmp",
+      "file_name": "14.bmp",
+      "gt": "NG",
+      "pred": "NG",
+      "diff": -0.15749943256378174,
+      "sim_ok": 0.7239090800285339,
+      "sim_ng": 0.8814085125923157,
+      "match_ms": 429.29780000122264,
+      "total_ms": 617.8073000046425,
+      "json_name": "14.json"
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/15.bmp",
+      "file_name": "15.bmp",
+      "gt": "NG",
+      "pred": "NG",
+      "diff": -0.07258224487304688,
+      "sim_ok": 0.8326991200447083,
+      "sim_ng": 0.9052813649177551,
+      "match_ms": 568.4938000049442,
+      "total_ms": 767.9477999918163,
+      "json_name": "15.json"
+    }
+  ]
+}

@@ -16,14 +16,18 @@ from __future__ import annotations
 import os
 import json
 import time
+import csv
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from PIL import Image
+import cv2
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from embedding_analysis_dialog import EmbeddingAnalysisDialog
 import line2dup_locator
 from line2dup_recipe import Line2DupRecipe
 from line2dup_template_page_pyside6 import Line2DupTemplateDialog
@@ -488,8 +492,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_train.clicked.connect(self._train)
         self.btn_test = QtWidgets.QPushButton("测试 TEST")
         self.btn_test.clicked.connect(self._run_test)
+        self.btn_validate_margin = QtWidgets.QPushButton("验证/建议Margin")
+        self.btn_validate_margin.clicked.connect(self._run_margin_validation)
+        self.btn_embedding_analysis = QtWidgets.QPushButton("特征分析")
+        self.btn_embedding_analysis.clicked.connect(self._open_embedding_analysis_dialog)
+        self.btn_baseline_debug = QtWidgets.QPushButton("传统基线调试")
+        self.btn_baseline_debug.clicked.connect(self._run_traditional_baseline_debug)
         act.addWidget(self.btn_train)
         act.addWidget(self.btn_test)
+        act.addWidget(self.btn_validate_margin)
+        act.addWidget(self.btn_embedding_analysis)
+        act.addWidget(self.btn_baseline_debug)
         left.addLayout(act)
 
         self.lbl_status = QtWidgets.QLabel("状态：未训练")
@@ -563,15 +576,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_autogen.clicked.connect(self._autogen_roi_current_tab)
         self.btn_autogen_all = QtWidgets.QPushButton("批量生成ROI(全部列表)")
         self.btn_autogen_all.clicked.connect(self._autogen_roi_all)
+        self.btn_clear_roi_batch = QtWidgets.QPushButton("清空ROI(当前列表)")
+        self.btn_clear_roi_batch.clicked.connect(self._clear_roi_current_tab)
         auto_l.addWidget(self.btn_autogen, 4, 0, 1, 2)
         auto_l.addWidget(self.btn_autogen_all, 4, 2)
+        auto_l.addWidget(self.btn_clear_roi_batch, 5, 0, 1, 2)
         right.addWidget(auto_box)
         self._update_loc_ui()
 
 
 
-        self.table = QtWidgets.QTableWidget(0, 8)
-        self.table.setHorizontalHeaderLabels(["文件", "Pred", "diff", "sim_ok", "sim_ng", "match_ms", "total_ms", "json"])
+        self.table = QtWidgets.QTableWidget(0, 9)
+        self.table.setHorizontalHeaderLabels(["文件", "GT", "Pred", "diff", "sim_ok", "sim_ng", "match_ms", "total_ms", "json"])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.table.cellClicked.connect(self._on_table_click)
@@ -1214,6 +1230,73 @@ class MainWindow(QtWidgets.QMainWindow):
         paths = list(self.ok_files) + list(self.ng_files) + list(self.test_files)
         self._autogen_roi_for_images(paths, only_missing=self.chk_only_missing.isChecked())
 
+    def _clear_roi_for_images(self, paths: List[str], silent: bool = False) -> None:
+        if not paths:
+            if not silent:
+                QtWidgets.QMessageBox.information(self, "提示", "没有可处理的图片")
+            return
+        labels = self._line2dup_output_labels() if self.loc_method == "line2dup" else ["roi"]
+        labels = [label for label in labels if label]
+        if not labels:
+            labels = ["roi"]
+
+        removed = 0
+        touched = 0
+        for path in paths:
+            any_removed = False
+            for label in labels:
+                try:
+                    if qr_core.delete_labelme_shape(path, label):
+                        removed += 1
+                        any_removed = True
+                except Exception:
+                    pass
+            if any_removed:
+                touched += 1
+                self._line2dup_match_ms_by_image.pop(path, None)
+                self._line2dup_autogen_ms_by_image.pop(path, None)
+
+        cur = self.canvas.image_path()
+        if cur and cur in paths:
+            self._load_canvas_image(cur)
+            self._set_status_for_current_image(cur)
+
+        if not silent:
+            QtWidgets.QMessageBox.information(
+                self,
+                "完成",
+                f"已清空 ROI：{touched} 张图片，删除 {removed} 个标签。\n标签: {', '.join(labels)}",
+            )
+            self.lbl_status.setText(f"状态：已清空 ROI，图片 {touched} 张，标签 {removed} 个")
+
+    def _clear_roi_current_tab(self):
+        tab = self.tabs.currentIndex()
+        if tab == 0:
+            paths = list(self.ok_files)
+            tab_name = "OK"
+        elif tab == 1:
+            paths = list(self.ng_files)
+            tab_name = "NG"
+        else:
+            paths = list(self.test_files)
+            tab_name = "TEST"
+
+        if not paths:
+            QtWidgets.QMessageBox.information(self, "提示", "当前列表没有图片")
+            return
+
+        labels = self._line2dup_output_labels() if self.loc_method == "line2dup" else ["roi"]
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            "清空ROI",
+            f"确定清空当前 {tab_name} 列表中的 ROI 吗？\n将删除标签: {', '.join(labels)}",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.Cancel,
+            QtWidgets.QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        self._clear_roi_for_images(paths, silent=False)
+
     def _load_products(self) -> dict:
         """加载产品配置，如果不存在则创建默认"""
         if os.path.exists(self._products_json):
@@ -1271,7 +1354,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ng_files = []
         self.test_files = []
         self.table.setRowCount(0)
-        self.canvas.clear()
+        self.canvas.clear_image()
         self.lbl_ref.setText("参考图：未设置")
         self.lbl_ref.setToolTip("")
         self.lbl_status.setText("状态：已切换产品")
@@ -1395,6 +1478,454 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "保存会话失败", str(e))
         QtWidgets.QMessageBox.information(self, "训练完成", "OK/NG 注册完成，可以开始测试。")
 
+    def _predict_image(
+        self,
+        path: str,
+        *,
+        feat_net=None,
+        prefer_canvas_roi: bool = False,
+    ) -> Dict[str, object]:
+        if self.model is None:
+            raise RuntimeError("model is not loaded")
+        if not os.path.exists(path):
+            raise FileNotFoundError(path)
+
+        total_t0 = time.perf_counter()
+        match_ms: Optional[float] = None
+        if self.loc_method == "line2dup":
+            recipe = self.line2dup_recipe
+            if recipe is None and os.path.exists(self._line2dup_recipe_path):
+                recipe = line2dup_locator.load_recipe_for_product(self._product_dir)
+                self.line2dup_recipe = recipe
+            ref_image = self.ref_image
+            if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
+                ref_image = recipe.reference_image
+            if ref_image and os.path.exists(ref_image):
+                run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
+                    tgt_img_path=path,
+                    ref_img_path=ref_image,
+                    product_dir=self._product_dir,
+                )
+                match_ms = float(run.locate_ms)
+                self._line2dup_match_ms_by_image[path] = match_ms
+                self._line2dup_autogen_ms_by_image[path] = float(run.total_ms)
+        elif self.ref_image and os.path.exists(self.ref_image):
+            self._autogen_roi_for_images([path], only_missing=True, silent=True)
+
+        labels = self.model.effective_label_names()
+        roi = None
+        if prefer_canvas_roi and len(labels) == 1 and self.canvas.image_path() == path:
+            roi = self._roi_xywh_from_canvas()
+        if len(labels) == 1 and roi is None:
+            j = qr_core.labelme_json_of_image(path)
+            if not os.path.exists(j):
+                raise FileNotFoundError(f"缺少 labelme json: {j}")
+
+        if feat_net is None:
+            feat_net, _ = qr_core.load_backbone(self.model.backbone, device=self.model.device)
+        if len(labels) > 1:
+            e = qr_core.embed_many(path, feat_net, labels, device=self.model.device)
+        else:
+            e = qr_core.embed_one(
+                path,
+                feat_net,
+                label_name=labels[0],
+                device=self.model.device,
+                roi_xywh=roi,
+            )
+        pred, diff, sim_ok, sim_ng = qr_core.predict_one_with_model(e, self.model)
+        total_ms = (time.perf_counter() - total_t0) * 1000.0
+        return {
+            "file_path": path,
+            "file_name": os.path.basename(path),
+            "gt": "",
+            "pred": pred,
+            "diff": float(diff),
+            "sim_ok": float(sim_ok),
+            "sim_ng": float(sim_ng),
+            "match_ms": match_ms,
+            "total_ms": float(total_ms),
+            "json_name": os.path.basename(qr_core.labelme_json_of_image(path)),
+        }
+
+    def _populate_results_table(self, rows: List[Dict[str, object]]) -> None:
+        self.table.setRowCount(0)
+        for row_idx, row in enumerate(rows):
+            self.table.insertRow(row_idx)
+            values = [
+                str(row.get("file_name", "")),
+                str(row.get("gt", "")),
+                str(row.get("pred", "")),
+                f"{float(row.get('diff', 0.0)):.4f}" if row.get("diff") is not None else "",
+                f"{float(row.get('sim_ok', 0.0)):.4f}" if row.get("sim_ok") is not None else "",
+                f"{float(row.get('sim_ng', 0.0)):.4f}" if row.get("sim_ng") is not None else "",
+                f"{float(row.get('match_ms', 0.0)):.1f}" if row.get("match_ms") is not None else "",
+                f"{float(row.get('total_ms', 0.0)):.1f}" if row.get("total_ms") is not None else "",
+                str(row.get("json_name", "")),
+            ]
+            for col_idx, value in enumerate(values):
+                item = QtWidgets.QTableWidgetItem(value)
+                if col_idx == 0:
+                    item.setData(QtCore.Qt.UserRole, str(row.get("file_path", "")))
+                gt = str(row.get("gt", ""))
+                pred = str(row.get("pred", ""))
+                if gt and pred and gt != pred:
+                    item.setForeground(QtGui.QBrush(QtGui.QColor(192, 32, 32)))
+                self.table.setItem(row_idx, col_idx, item)
+
+    def _suggest_margin_from_rows(self, rows: List[Dict[str, object]]) -> Dict[str, object]:
+        labeled = [row for row in rows if str(row.get("gt", "")) in {"OK", "NG"} and row.get("diff") is not None]
+        if not labeled:
+            raise RuntimeError("no labeled rows for margin suggestion")
+
+        current_margin = float(self.spin_margin.value())
+        diffs = sorted({float(row["diff"]) for row in labeled})
+        candidates: List[float] = []
+        if diffs:
+            candidates.append(diffs[0] - 1e-6)
+            candidates.extend(diffs)
+            candidates.extend((a + b) * 0.5 for a, b in zip(diffs, diffs[1:]))
+            candidates.append(diffs[-1] + 1e-6)
+
+        def _accuracy(threshold: float) -> Tuple[float, int, int, int, int]:
+            tp = tn = fp = fn = 0
+            for row in labeled:
+                gt = str(row["gt"])
+                pred = "OK" if float(row["diff"]) >= threshold else "NG"
+                if gt == "OK" and pred == "OK":
+                    tp += 1
+                elif gt == "OK" and pred == "NG":
+                    fn += 1
+                elif gt == "NG" and pred == "NG":
+                    tn += 1
+                else:
+                    fp += 1
+            acc = float(tp + tn) / float(len(labeled))
+            return acc, tp, tn, fp, fn
+
+        best_margin = current_margin
+        best_acc = -1.0
+        best_conf = (0, 0, 0, 0)
+        for candidate in candidates:
+            acc, tp, tn, fp, fn = _accuracy(candidate)
+            if acc > best_acc + 1e-12 or (abs(acc - best_acc) <= 1e-12 and abs(candidate - current_margin) < abs(best_margin - current_margin)):
+                best_acc = acc
+                best_margin = float(candidate)
+                best_conf = (tp, tn, fp, fn)
+
+        current_acc, current_tp, current_tn, current_fp, current_fn = _accuracy(current_margin)
+        ok_diffs = [float(row["diff"]) for row in labeled if str(row["gt"]) == "OK"]
+        ng_diffs = [float(row["diff"]) for row in labeled if str(row["gt"]) == "NG"]
+        safe_range = None
+        if ok_diffs and ng_diffs:
+            lower = max(ng_diffs)
+            upper = min(ok_diffs)
+            if lower < upper:
+                safe_range = (float(lower), float(upper))
+                best_margin = float((lower + upper) * 0.5)
+                best_acc, *conf = _accuracy(best_margin)
+                best_conf = tuple(conf)
+
+        return {
+            "current_margin": current_margin,
+            "current_accuracy": float(current_acc),
+            "current_confusion": {
+                "tp_ok": current_tp,
+                "tn_ng": current_tn,
+                "fp_ok_as_ng": current_fn,
+                "fp_ng_as_ok": current_fp,
+            },
+            "suggested_margin": float(best_margin),
+            "suggested_accuracy": float(best_acc),
+            "suggested_confusion": {
+                "tp_ok": best_conf[0],
+                "tn_ng": best_conf[1],
+                "fp_ng_as_ok": best_conf[2],
+                "fp_ok_as_ng": best_conf[3],
+            },
+            "ok_diff_min": float(min(ok_diffs)) if ok_diffs else None,
+            "ok_diff_max": float(max(ok_diffs)) if ok_diffs else None,
+            "ng_diff_min": float(min(ng_diffs)) if ng_diffs else None,
+            "ng_diff_max": float(max(ng_diffs)) if ng_diffs else None,
+            "safe_range": safe_range,
+        }
+
+    def _save_margin_report(
+        self,
+        rows: List[Dict[str, object]],
+        summary: Dict[str, object],
+    ) -> Tuple[str, str]:
+        report_dir = os.path.join(self._product_dir, "margin_reports")
+        os.makedirs(report_dir, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base = f"margin_report_{self.cmb_backbone.currentText()}_{stamp}"
+        json_path = os.path.join(report_dir, base + ".json")
+        csv_path = os.path.join(report_dir, base + ".csv")
+
+        payload = {
+            "product": self.current_product,
+            "backbone": self.cmb_backbone.currentText(),
+            "score_mode": self.cmb_mode.currentText(),
+            "topk": int(self.spin_topk.value()),
+            "loc_method": self.loc_method,
+            "summary": summary,
+            "rows": rows,
+        }
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+
+        with open(csv_path, "w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["file", "gt", "pred", "diff", "sim_ok", "sim_ng", "match_ms", "total_ms", "json"])
+            for row in rows:
+                writer.writerow(
+                    [
+                        row.get("file_name", ""),
+                        row.get("gt", ""),
+                        row.get("pred", ""),
+                        row.get("diff", ""),
+                        row.get("sim_ok", ""),
+                        row.get("sim_ng", ""),
+                        row.get("match_ms", ""),
+                        row.get("total_ms", ""),
+                        row.get("json_name", ""),
+                    ]
+                )
+        return json_path, csv_path
+
+    def _current_tab_paths_and_name(self) -> Tuple[List[str], str]:
+        tab = self.tabs.currentIndex()
+        if tab == 0:
+            return list(self.ok_files), "OK"
+        if tab == 1:
+            return list(self.ng_files), "NG"
+        return list(self.test_files), "TEST"
+
+    def _load_roi_mask_crop(self, img_path: str, preferred_label: str = "roi1") -> Dict[str, object]:
+        jpath = qr_core.labelme_json_of_image(img_path)
+        if not os.path.exists(jpath):
+            raise FileNotFoundError(f"缺少 labelme json: {jpath}")
+
+        label_name = preferred_label
+        shape = qr_core.read_shape_from_labelme(jpath, preferred_label)
+        if shape is None:
+            label_name = "roi"
+            shape = qr_core.read_shape_from_labelme(jpath, label_name)
+        if shape is None:
+            raise RuntimeError(f"{os.path.basename(img_path)} 缺少 {preferred_label}/roi 标注")
+
+        img_bgr = cv2.imread(img_path, cv2.IMREAD_COLOR)
+        if img_bgr is None:
+            raise FileNotFoundError(img_path)
+        h_img, w_img = img_bgr.shape[:2]
+
+        pts = np.asarray(shape.get("points", []), dtype=np.float32)
+        if pts.size == 0:
+            raise RuntimeError(f"{os.path.basename(img_path)} ROI points empty")
+        x_min, y_min = pts.min(axis=0)
+        x_max, y_max = pts.max(axis=0)
+        x = max(0, int(np.floor(float(x_min))))
+        y = max(0, int(np.floor(float(y_min))))
+        x2 = min(w_img, int(np.ceil(float(x_max))))
+        y2 = min(h_img, int(np.ceil(float(y_max))))
+        if x2 <= x or y2 <= y:
+            raise RuntimeError(f"{os.path.basename(img_path)} ROI bbox invalid")
+
+        crop_bgr = img_bgr[y:y2, x:x2].copy()
+        crop_gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
+        mask = np.zeros((y2 - y, x2 - x), dtype=np.uint8)
+        rel_pts = pts - np.array([[x, y]], dtype=np.float32)
+        if str(shape.get("shape_type", "rectangle")) == "polygon" and len(rel_pts) >= 3:
+            cv2.fillPoly(mask, [np.round(rel_pts).astype(np.int32)], 255)
+        else:
+            p0 = rel_pts.min(axis=0)
+            p1 = rel_pts.max(axis=0)
+            rx = max(0, int(np.floor(float(p0[0]))))
+            ry = max(0, int(np.floor(float(p0[1]))))
+            rx2 = min(mask.shape[1], int(np.ceil(float(p1[0]))))
+            ry2 = min(mask.shape[0], int(np.ceil(float(p1[1]))))
+            mask[ry:ry2, rx:rx2] = 255
+        return {
+            "label_name": label_name,
+            "crop_bgr": crop_bgr,
+            "crop_gray": crop_gray,
+            "mask": mask,
+            "bbox_xywh": (x, y, x2 - x, y2 - y),
+        }
+
+    def _compute_traditional_baseline_metrics(self, img_path: str, preferred_label: str = "roi1") -> Dict[str, object]:
+        roi = self._load_roi_mask_crop(img_path, preferred_label=preferred_label)
+        crop_gray = np.asarray(roi["crop_gray"], dtype=np.float32)
+        crop_bgr = np.asarray(roi["crop_bgr"], dtype=np.uint8)
+        mask = np.asarray(roi["mask"], dtype=np.uint8)
+        valid_gray = crop_gray[mask > 0]
+        if valid_gray.size == 0:
+            raise RuntimeError(f"{os.path.basename(img_path)} ROI valid pixels empty")
+        hsv = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2HSV)
+        valid_hsv = hsv[mask > 0]
+        if valid_hsv.size == 0:
+            raise RuntimeError(f"{os.path.basename(img_path)} ROI HSV pixels empty")
+        valid_hsv = np.asarray(valid_hsv, dtype=np.float32)
+        h_vals = valid_hsv[:, 0]
+        s_vals = valid_hsv[:, 1]
+        v_vals = valid_hsv[:, 2]
+
+        return {
+            "file_path": img_path,
+            "file_name": os.path.basename(img_path),
+            "roi_label": str(roi["label_name"]),
+            "bbox_xywh": list(roi["bbox_xywh"]),
+            "mean_intensity": float(np.mean(valid_gray)),
+            "hsv_h_mean": float(np.mean(h_vals)),
+            "hsv_h_std": float(np.std(h_vals)),
+            "hsv_s_mean": float(np.mean(s_vals)),
+            "hsv_s_std": float(np.std(s_vals)),
+            "hsv_v_mean": float(np.mean(v_vals)),
+            "hsv_v_std": float(np.std(v_vals)),
+            "roi_area": int(valid_gray.size),
+        }
+
+    def _save_traditional_baseline_report(self, rows: List[Dict[str, object]], tab_name: str) -> Tuple[str, str]:
+        report_dir = os.path.join(self._product_dir, "traditional_baseline_reports")
+        os.makedirs(report_dir, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base = f"baseline_roi1_hsv_{tab_name.lower()}_{stamp}"
+        json_path = os.path.join(report_dir, base + ".json")
+        csv_path = os.path.join(report_dir, base + ".csv")
+
+        payload = {
+            "product": self.current_product,
+            "tab": tab_name,
+            "rows": rows,
+        }
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+
+        with open(csv_path, "w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(
+                [
+                    "file",
+                    "roi_label",
+                    "bbox_xywh",
+                    "mean_intensity",
+                    "hsv_h_mean",
+                    "hsv_h_std",
+                    "hsv_s_mean",
+                    "hsv_s_std",
+                    "hsv_v_mean",
+                    "hsv_v_std",
+                    "roi_area",
+                    "error",
+                ]
+            )
+            for row in rows:
+                writer.writerow(
+                    [
+                        row.get("file_name", ""),
+                        row.get("roi_label", ""),
+                        row.get("bbox_xywh", ""),
+                        row.get("mean_intensity", ""),
+                        row.get("hsv_h_mean", ""),
+                        row.get("hsv_h_std", ""),
+                        row.get("hsv_s_mean", ""),
+                        row.get("hsv_s_std", ""),
+                        row.get("hsv_v_mean", ""),
+                        row.get("hsv_v_std", ""),
+                        row.get("roi_area", ""),
+                        row.get("error", ""),
+                    ]
+                )
+        return json_path, csv_path
+
+    def _run_traditional_baseline_debug(self):
+        paths, tab_name = self._current_tab_paths_and_name()
+        if not paths:
+            QtWidgets.QMessageBox.information(self, "提示", "当前列表没有图片")
+            return
+
+        rows: List[Dict[str, object]] = []
+        ok = 0
+        for path in paths:
+            try:
+                row = self._compute_traditional_baseline_metrics(path, preferred_label="roi1")
+                ok += 1
+            except Exception as exc:
+                row = {
+                    "file_path": path,
+                    "file_name": os.path.basename(path),
+                    "roi_label": "",
+                    "bbox_xywh": "",
+                    "mean_intensity": "",
+                    "hsv_h_mean": "",
+                    "hsv_h_std": "",
+                    "hsv_s_mean": "",
+                    "hsv_s_std": "",
+                    "hsv_v_mean": "",
+                    "hsv_v_std": "",
+                    "roi_area": "",
+                    "error": str(exc),
+                }
+            rows.append(row)
+
+        json_path, csv_path = self._save_traditional_baseline_report(rows, tab_name=tab_name)
+        self.lbl_status.setText(f"状态：传统基线调试已完成，成功 {ok}/{len(paths)}，结果已保存")
+        QtWidgets.QMessageBox.information(
+            self,
+            "传统基线调试",
+            f"已完成当前 {tab_name} 列表的 ROI1/ROI 指标计算。\n"
+            f"成功: {ok}/{len(paths)}\n\n"
+            f"JSON:\n{json_path}\n\nCSV:\n{csv_path}",
+        )
+
+    def _run_margin_validation(self):
+        if self.model is None:
+            QtWidgets.QMessageBox.warning(self, "提示", "请先训练/注册（OK+NG）")
+            return
+        if not self.ok_files or not self.ng_files:
+            QtWidgets.QMessageBox.warning(self, "提示", "需要至少一批 OK 和 NG 图片才能建议 margin。")
+            return
+
+        feat_net, _ = qr_core.load_backbone(self.model.backbone, device=self.model.device)
+        rows: List[Dict[str, object]] = []
+        try:
+            for path in self.ok_files:
+                row = self._predict_image(path, feat_net=feat_net, prefer_canvas_roi=False)
+                row["gt"] = "OK"
+                rows.append(row)
+            for path in self.ng_files:
+                row = self._predict_image(path, feat_net=feat_net, prefer_canvas_roi=False)
+                row["gt"] = "NG"
+                rows.append(row)
+        except Exception as ex:
+            QtWidgets.QMessageBox.critical(self, "验证失败", str(ex))
+            return
+
+        self._populate_results_table(rows)
+        summary = self._suggest_margin_from_rows(rows)
+        json_path, csv_path = self._save_margin_report(rows, summary)
+
+        safe_range = summary.get("safe_range")
+        safe_text = ""
+        if isinstance(safe_range, tuple):
+            safe_text = f"\n安全区间: {safe_range[0]:.4f} ~ {safe_range[1]:.4f}"
+
+        self.lbl_status.setText(
+            "状态："
+            + f"当前margin={summary['current_margin']:.4f} acc={summary['current_accuracy']:.4f}  "
+            + f"建议margin={summary['suggested_margin']:.4f} acc={summary['suggested_accuracy']:.4f}"
+        )
+        QtWidgets.QMessageBox.information(
+            self,
+            "Margin 建议",
+            f"当前 margin: {summary['current_margin']:.4f}\n"
+            f"当前准确率: {summary['current_accuracy']:.4f}\n"
+            f"建议 margin: {summary['suggested_margin']:.4f}\n"
+            f"建议准确率: {summary['suggested_accuracy']:.4f}"
+            + safe_text
+            + f"\n\n报告已保存:\n{json_path}\n{csv_path}",
+        )
+
     def _run_test(self):
         if self.model is None:
             QtWidgets.QMessageBox.warning(self, "提示", "请先训练/注册（OK+NG）")
@@ -1406,87 +1937,31 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "提示", "请先打开一张测试图片")
             return
 
-        total_t0 = time.perf_counter()
-        match_ms: Optional[float] = None
-        if self.loc_method == "line2dup":
-            try:
-                recipe = self.line2dup_recipe
-                if recipe is None and os.path.exists(self._line2dup_recipe_path):
-                    recipe = line2dup_locator.load_recipe_for_product(self._product_dir)
-                    self.line2dup_recipe = recipe
-                ref_image = self.ref_image
-                if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
-                    ref_image = recipe.reference_image
-                if ref_image and os.path.exists(ref_image):
-                    run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
-                        tgt_img_path=p,
-                        ref_img_path=ref_image,
-                        product_dir=self._product_dir,
-                    )
-                    match_ms = float(run.locate_ms)
-                    self._line2dup_match_ms_by_image[p] = match_ms
-                    self._line2dup_autogen_ms_by_image[p] = float(run.total_ms)
-                    self._load_canvas_image(p)
-            except Exception:
-                pass
-        elif p and self.ref_image and os.path.exists(self.ref_image):
-            try:
-                self._autogen_roi_for_images([p], only_missing=True, silent=True)
-                self._load_canvas_image(p)
-            except Exception:
-                pass
-
-        labels = self.model.effective_label_names()
-        roi = self._roi_xywh_from_canvas() if len(labels) == 1 else None
-        if len(labels) == 1 and roi is None:
-            j = qr_core.labelme_json_of_image(p)
-            if not os.path.exists(j):
-                QtWidgets.QMessageBox.warning(self, "提示", "请先打开一张测试图片，并在图上画 ROI")
-                return
-
-        feat_net, _ = qr_core.load_backbone(self.model.backbone, device=self.model.device)
         try:
-            if len(labels) > 1:
-                e = qr_core.embed_many(p, feat_net, labels, device=self.model.device)
-            else:
-                e = qr_core.embed_one(
-                    p,
-                    feat_net,
-                    label_name=labels[0],
-                    device=self.model.device,
-                    roi_xywh=roi,
-                )
-            pred, diff, sim_ok, sim_ng = qr_core.predict_one_with_model(e, self.model)
+            feat_net, _ = qr_core.load_backbone(self.model.backbone, device=self.model.device)
+            row = self._predict_image(p, feat_net=feat_net, prefer_canvas_roi=True)
         except Exception as ex:
             QtWidgets.QMessageBox.critical(self, "测试失败", str(ex))
             return
-        total_ms = (time.perf_counter() - total_t0) * 1000.0
-        
-        self.table.setRowCount(0)
-        self.table.insertRow(0)
-        vals = [
-            os.path.basename(p),
-            pred,
-            f"{diff:.4f}",
-            f"{sim_ok:.4f}",
-            f"{sim_ng:.4f}",
-            f"{match_ms:.1f}" if match_ms is not None else "",
-            f"{total_ms:.1f}",
-            os.path.basename(qr_core.labelme_json_of_image(p)),
-        ]
-        for c, v in enumerate(vals):
-            item = QtWidgets.QTableWidgetItem(v)
-            if c == 0:
-                item.setData(QtCore.Qt.UserRole, p)
-            self.table.setItem(0, c, item)
+
+        self._populate_results_table([row])
         self.lbl_status.setText(
             "状态："
-            + f"TEST={os.path.basename(p)}  pred={pred}  diff={diff:.4f}  "
-            + (f"模板匹配={match_ms:.1f}ms  " if match_ms is not None else "")
-            + f"总耗时={total_ms:.1f}ms"
+            + f"TEST={os.path.basename(p)}  pred={row['pred']}  diff={float(row['diff']):.4f}  "
+            + (f"模板匹配={float(row['match_ms']):.1f}ms  " if row.get("match_ms") is not None else "")
+            + f"总耗时={float(row['total_ms']):.1f}ms"
         )
         self._load_canvas_image(p)
         self._save_session()
+
+    def _open_embedding_analysis_dialog(self):
+        dialog = EmbeddingAnalysisDialog(
+            session_root=self._session_dir,
+            initial_product=self.current_product,
+            initial_backbone=self.cmb_backbone.currentText(),
+            parent=self,
+        )
+        dialog.exec()
 
     def _on_table_click(self, row: int, _col: int):
         """Click on test result row to load the corresponding image"""

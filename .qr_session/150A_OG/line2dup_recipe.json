@@ -2,7 +2,7 @@
   "model_path": "c:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\150A_OG\\line2dup_model.json",
   "reference_image": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/ok/1.bmp",
   "class_id": "150A_OG",
-  "backend": "fusion",
+  "backend": "fusionv2",
   "threshold": 20.0,
   "auto_threshold_sweep": false,
   "threshold_sweep_step": 10,
@@ -40,6 +40,23 @@
           1374.0
         ]
       ]
+    },
+    {
+      "reference_label": "roi2",
+      "output_label": "roi2",
+      "shape_type": "rectangle",
+      "points": [
+        [
+          1000.0,
+          904.0
+        ],
+        [
+          1036.0,
+          1041.0
+        ]
+      ]
     }
-  ]
+  ],
+  "search_shape_type": "",
+  "search_points": null
 }
