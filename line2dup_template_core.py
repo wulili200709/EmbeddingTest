@@ -25,6 +25,7 @@ from line2dup_like_matcher import (  # noqa: E402
 BACKEND_ITEMS = [
     ("Original", "original"),
     ("Fusion", "fusion"),
+    ("Fusion V2", "fusionv2"),
     ("ICP (sim3)", "sim3"),
 ]
 BACKEND_LABEL_TO_KEY = {label: key for label, key in BACKEND_ITEMS}
@@ -464,7 +465,7 @@ def build_multi_backend_detector(
     original_editor_levels: Optional[Sequence[TemplateLevel]] = None,
     source_image_path: str = "",
 ) -> Tuple[Line2DupLikeDetector, int, int]:
-    ensure_native_backends_available(("original", "fusion", "sim3"))
+    ensure_native_backends_available(("original", "fusion", "fusionv2", "sim3"))
     roi_mask = build_mask_from_rects(roi_img.shape[1], roi_img.shape[0], mask_rects)
 
     detector = Line2DupLikeDetector(
@@ -523,6 +524,13 @@ def build_multi_backend_detector(
         strong_threshold=strong_threshold,
         backend="fusion",
     )
+    fusionv2_native = create_native_detector(
+        num_features=num_features,
+        T_levels=levels,
+        weak_threshold=weak_threshold,
+        strong_threshold=strong_threshold,
+        backend="fusionv2",
+    )
     sim3_native = create_native_detector(
         num_features=num_features,
         T_levels=levels,
@@ -564,6 +572,10 @@ def build_multi_backend_detector(
         if fusion_tid < 0:
             skipped += 1
             continue
+        fusionv2_tid = int(fusionv2_native.add_template(src_i, class_id, mask_i, nfeat))
+        if fusionv2_tid < 0:
+            skipped += 1
+            continue
         sim3_tid = int(sim3_native.add_template(src_i, class_id, mask_i, nfeat))
         if sim3_tid < 0:
             skipped += 1
@@ -572,12 +584,16 @@ def build_multi_backend_detector(
         fusion_tp = Line2DupLikeDetector._template_pyramid_from_native(
             fusion_native.export_template_pyramid(class_id, fusion_tid)
         )
+        fusionv2_tp = Line2DupLikeDetector._template_pyramid_from_native(
+            fusionv2_native.export_template_pyramid(class_id, fusionv2_tid)
+        )
         sim3_tp = Line2DupLikeDetector._template_pyramid_from_native(
             sim3_native.export_template_pyramid(class_id, sim3_tid)
         )
 
         backend_templates["original"].append(original_tp)
         backend_templates["fusion"].append(fusion_tp)
+        backend_templates["fusionv2"].append(fusionv2_tp)
         backend_templates["sim3"].append(sim3_tp)
         metas.append(
             {

@@ -642,3 +642,304 @@ topk：和“最像的几个真实样本”比
 如果你要，我下一条可以继续讲：
 
 topk 里的 k=1、3、5 分别适合什么情况。
+
+# fusionV2
+fusionv2 的主要差异在 C++ 里这两段：
+
+新增 buildFusionV2QuantizedLabels(...)，见 line2Dup.cpp (line 1049)
+Detector::match(...) 里如果开了 LINE2DUP_ENABLE_FUSION_V2，走新的量化和 linear memory 构建流程，见 line2Dup.cpp (line 1227)
+具体上它做了这些事：
+
+先 GaussianBlur(7x7)
+再 Sobel
+自己做 8 方向量化 fusionV2QuantizedLabel
+对彩色图时，选梯度幅值最大的通道
+再走一条更直接的 fusion pipeline：
+Hist3x3
+Spread1xn
+Spreadnx1
+Response1x1
+LinearizeTxT
+所以它优化的重点在：
+
+梯度量化
+response map / linear memory 构建
+fusion 管线前半段
+不是把整个匹配器从头到尾重写。
+
+是不是和 Original 一样
+不是。
+
+original 还是老的 line2dup_native 路径。
+fusion / fusionv2 都是 fusion 系列 native backend。
+
+它们不是同一套实现，只是接口尽量统一。
+
+可以这样理解：
+
+original
+基准实现
+fusion
+第一版 fusion 加速实现
+fusionv2
+第二版 fusion 前处理/构图路径
+所以你不能把 fusionv2 理解成“和 original 一样，只是更快”。
+更准确是：同一类模板匹配框架下，不同 native backend 实现。
+
+还增加了 NCC 吗
+结论是：
+
+NCC 相关源码和 demo 被加进仓库了
+但我没看到它已经接入当前 line2dup 主流程
+证据是：
+
+新增了整个 Fastest_Image_Pattern_Matching 目录
+里面有：
+Template Matching using Fast Normalized Cross Correlation.pdf
+cli_runner.cpp
+NCC.jpg、NCCBasedOCR.gif 这些资料
+但在当前主流程文件里，我没看到 line2dup_like_matcher.py、line2dup_template_workbench.py、setup.py 去引用这个 NCC 工程
+所以现在最稳的说法是：
+
+NCC 工程被 vendored 进来了
+但当前 workbench/line2dup 还没正式把 NCC 作为一个可选 backend 接进去
+一句总结
+这段提交的核心不是“把 fusion 改成和 original 一样”，而是：
+
+新增 fusionv2
+在 C++ 里优化 fusion 前半段的量化和 linear memory 构建
+保留 original 为另一条独立实现
+把 NCC 相关工程源码放进仓库，但目前还不像是已经接到主流程里
+
+# fusionV2 相比fusion改得地方
+从代码上看，fusionv2 的“优化”主要集中在 前半段响应图构建，不是后半段匹配评分全改了。
+
+具体改了什么
+fusionv2 新增在 _third_party_shape_based_matching_fusion_fix_memo/line2Dup.cpp (line 1049) 开始，核心变化有 3 个：
+
+颜色梯度处理改了
+老 fusion 对彩色图先转灰度：
+BGR2GRAY -> Gauss -> Sobel -> MagPhaseQuant
+见 _third_party_shape_based_matching_fusion_fix_memo/line2Dup.cpp (line 1259)
+fusionv2 不先转灰度，而是：
+
+GaussianBlur(7x7)
+对每个通道做 Sobel
+选梯度幅值最大的那个通道
+再量化方向
+见 _third_party_shape_based_matching_fusion_fix_memo/line2Dup.cpp (line 1071)
+这点和 original 的 ColorGradient 更接近，original 也是“彩色图按最大梯度通道选方向”，见 _third_party_shape_based_matching_fusion_fix_memo/line2Dup.cpp (line 295)、_third_party_shape_based_matching_fusion_fix_memo/line2Dup.cpp (line 319)
+
+量化阈值变松了
+老 fusion 的响应图阈值用的是 strong_threshold：
+res_map_mag_thresh = strong_threash
+见 _third_party_shape_based_matching_fusion_fix_memo/line2Dup.cpp (line 1019)
+后面 mag_thresh_l2 = res_map_mag_thresh * res_map_mag_thresh
+见 _third_party_shape_based_matching_fusion_fix_memo/line2Dup.cpp (line 1252)
+fusionv2 改成用 weak_threshold：
+
+mag_thresh_l2 = modality->weak_threshold * modality->weak_threshold
+见 _third_party_shape_based_matching_fusion_fix_memo/line2Dup.cpp (line 1232)
+这会保留更多弱但真实的边缘，通常会提高召回。
+
+前处理链路更直接
+老 fusion 是一长串 node：
+BGR2GRAY
+Gauss1x5
+Gauss5x1withPyrdown
+Sobel1x3
+Sobel3x1
+MagPhaseQuant
+Hist3x3
+Spread
+Response
+Linearize
+见 _third_party_shape_based_matching_fusion_fix_memo/line2Dup.cpp (line 1259) 到 _third_party_shape_based_matching_fusion_fix_memo/line2Dup.cpp (line 1278)
+fusionv2 变成：
+
+直接 OpenCV GaussianBlur + Sobel
+自己生成 quantized_labels
+再走
+Hist3x3
+Spread1xn
+Spreadnx1
+Response1x1
+LinearizeTxT
+见 _third_party_shape_based_matching_fusion_fix_memo/line2Dup.cpp (line 1165) 到 _third_party_shape_based_matching_fusion_fix_memo/line2Dup.cpp (line 1170)
+为什么 fusionv2 精度可能比 fusion 高
+从代码推断，主要是这两个原因：
+
+更接近 original 的前端特征提取
+fusionv2 用了 7x7 blur、彩色通道最大梯度选择，这和 original 更像；老 fusion 先灰度化，容易丢掉彩色边缘信息。
+
+边缘保留更多
+fusionv2 用 weak_threshold，老 fusion 用 strong_threshold。
+所以 fusionv2 不那么容易把“真实但偏弱”的结构过滤掉。
+
+这两点叠加后，常见效果就是：
+
+fusion 更快、更硬
+fusionv2 稍微更“保守保真”，因此命中率可能更高一些
+它和 original 一样吗
+不一样，但 更像 original。
+
+不一样：后半段仍然走 fusion 的 Hist/Spread/Response/Linearize 和 fusion 的匹配路径
+更像：前半段的梯度提取和方向量化更接近 original ColorGradient
+所以最准确的说法是：
+
+fusion：第一代更激进的 fusion 快路径
+fusionv2：把 fusion 前端往 original 对齐了一步
+# fusionv2 fusion original 区别
+Original
+输入图
+  -> GaussianBlur(7x7)
+  -> Sobel(dx, dy)
+  -> 彩色图时，选梯度幅值最大的通道
+  -> phase(angle)
+  -> hysteresisGradient
+  -> 3x3 局部一致性过滤
+  -> 8方向量化(1<<label)
+  -> spread
+  -> response maps
+  -> linearize
+  -> match
+
+Fusion
+输入图
+  -> BGR2GRAY
+  -> Gauss1x5
+  -> Gauss5x1withPyrdown
+  -> Sobel1x3
+  -> Sobel3x1
+  -> MagPhaseQuant1x1
+  -> Hist3x3
+  -> Spread1xn
+  -> Spreadnx1
+  -> Response1x1
+  -> LinearizeTxT
+  -> match
+Fusion V2
+输入图
+  -> GaussianBlur(7x7)
+  -> Sobel(dx, dy)
+  -> 彩色图时，选梯度幅值最大的通道
+  -> fusionV2QuantizedLabel
+  -> Hist3x3
+  -> Spread1xn
+  -> Spreadnx1
+  -> Response1x1
+  -> LinearizeTxT
+  -> match
+差异重点
+
+Original 和 Fusion V2 的前端更像
+都是 GaussianBlur(7x7)
+都是 Sobel
+都对彩色图做“最大梯度通道选择”
+Fusion 和 Fusion V2 的后端更像
+都走 Hist3x3 -> Spread -> Response -> Linearize -> match
+Fusion 最不一样的地方
+先 BGR2GRAY
+量化阈值更偏 strong_threshold
+更像极致吞吐的快路径
+Fusion V2 为什么常常更准
+保留了彩色通道里更强的边缘
+阈值更接近 weak_threshold
+前端更少丢信息
+一句概括
+
+Original：经典 ColorGradient 路线
+Fusion：灰度化的高速 fusion 路线
+Fusion V2：Original 风格前端 + Fusion 风格后端
+
+# 前端后端怎么理解 fusion的后端加速了
+这里的“前端/后端”不是指前端页面、后端服务，而是指模板匹配算法内部流程的前半段和后半段。
+
+可以这样理解：
+
+前端
+指“从输入图像里先把匹配所需特征准备出来”的部分。
+也就是：
+
+模糊
+求梯度
+方向量化
+spread
+response map
+linearize memory
+这些都属于“先把图变成便于匹配的中间表示”。
+
+后端
+指“拿这些中间表示，真正去和模板做比对并输出 match”的部分。
+也就是：
+
+遍历模板
+计算 similarity
+金字塔 coarse-to-fine refine
+汇总候选
+排序 / 去重 / 输出结果
+所以前面我说：
+
+fusionv2 更像是优化了前端
+因为它主要改了：
+梯度提取
+量化方式
+linear memory 构建路径
+而不是把 matchClass(...) 整套候选评分逻辑重写了。
+
+fusion 的“后端加速”加速在哪里
+如果说 fusion 的后端加速，主要体现在这些点：
+
+模板匹配主循环并行
+matchClass(...) 里模板遍历用了 OpenMP：
+#pragma omp parallel for
+见 _third_party_shape_based_matching_fusion_fix_memo/line2Dup.cpp
+这意味着：
+
+一个类下面很多 template_id
+可以多线程同时匹配
+response / linear memory 是为后续匹配做的高速布局
+虽然它们通常归前端，但它们本质上是为了后端匹配快：
+LinearizeTxT
+连续内存访问
+SIMD 友好
+减少 cache miss
+所以 fusion 的核心思想是：
+
+前面先把数据整理成“后面很好匹配”的样子
+后面匹配时就能快很多
+SIMD / MIPP
+fusion_fix_memo 里面大量用了 MIPP SIMD 实现。
+这让：
+梯度量化
+response 生成
+局部计算
+都能更快跑。
+
+tile / pipeline 式处理
+simple_fusion::ProcessManager 这套 node pipeline，本质上就是为了：
+按块处理
+减少内存抖动
+更容易并行
+更适合 SIMD
+这部分也属于 fusion 的工程加速重点。
+
+一句最直白的话
+
+前端 = 把图像变成特征表示
+后端 = 拿特征表示去和模板真正比
+而 fusion 的加速不是只加速后端，也不是只加速前端，
+而是整套都往“适合 CPU 并行和 SIMD”的方向改了。
+只是这次你问的 fusionv2，它最明显的变化点更集中在前端这块。
+
+为什么我前面说 fusionv2 主要改前端
+因为从代码 diff 看：
+
+新增的是 buildFusionV2QuantizedLabels
+替换的是量化和 linear memory 构建入口
+后面的 matchClass(...) 主体没看到被大改
+所以：
+
+fusion 系列整体是加速版
+fusionv2 这次新增主要是改前端特征构建
+后端模板匹配主逻辑大体沿用 fusion 体系

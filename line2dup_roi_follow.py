@@ -150,7 +150,7 @@ def _best_match(
     scene_mask: Optional[np.ndarray] = None,
 ) -> Match:
     backend = str(recipe.backend or "original").strip().lower()
-    if backend == "fusion":
+    if backend in {"fusion", "fusionv2"}:
         scene_mask = None
     matches = detector.match(
         scene_bgr,
