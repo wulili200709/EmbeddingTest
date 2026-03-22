@@ -1,0 +1,25 @@
+{
+  "board_model": "NP-6133-16I16O",
+  "foot_switch_di": "DI0",
+  "tower_red": {
+    "channel": "DO0",
+    "active_high": false
+  },
+  "tower_green": {
+    "channel": "DO1",
+    "active_high": false
+  },
+  "tower_blue": {
+    "channel": "DO2",
+    "active_high": false
+  },
+  "light_cam1": {
+    "channel": "DO3",
+    "active_high": false
+  },
+  "light_cam2": {
+    "channel": "DO4",
+    "active_high": false
+  },
+  "_comment": "三色灯已确认低电平有效；光源极性仍待现场确认，当前值仅为占位默认值。"
+}

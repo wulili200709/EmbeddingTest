@@ -1407,3 +1407,153 @@ Image__10-05-50.bmp (NG图没有密封圈):
   dist_ok = 0.6084  ← 与 OK 原型不像
   dist_ng = 0.0315  ← 与 NG 原型极其相似（0.03 ≈ 几乎一样）
   → 判 NG ✓
+
+
+  当前代码是一个很典型的“主窗口协调层 + 调试工作区 + 运行工作区 + 服务层”的结构。
+
+总体分层
+可以先把它看成 5 层：
+
+MainWindow 壳层
+负责把所有模块组起来、切换工作区、接菜单、弹对话框、同步状态。qr_gui_pyside6.py
+
+调试工作区 ToolPage
+负责产品配置、图片列表、ROI/模板、训练、测试、分析、相机调试工具。tool_page_pyside6.py
+
+运行工作区 RuntimeModePage
+负责运行界面的纯显示和交互，不直接做业务判断。runtime_mode_pyside6.py
+
+运行控制层 RuntimeController
+负责把“相机、IO、调度、放行、记录、算法调用”串起来，对运行页发信号。runtime_controller.py
+
+底层数据/服务层
+包括：
+
+会话与产品：ProductSession
+算法控制：AlgorithmController
+相机服务：HikCameraManager、HikCameraDevice
+运行调度：InspectionScheduler
+放行锁定：PermissionManager
+IO/灯控：IoController、LightController、TowerLightController、DiPoller
+启动架构
+启动入口很简单：
+
+main() -> MainWindow() -> build_default_session_and_algo() -> ToolPage + RuntimeModePage + RuntimeController
+
+对应代码：
+
+入口：qr_gui_pyside6.py
+默认会话/算法对象创建：window_common.py
+主窗口里组装 ToolPage / RuntimeModePage / RuntimeController：qr_gui_pyside6.py qr_gui_pyside6.py qr_gui_pyside6.py qr_gui_pyside6.py
+另外现在启动时还有一条“后台预热算法引擎”的支线：
+
+UI 先起来
+qr_core / torch / torchvision 在后台线程预热
+状态栏显示 算法引擎：加载中... / 已就绪 / 加载失败
+位置在 qr_gui_pyside6.py 和 qr_gui_pyside6.py。
+
+主窗口在系统里的角色
+MainWindow 现在就是“协调器”，不是业务中心。
+
+它主要做 4 件事：
+
+组装 UI 壳和菜单 qr_gui_pyside6.py
+切换 调试界面 / 运行界面 qr_gui_pyside6.py
+把 ToolPage、RuntimeModePage、RuntimeController 的信号接起来 qr_gui_pyside6.py
+处理必须由主窗口弹出的对话框，比如密码、关于、连接相机 qr_gui_pyside6.py
+所以现在不是“页面自己乱连页面”，而是：
+
+ToolPage 只提请求
+RuntimeModePage 只发 UI 信号
+RuntimeController 只做运行链业务
+MainWindow 做跨边界协调
+调试链
+调试链以 ToolPage 为中心，职责很重，但都是“工程配置类能力”：
+
+加载产品会话、图片列表、参考图 tool_page_pyside6.py
+ROI 标注、模板 recipe 编辑、自动生成 ROI
+训练与测试
+特征分析、Margin 验证、传统基线调试
+相机调试工具和实时预览线程 tool_page_pyside6.py
+调试页不直接控制运行状态。它通过信号告诉主窗口：
+
+产品切换了
+会话清空了
+检测项变了
+定义在 tool_page_pyside6.py。
+
+运行链
+运行链以 RuntimeController 为中心，它是当前“真业务主链”。
+
+可以理解成：
+
+RuntimeModePage(发请求) -> RuntimeController(做业务) -> services/devices -> RuntimeModePage(回显状态)
+
+关键连接在 window_common.py。
+
+RuntimeController 负责：
+
+枚举/连接/断开相机 runtime_controller.py
+触发拍照
+调用算法执行检测
+更新运行状态、相机结果、总结果
+处理 NG 锁定和密码放行
+驱动三色灯、相机光源、记录输出
+它自己不碰 QWidget，这点在文件头就写得很清楚。runtime_controller.py
+
+相机链
+海康相机链在服务层：
+
+HikCameraManager -> HikCameraDevice -> FrameGrabService -> RuntimeController / ToolPage
+
+底层相机能力在 camera.py camera.py camera.py。
+
+当前取图模式是：
+
+打开相机
+StartGrabbing
+软件触发
+GetImageBuffer
+转图
+上层决定是预览、保存还是送检测
+调试页和运行页都共用这套服务，只是角色不同：
+
+调试页用 debug
+运行页用 cam1/cam2
+IO 与灯控链
+IO 这条是独立的硬件链：
+
+NkioBoard -> IoController -> LightController / TowerLightController / DiPoller -> RuntimeController
+
+职责分工很清楚：
+
+IoController：把 DI/DO 点位映射成业务名
+LightController：控制相机光源开关
+TowerLightController：三色灯状态机
+DiPoller：轮询脚踏输入并做去抖/边沿检测
+算法链
+算法链现在分成两层：
+
+AlgorithmController 负责参数、模型加载、训练、预测
+qr_core_proxy -> qr_core 负责真正的 embedding 模型能力
+算法控制器不碰 UI，只返回纯结果数据，这点结构是干净的。algorithm_controller.py
+
+当前运行架构一句话图
+
+main
+ -> MainWindow
+    -> ProductSession
+    -> AlgorithmController
+    -> ToolPage(调试)
+    -> RuntimeModePage(运行UI)
+    -> RuntimeController(运行业务)
+       -> Camera services
+       -> IO / Light / Tower / DI poller
+       -> InspectionScheduler / PermissionManager / Record services
+你现在这套代码的核心特点
+
+MainWindow 只做协调，不做底层业务
+ToolPage 是工程配置面
+RuntimeModePage 是纯运行显示面
+RuntimeController 是运行业务中枢
+ProductSession / AlgorithmController / services / devices 都是可复用的非 UI 层

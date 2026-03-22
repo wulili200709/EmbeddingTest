@@ -1,5 +1,5 @@
 {
-  "model_path": "c:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\150A_OG\\line2dup_model.json",
+  "model_path": "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\150A_OG\\line2dup_model.json",
   "reference_image": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/ok/1.bmp",
   "class_id": "150A_OG",
   "backend": "fusionv2",
@@ -29,6 +29,7 @@
     {
       "reference_label": "roi1",
       "output_label": "roi1",
+      "display_name": "X",
       "shape_type": "rectangle",
       "points": [
         [
@@ -44,6 +45,7 @@
     {
       "reference_label": "roi2",
       "output_label": "roi2",
+      "display_name": "W",
       "shape_type": "rectangle",
       "points": [
         [

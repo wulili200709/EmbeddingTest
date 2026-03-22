@@ -17,7 +17,7 @@ try:
 except Exception:  # pragma: no cover - fallback to PCA
     TSNE = None
 
-import qr_core
+import qr_core_proxy as qr_core
 from product_params import load_product_params
 
 

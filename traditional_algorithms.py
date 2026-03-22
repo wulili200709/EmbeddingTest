@@ -7,7 +7,7 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 import cv2
 import numpy as np
 
-import qr_core
+import qr_core_proxy as qr_core
 
 
 TRADITIONAL_ALGORITHMS = ["meanintensity", "meanhsv_h", "meanhsv_v", "meanhsv_s"]

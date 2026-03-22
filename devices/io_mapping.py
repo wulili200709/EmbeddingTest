@@ -35,6 +35,8 @@ class IoMapping:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "IoMapping":
+        if "di" not in data and "do" not in data:
+            data = cls._from_legacy_project_config(data)
         di_data = data.get("di", {})
         do_data = data.get("do", {})
         if not isinstance(di_data, dict) or not isinstance(do_data, dict):
@@ -80,6 +82,50 @@ class IoMapping:
             raise ValueError(f"missing 'channel' for '{name}'")
         active_high = bool(item.get("active_high", default_active_high))
         return IoChannelConfig(name=name, channel=int(item["channel"]), active_high=active_high)
+
+    @classmethod
+    def _from_legacy_project_config(cls, data: dict[str, Any]) -> dict[str, Any]:
+        if "foot_switch_di" not in data:
+            raise ValueError("io mapping requires dict fields: 'di' and 'do'")
+        return {
+            "di": {
+                "foot_switch": {
+                    "channel": cls._parse_channel_ref(data["foot_switch_di"], prefix="DI"),
+                    "active_high": True,
+                },
+            },
+            "do": {
+                "tower_red": cls._normalize_legacy_output(data.get("tower_red"), default_channel=0),
+                "tower_green": cls._normalize_legacy_output(data.get("tower_green"), default_channel=1),
+                "tower_blue": cls._normalize_legacy_output(data.get("tower_blue"), default_channel=2),
+                "light_cam1": cls._normalize_legacy_output(data.get("light_cam1"), default_channel=3),
+                "light_cam2": cls._normalize_legacy_output(data.get("light_cam2"), default_channel=4),
+            },
+        }
+
+    @classmethod
+    def _normalize_legacy_output(cls, item: Any, *, default_channel: int) -> dict[str, Any]:
+        if item is None:
+            return {"channel": default_channel, "active_high": True}
+        if isinstance(item, dict):
+            channel_ref = item.get("channel", default_channel)
+            return {
+                "channel": cls._parse_channel_ref(channel_ref, prefix="DO"),
+                "active_high": bool(item.get("active_high", True)),
+            }
+        return {
+            "channel": cls._parse_channel_ref(item, prefix="DO"),
+            "active_high": True,
+        }
+
+    @staticmethod
+    def _parse_channel_ref(value: Any, *, prefix: str) -> int:
+        if isinstance(value, int):
+            return int(value)
+        text = str(value).strip().upper()
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+        return int(text)
 
     def di_names(self) -> list[str]:
         return list(self._di.keys())

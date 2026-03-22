@@ -7,7 +7,8 @@ from typing import Optional, Tuple
 
 import cv2
 
-import qr_core
+import qr_core_proxy as qr_core
+from domain import clearable_roi_labels, output_labels_from_line2dup_recipe
 from line2dup_recipe import Line2DupRecipe, load_recipe, save_recipe
 from line2dup_roi_follow import FollowResult, locate_and_follow
 
@@ -25,6 +26,29 @@ class Line2DupAutogenRun:
     result: FollowResult
     locate_ms: float
     total_ms: float
+
+
+def _delete_stale_line2dup_roi_shapes(tgt_img_path: str, recipe: Line2DupRecipe) -> list[str]:
+    jpath = qr_core.labelme_json_of_image(tgt_img_path)
+    if not os.path.exists(jpath):
+        return []
+    current_labels = output_labels_from_line2dup_recipe(recipe)
+    existing_labels = qr_core.sorted_label_names_from_labelme(jpath, label_prefix="roi")
+    labels_to_clear, clear_mode = clearable_roi_labels(
+        current_labels,
+        existing_labels,
+        prefer_stale_only=True,
+    )
+    if clear_mode != "stale_only":
+        return []
+    removed: list[str] = []
+    for label in labels_to_clear:
+        try:
+            if qr_core.delete_labelme_shape(tgt_img_path, label_name=label):
+                removed.append(label)
+        except Exception:
+            continue
+    return removed
 
 
 def product_paths(product_dir: str) -> ProductLine2DupPaths:
@@ -84,6 +108,7 @@ def autogen_roi_json_from_line2dup_timed(
     locate_t0 = time.perf_counter()
     result = locate_and_follow(scene, ref_img_path, recipe, scene_mask=scene_mask)
     locate_ms = (time.perf_counter() - locate_t0) * 1000.0
+    _delete_stale_line2dup_roi_shapes(tgt_img_path, recipe)
     jpath = ""
     for region in result.regions:
         if region.source_shape_type == "polygon":

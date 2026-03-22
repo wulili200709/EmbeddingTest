@@ -51,5 +51,7 @@
     "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/Image__2026-03-20__10-06-34.bmp"
   ],
   "ref_image": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/ok/1.bmp",
-  "loc_method": "line2dup"
+  "loc_method": "line2dup",
+  "runtime_cam1_serial": "00E76555119",
+  "runtime_cam2_serial": ""
 }

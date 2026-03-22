@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from roi_canvas_pyside6 import OverlayShape, RoiCanvas
+from ui.debug import OverlayShape, RoiCanvas
 from shape_model_like import ScaledShapeModel
 
 

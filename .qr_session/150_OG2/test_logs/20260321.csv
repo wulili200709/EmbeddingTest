@@ -1,0 +1,3 @@
+﻿timestamp,product,algorithm,score_mode,margin,topk,file_name,gt,pred,diff,sim_ok,sim_ng,value,threshold,match_ms,total_ms,json_name
+2026-03-21T22:23:51,150_OG2,meanhsv_h,proto,0.02,3,Image__2026-03-20__10-05-40.bmp,,OK,0.0,,,87.06441497802734,87.06441497802734,,34.15550000499934,Image__2026-03-20__10-05-40.json
+2026-03-21T22:24:00,150_OG2,meanhsv_h,proto,0.02,3,Image__2026-03-20__10-05-40.bmp,,OK,0.0,,,87.06441497802734,87.06441497802734,,16.530599968973547,Image__2026-03-20__10-05-40.json

@@ -1,0 +1,18 @@
+[
+  {
+    "item_id": "roi1",
+    "display_name": "X",
+    "camera_id": "cam1",
+    "roi_label": "roi1",
+    "algorithm_type": "inherit_product",
+    "enabled": true
+  },
+  {
+    "item_id": "roi2",
+    "display_name": "W",
+    "camera_id": "cam1",
+    "roi_label": "roi2",
+    "algorithm_type": "inherit_product",
+    "enabled": true
+  }
+]

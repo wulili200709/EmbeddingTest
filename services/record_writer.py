@@ -1,0 +1,263 @@
+from __future__ import annotations
+
+import csv
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+
+@dataclass
+class TestRecord:
+    record_time: str
+    product_name: str
+    recipe_name: str = ""
+    serial_no: str = ""
+    final_result: str = ""
+    camera1_result: str = ""
+    camera2_result: str = ""
+    duration_ms: int = 0
+    is_error: bool = False
+    error_code: str = ""
+    error_message: str = ""
+    lock_required: bool = False
+    release_required: bool = False
+    release_result: str = ""
+    extra_fields: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def now(
+        cls,
+        *,
+        product_name: str,
+        recipe_name: str = "",
+        serial_no: str = "",
+        final_result: str = "",
+        camera1_result: str = "",
+        camera2_result: str = "",
+        duration_ms: int = 0,
+        is_error: bool = False,
+        error_code: str = "",
+        error_message: str = "",
+        lock_required: bool = False,
+        release_required: bool = False,
+        release_result: str = "",
+        extra_fields: dict[str, Any] | None = None,
+    ) -> "TestRecord":
+        return cls(
+            record_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            product_name=product_name,
+            recipe_name=recipe_name,
+            serial_no=serial_no,
+            final_result=final_result,
+            camera1_result=camera1_result,
+            camera2_result=camera2_result,
+            duration_ms=int(duration_ms),
+            is_error=bool(is_error),
+            error_code=error_code,
+            error_message=error_message,
+            lock_required=bool(lock_required),
+            release_required=bool(release_required),
+            release_result=release_result,
+            extra_fields=dict(extra_fields or {}),
+        )
+
+
+@dataclass
+class ReleaseLogRecord:
+    record_time: str
+    product_name: str
+    recipe_name: str = ""
+    event_type: str = ""
+    result: str = ""
+    message: str = ""
+    runtime_state: str = ""
+    extra_fields: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def now(
+        cls,
+        *,
+        product_name: str,
+        recipe_name: str = "",
+        event_type: str = "",
+        result: str = "",
+        message: str = "",
+        runtime_state: str = "",
+        extra_fields: dict[str, Any] | None = None,
+    ) -> "ReleaseLogRecord":
+        return cls(
+            record_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            product_name=product_name,
+            recipe_name=recipe_name,
+            event_type=event_type,
+            result=result,
+            message=message,
+            runtime_state=runtime_state,
+            extra_fields=dict(extra_fields or {}),
+        )
+
+
+class CsvRecordWriter:
+    """Append one test record per product into a daily CSV file."""
+
+    DEFAULT_COLUMNS = [
+        "record_time",
+        "product_name",
+        "recipe_name",
+        "serial_no",
+        "final_result",
+        "camera1_result",
+        "camera2_result",
+        "duration_ms",
+        "is_error",
+        "error_code",
+        "error_message",
+        "lock_required",
+        "release_required",
+        "release_result",
+    ]
+
+    def __init__(self, base_directory: str | Path) -> None:
+        self.base_directory = Path(base_directory)
+
+    def file_path_for_date(self, dt: datetime | None = None) -> Path:
+        target_dt = dt or datetime.now()
+        return self.base_directory / f"{target_dt.strftime('%Y-%m-%d')}.csv"
+
+    def append_record(self, record: TestRecord) -> Path:
+        self.base_directory.mkdir(parents=True, exist_ok=True)
+        file_path = self.file_path_for_date(datetime.strptime(record.record_time, "%Y-%m-%d %H:%M:%S"))
+        row = self._record_to_row(record)
+        fieldnames = self._fieldnames_for_row(row)
+        file_exists = file_path.exists()
+
+        with file_path.open("a", newline="", encoding="utf-8-sig") as csv_file:
+            writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(row)
+        return file_path
+
+    def _record_to_row(self, record: TestRecord) -> dict[str, Any]:
+        base = asdict(record)
+        extra_fields = base.pop("extra_fields", {})
+        base.update(extra_fields)
+        return base
+
+    def _fieldnames_for_row(self, row: dict[str, Any]) -> list[str]:
+        extra_keys = [key for key in row.keys() if key not in self.DEFAULT_COLUMNS]
+        return [*self.DEFAULT_COLUMNS, *sorted(extra_keys)]
+
+
+class CsvReleaseLogWriter:
+    """Append one release/trigger event per line into a daily CSV file."""
+
+    DEFAULT_COLUMNS = [
+        "record_time",
+        "product_name",
+        "recipe_name",
+        "event_type",
+        "result",
+        "message",
+        "runtime_state",
+    ]
+
+    def __init__(self, base_directory: str | Path) -> None:
+        self.base_directory = Path(base_directory)
+
+    def file_path_for_date(self, dt: datetime | None = None) -> Path:
+        target_dt = dt or datetime.now()
+        return self.base_directory / f"{target_dt.strftime('%Y-%m-%d')}.csv"
+
+    def append_record(self, record: ReleaseLogRecord) -> Path:
+        self.base_directory.mkdir(parents=True, exist_ok=True)
+        file_path = self.file_path_for_date(datetime.strptime(record.record_time, "%Y-%m-%d %H:%M:%S"))
+        row = self._record_to_row(record)
+        fieldnames = self._fieldnames_for_row(row)
+        file_exists = file_path.exists()
+
+        with file_path.open("a", newline="", encoding="utf-8-sig") as csv_file:
+            writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(row)
+        return file_path
+
+    def _record_to_row(self, record: ReleaseLogRecord) -> dict[str, Any]:
+        base = asdict(record)
+        extra_fields = base.pop("extra_fields", {})
+        base.update(extra_fields)
+        return base
+
+    def _fieldnames_for_row(self, row: dict[str, Any]) -> list[str]:
+        extra_keys = [key for key in row.keys() if key not in self.DEFAULT_COLUMNS]
+        return [*self.DEFAULT_COLUMNS, *sorted(extra_keys)]
+
+
+class TestRecordService:
+    def __init__(self, writer: CsvRecordWriter) -> None:
+        self.writer = writer
+
+    def write_product_result(
+        self,
+        *,
+        product_name: str,
+        final_result: str,
+        recipe_name: str = "",
+        serial_no: str = "",
+        camera1_result: str = "",
+        camera2_result: str = "",
+        duration_ms: int = 0,
+        is_error: bool = False,
+        error_code: str = "",
+        error_message: str = "",
+        lock_required: bool = False,
+        release_required: bool = False,
+        release_result: str = "",
+        extra_fields: dict[str, Any] | None = None,
+    ) -> Path:
+        record = TestRecord.now(
+            product_name=product_name,
+            recipe_name=recipe_name,
+            serial_no=serial_no,
+            final_result=final_result,
+            camera1_result=camera1_result,
+            camera2_result=camera2_result,
+            duration_ms=duration_ms,
+            is_error=is_error,
+            error_code=error_code,
+            error_message=error_message,
+            lock_required=lock_required,
+            release_required=release_required,
+            release_result=release_result,
+            extra_fields=extra_fields,
+        )
+        return self.writer.append_record(record)
+
+
+class ReleaseLogService:
+    def __init__(self, writer: CsvReleaseLogWriter) -> None:
+        self.writer = writer
+
+    def write_event(
+        self,
+        *,
+        product_name: str,
+        recipe_name: str = "",
+        event_type: str,
+        result: str,
+        message: str = "",
+        runtime_state: str = "",
+        extra_fields: dict[str, Any] | None = None,
+    ) -> Path:
+        record = ReleaseLogRecord.now(
+            product_name=product_name,
+            recipe_name=recipe_name,
+            event_type=event_type,
+            result=result,
+            message=message,
+            runtime_state=runtime_state,
+            extra_fields=extra_fields,
+        )
+        return self.writer.append_record(record)

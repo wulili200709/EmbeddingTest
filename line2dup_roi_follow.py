@@ -8,7 +8,7 @@ from typing import List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 
-import qr_core
+import qr_core_proxy as qr_core
 from line2dup_bootstrap import ensure_repo_root_on_path
 from line2dup_recipe import Line2DupRecipe
 from line2dup_template_core import apply_affine_to_points, expanded_pose_affine, load_class_source_assets

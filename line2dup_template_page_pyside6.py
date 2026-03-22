@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
-import qr_core
+import qr_core_proxy as qr_core
 from line2dup_bootstrap import ensure_repo_root_on_path
 from line2dup_locator import product_paths
 from line2dup_recipe import Line2DupRecipe, load_recipe, save_recipe
@@ -31,7 +31,7 @@ from line2dup_template_core import (
     roi_level_shapes_from_image,
     sync_levels_from_level0,
 )
-from roi_canvas_pyside6 import OverlayShape, RoiCanvas, pixmap_from_path
+from ui.debug import OverlayShape, RoiCanvas, pixmap_from_path
 
 ensure_repo_root_on_path()
 
@@ -171,8 +171,84 @@ def _draw_match_overlay(detector: Line2DupLikeDetector, image_bgr: np.ndarray, m
     return out
 
 
+_DIALOG_STYLESHEET = """
+QDialog {
+    background: #2d2d2d;
+    color: #e0e0e0;
+}
+QWidget {
+    color: #e0e0e0;
+}
+QGroupBox {
+    background: #363636;
+    border: 1px solid #505050;
+    border-radius: 4px;
+    margin-top: 10px;
+    padding-top: 10px;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 8px;
+    padding: 0 4px;
+}
+QTabWidget::pane {
+    border: 1px solid #505050;
+    background: #2d2d2d;
+}
+QTabBar::tab {
+    background: #3a3a3a;
+    color: #888888;
+    padding: 6px 14px;
+    border: 1px solid #505050;
+    border-bottom: none;
+}
+QTabBar::tab:selected {
+    background: #4a4a4a;
+    color: #e0e0e0;
+}
+QPushButton {
+    background: #444444;
+    color: #d0d0d0;
+    border: 1px solid #5a5a5a;
+    padding: 4px 8px;
+    border-radius: 3px;
+}
+QPushButton:hover {
+    background: #505050;
+}
+QLineEdit,
+QComboBox,
+QSpinBox,
+QDoubleSpinBox,
+QListWidget,
+QTableWidget {
+    background: #333333;
+    color: #e0e0e0;
+    border: 1px solid #5a5a5a;
+    selection-background-color: #6ec0ff;
+    selection-color: #1a1a1a;
+}
+QHeaderView::section {
+    background: #3a3a3a;
+    color: #d0d0d0;
+    border: 1px solid #404040;
+    padding: 4px;
+}
+QAbstractItemView {
+    background: #333333;
+    color: #e0e0e0;
+    selection-background-color: #6ec0ff;
+    selection-color: #1a1a1a;
+}
+QLabel {
+    color: #e0e0e0;
+}
+"""
+
+
 class Line2DupTemplateDialog(QtWidgets.QDialog):
     modelSaved = QtCore.Signal(str, str)
+    referenceRegionsChanged = QtCore.Signal()
 
     def __init__(
         self,
@@ -183,8 +259,10 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         parent: Optional[QtWidgets.QWidget] = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle(f"line2dup 模板页 - {product_name}")
+        self.setWindowTitle(f"模板页 - {product_name}")
         self.resize(1450, 920)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(_DIALOG_STYLESHEET)
 
         self.product_name = product_name
         self.product_dir = product_dir
@@ -412,40 +490,74 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         left = QtWidgets.QVBoxLayout()
         layout.addLayout(left, 0)
 
-        info_box = QtWidgets.QGroupBox("参考ROI")
+        info_box = QtWidgets.QGroupBox("选中 ROI 属性")
         info_form = QtWidgets.QFormLayout(info_box)
-        self.edit_reference_label = QtWidgets.QLineEdit("roi")
-        self.edit_output_label = QtWidgets.QLineEdit("roi")
+        self.edit_reference_label = QtWidgets.QLineEdit()
+        self.edit_output_label = QtWidgets.QLineEdit()
+        self.edit_output_label.setPlaceholderText("先在列表中选择一个 ROI")
+        self.edit_display_name = QtWidgets.QLineEdit()
+        self.edit_display_name.setPlaceholderText("先在列表中选择一个 ROI")
         self.cmb_reference_shape = QtWidgets.QComboBox()
         self.cmb_reference_shape.addItems(["rectangle", "polygon"])
         self.cmb_reference_shape.currentTextChanged.connect(self._on_reference_shape_changed)
-        info_form.addRow("shape", self.cmb_reference_shape)
+        self.edit_output_label.textChanged.connect(self._on_region_field_edited)
+        self.edit_display_name.textChanged.connect(self._on_region_field_edited)
+        self.edit_output_label.returnPressed.connect(self._apply_reference_region_fields)
+        self.edit_display_name.returnPressed.connect(self._apply_reference_region_fields)
+        self.btn_apply_region_name = QtWidgets.QPushButton("应用名称")
+        self.btn_apply_region_name.clicked.connect(self._apply_reference_region_fields)
+        info_form.addRow("ROI 标签", self.edit_output_label)
+        info_form.addRow("显示名称", self.edit_display_name)
+        name_btn_row = QtWidgets.QHBoxLayout()
+        name_btn_row.addWidget(self.btn_apply_region_name)
+        name_btn_row.addWidget(self.cmb_reference_shape)
+        info_form.addRow("形状 / 操作", name_btn_row)
+        self.edit_output_label.setEnabled(False)
+        self.edit_display_name.setEnabled(False)
+        self.btn_apply_region_name.setEnabled(False)
         left.addWidget(info_box)
 
         region_box = QtWidgets.QGroupBox("Reference Regions")
         region_l = QtWidgets.QVBoxLayout(region_box)
-        self.list_reference_regions = QtWidgets.QListWidget()
-        self.list_reference_regions.currentItemChanged.connect(self._on_reference_region_selected)
-        region_l.addWidget(self.list_reference_regions, 1)
-        region_btn_row = QtWidgets.QHBoxLayout()
+        region_body = QtWidgets.QHBoxLayout()
+        self.table_reference_regions = QtWidgets.QTableWidget(0, 4)
+        self.table_reference_regions.setHorizontalHeaderLabels(["#", "Name", "ROI Label", "Info"])
+        self.table_reference_regions.verticalHeader().setVisible(False)
+        self.table_reference_regions.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.table_reference_regions.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.table_reference_regions.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.table_reference_regions.setAlternatingRowColors(True)
+        self.table_reference_regions.currentCellChanged.connect(self._on_reference_region_selected)
+        self.table_reference_regions.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
+        self.table_reference_regions.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
+        self.table_reference_regions.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
+        self.table_reference_regions.horizontalHeader().setSectionResizeMode(3, QtWidgets.QHeaderView.Stretch)
+        region_body.addWidget(self.table_reference_regions, 1)
+
+        region_btn_col = QtWidgets.QVBoxLayout()
+        self.btn_add_reference_roi = QtWidgets.QPushButton("新建ROI")
+        self.btn_add_reference_roi.clicked.connect(self._prepare_new_reference_roi)
         self.btn_remove_reference_roi = QtWidgets.QPushButton("删除选中ROI")
         self.btn_remove_reference_roi.clicked.connect(self._remove_selected_reference_roi)
         self.btn_clear_reference_rois = QtWidgets.QPushButton("清空全部ROI")
         self.btn_clear_reference_rois.clicked.connect(self._clear_reference_roi)
-        region_btn_row.addWidget(self.btn_remove_reference_roi)
-        region_btn_row.addWidget(self.btn_clear_reference_rois)
-        region_l.addLayout(region_btn_row)
-        left.addWidget(region_box)
-
-        act_box = QtWidgets.QGroupBox("操作")
-        act_l = QtWidgets.QVBoxLayout(act_box)
         self.btn_load_reference_roi = QtWidgets.QPushButton("加载已有参考ROI")
         self.btn_load_reference_roi.clicked.connect(lambda: self._load_reference_roi_from_json(silent=False))
-        self.btn_save_reference_roi = QtWidgets.QPushButton("保存当前ROI到 labelme")
+        self.btn_save_reference_roi = QtWidgets.QPushButton("保存当前ROI")
         self.btn_save_reference_roi.clicked.connect(self._save_reference_roi_to_json)
-        act_l.addWidget(self.btn_load_reference_roi)
-        act_l.addWidget(self.btn_save_reference_roi)
-        left.addWidget(act_box)
+        for button in [
+            self.btn_add_reference_roi,
+            self.btn_load_reference_roi,
+            self.btn_remove_reference_roi,
+            self.btn_clear_reference_rois,
+            self.btn_save_reference_roi,
+        ]:
+            button.setMinimumWidth(150)
+            region_btn_col.addWidget(button)
+        region_btn_col.addStretch(1)
+        region_body.addLayout(region_btn_col)
+        region_l.addLayout(region_body, 1)
+        left.addWidget(region_box)
 
         self.lbl_reference_status = QtWidgets.QLabel("状态：这里设置的是最终输出给 embedding 的参考ROI。")
         self.lbl_reference_status.setWordWrap(True)
@@ -456,6 +568,13 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         layout.addLayout(right, 1)
         self.ref_canvas = RoiCanvas()
         self.ref_canvas.setMinimumSize(840, 720)
+        self.ref_canvas.set_roi_style(
+            roi_color=QtGui.QColor(0, 0, 255),
+            roi_width=3.5,
+            preview_color=QtGui.QColor(0, 0, 255),
+            preview_dash=False,
+            preview_width=2.0,
+        )
         self.ref_canvas.shapesChanged.connect(self._on_reference_canvas_shape_changed)
         right.addWidget(self.ref_canvas, 1)
 
@@ -636,6 +755,14 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             {
                 "reference_label": str(region.get("reference_label") or region.get("label") or ""),
                 "output_label": str(region.get("output_label") or region.get("reference_label") or region.get("label") or ""),
+                "display_name": str(
+                    region.get("display_name")
+                    or region.get("name")
+                    or region.get("output_label")
+                    or region.get("reference_label")
+                    or region.get("label")
+                    or ""
+                ),
                 "shape_type": str(region.get("shape_type", "rectangle")),
                 "points": [
                     [float(pt[0]), float(pt[1])]
@@ -681,6 +808,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
 
     def _load_recipe(self) -> None:
         if not os.path.exists(self.paths.recipe_path):
+            self._refresh_reference_region_fields()
             self._sync_recipe_controls("create")
             return
         recipe = load_recipe(self.paths.recipe_path)
@@ -695,6 +823,14 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             {
                 "reference_label": str(region.get("reference_label") or region.get("label") or ""),
                 "output_label": str(region.get("output_label") or region.get("reference_label") or region.get("label") or ""),
+                "display_name": str(
+                    region.get("display_name")
+                    or region.get("name")
+                    or region.get("output_label")
+                    or region.get("reference_label")
+                    or region.get("label")
+                    or ""
+                ),
                 "shape_type": str(region.get("shape_type", "rectangle")),
                 "points": [
                     [float(pt[0]), float(pt[1])]
@@ -714,6 +850,9 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         idx = self.cmb_follow_create.findText(recipe.follow_mode)
         if idx >= 0:
             self.cmb_follow_create.setCurrentIndex(idx)
+        self._refresh_reference_region_list()
+        self._refresh_reference_canvas()
+        self._refresh_reference_region_fields()
         self._sync_recipe_controls("create")
 
     def _apply_reference_roi_from_recipe(self) -> bool:
@@ -726,6 +865,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
                 {
                     "reference_label": "roi1",
                     "output_label": "roi1",
+                    "display_name": "roi1",
                     "shape_type": shape_type,
                     "points": [list(pt) for pt in points],
                 }
@@ -733,13 +873,14 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._selected_reference_idx = None
         self._refresh_reference_region_list()
         self._refresh_reference_canvas()
+        self._refresh_reference_region_fields()
         self.lbl_reference_status.setText("状态：已从 recipe 恢复参考ROI。")
         return bool(self._reference_regions)
 
     def _load_existing_model(self, *, silent: bool) -> None:
         if not os.path.exists(self.paths.model_path):
             if not silent:
-                QtWidgets.QMessageBox.information(self, "提示", "当前产品目录还没有 line2dup 模型。")
+                QtWidgets.QMessageBox.information(self, "提示", "当前产品目录还没有模板模型。")
             return
         try:
             detector = self._get_detector_for_model(self.paths.model_path, reuse_shared=False)
@@ -854,7 +995,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             f"状态：模型已保存，kept={kept} skipped={skipped} 特征点={self._feature_count}"
         )
         self.modelSaved.emit(self.paths.model_path, self.paths.recipe_path)
-        QtWidgets.QMessageBox.information(self, "完成", f"line2dup 模型已保存：\n{self.paths.model_path}")
+        QtWidgets.QMessageBox.information(self, "完成", f"模板模型已保存：\n{self.paths.model_path}")
 
     def _pose_ui_values(self) -> Dict[str, float]:
         return {
@@ -1238,32 +1379,105 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         return OverlayShape(shape_type="rect", xywh=(0, 0, 1, 1), color=color, width=width, dash=dash)
 
     def _refresh_reference_region_list(self) -> None:
-        if not hasattr(self, "list_reference_regions"):
+        if not hasattr(self, "table_reference_regions"):
             return
-        self.list_reference_regions.blockSignals(True)
-        self.list_reference_regions.clear()
+        self.table_reference_regions.blockSignals(True)
+        self.table_reference_regions.setRowCount(0)
         for idx, region in enumerate(self._reference_regions):
             label = str(region.get("output_label") or region.get("reference_label") or f"roi{idx + 1}")
-            item = QtWidgets.QListWidgetItem(label)
-            item.setData(QtCore.Qt.UserRole, idx)
-            self.list_reference_regions.addItem(item)
-        if self._selected_reference_idx is not None and 0 <= self._selected_reference_idx < self.list_reference_regions.count():
-            self.list_reference_regions.setCurrentRow(self._selected_reference_idx)
-        self.list_reference_regions.blockSignals(False)
+            display_name = str(region.get("display_name") or region.get("name") or label).strip() or label
+            shape_type = str(region.get("shape_type", "rectangle"))
+            points = [
+                [float(pt[0]), float(pt[1])]
+                for pt in region.get("points", []) or []
+                if isinstance(pt, (list, tuple)) and len(pt) >= 2
+            ]
+            if shape_type == "polygon":
+                info_text = f"Polygon · {len(points)} pts"
+            elif len(points) >= 2:
+                x0, y0 = float(points[0][0]), float(points[0][1])
+                x1, y1 = float(points[1][0]), float(points[1][1])
+                w = max(1, int(round(abs(x1 - x0))))
+                h = max(1, int(round(abs(y1 - y0))))
+                info_text = f"Rect · {w}x{h}"
+            else:
+                info_text = "Rect"
+            row = self.table_reference_regions.rowCount()
+            self.table_reference_regions.insertRow(row)
+            values = [
+                str(idx),
+                display_name,
+                label,
+                info_text,
+            ]
+            for col, value in enumerate(values):
+                item = QtWidgets.QTableWidgetItem(value)
+                item.setData(QtCore.Qt.UserRole, idx)
+                if col == 0:
+                    item.setTextAlignment(
+                        int(
+                            QtCore.Qt.AlignmentFlag.AlignHCenter
+                            | QtCore.Qt.AlignmentFlag.AlignVCenter
+                        )
+                    )
+                self.table_reference_regions.setItem(row, col, item)
+        if self._selected_reference_idx is not None and 0 <= self._selected_reference_idx < self.table_reference_regions.rowCount():
+            self.table_reference_regions.setCurrentCell(self._selected_reference_idx, 0)
+        self.table_reference_regions.blockSignals(False)
+
+    def _refresh_reference_region_fields(self) -> None:
+        self.edit_output_label.blockSignals(True)
+        self.edit_display_name.blockSignals(True)
+        try:
+            has_selection = (
+                self._selected_reference_idx is not None
+                and 0 <= self._selected_reference_idx < len(self._reference_regions)
+            )
+            self.edit_output_label.setEnabled(has_selection)
+            self.edit_display_name.setEnabled(has_selection)
+            self.btn_apply_region_name.setEnabled(has_selection)
+            if not has_selection:
+                self.edit_output_label.setText("")
+                self.edit_display_name.setText("")
+                return
+            region = self._reference_regions[self._selected_reference_idx]
+            label = str(region.get("output_label") or region.get("reference_label") or "").strip()
+            display_name = str(region.get("display_name") or region.get("name") or label).strip() or label
+            self.edit_output_label.setText(label)
+            self.edit_display_name.setText(display_name)
+        finally:
+            self.edit_output_label.blockSignals(False)
+            self.edit_display_name.blockSignals(False)
+
+    def _on_region_field_edited(self) -> None:
+        pass
+
+    def _apply_reference_region_fields(self) -> None:
+        if self._selected_reference_idx is None or not (0 <= self._selected_reference_idx < len(self._reference_regions)):
+            return
+        region = self._reference_regions[self._selected_reference_idx]
+        label = self.edit_output_label.text().strip()
+        if not label:
+            label = str(region.get("output_label") or region.get("reference_label") or "").strip()
+        if not label:
+            label = self._next_reference_label()
+        display_name = self.edit_display_name.text().strip() or label
+        region["reference_label"] = label
+        region["output_label"] = label
+        region["display_name"] = display_name
+        self._refresh_reference_region_list()
+        self._refresh_reference_region_fields()
+        self._save_recipe()
+        self.referenceRegionsChanged.emit()
+        self.lbl_reference_status.setText(f"状态：已更新参考ROI名称：{display_name}")
 
     def _refresh_reference_canvas(self) -> None:
         overlays: List[OverlayShape] = []
-        palette = [
-            QtGui.QColor(255, 0, 255),
-            QtGui.QColor(0, 255, 255),
-            QtGui.QColor(255, 180, 0),
-            QtGui.QColor(160, 80, 255),
-            QtGui.QColor(0, 220, 120),
-        ]
+        inactive_color = QtGui.QColor(255, 0, 255)
         for idx, region in enumerate(self._reference_regions):
             if idx == self._selected_reference_idx:
                 continue
-            overlays.append(self._region_overlay_shape(region, palette[idx % len(palette)], 2, False))
+            overlays.append(self._region_overlay_shape(region, inactive_color, 1.8, False))
         self.ref_canvas.set_overlays(overlays)
         self._syncing_reference_view = True
         try:
@@ -1298,15 +1512,28 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
 
     def _on_reference_region_selected(
         self,
-        current: Optional[QtWidgets.QListWidgetItem],
-        _previous: Optional[QtWidgets.QListWidgetItem],
+        current_row: int,
+        _current_column: int,
+        _previous_row: int,
+        _previous_column: int,
     ) -> None:
-        if current is None:
+        if current_row < 0 or current_row >= len(self._reference_regions):
             self._selected_reference_idx = None
         else:
-            idx = int(current.data(QtCore.Qt.UserRole))
-            self._selected_reference_idx = idx if 0 <= idx < len(self._reference_regions) else None
+            self._selected_reference_idx = current_row
         self._refresh_reference_canvas()
+        self._refresh_reference_region_fields()
+
+    def _prepare_new_reference_roi(self) -> None:
+        self._selected_reference_idx = None
+        if hasattr(self, "table_reference_regions"):
+            self.table_reference_regions.blockSignals(True)
+            self.table_reference_regions.clearSelection()
+            self.table_reference_regions.setCurrentIndex(QtCore.QModelIndex())
+            self.table_reference_regions.blockSignals(False)
+        self._refresh_reference_canvas()
+        self._refresh_reference_region_fields()
+        self.lbl_reference_status.setText("状态：已切换到新增ROI模式，请直接在右侧画布上继续画框。")
 
     def _remove_selected_reference_roi(self) -> None:
         if self._selected_reference_idx is None or not (0 <= self._selected_reference_idx < len(self._reference_regions)):
@@ -1315,7 +1542,9 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._selected_reference_idx = None
         self._refresh_reference_region_list()
         self._refresh_reference_canvas()
+        self._refresh_reference_region_fields()
         self._save_recipe()
+        self.referenceRegionsChanged.emit()
         self.lbl_reference_status.setText("状态：已删除选中的参考ROI。")
 
     def _on_reference_canvas_shape_changed(self) -> None:
@@ -1330,12 +1559,15 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
                 {
                     "reference_label": label,
                     "output_label": label,
+                    "display_name": label,
                     "shape_type": shape_type,
                     "points": points,
                 }
             )
+            self._selected_reference_idx = len(self._reference_regions) - 1
             self._refresh_reference_region_list()
             self._refresh_reference_canvas()
+            self._refresh_reference_region_fields()
             self._save_recipe()
             self.lbl_reference_status.setText(f"状态：已新增参考ROI：{label}")
             return
@@ -1388,6 +1620,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
                     {
                         "reference_label": label_name,
                         "output_label": label_name,
+                        "display_name": label_name,
                         "shape_type": shape_type,
                         "points": points,
                     }
@@ -1398,13 +1631,16 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self._selected_reference_idx = None
             self._refresh_reference_region_list()
             self._refresh_reference_canvas()
+            self._refresh_reference_region_fields()
             self.lbl_reference_status.setText(f"状态：已加载 {len(regions)} 个参考ROI")
             self._save_recipe()
+            self.referenceRegionsChanged.emit()
         except Exception as exc:
             self._reference_regions = []
             self._selected_reference_idx = None
             self._refresh_reference_region_list()
             self._refresh_reference_canvas()
+            self._refresh_reference_region_fields()
             if not silent:
                 QtWidgets.QMessageBox.warning(self, "加载失败", str(exc))
 
@@ -1458,6 +1694,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             QtWidgets.QMessageBox.warning(self, "保存失败", str(exc))
             return
         self._save_recipe()
+        self.referenceRegionsChanged.emit()
         self.lbl_reference_status.setText(f"状态：参考ROI已保存，共 {len(self._reference_regions)} 个")
 
     def _clear_reference_roi(self) -> None:
@@ -1465,9 +1702,11 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._selected_reference_idx = None
         self._refresh_reference_region_list()
         self._refresh_reference_canvas()
+        self._refresh_reference_region_fields()
         self._recipe_reference_shape_type = ""
         self._recipe_reference_points = []
         self._save_recipe()
+        self.referenceRegionsChanged.emit()
         self.lbl_reference_status.setText("状态：已清空全部参考ROI。")
 
     def _search_roi_xywh(self) -> Optional[Tuple[int, int, int, int]]:
@@ -1491,7 +1730,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self.lbl_search_roi.setText("状态：未设置搜索ROI，默认全图搜索。")
             return
         x, y, w, h = xywh
-        self.lbl_search_roi.setText(f"状态：搜索ROI=({x},{y},{w},{h})，Find 与主界面 line2dup 都会限制在此区域搜索。")
+        self.lbl_search_roi.setText(f"状态：搜索ROI=({x},{y},{w},{h})，Find 与主界面模板定位都会限制在此区域搜索。")
 
     def _apply_search_roi_to_find_canvas(self) -> None:
         xywh = self._search_roi_xywh()
@@ -1528,7 +1767,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self,
             "选择模型",
             self.find_model_path or self.paths.model_path,
-            "line2dup model (*.json)",
+            "template model (*.json)",
         )
         if path:
             self.find_model_path = path

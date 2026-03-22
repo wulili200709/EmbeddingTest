@@ -1,0 +1,3 @@
+﻿record_time,product_name,recipe_name,event_type,result,message,runtime_state
+2026-03-22 22:40:17,150A_OG,line2dup_recipe.json,ng_lock,locked,cam1=NG；line2dup did not find any match；耗时 864 ms,LockedByNg
+2026-03-22 22:42:20,150A_OG,line2dup_recipe.json,ng_lock,locked,cam1=NG；line2dup did not find any match；耗时 1003 ms,LockedByNg

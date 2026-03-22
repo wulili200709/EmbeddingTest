@@ -57,6 +57,14 @@ class Line2DupRecipe:
                 {
                     "reference_label": str(region.get("reference_label") or region.get("label") or ""),
                     "output_label": str(region.get("output_label") or region.get("reference_label") or region.get("label") or ""),
+                    "display_name": str(
+                        region.get("display_name")
+                        or region.get("name")
+                        or region.get("output_label")
+                        or region.get("reference_label")
+                        or region.get("label")
+                        or ""
+                    ),
                     "shape_type": str(region.get("shape_type", "rectangle")),
                     "points": [
                         [float(pt[0]), float(pt[1])]

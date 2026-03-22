@@ -1,0 +1,34 @@
+{
+  "version": "5.5.0",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "roi1",
+      "points": [
+        [
+          607.0,
+          707.0
+        ],
+        [
+          808.0,
+          707.0
+        ],
+        [
+          808.0,
+          865.0
+        ],
+        [
+          607.0,
+          865.0
+        ]
+      ],
+      "group_id": null,
+      "shape_type": "polygon",
+      "flags": {}
+    }
+  ],
+  "imagePath": "debug_cam_20260322_185355_354980.png",
+  "imageData": null,
+  "imageHeight": 2048,
+  "imageWidth": 2448
+}

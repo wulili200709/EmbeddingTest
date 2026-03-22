@@ -1,48 +1,23 @@
 {
   "ok_files": [
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/ok/Image__2026-03-20__10-05-33.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/ok/Image__2026-03-20__10-05-36.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/ok/Image__2026-03-20__10-05-40.bmp"
+    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/ok/1.bmp"
   ],
   "ng_files": [
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/ng/Image__2026-03-20__10-05-50.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/ng/Image__2026-03-20__10-06-00.bmp"
+    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/ng/9.bmp"
   ],
   "test_files": [
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/1.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/10.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/11.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/14.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/15.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/16.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/17.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/18.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/2.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/3.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/4.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/6.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/9.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/Image_20260320125347796.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/Image_20260320125405577.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/Image_20260320125409595.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/Image_20260320125412520.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/Image_20260320125419140.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/Image_20260320125423574.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/Image_20260320125638575.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/Image__2026-03-20__10-05-09.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/Image__2026-03-20__10-05-20.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/Image__2026-03-20__10-05-28.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/Image__2026-03-20__10-05-54.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/Image__2026-03-20__10-05-57.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/Image__2026-03-20__10-06-03.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/Image__2026-03-20__10-06-07.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/Image__2026-03-20__10-06-12.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/Image__2026-03-20__10-06-16.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/Image__2026-03-20__10-06-19.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/Image__2026-03-20__10-06-26.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/Image__2026-03-20__10-06-30.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/6/test/Image__2026-03-20__10-06-34.bmp"
+    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/10.bmp",
+    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/16.bmp",
+    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/17.bmp",
+    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/18.bmp",
+    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/4.bmp",
+    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/6.bmp",
+    "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\150_OG2\\debug_capture\\debug_cam_20260322_105811_701092.png",
+    "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\150_OG2\\debug_capture\\debug_cam_20260322_110007_710709.png",
+    "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\150_OG2\\debug_capture\\debug_cam_20260322_113106_343666.png",
+    "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\150_OG2\\debug_capture\\debug_cam_20260322_113147_201655.png",
+    "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\150_OG2\\debug_capture\\debug_cam_20260322_114958_107581.png"
   ],
-  "ref_image": null,
+  "ref_image": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/16.bmp",
   "loc_method": "line2dup"
 }
