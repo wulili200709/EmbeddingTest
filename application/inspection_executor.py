@@ -40,6 +40,8 @@ class InspectionExecutionResponse:
     result: str
     detail: str = ""
     raw_row: dict | None = None
+    match_ms: float = 0.0
+    infer_ms: float = 0.0
     item_results: List[InspectionItemResult] = field(default_factory=list)
 
 
@@ -60,11 +62,14 @@ class InspectionExecutor:
             row = self._predictor.predict_image(request.image_path)
             pred = str(row.get("pred", "NG") or "NG")
             detail = self._build_detail(row)
+            match_ms, infer_ms = self._extract_timing_fields(row)
             return InspectionExecutionResponse(
                 camera_id=request.camera_id,
                 result=pred,
                 detail=detail,
                 raw_row=row,
+                match_ms=match_ms,
+                infer_ms=infer_ms,
                 item_results=[],
             )
 
@@ -105,6 +110,7 @@ class InspectionExecutor:
         )
         final_result = str(row.get("pred", "NG") or "NG")
         camera_detail = self._build_detail(row)
+        match_ms, infer_ms = self._extract_timing_fields(row)
 
         for item in request.items:
             if not item.enabled:
@@ -137,6 +143,8 @@ class InspectionExecutor:
             result=final_result,
             detail=camera_detail,
             raw_row=row,
+            match_ms=match_ms,
+            infer_ms=infer_ms,
             item_results=item_results,
         )
 
@@ -147,9 +155,20 @@ class InspectionExecutor:
             detail_parts.append(f"diff={float(row['diff']):.4f}")
         if row.get("match_ms") is not None:
             detail_parts.append(f"match={float(row['match_ms']):.1f}ms")
-        if row.get("total_ms") is not None:
+        if row.get("infer_ms") is not None:
+            detail_parts.append(f"infer={float(row['infer_ms']):.1f}ms")
+        elif row.get("total_ms") is not None:
             detail_parts.append(f"total={float(row['total_ms']):.1f}ms")
         return " ".join(detail_parts)
+
+    @staticmethod
+    def _extract_timing_fields(row: dict) -> tuple[float, float]:
+        match_ms = float(row.get("match_ms") or 0.0) if row.get("match_ms") is not None else 0.0
+        infer_source = row.get("infer_ms")
+        if infer_source is None:
+            infer_source = row.get("total_ms")
+        infer_ms = float(infer_source or 0.0) if infer_source is not None else 0.0
+        return match_ms, infer_ms
 
 
 __all__ = ["InspectionExecutionRequest", "InspectionExecutionResponse", "InspectionExecutor"]

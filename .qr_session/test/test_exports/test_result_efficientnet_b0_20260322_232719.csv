@@ -1,0 +1,2 @@
+﻿file,file_path,gt,pred,status,diff,sim_ok,sim_ng,value,threshold,match_ms,total_ms,json
+debug_cam_20260322_224638_475693.png,C:\Users\goney\Desktop\MatchTemplate2\EmbeddingTest\.qr_session\test\debug_capture\debug_cam_20260322_224638_475693.png,,OK,,0.25435250997543335,0.9798235297203064,0.725471019744873,,,737.5175000051968,1251.6568999853916,debug_cam_20260322_224638_475693.json

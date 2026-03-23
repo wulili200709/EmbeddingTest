@@ -25,6 +25,13 @@ from domain import (
 )
 
 
+def _timing_value_ms(value: object) -> float:
+    try:
+        return max(0.0, float(value or 0.0))
+    except Exception:
+        return 0.0
+
+
 def build_pending_result(
     *,
     product_name: str,
@@ -85,16 +92,28 @@ def aggregate_runtime_outcome(
     capture_paths = dict(capture_paths or {})
     item_results_by_camera = dict(item_results_by_camera or {})
     camera_results: dict[str, CameraRuntimeResult] = {}
+    capture_ms_total = 0.0
+    match_ms_total = 0.0
+    infer_ms_total = 0.0
 
     for role in sorted(active_role_set):
         outcome = camera_outcomes.get(role)
         result = str(getattr(outcome, "result", "") or "")
         detail = str(getattr(outcome, "message", "") or "")
+        capture_ms = _timing_value_ms(getattr(outcome, "capture_ms", 0.0))
+        match_ms = _timing_value_ms(getattr(outcome, "match_ms", 0.0))
+        infer_ms = _timing_value_ms(getattr(outcome, "infer_ms", 0.0))
+        capture_ms_total += capture_ms
+        match_ms_total += match_ms
+        infer_ms_total += infer_ms
         camera_results[role] = CameraRuntimeResult(
             camera_id=role,
             result=result or ("NG" if error_message else ""),
             detail=detail,
             image_path=str(capture_paths.get(role, "") or ""),
+            capture_ms=capture_ms,
+            match_ms=match_ms,
+            infer_ms=infer_ms,
         )
 
     explicit_item_results: dict[str, InspectionItemResult] = {}
@@ -143,6 +162,9 @@ def aggregate_runtime_outcome(
         recipe_name=recipe_name,
         final_result=str(final_result or ""),
         duration_ms=int(duration_ms),
+        capture_ms=float(capture_ms_total),
+        match_ms=float(match_ms_total),
+        infer_ms=float(infer_ms_total),
         error_message=str(error_message or ""),
         is_system_error=is_system_error,
         camera_results=camera_results,

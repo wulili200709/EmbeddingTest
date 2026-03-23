@@ -1,0 +1,33 @@
+{
+  "product": "test",
+  "algorithm": "efficientnet_b0",
+  "score_mode": "proto",
+  "margin": 0.02,
+  "topk": 3,
+  "loc_method": "line2dup",
+  "summary": {
+    "row_count": 1,
+    "labeled_count": 0,
+    "matched_count": 0,
+    "pred_ok_count": 1,
+    "pred_ng_count": 0,
+    "accuracy": null,
+    "avg_total_ms": 1251.6568999853916
+  },
+  "rows": [
+    {
+      "file_path": "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\test\\debug_capture\\debug_cam_20260322_224638_475693.png",
+      "file_name": "debug_cam_20260322_224638_475693.png",
+      "gt": "",
+      "pred": "OK",
+      "diff": 0.25435250997543335,
+      "sim_ok": 0.9798235297203064,
+      "sim_ng": 0.725471019744873,
+      "value": null,
+      "threshold": null,
+      "match_ms": 737.5175000051968,
+      "total_ms": 1251.6568999853916,
+      "json_name": "debug_cam_20260322_224638_475693.json"
+    }
+  ]
+}

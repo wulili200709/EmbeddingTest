@@ -49,3 +49,5 @@
 2026-03-22 22:48:22,test,line2dup_recipe.json,invalid_trigger,blocked,system is locked by NG,LockedByNg
 2026-03-22 22:48:26,test,line2dup_recipe.json,release_request,granted,密码正确，已放行一次,ReleasedPendingConsume
 2026-03-22 22:48:35,test,line2dup_recipe.json,release_consumed,consumed,放行已在有效检测开始时消耗，结果=OK,WaitingTrigger
+2026-03-22 23:03:08,test,line2dup_recipe.json,ng_lock,locked,cam1=NG；耗时 1746 ms,LockedByNg
+2026-03-22 23:03:17,test,line2dup_recipe.json,release_request,granted,密码正确，已放行一次,ReleasedPendingConsume

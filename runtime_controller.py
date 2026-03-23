@@ -174,6 +174,8 @@ class RuntimeController(QtCore.QObject):
     activeCameraRolesChanged = QtCore.Signal(list) # → runtime_page.set_active_camera_roles
     inspectionItemsChanged = QtCore.Signal(list)   # → runtime_page.set_inspection_items
     cameraResultsChanged = QtCore.Signal(dict)     # → runtime_page.set_camera_results
+    durationChanged = QtCore.Signal(int)           # → runtime_page.set_duration_ms
+    timingBreakdownChanged = QtCore.Signal(dict)   # → runtime_page.set_timing_breakdown
 
     # ── 对话框类 Signal（由 MainWindow 弹框） ─────────────────────────────
     warningOccurred = QtCore.Signal(str)           # → QMessageBox.warning
@@ -844,7 +846,13 @@ class RuntimeController(QtCore.QObject):
         message = f"{os.path.basename(path)} pred={response.result}"
         if response.detail:
             message += f" {response.detail}"
-        return CameraInspectionOutcome(role=role, result=response.result, message=message)
+        return CameraInspectionOutcome(
+            role=role,
+            result=response.result,
+            message=message,
+            match_ms=float(response.match_ms or 0.0),
+            infer_ms=float(response.infer_ms or 0.0),
+        )
 
     # ------------------------------------------------------------------
     # 内部：统一状态推送（替代原 _refresh_runtime_status_ui）
@@ -1084,6 +1092,8 @@ class RuntimeController(QtCore.QObject):
         self.activeCameraRolesChanged.emit(self._connected_roles())
         self.inspectionItemsChanged.emit(self._last_runtime_result.item_rows())
         self.cameraResultsChanged.emit(self._last_runtime_result.camera_result_map())
+        self.durationChanged.emit(int(getattr(self._last_runtime_result, "duration_ms", 0) or 0))
+        self.timingBreakdownChanged.emit(self._last_runtime_result.timing_breakdown())
 
     def _build_pending_runtime_result(self, *, status: str) -> RuntimeInspectionResult:
         return build_pending_result(

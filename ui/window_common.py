@@ -78,6 +78,8 @@ def connect_runtime_page(runtime_page, runtime_ctrl) -> None:
     runtime_ctrl.busyChanged.connect(runtime_page.set_busy)
     runtime_ctrl.triggerResultReady.connect(runtime_page.set_final_result)
     runtime_ctrl.cameraResultsChanged.connect(runtime_page.set_camera_results)
+    runtime_ctrl.durationChanged.connect(runtime_page.set_duration_ms)
+    runtime_ctrl.timingBreakdownChanged.connect(runtime_page.set_timing_breakdown)
     runtime_ctrl.cameraViewsCleared.connect(runtime_page.clear_camera_views)
     runtime_ctrl.activeCameraRolesChanged.connect(runtime_page.set_active_camera_roles)
     runtime_ctrl.inspectionItemsChanged.connect(runtime_page.set_inspection_items)

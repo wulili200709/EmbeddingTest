@@ -1557,3 +1557,29 @@ ToolPage 是工程配置面
 RuntimeModePage 是纯运行显示面
 RuntimeController 是运行业务中枢
 ProductSession / AlgorithmController / services / devices 都是可复用的非 UI 层
+# 多相机多ROI模型方案对比
+全ROI共用一个 backbone
+现在这套就是这个模式。
+产品级一个 algorithm
+一个 register_model_{algorithm}.npz
+多个 ROI 先各自提特征，再拼成一个联合向量判一次
+优点：最简单，模型最少。
+缺点：ROI 一多就耦合，解释性差。
+每ROI独立注册，但共用 backbone
+这是我最推荐的扩展方向。
+比如产品还是统一 efficientnet_b0
+但 roi1/roi2/roi3 各自存自己的 register model
+运行时同一个 backbone 提一次各 ROI 特征，再各自判定
+模型形态像：
+cam1_roi1_register_model_efficientnet_b0.npz
+cam1_roi2_register_model_efficientnet_b0.npz
+优点：能看出哪个 ROI NG，维护成本还可控。
+缺点：模型数量会上升，但还是轻量。
+每ROI独立 backbone + 独立注册模型
+这是最重的模式。
+roi1=efficientnet_b0
+roi2=mobilenet_v3_small
+roi3=traditional threshold
+每个 ROI 独立训练、独立保存、独立推理
+优点：灵活度最高。
+缺点：配置、训练、加载、调试都最复杂，多相机时模型数量会很多。

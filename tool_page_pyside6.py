@@ -2050,6 +2050,7 @@ class ToolPage(QtWidgets.QWidget):
         if not os.path.exists(path):
             raise FileNotFoundError(path)
 
+        total_t0 = time.perf_counter()
         algorithm = self.current_algorithm()
 
         match_ms: Optional[float] = None
@@ -2087,7 +2088,14 @@ class ToolPage(QtWidgets.QWidget):
         result = self.algo.predict_image(
             path, labels=labels, feat_net=feat_net, roi=roi, match_ms=match_ms,
         )
-        return result.to_dict()
+        payload = result.to_dict()
+        payload["infer_ms"] = (
+            float(payload.get("total_ms", 0.0))
+            if payload.get("total_ms") is not None
+            else None
+        )
+        payload["total_ms"] = float((time.perf_counter() - total_t0) * 1000.0)
+        return payload
 
     def _populate_results_table(self, rows: List[Dict[str, object]]) -> None:
         self._current_result_rows = list(rows)

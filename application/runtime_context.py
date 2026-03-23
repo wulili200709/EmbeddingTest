@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+import time
 from typing import TYPE_CHECKING, Dict, List, Protocol
 
 from domain import (
@@ -115,6 +116,7 @@ class ProductRuntimeContext:
         if not os.path.exists(path):
             raise FileNotFoundError(path)
 
+        total_t0 = time.perf_counter()
         match_ms = None
         if self.loc_method == "line2dup":
             recipe = self._ensure_recipe_loaded()
@@ -136,7 +138,14 @@ class ProductRuntimeContext:
             feat_net=feat_net,
             match_ms=match_ms,
         )
-        return result.to_dict()
+        payload = result.to_dict()
+        payload["infer_ms"] = (
+            float(payload.get("total_ms", 0.0))
+            if payload.get("total_ms") is not None
+            else None
+        )
+        payload["total_ms"] = float((time.perf_counter() - total_t0) * 1000.0)
+        return payload
 
     def reload(self) -> None:
         self.algo.load_params(self.session.product_params_path)

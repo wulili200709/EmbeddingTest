@@ -129,6 +129,52 @@ class _ItemIndicator(QtWidgets.QFrame):
         )
 
 
+class _CameraSectionHeader(QtWidgets.QFrame):
+    def __init__(self, camera_id: str, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._camera_id = str(camera_id).strip() or "cam1"
+        self.setStyleSheet(
+            f"_CameraSectionHeader{{background:#404040;border-top:1px solid #505050;border-bottom:1px solid #505050;}}"
+        )
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(8)
+
+        camera_name = "相机1" if self._camera_id == "cam1" else "相机2"
+        self.lbl_title = QtWidgets.QLabel(camera_name)
+        self.lbl_title.setStyleSheet(f"color:{_TEXT_LIGHT};font-size:13px;font-weight:bold;")
+        layout.addWidget(self.lbl_title)
+
+        layout.addStretch(1)
+
+        self.lbl_result = QtWidgets.QLabel("未检测")
+        self.lbl_result.setAlignment(QtCore.Qt.AlignCenter)
+        self.lbl_result.setFixedSize(64, 28)
+        self.lbl_result.setStyleSheet(
+            f"background:{_PENDING_GRAY};color:white;font-size:12px;font-weight:bold;border-radius:4px;"
+        )
+        layout.addWidget(self.lbl_result)
+
+    def set_result(self, result_text: str) -> None:
+        result_upper = str(result_text or "").strip().upper()
+        if result_upper == "OK":
+            bg = _OK_GREEN
+            display = "OK"
+        elif result_upper == "NG":
+            bg = _NG_RED
+            display = "NG"
+        elif result_upper in {"RUNNING", "INSPECTING"}:
+            bg = _RUNNING_YELLOW
+            display = "检测中"
+        else:
+            bg = _PENDING_GRAY
+            display = "未检测"
+        self.lbl_result.setText(display)
+        self.lbl_result.setStyleSheet(
+            f"background:{bg};color:white;font-size:12px;font-weight:bold;border-radius:4px;"
+        )
+
+
 class RuntimeModePage(QtWidgets.QWidget):
     refreshCamerasRequested = QtCore.Signal()
     connectCamerasRequested = QtCore.Signal(object)
@@ -141,6 +187,8 @@ class RuntimeModePage(QtWidgets.QWidget):
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self._item_indicators: list[_ItemIndicator] = []
+        self._item_indicators_by_item_id: dict[str, _ItemIndicator] = {}
+        self._camera_section_headers: dict[str, _CameraSectionHeader] = {}
         self._cam1_serial = ""
         self._cam2_serial = ""
         self._release_pwd = ""
@@ -247,6 +295,8 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._items_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self._items_scroll.setStyleSheet("QScrollArea{border:none;}")
         self._items_container = QtWidgets.QWidget()
+        self._items_container.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        self._items_container.setStyleSheet(f"background:{_PANEL_BG};")
         self._items_vbox = QtWidgets.QVBoxLayout(self._items_container)
         self._items_vbox.setContentsMargins(0, 0, 0, 0)
         self._items_vbox.setSpacing(0)
@@ -256,27 +306,50 @@ class RuntimeModePage(QtWidgets.QWidget):
 
         total_frame = QtWidgets.QFrame()
         total_frame.setStyleSheet(f"background:#404040;border-top:1px solid #5a5a5a;")
-        total_layout = QtWidgets.QHBoxLayout(total_frame)
+        total_layout = QtWidgets.QVBoxLayout(total_frame)
         total_layout.setContentsMargins(12, 8, 12, 8)
-        total_layout.setSpacing(8)
+        total_layout.setSpacing(6)
+
+        total_header = QtWidgets.QHBoxLayout()
+        total_header.setContentsMargins(0, 0, 0, 0)
+        total_header.setSpacing(8)
 
         total_label = QtWidgets.QLabel("总结果")
         total_label.setStyleSheet(f"color:{_TEXT_LIGHT};font-size:14px;font-weight:bold;")
-        total_layout.addWidget(total_label)
+        total_header.addWidget(total_label)
+
+        total_layout.addLayout(total_header)
+
+        timing_grid = QtWidgets.QGridLayout()
+        timing_grid.setContentsMargins(0, 0, 0, 0)
+        timing_grid.setHorizontalSpacing(10)
+        timing_grid.setVerticalSpacing(4)
+
+        self.lbl_capture_time = QtWidgets.QLabel("取图: -")
+        self.lbl_capture_time.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
+        timing_grid.addWidget(self.lbl_capture_time, 0, 0)
+
+        self.lbl_match_time = QtWidgets.QLabel("匹配: -")
+        self.lbl_match_time.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
+        timing_grid.addWidget(self.lbl_match_time, 0, 1)
+
+        self.lbl_infer_time = QtWidgets.QLabel("推理: -")
+        self.lbl_infer_time.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
+        timing_grid.addWidget(self.lbl_infer_time, 1, 0)
+
+        self.lbl_duration = QtWidgets.QLabel("总流程: -")
+        self.lbl_duration.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
+        timing_grid.addWidget(self.lbl_duration, 1, 1)
+        total_layout.addLayout(timing_grid)
 
         self.lbl_final_result = QtWidgets.QLabel("-")
         self.lbl_final_result.setAlignment(QtCore.Qt.AlignCenter)
-        self.lbl_final_result.setFixedSize(80, 36)
+        self.lbl_final_result.setMinimumHeight(36)
+        self.lbl_final_result.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
         self.lbl_final_result.setStyleSheet(
             f"background:{_PENDING_GRAY};color:white;font-size:16px;font-weight:bold;border-radius:4px;"
         )
-        total_layout.addWidget(self.lbl_final_result)
-
-        total_layout.addStretch(1)
-
-        self.lbl_duration = QtWidgets.QLabel("")
-        self.lbl_duration.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
-        total_layout.addWidget(self.lbl_duration)
+        total_layout.addWidget(self.lbl_final_result, 1)
 
         right_layout.addWidget(total_frame)
         body.addWidget(right_panel, 0)
@@ -433,19 +506,54 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._refresh_trigger_buttons()
 
     def set_inspection_items(self, rows: list[dict]) -> None:
-        for indicator in self._item_indicators:
-            self._items_vbox.removeWidget(indicator)
-            indicator.deleteLater()
+        while self._items_vbox.count():
+            item = self._items_vbox.takeAt(0)
+            widget = item.widget()
+            if widget is None:
+                continue
+            widget.hide()
+            widget.setParent(None)
+            widget.deleteLater()
         self._item_indicators.clear()
+        self._item_indicators_by_item_id.clear()
+        self._camera_section_headers.clear()
 
-        for idx, row in enumerate(rows):
-            name = str(row.get("display_name", ""))
-            indicator = _ItemIndicator(idx + 1, name)
-            kind = str(row.get("status_kind", "pending"))
-            text = str(row.get("status_text", ""))
-            indicator.set_result(kind, text)
-            self._items_vbox.insertWidget(idx, indicator)
-            self._item_indicators.append(indicator)
+        grouped_rows: dict[str, list[dict]] = {"cam1": [], "cam2": []}
+        for row in rows:
+            camera_id = str(row.get("camera_id", "cam1")).strip() or "cam1"
+            if camera_id not in grouped_rows:
+                grouped_rows[camera_id] = []
+            grouped_rows[camera_id].append(row)
+
+        insert_index = 0
+        display_index = 1
+        for camera_id in ["cam1", "cam2"]:
+            camera_rows = grouped_rows.get(camera_id, [])
+            if not camera_rows:
+                continue
+
+            header = _CameraSectionHeader(camera_id)
+            self._items_vbox.insertWidget(insert_index, header)
+            self._camera_section_headers[camera_id] = header
+            insert_index += 1
+
+            for row in camera_rows:
+                name = str(row.get("display_name", ""))
+                indicator = _ItemIndicator(display_index, name)
+                kind = str(row.get("status_kind", "pending"))
+                text = str(row.get("status_text", ""))
+                indicator.set_result(kind, text)
+                self._items_vbox.insertWidget(insert_index, indicator)
+                self._item_indicators.append(indicator)
+                item_id = str(row.get("item_id", "")).strip()
+                if item_id:
+                    self._item_indicators_by_item_id[item_id] = indicator
+                insert_index += 1
+                display_index += 1
+
+        self._items_vbox.addStretch(1)
+        self._items_container.update()
+        self._items_scroll.viewport().update()
 
     def set_camera_pixmap(self, role: str, pixmap: QtGui.QPixmap | None, *, placeholder: str | None = None) -> None:
         if role == "cam1":
@@ -457,10 +565,17 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._active_role_set = set()
         self.view_cam1.set_runtime_pixmap(None, placeholder="Cam1")
         self.view_cam2.set_runtime_pixmap(None, placeholder="Cam2")
+        self.set_camera_results({})
         self._refresh_trigger_buttons()
 
     def set_camera_results(self, result_map: dict[str, str]) -> None:
-        pass
+        normalized = {
+            str(camera_id).strip(): str(result or "").strip()
+            for camera_id, result in dict(result_map or {}).items()
+            if str(camera_id).strip()
+        }
+        for camera_id, header in self._camera_section_headers.items():
+            header.set_result(normalized.get(camera_id, ""))
 
     def append_log(self, message: str) -> None:
         self.log_output.appendPlainText(message)
@@ -470,8 +585,36 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._refresh_trigger_buttons()
 
     def set_duration_ms(self, ms: int) -> None:
-        self.lbl_footer_time.setText(f"处理: {ms}ms")
-        self.lbl_duration.setText(f"{ms}ms")
+        self._set_total_duration_labels(float(ms or 0.0))
+
+    def set_timing_breakdown(self, timing_map: dict[str, object]) -> None:
+        timing_map = dict(timing_map or {})
+        capture_ms = self._coerce_ms(timing_map.get("capture_ms"))
+        match_ms = self._coerce_ms(timing_map.get("match_ms"))
+        infer_ms = self._coerce_ms(timing_map.get("infer_ms"))
+        duration_ms = self._coerce_ms(timing_map.get("duration_ms"))
+
+        self.lbl_capture_time.setText(self._format_timing_label("取图", capture_ms))
+        self.lbl_match_time.setText(self._format_timing_label("匹配", match_ms))
+        self.lbl_infer_time.setText(self._format_timing_label("推理", infer_ms))
+        self._set_total_duration_labels(duration_ms)
+
+    @staticmethod
+    def _coerce_ms(value: object) -> float:
+        try:
+            return max(0.0, float(value or 0.0))
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _format_timing_label(title: str, value: float) -> str:
+        return f"{title}: {value:.1f} ms" if value > 0.0 else f"{title}: -"
+
+    def _set_total_duration_labels(self, duration_ms: float) -> None:
+        self.lbl_footer_time.setText(
+            f"处理: {duration_ms:.1f}ms" if duration_ms > 0.0 else "处理: -"
+        )
+        self.lbl_duration.setText(self._format_timing_label("总流程", duration_ms))
 
     def _refresh_trigger_buttons(self) -> None:
         allow_cam1 = (not self._busy) and ("cam1" in self._active_role_set)

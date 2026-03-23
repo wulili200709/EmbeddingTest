@@ -887,7 +887,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_runtime_trigger_result(self, result: str, _detail: str) -> None:
         if str(result).strip().upper() != "NG":
             return
-        QtCore.QTimer.singleShot(0, self._show_release_dialog)
+        QtCore.QTimer.singleShot(80, self._show_release_dialog)
 
     # ------------------------------------------------------------------
     # 跨组件协调（ToolPage 请求 → 先处理运行链路 → 再委托 ToolPage）

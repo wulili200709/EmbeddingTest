@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable
 
 from .camera import FrameGrabService, HikFrame
@@ -16,6 +16,9 @@ class CameraInspectionOutcome:
     role: str
     result: str
     message: str = ""
+    capture_ms: float = 0.0
+    match_ms: float = 0.0
+    infer_ms: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -170,22 +173,31 @@ class InspectionRuntime:
             return {}
 
         futures: dict[str, Future[CameraInspectionOutcome]] = {}
+        capture_ms_by_role: dict[str, float] = {}
         with ThreadPoolExecutor(max_workers=max(1, len(roles))) as executor:
             for role in roles:
                 camera_index = self.role_to_camera_index.get(role)
                 if camera_index is None:
                     raise RuntimeError(f"missing camera index mapping for role={role}")
 
+                capture_t0 = time.perf_counter()
                 self.light_controller.prepare_capture(camera_index)
                 if self.light_stable_ms > 0:
                     time.sleep(self.light_stable_ms / 1000.0)
                 self.scheduler.on_capture_started(camera_index)
                 frame = self.frame_grab_service.capture_once(role, timeout_ms=timeout_ms)
                 self.light_controller.finish_capture(camera_index)
+                capture_ms_by_role[role] = (time.perf_counter() - capture_t0) * 1000.0
                 futures[role] = executor.submit(self.inspect_callback, role, frame)
 
             self.scheduler.on_inspecting_started()
-            return {role: future.result() for role, future in futures.items()}
+            outcomes: dict[str, CameraInspectionOutcome] = {}
+            for role, future in futures.items():
+                outcomes[role] = replace(
+                    future.result(),
+                    capture_ms=float(capture_ms_by_role.get(role, 0.0) or 0.0),
+                )
+            return outcomes
 
     def _ordered_roles(self) -> list[str]:
         roles = [str(role) for role in self.frame_grab_service.roles()]

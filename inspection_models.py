@@ -51,6 +51,9 @@ class CameraRuntimeResult:
     result: str = ""  # OK/NG/PRECHECK_FAILED/...
     detail: str = ""
     image_path: str = ""
+    capture_ms: float = 0.0
+    match_ms: float = 0.0
+    infer_ms: float = 0.0
     item_results: List[InspectionItemResult] = field(default_factory=list)
 
 
@@ -61,6 +64,9 @@ class RuntimeInspectionResult:
     recipe_name: str = ""
     final_result: str = ""
     duration_ms: int = 0
+    capture_ms: float = 0.0
+    match_ms: float = 0.0
+    infer_ms: float = 0.0
     error_message: str = ""
     is_system_error: bool = False
     created_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
@@ -82,6 +88,14 @@ class RuntimeInspectionResult:
             for camera_id, camera_result in self.camera_results.items()
         }
 
+    def timing_breakdown(self) -> Dict[str, float]:
+        return {
+            "capture_ms": float(self.capture_ms or 0.0),
+            "match_ms": float(self.match_ms or 0.0),
+            "infer_ms": float(self.infer_ms or 0.0),
+            "duration_ms": float(self.duration_ms or 0.0),
+        }
+
     def summary_text(self) -> str:
         parts: List[str] = []
         for camera_id in sorted(self.camera_results.keys()):
@@ -89,6 +103,12 @@ class RuntimeInspectionResult:
             parts.append(f"{camera_id}={result}")
         if self.error_message:
             parts.append(self.error_message)
+        if self.capture_ms:
+            parts.append(f"capture {self.capture_ms:.1f} ms")
+        if self.match_ms:
+            parts.append(f"match {self.match_ms:.1f} ms")
+        if self.infer_ms:
+            parts.append(f"infer {self.infer_ms:.1f} ms")
         if self.duration_ms:
             parts.append(f"耗时 {self.duration_ms} ms")
         return "；".join(parts) if parts else "本次没有检测结果"
@@ -99,6 +119,9 @@ class RuntimeInspectionResult:
             "created_at": self.created_at,
             "camera_count": len(self.camera_results),
             "item_count": len(self.item_results),
+            "capture_ms": self.capture_ms,
+            "match_ms": self.match_ms,
+            "infer_ms": self.infer_ms,
             "camera_results_summary": "; ".join(
                 f"{camera_id}:{camera_result.result or '-'}"
                 for camera_id, camera_result in sorted(self.camera_results.items())
@@ -127,6 +150,9 @@ class RuntimeInspectionResult:
             row[f"{camera_id}_result"] = camera_result.result or ""
             row[f"{camera_id}_detail"] = camera_result.detail or ""
             row[f"{camera_id}_image_path"] = camera_result.image_path or ""
+            row[f"{camera_id}_capture_ms"] = camera_result.capture_ms
+            row[f"{camera_id}_match_ms"] = camera_result.match_ms
+            row[f"{camera_id}_infer_ms"] = camera_result.infer_ms
         for index, item in enumerate(self.item_results, start=1):
             prefix = f"item_{index:02d}"
             row[f"{prefix}_id"] = item.item_id
