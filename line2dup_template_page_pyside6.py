@@ -245,6 +245,8 @@ QLabel {
 }
 """
 
+_DEFAULT_FIND_BACKEND_LABEL = "Fusion V2"
+
 
 class Line2DupTemplateDialog(QtWidgets.QDialog):
     modelSaved = QtCore.Signal(str, str)
@@ -620,7 +622,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         recipe_form = QtWidgets.QFormLayout(recipe_box)
         self.cmb_backend_find = QtWidgets.QComboBox()
         self.cmb_backend_find.addItems([label for label, _ in BACKEND_ITEMS])
-        self.cmb_backend_find.setCurrentText("Original")
+        self.cmb_backend_find.setCurrentText(_DEFAULT_FIND_BACKEND_LABEL)
         self.spin_threshold_find = QtWidgets.QDoubleSpinBox()
         self.spin_threshold_find.setRange(0.0, 100.0)
         self.spin_threshold_find.setValue(70.0)
@@ -739,6 +741,16 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self._syncing_recipe_controls = False
         self._save_recipe()
 
+    def _apply_find_backend_default(self) -> None:
+        if not hasattr(self, "cmb_backend_find"):
+            return
+        idx = self.cmb_backend_find.findText(_DEFAULT_FIND_BACKEND_LABEL)
+        with QtCore.QSignalBlocker(self.cmb_backend_find):
+            if idx >= 0:
+                self.cmb_backend_find.setCurrentIndex(idx)
+            else:
+                self.cmb_backend_find.setCurrentText(_DEFAULT_FIND_BACKEND_LABEL)
+
     def _recipe_from_controls(self, *, use_find_values: bool = False) -> Line2DupRecipe:
         if use_find_values:
             backend = BACKEND_LABEL_TO_KEY.get(self.cmb_backend_find.currentText(), "original")
@@ -809,7 +821,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
     def _load_recipe(self) -> None:
         if not os.path.exists(self.paths.recipe_path):
             self._refresh_reference_region_fields()
-            self._sync_recipe_controls("create")
+            self._apply_find_backend_default()
             return
         recipe = load_recipe(self.paths.recipe_path)
         if recipe.reference_image and os.path.exists(recipe.reference_image) and not self.image_path:
@@ -854,6 +866,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._refresh_reference_canvas()
         self._refresh_reference_region_fields()
         self._sync_recipe_controls("create")
+        self._apply_find_backend_default()
 
     def _apply_reference_roi_from_recipe(self) -> bool:
         if not self._reference_regions:

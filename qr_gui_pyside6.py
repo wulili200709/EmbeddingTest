@@ -56,6 +56,16 @@ def _resource_path(filename: str) -> Path:
     return embedding_test_root(__file__) / "res" / filename
 
 
+def _app_icon() -> QtGui.QIcon:
+    for name in ("logo.ico", "logo.png"):
+        path = _resource_path(name)
+        if path.exists():
+            icon = QtGui.QIcon(str(path))
+            if not icon.isNull():
+                return icon
+    return QtGui.QIcon()
+
+
 def _load_app_version() -> str:
     setup_path = embedding_test_root(__file__).parent / "setup.py"
     try:
@@ -145,9 +155,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(_APP_NAME)
-        logo_path = _resource_path("logo.png")
-        if logo_path.exists():
-            self.setWindowIcon(QtGui.QIcon(str(logo_path)))
+        app_icon = _app_icon()
+        if not app_icon.isNull():
+            self.setWindowIcon(app_icon)
         self.setStyleSheet(
             "QMainWindow{background:#2d2d2d;}"
             "QMenuBar{background:#3a3a3a;color:#e0e0e0;border-bottom:1px solid #505050;}"
@@ -164,6 +174,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._engine_warmup_thread: Optional[_AlgorithmEngineWarmupThread] = None
         self._brand_banner_source = QtGui.QPixmap(str(_resource_path("logo2.png")))
         self._startup_runtime_auto_connect_done = False
+        self._runtime_capture_policy = self._load_runtime_capture_policy_from_session()
 
         # ── UI 组装 ────────────────────────────────────────────────────
         self._build_ui()
@@ -177,6 +188,7 @@ class MainWindow(QtWidgets.QMainWindow):
             release_password=self._release_password,
             parent=self,
         )
+        self.runtime_ctrl.set_capture_retention_policy(self._runtime_capture_policy)
 
         # ── 信号连接 ───────────────────────────────────────────────────
         self._connect_signals()
@@ -217,6 +229,55 @@ class MainWindow(QtWidgets.QMainWindow):
         session_data.runtime_cam1_serial = str(current_bindings.get("cam1", "")).strip()
         session_data.runtime_cam2_serial = str(current_bindings.get("cam2", "")).strip()
         self.session.save_session(session_data)
+
+    def _normalize_runtime_capture_policy(self, policy: str) -> str:
+        return "all" if str(policy or "").strip().lower() == "all" else "ng_only"
+
+    def _runtime_capture_policy_text(self, policy: str) -> str:
+        return "全部保留" if self._normalize_runtime_capture_policy(policy) == "all" else "仅保留NG"
+
+    def _load_runtime_capture_policy_from_session(self) -> str:
+        session_data = self.session.load_session()
+        return self._normalize_runtime_capture_policy(session_data.runtime_capture_policy)
+
+    def _persist_runtime_capture_policy(self, policy: str) -> None:
+        session_data = self.session.load_session()
+        session_data.runtime_capture_policy = self._normalize_runtime_capture_policy(policy)
+        self.session.save_session(session_data)
+
+    def _sync_runtime_capture_policy_actions(self) -> None:
+        policy = self._normalize_runtime_capture_policy(self._runtime_capture_policy)
+        if hasattr(self, "act_runtime_capture_keep_all"):
+            self.act_runtime_capture_keep_all.setChecked(policy == "all")
+        if hasattr(self, "act_runtime_capture_keep_ng_only"):
+            self.act_runtime_capture_keep_ng_only.setChecked(policy == "ng_only")
+
+    def _apply_runtime_capture_policy(
+        self,
+        policy: str,
+        *,
+        persist: bool,
+        show_message: bool,
+    ) -> None:
+        normalized = self._normalize_runtime_capture_policy(policy)
+        self._runtime_capture_policy = normalized
+        if hasattr(self, "runtime_ctrl") and self.runtime_ctrl is not None:
+            self.runtime_ctrl.set_capture_retention_policy(normalized)
+        self._sync_runtime_capture_policy_actions()
+        if persist:
+            self._persist_runtime_capture_policy(normalized)
+        if show_message:
+            self._bottom_status_bar.showMessage(
+                f"运行图像保存：{self._runtime_capture_policy_text(normalized)}",
+                3000,
+            )
+
+    def _restore_runtime_capture_policy_from_session(self) -> None:
+        self._apply_runtime_capture_policy(
+            self._load_runtime_capture_policy_from_session(),
+            persist=False,
+            show_message=False,
+        )
 
     def _startup_auto_connect_runtime_cameras(self) -> None:
         if self._startup_runtime_auto_connect_done:
@@ -469,6 +530,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tool_page.sessionClearRequested.connect(self._on_session_clear_request)
         self.tool_page.sessionLoaded.connect(self._sync_shell_status)
         self.tool_page.sessionLoaded.connect(self._restore_runtime_camera_bindings_from_session)
+        self.tool_page.sessionLoaded.connect(self._restore_runtime_capture_policy_from_session)
         connect_runtime_refresh_sources(
             self.tool_page,
             self.runtime_ctrl,
@@ -574,7 +636,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         hardware_menu = tools_menu.addMenu(_icon(SP.SP_ComputerIcon), "工程调试工具")
         hardware_menu.addAction(
-            _icon(SP.SP_DesktopIcon), "相机取图 / 参数工具"
+            _icon(SP.SP_DesktopIcon), "相机取图工具"
         ).triggered.connect(self.tool_page.open_camera_debug_dialog)
         hardware_menu.addAction(
             _icon(SP.SP_DriveNetIcon), "DI / DO 调试工具"
@@ -583,7 +645,7 @@ class MainWindow(QtWidgets.QMainWindow):
             _icon(SP.SP_FileDialogContentsView), "模板工具"
         ).triggered.connect(self.tool_page.open_template_editor_dialog)
         hardware_menu.addAction(
-            _icon(SP.SP_FileDialogListView), "自动生成ROI工具"
+            _icon(SP.SP_FileDialogListView), "自动ROI工具"
         ).triggered.connect(self.tool_page.open_template_match_dialog)
 
         tools_menu.addSeparator()
@@ -610,6 +672,32 @@ class MainWindow(QtWidgets.QMainWindow):
         runtime_menu.addAction(
             _icon(SP.SP_DialogDiscardButton), "断开相机"
         ).triggered.connect(self.runtime_ctrl.disconnect)
+        capture_menu = runtime_menu.addMenu(_icon(SP.SP_DialogSaveButton), "运行图像保存")
+        self.runtime_capture_policy_group = QtGui.QActionGroup(self)
+        self.runtime_capture_policy_group.setExclusive(True)
+        self.act_runtime_capture_keep_all = capture_menu.addAction("全部保留")
+        self.act_runtime_capture_keep_all.setCheckable(True)
+        self.runtime_capture_policy_group.addAction(self.act_runtime_capture_keep_all)
+        self.act_runtime_capture_keep_all.triggered.connect(
+            lambda checked=False: self._apply_runtime_capture_policy(
+                "all",
+                persist=True,
+                show_message=True,
+            )
+        )
+        self.act_runtime_capture_keep_ng_only = capture_menu.addAction("仅保留NG")
+        self.act_runtime_capture_keep_ng_only.setCheckable(True)
+        self.runtime_capture_policy_group.addAction(self.act_runtime_capture_keep_ng_only)
+        self.act_runtime_capture_keep_ng_only.triggered.connect(
+            lambda checked=False: self._apply_runtime_capture_policy(
+                "ng_only",
+                persist=True,
+                show_message=True,
+            )
+        )
+        self._sync_runtime_capture_policy_actions()
+        for action in list(runtime_menu.actions())[:3]:
+            runtime_menu.removeAction(action)
         runtime_menu.addSeparator()
         runtime_menu.addAction(
             _icon(SP.SP_MediaPlay), "脚踏触发"
@@ -629,6 +717,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # ── 路径 ──
         path_menu = QtWidgets.QMenu("路径", self)
+        if runtime_menu.actions():
+            runtime_menu.removeAction(runtime_menu.actions()[-1])
+
         path_menu.setStyleSheet(menu_style)
         path_menu.addAction(
             _icon(SP.SP_DirHomeIcon), "打开 EmbeddingTest 根目录"
@@ -937,9 +1028,9 @@ def main() -> None:
     app = QtWidgets.QApplication([])
     app.setApplicationName(_APP_NAME)
     app.setApplicationDisplayName(_APP_NAME)
-    logo_path = _resource_path("logo.png")
-    if logo_path.exists():
-        app.setWindowIcon(QtGui.QIcon(str(logo_path)))
+    app_icon = _app_icon()
+    if not app_icon.isNull():
+        app.setWindowIcon(app_icon)
     w = MainWindow()
     w.resize(1200, 800)
     w.show()

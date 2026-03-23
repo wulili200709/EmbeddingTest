@@ -1583,3 +1583,743 @@ roi3=traditional threshold
 每个 ROI 独立训练、独立保存、独立推理
 优点：灵活度最高。
 缺点：配置、训练、加载、调试都最复杂，多相机时模型数量会很多。
+
+
+模式2 只是在“同一个特征空间里，分多个 ROI 做判定”。
+模式3 是“每个 ROI 可能都在不同特征空间里，各自一套提取器、各自一套判定链”。
+
+这会把复杂度从“多份轻量注册模型”升级成“多套模型系统”。
+
+先把两种模式说准
+
+模式2：roi1/roi2/... 各自独立判定，但都用同一个 backbone，比如都用 efficientnet_b0。
+模式3：roi1 用 efficientnet_b0，roi2 用 mobilenet_v3_small，roi3 甚至还能用传统算法。每个 ROI 的算法类型都可能不同。
+按你现在代码，register_model 本身很轻，它保存的是 ok_proto / ng_proto / bank，不包含 backbone 权重。qr_core.py
+真正重的是 backbone 加载和特征提取。qr_core.py
+
+1. 加载时间为什么模式3更重
+当前 load_backbone() 没有缓存，是现建现载的。qr_core.py
+
+这意味着：
+
+模式2：整次测试/运行，理论上只需要加载 1 次 backbone，然后所有 ROI 共用。
+模式3：如果有 3 种 ROI、用了 3 种 backbone，就至少要处理 3 套 backbone 的加载/驻留/切换。
+在你当前调试链里，批量测试可以先预载 1 个 feat_net，然后循环复用。tool_page_pyside6.py
+这个优化只天然适合 模式2。
+到了 模式3，你要么：
+
+同时把多套 backbone 常驻内存
+要么推理时来回切换加载
+两者都更重。
+
+2. 训练时间为什么模式3更重
+你当前“训练”不是反向传播微调 CNN，而是：
+
+先加载 backbone
+对 OK/NG 图片做 embedding
+再生成 register model。qr_core.py algorithm_controller.py
+所以这里的主要耗时在“特征提取”。
+
+模式2：同一个 backbone 下，所有 ROI 都在同一特征体系里，训练链容易复用。
+模式3：每种 backbone 都要各跑一遍自己的特征提取流程。
+假设：
+
+2 个相机
+每个相机 6 个 ROI
+共 12 个 ROI
+那：
+
+模式2：可能是 12 个轻量注册模型 + 1 套 backbone
+模式3：可能是 12 个注册模型 + 2~12 套 backbone 配置链
+即使不是 12 个不同网络，只要有 3 种不同 backbone，你训练时也得分 3 组分别跑。
+
+3. 推理时间为什么模式3更不稳定
+模式2 下：
+
+先 line2dup
+拿到多个 ROI
+用同一个 backbone 依次提特征
+再分别判定或联合判定
+这条链很直。
+
+模式3 下：
+
+还是先 line2dup
+但 roi1 走 efficientnet
+roi2 走 mobilenet
+roi3 可能还走传统算法
+这时你的运行时不是“一条判定链”，而是“一个路由器”：
+
+先查每个 ROI 用什么算法
+再调对应 backbone
+再汇总结果
+结果就是：
+
+耗时更碎
+首次推理更容易卡顿
+不同 ROI 的耗时差别更大
+做运行时预热也更麻烦
+4. 调试为什么模式3难很多
+这是差距最大的地方。
+
+模式2 下，所有 ROI 都在同一个特征空间里：
+
+sim_ok / sim_ng / diff 的含义一致
+margin/topk 的调法一致
+你看到 roi1 和 roi2 的结果，能放在一套逻辑里理解
+模式3 下，不同 ROI 的分数不再天然可比：
+
+efficientnet 的 embedding 分布是一套
+mobilenet 的 embedding 分布是另一套
+同一个 margin=0.02 未必对所有 ROI 都合适
+这会导致调试上多出很多问题：
+
+为什么 roi1 稳，roi2 飘
+是 ROI 本身难，还是 backbone 选错了
+是数据问题，还是这个 ROI 应该换别的模型
+同样的 NG，到底是定位问题、ROI 问题、算法选择问题，还是阈值问题
+这时日志、报表、UI 都得带上“每个 ROI 当前算法”。
+
+5. 配置和维护为什么模式3会爆炸
+模式2 的配置很简单：
+
+产品级一个 backbone
+ROI 级若干 register model
+模式3 会变成：
+
+每个 ROI 要单独存 algorithm
+每个 ROI 要单独存模型状态
+每个 ROI 要单独判断“是否训练过”
+多相机时还要区分 cam1_roi1、cam2_roi1
+文件数量和组合数会迅速膨胀。
+
+比如文件命名就会从现在这种：
+
+register_model_efficientnet_b0.npz
+变成这种：
+
+cam1_roi1_register_model_efficientnet_b0.npz
+cam1_roi2_register_model_mobilenet_v3_small.npz
+cam2_roi1_register_model_efficientnet_b0.npz
+版本管理、发布、备份、换产品、查问题都会明显更累。
+
+6. 多相机时为什么模式3更重
+多相机不是简单乘 2，而是“域差异 + 模型数量”一起放大。
+
+因为相机不同，通常意味着：
+
+视角不同
+镜头不同
+光照不同
+像素分布不同
+所以你最后大概率不会只区分 ROI，还要区分相机。
+
+结果就是：
+
+模式2：按相机分两套 backbone 就够了，仍然相对可控
+模式3：按相机、按 ROI、按算法三维展开，复杂度上升很快
+为什么我说模式3“复杂得多”，不是“复杂一点”
+因为它不是多几个模型文件这么简单，而是这 5 件事都要变：
+
+模型加载策略变
+训练流程变
+运行调度变
+调试口径变
+配置管理变
+它改变的是系统结构，不只是参数数量。
+
+我给你的实际建议
+
+默认做 模式2
+模式3 只作为高级例外能力，不要作为主流程默认
+更具体一点：
+
+80% 的 ROI：走 模式2
+只有少数非常特殊的 ROI，再允许单独指定 backbone
+这样你能保留灵活性，但不会把整个系统复杂度一下拉爆。
+
+如果你要，我下一步可以继续给你画一个非常具体的对比：
+
+2相机 × 6ROI
+在 模式2 和 模式3 下，各自会有多少模型文件、多少加载步骤、多少训练步骤。
+## 为什么模式3比模式2要复杂的多？
+模式2 只是在“同一个特征空间里，分多个 ROI 做判定”。
+模式3 是“每个 ROI 可能都在不同特征空间里，各自一套提取器、各自一套判定链”。
+
+这会把复杂度从“多份轻量注册模型”升级成“多套模型系统”。
+
+先把两种模式说准
+
+模式2：roi1/roi2/... 各自独立判定，但都用同一个 backbone，比如都用 efficientnet_b0。
+模式3：roi1 用 efficientnet_b0，roi2 用 mobilenet_v3_small，roi3 甚至还能用传统算法。每个 ROI 的算法类型都可能不同。
+按你现在代码，register_model 本身很轻，它保存的是 ok_proto / ng_proto / bank，不包含 backbone 权重。qr_core.py
+真正重的是 backbone 加载和特征提取。qr_core.py
+
+1. 加载时间为什么模式3更重
+当前 load_backbone() 没有缓存，是现建现载的。qr_core.py
+
+这意味着：
+
+模式2：整次测试/运行，理论上只需要加载 1 次 backbone，然后所有 ROI 共用。
+模式3：如果有 3 种 ROI、用了 3 种 backbone，就至少要处理 3 套 backbone 的加载/驻留/切换。
+在你当前调试链里，批量测试可以先预载 1 个 feat_net，然后循环复用。tool_page_pyside6.py
+这个优化只天然适合 模式2。
+到了 模式3，你要么：
+
+同时把多套 backbone 常驻内存
+要么推理时来回切换加载
+两者都更重。
+
+2. 训练时间为什么模式3更重
+你当前“训练”不是反向传播微调 CNN，而是：
+
+先加载 backbone
+对 OK/NG 图片做 embedding
+再生成 register model。qr_core.py algorithm_controller.py
+所以这里的主要耗时在“特征提取”。
+
+模式2：同一个 backbone 下，所有 ROI 都在同一特征体系里，训练链容易复用。
+模式3：每种 backbone 都要各跑一遍自己的特征提取流程。
+假设：
+
+2 个相机
+每个相机 6 个 ROI
+共 12 个 ROI
+那：
+
+模式2：可能是 12 个轻量注册模型 + 1 套 backbone
+模式3：可能是 12 个注册模型 + 2~12 套 backbone 配置链
+即使不是 12 个不同网络，只要有 3 种不同 backbone，你训练时也得分 3 组分别跑。
+
+3. 推理时间为什么模式3更不稳定
+模式2 下：
+
+先 line2dup
+拿到多个 ROI
+用同一个 backbone 依次提特征
+再分别判定或联合判定
+这条链很直。
+
+模式3 下：
+
+还是先 line2dup
+但 roi1 走 efficientnet
+roi2 走 mobilenet
+roi3 可能还走传统算法
+这时你的运行时不是“一条判定链”，而是“一个路由器”：
+
+先查每个 ROI 用什么算法
+再调对应 backbone
+再汇总结果
+结果就是：
+
+耗时更碎
+首次推理更容易卡顿
+不同 ROI 的耗时差别更大
+做运行时预热也更麻烦
+4. 调试为什么模式3难很多
+这是差距最大的地方。
+
+模式2 下，所有 ROI 都在同一个特征空间里：
+
+sim_ok / sim_ng / diff 的含义一致
+margin/topk 的调法一致
+你看到 roi1 和 roi2 的结果，能放在一套逻辑里理解
+模式3 下，不同 ROI 的分数不再天然可比：
+
+efficientnet 的 embedding 分布是一套
+mobilenet 的 embedding 分布是另一套
+同一个 margin=0.02 未必对所有 ROI 都合适
+这会导致调试上多出很多问题：
+
+为什么 roi1 稳，roi2 飘
+是 ROI 本身难，还是 backbone 选错了
+是数据问题，还是这个 ROI 应该换别的模型
+同样的 NG，到底是定位问题、ROI 问题、算法选择问题，还是阈值问题
+这时日志、报表、UI 都得带上“每个 ROI 当前算法”。
+
+5. 配置和维护为什么模式3会爆炸
+模式2 的配置很简单：
+
+产品级一个 backbone
+ROI 级若干 register model
+模式3 会变成：
+
+每个 ROI 要单独存 algorithm
+每个 ROI 要单独存模型状态
+每个 ROI 要单独判断“是否训练过”
+多相机时还要区分 cam1_roi1、cam2_roi1
+文件数量和组合数会迅速膨胀。
+
+比如文件命名就会从现在这种：
+
+register_model_efficientnet_b0.npz
+变成这种：
+
+cam1_roi1_register_model_efficientnet_b0.npz
+cam1_roi2_register_model_mobilenet_v3_small.npz
+cam2_roi1_register_model_efficientnet_b0.npz
+版本管理、发布、备份、换产品、查问题都会明显更累。
+
+6. 多相机时为什么模式3更重
+多相机不是简单乘 2，而是“域差异 + 模型数量”一起放大。
+
+因为相机不同，通常意味着：
+
+视角不同
+镜头不同
+光照不同
+像素分布不同
+所以你最后大概率不会只区分 ROI，还要区分相机。
+
+结果就是：
+
+模式2：按相机分两套 backbone 就够了，仍然相对可控
+模式3：按相机、按 ROI、按算法三维展开，复杂度上升很快
+为什么我说模式3“复杂得多”，不是“复杂一点”
+因为它不是多几个模型文件这么简单，而是这 5 件事都要变：
+
+模型加载策略变
+训练流程变
+运行调度变
+调试口径变
+配置管理变
+它改变的是系统结构，不只是参数数量。
+
+我给你的实际建议
+
+默认做 模式2
+模式3 只作为高级例外能力，不要作为主流程默认
+更具体一点：
+
+80% 的 ROI：走 模式2
+只有少数非常特殊的 ROI，再允许单独指定 backbone
+这样你能保留灵活性，但不会把整个系统复杂度一下拉爆。
+
+如果你要，我下一步可以继续给你画一个非常具体的对比：
+
+2相机 × 6ROI
+在 模式2 和 模式3 下，各自会有多少模型文件、多少加载步骤、多少训练步骤。
+## 举例说明
+假设：
+
+2 个相机
+每个相机 6 个 ROI
+一共 12 个 ROI
+模式2
+规则：
+
+每个 ROI 独立判定
+但同一相机下共用一个 backbone
+一种典型落法是：
+
+cam1 全部 ROI 都用 efficientnet_b0
+cam2 全部 ROI 都用 efficientnet_b0
+这样运行时大概是：
+
+cam1 图像先 line2dup
+加载一次 cam1 backbone
+连续提 roi1~roi6 的特征
+分别用 6 个 register model 判定
+cam2 同理
+这时你真正要维护的是：
+
+12 个 ROI 的 register model
+1~2 套 backbone 配置
+体感上就是：
+
+加载：轻
+训练：中等
+调试：还能控
+运行：稳定
+模式3
+规则：
+
+每个 ROI 都可以选不同 backbone
+比如：
+
+cam1_roi1 -> efficientnet_b0
+cam1_roi2 -> mobilenet_v3_small
+cam1_roi3 -> mobilenet_v3_large
+cam1_roi4 -> efficientnet_b0
+cam1_roi5 -> 传统算法
+cam1_roi6 -> mobilenet_v3_small
+cam2 再来一套
+这时运行时不再是一条整齐的链，而是：
+
+line2dup
+对每个 ROI 查“你该走哪种算法”
+ROI1 调 efficientnet
+ROI2 调 mobilenet_small
+ROI3 调 mobilenet_large
+ROI4 再回 efficientnet
+ROI5 走传统算法
+最后再汇总
+这就是它复杂很多的根源。
+
+加载时间
+模式2：
+
+最多预热 1~2 套 backbone
+后面一直复用
+模式3：
+
+要预热多套 backbone，或者推理时临时切换
+首次运行更慢
+切产品、切 ROI 配置时更容易卡
+按你当前代码，load_backbone() 还是现载的，没有统一缓存中心，所以模式3的加载成本会更明显。qr_core.py
+
+训练时间
+模式2：
+
+一组 ROI 共用同一个 backbone 流程
+训练组织简单
+模式3：
+
+不同 ROI 要分组训练
+每一组都要单独跑自己的特征提取链
+训练入口、状态显示、失败重试都会更碎
+如果 12 个 ROI 里分成 3 种 backbone，训练流程基本就是 3 套小系统并行维护。
+
+调试难度
+这是差距最大的。
+
+模式2：
+
+所有 ROI 的分数口径一致
+margin/topk 调参逻辑一致
+看报表比较直观
+模式3：
+
+roi1 的 diff 和 roi2 的 diff 不一定同口径
+efficientnet 稳，不代表 mobilenet 也稳
+你很难第一时间判断是 ROI 难、数据差、还是 backbone 选错
+最后会变成：
+
+每个 ROI 都要单独看算法
+单独看训练状态
+单独看参数
+单独看结果解释
+模型数量
+要说准确一点：
+
+按你当前代码，重的不是 .npz 数量，而是“不同 backbone 类型数量”。
+因为 .npz 只是注册模型，真正的 CNN 权重来自 backbone 加载。algorithm_controller.py
+
+所以：
+
+模式2：12 个 ROI model，但只要 1~2 套 backbone
+模式3：还是 12 个 ROI model，但可能要维护 3~12 套 backbone 选择
+如果以后你再做“每 ROI 微调自己的网络权重”，那模式3会再重一个数量级。
+
+维护成本
+模式2你主要管：
+
+ROI 是否存在
+每个 ROI 是否训练过
+同一相机用哪个 backbone
+模式3你还要多管：
+
+每个 ROI 用哪种算法
+每个 ROI 的参数是否独立
+每个 ROI 的日志怎么解释
+UI 怎么显示混合算法状态
+运行页怎么做预热和异常处理
+结论
+所以模式3不是“多几个模型文件”，而是“系统从单轨变成多轨调度”。
+
+对你这类项目，我建议：
+
+默认主路线做模式2
+模式3只给少数特殊 ROI 用
+也就是：
+
+大部分 ROI 共用 backbone
+极少数特别难的 ROI 才允许单独选 mobilenet 或传统算法
+这样最实用。
+
+如果你要，我下一步可以继续给你画一版非常具体的配置设计：
+
+2相机 × 6ROI
+模式2怎么存 json
+模式3怎么存 json
+UI 上分别会多出哪些字段
+
+# feat_net, _ = qr_core.load_backbone(...)
+要区分两类缓存：
+
+feat_net
+这是 backbone 特征网络，应该跨调试页和运行页复用
+self.algo.model
+这是当前产品训练/注册出来的判定模型，这个更偏产品级缓存
+所以理想状态应该是：
+
+调试页点 TEST 时，从共享缓存拿 feat_net
+运行页触发时，也从同一个共享缓存拿 feat_net
+如果缓存里已经有，就不要再 qr_core.load_backbone(...)
+需要重新加载的场景主要是：
+
+切算法
+切设备
+明确释放缓存
+进程重启
+一般来说，重新训练/注册后不一定要重载 feat_net，因为变的是产品判定模型，不一定是 backbone 网络本身。
+
+所以结论就是：
+对，同 backbone + 同 device 时，调试页和运行页应该复用同一个 feat_net 缓存。
+
+## 已改
+现在 feat_net 缓存收口到 algorithm_controller.py，按 (backbone, device) 懒加载复用：第一次用到时才 load_backbone(...)，后面调试页 TEST 和运行页都会直接拿缓存，不会每次按钮点击都重新建网络。调试页两个原来绕过缓存的地方也改成走同一个入口了，在 tool_page_pyside6.py 和 tool_page_pyside6.py。运行页在预检时也会把这份缓存预热起来，位置在 runtime_controller.py。
+
+现在的行为是：
+
+同一个 backbone + device，第一次才加载一次
+后面反复点“测试当前图”，直接复用
+运行页触发也复用同一份缓存
+如果切了 backbone 或 device，才会生成新的缓存项
+## 那如果重新注册之后 需要重新加载backbone + device吗？
+通常不需要。
+
+重新注册/重训练之后，变化的是“产品判定模型” self.algo.model，不是 backbone 网络本身。
+只要这两个没变：
+
+backbone 没变
+device 没变
+那 feat_net 可以继续复用，不需要重新 load_backbone(...)。
+
+要分开看：
+
+feat_net
+负责把 ROI 提成特征
+只跟 backbone + device 有关
+self.algo.model
+负责拿特征做比对和判定
+这个会因为重新注册而变化
+所以重新注册后应该重载的是：
+
+register_model_xxx.npz 对应的 self.algo.model
+不一定要重载的是：
+
+feat_net
+只有这些情况才需要重新加载 feat_net：
+
+算法从 efficientnet_b0 切到别的 backbone
+设备从 cpu 切到 cuda，或者反过来
+你主动清空缓存
+进程重启
+所以结论就是：
+重新注册后，一般不用重新加载 backbone + device，对应的 feat_net 可以继续用。
+真正要更新的是判定模型 self.algo.model。
+## 什么时候更新self.algo.model
+self.algo.model 有两种“更新”方式，得分开看。
+
+第一种是“整个模型对象被替换”：
+
+重新注册/训练成功后，直接把新模型赋给 self.model，在 algorithm_controller.py 和 algorithm_controller.py。
+从磁盘加载当前产品算法模型时，也会替换 self.model，在 algorithm_controller.py 和 algorithm_controller.py。
+现在运行页的预检里，每次触发前也会走一次这个加载入口，所以运行链路当前其实还会重复更新 self.algo.model，见 runtime_controller.py 、runtime_controller.py 和 runtime_context.py。
+第二种是“模型对象不换，只同步参数”：
+
+当你改 score_mode / margin / topk 这类运行参数时，不一定重载模型文件，而是对现有 self.algo.model 做参数同步，在 algorithm_controller.py。
+调试页参数变化时会调这个入口，在 tool_page_pyside6.py。
+另外它也会被清空成 None，常见时机有：
+
+载入 session 时，见 tool_page_pyside6.py
+切产品时，见 tool_page_pyside6.py
+清空/reset 时，见 tool_page_pyside6.py
+开始重新训练前，见 tool_page_pyside6.py
+算法切换加载失败时，见 tool_page_pyside6.py
+所以如果你问“重新注册后什么时候更新”，答案是：
+
+注册/训练成功那一刻就更新成新的 self.algo.model
+之后运行页当前还会在每次触发预检时再从磁盘重载一遍同类模型
+feat_net 现在已经缓存了，但 self.algo.model 还没有做到同样级别的复用
+
+self.algo.model 相对 feat_net/backbone 确实更轻，但这不等于“每次测试都应该重载”。
+
+更合理的判断标准不是“它轻不轻”，而是：
+
+它有没有变
+重载有没有实际收益
+重载会不会带来额外抖动和 I/O
+对你这里来说，self.algo.model 其实是当前产品的判定模型：
+
+从 register_model_xxx.npz 读出来
+带着 score_mode / margin / topk
+后面只负责做特征比对和判定
+如果下面这些都没变：
+
+当前产品没变
+当前算法没变
+没重新注册/训练
+没手动改需要重新生效的参数
+那它就没必要每次测试都重新加载。
+
+每次都加载的坏处是：
+
+有磁盘 I/O
+会让单次测试时间不稳定
+运行页和调试页口径会更乱
+双相机或高频触发时是纯额外开销
+真正应该做的是：
+
+平时缓存 self.algo.model
+改参数时，如果只是 margin/topk/mode，直接同步到当前模型
+重新注册/训练后，再替换成新模型
+切产品/切算法时，再失效重载
+所以结论是：
+
+self.algo.model 不应该每次测试都加载。它可以比feat_net` 更容易重载，但从工程上看，默认仍然应该复用，只有在“模型确实变了”时才更新。
+
+如果你愿意，我下一步可以继续把运行页这部分也优化掉：
+去掉每次 trigger 预检都重载 self.algo.model，只在必要时更新。
+
+
+self.algo.model 现在有两种更新方式。
+
+第一种是“整个模型对象替换”：
+
+重新注册/训练成功时，直接把新模型赋给 self.model，见 algorithm_controller.py 和 algorithm_controller.py。
+从磁盘加载当前产品算法模型时，也会替换 self.model，见 algorithm_controller.py 和 algorithm_controller.py。
+当前运行页预检里，每次触发前还会走一次这个加载入口，见 runtime_controller.py 和 runtime_controller.py。
+第二种是“只改模型参数，不重注册”：
+
+你改 score_mode / margin / topk 时，调试页会直接把这些值同步到已加载的 self.algo.model，见 tool_page_pyside6.py 和 algorithm_controller.py。
+同时，从磁盘加载模型时，也会把当前 product_params 里的 score_mode / margin / topk 覆盖到模型对象上，见 algorithm_controller.py。
+所以结论是：
+
+改 Margin 不需要重新注册。
+
+因为在当前实现里，Margin 是预测判定阈值，不是必须重做注册样本库的参数。真正判定时就是用 model.margin 去判断 diff >= margin，见 qr_core.py 和 qr_core.py。
+
+你只有在这些情况才需要重新注册：
+
+OK/NG 样本变了
+ROI/标签体系变了
+算法 backbone 变了
+产品切换到另一套注册模型
+但如果只是改：
+
+Margin
+TopK
+score_mode
+按现在代码，都不需要重新注册，下一次测试/运行就会按新参数生效。
+
+
+# IV4
+它把问题抽象成了“同一张已校正图像上的多个独立测量工具”。
+
+也就是 4 层：
+
+统一取图
+同一套相机、曝光、触发、预处理。
+
+统一定位
+先做位置修正，把工件对齐到同一个坐标系。
+这一步很关键。很多“工具很多但还能稳定”的前提，其实是先把图像标准化了。
+
+统一运行框架
+每个工具本质上都是：
+
+看哪一块区域
+用哪种算法
+给出一个分数/测量值
+再按阈值或规则判 OK/NG
+所以用户看到的是很多工具，但系统内部更像：
+
+同一张对齐后的图
+跑多个“小判定器”
+每个小判定器单独出结果
+统一结果管理
+总结果是汇总出来的，但每个工具的单项结果也保留，所以能明确知道“哪个工具 NG”。
+所以 IV4“看起来很多工具但只要学一遍”的真正原因是：
+
+不是每个工具都从零训练一套模型
+而是在同一个运行框架里，往同一张已对齐图像上挂多个判定模块
+复杂性被封装在工具类型和内部算法里，用户只是在配置工具，不是在管理模型工程
+对你来说，最值得借鉴的不是“它是不是一个 backbone”，而是这两个设计思想：
+
+先统一定位，再做多工具独立判定
+每个工具独立出结果，但用户界面和配置框架统一
+如果把它映射到你现在的软件，最接近的落地方向其实是：
+
+先 line2dup
+每个 ROI 当成一个“工具”
+每个工具独立判定、独立显示 OK/NG
+但底层尽量共享同一套特征提取能力
+这就是为什么我前面说，你更适合往“模式2”走，而不是直接上“每 ROI 一套完全独立网络”。
+## iv4的风格
+IV4 风格结构
+
+取图层
+负责相机、触发、曝光、光源、保存原图。
+
+定位层
+先做一次 line2dup / 位置修正，把所有后续 ROI 都带到同一个坐标系。
+
+工具层
+每个 ROI 不再叫“只是一个框”，而是一个“检测工具”。
+每个工具包含：
+
+工具名
+相机
+ROI
+算法类型
+参数
+单项结果
+汇总层
+把所有工具结果汇总成：
+
+单项 OK/NG
+相机 OK/NG
+总 OK/NG
+放到你当前项目里，对应关系是
+
+相机取图 = 取图层
+line2dup = 定位层
+inspection item / ROI = 工具层
+runtime result = 汇总层
+所以你后面不要再把 ROI 只理解成“画出来的区域”，更应该把它理解成：
+
+ROI + 算法 + 参数 + 判定规则 = 一个工具
+
+如果按这个方向演进，建议分两步
+
+先把当前 ROI 升级成“工具对象”
+例如每个工具有：
+display_name
+camera_id
+roi_label
+algorithm
+enabled
+params
+再支持两种工具模式
+共享 backbone 的注册工具
+传统阈值工具
+这样你就已经很像 IV4 了：
+
+用户看到很多工具
+每个工具单独出结果
+但整体框架还是统一的
+你现在最适合的版本
+我建议先别做成“每个工具可随便选任意 backbone”。
+先做成这版：
+
+定位：统一 line2dup
+工具：每个 ROI 一个工具
+算法：
+embedding 工具：共享 backbone，独立注册
+traditional 工具：独立阈值
+运行页：显示每个工具的结果
+汇总：任一工具 NG，则相机 NG；任一相机 NG，则总 NG
+
+
+# 相机保存参数和序列号
+“运行相机绑定的序列号”是按产品保存的，保存在每个产品自己的 session.json 里。代码在 product_session.py 保存，在 product_session.py 读取；切换产品后会在 qr_gui_pyside6.py 恢复到运行页。
+“曝光/增益/触发模式这些相机参数”不是按产品保存，是按相机序列号全局保存，在 camera_settings_store.py 指向的 camera_settings.json。
+你这次报错，原因就是某些产品还保存着旧相机序列号。当前工作区里我看到：
+
+150A_OG/session.json 还是 00E76555119
+test/session.json 还是 00E76555119
+test2/session.json 已经是新相机 DA9521010
+所以切到 150A_OG 或 test 时，程序恢复了这个产品历史保存的绑定，后面一连接就会去找旧序列号，最终在 camera.py 报 camera with serial '00E76555119' not found。

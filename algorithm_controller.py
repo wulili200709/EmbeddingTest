@@ -110,6 +110,7 @@ class AlgorithmController:
     def __init__(self) -> None:
         self.product_params: ProductRuntimeParams = ProductRuntimeParams()
         self.model: Optional[Any] = None          # qr_core.RegisterModel | None
+        self._feat_net_cache: Dict[Tuple[str, str], Any] = {}
 
     # ------------------------------------------------------------------
     # 参数持久化
@@ -138,6 +139,22 @@ class AlgorithmController:
 
     def embedding_model_path(self, algorithm: str, product_dir: str) -> str:
         return os.path.join(product_dir, f"register_model_{algorithm}.npz")
+
+    def get_feat_net(self, backbone: str, device: Optional[str] = None) -> Any:
+        normalized_backbone = str(backbone or "").strip()
+        if not normalized_backbone:
+            raise ValueError("backbone is required")
+        normalized_device = str(device or qr_core.get_device()).strip() or "cpu"
+        cache_key = (normalized_backbone, normalized_device)
+        feat_net = self._feat_net_cache.get(cache_key)
+        if feat_net is not None:
+            return feat_net
+        feat_net, _ = qr_core.load_backbone(normalized_backbone, device=normalized_device)
+        self._feat_net_cache[cache_key] = feat_net
+        return feat_net
+
+    def clear_feat_net_cache(self) -> None:
+        self._feat_net_cache.clear()
 
     # ------------------------------------------------------------------
     # 模型加载
@@ -298,7 +315,7 @@ class AlgorithmController:
                     raise FileNotFoundError(f"缺少 labelme json: {j}")
 
             if feat_net is None:
-                feat_net, _ = qr_core.load_backbone(self.model.backbone, device=self.model.device)
+                feat_net = self.get_feat_net(self.model.backbone, getattr(self.model, "device", None))
             if len(labels) > 1:
                 e = qr_core.embed_many(path, feat_net, labels, device=self.model.device)
             else:

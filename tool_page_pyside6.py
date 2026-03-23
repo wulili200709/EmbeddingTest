@@ -2146,7 +2146,10 @@ class ToolPage(QtWidgets.QWidget):
         try:
             feat_net = None
             if self._is_embedding_algorithm(algorithm) and self.algo.model is not None:
-                feat_net, _ = qr_core.load_backbone(self.algo.model.backbone, device=self.algo.model.device)
+                feat_net = self.algo.get_feat_net(
+                    self.algo.model.backbone,
+                    getattr(self.algo.model, "device", None),
+                )
             row = self._predict_image(p, feat_net=feat_net, prefer_canvas_roi=True)
         except Exception as ex:
             QtWidgets.QMessageBox.critical(self, "测试失败", str(ex))
@@ -2926,7 +2929,10 @@ class ToolPage(QtWidgets.QWidget):
             QtWidgets.QMessageBox.warning(self, "提示", "需要至少一批 OK 和 NG 图片才能建议 margin。")
             return
 
-        feat_net, _ = qr_core.load_backbone(self.algo.model.backbone, device=self.algo.model.device)
+        feat_net = self.algo.get_feat_net(
+            self.algo.model.backbone,
+            getattr(self.algo.model, "device", None),
+        )
         rows: List[Dict[str, object]] = []
         try:
             for path in self.ok_files:

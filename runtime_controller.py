@@ -100,6 +100,49 @@ except Exception:
 
 DEFAULT_RELEASE_PASSWORD = "1234"
 DEFAULT_LIGHT_STABLE_MS = 20
+RUNTIME_CAPTURE_POLICY_ALL = "all"
+RUNTIME_CAPTURE_POLICY_NG_ONLY = "ng_only"
+
+
+def normalize_capture_retention_policy(policy: object) -> str:
+    return (
+        RUNTIME_CAPTURE_POLICY_ALL
+        if str(policy or "").strip().lower() == RUNTIME_CAPTURE_POLICY_ALL
+        else RUNTIME_CAPTURE_POLICY_NG_ONLY
+    )
+
+
+def retained_capture_paths_for_policy(
+    policy: object,
+    final_result: object,
+    capture_paths: Dict[str, str] | None,
+) -> Dict[str, str]:
+    normalized = normalize_capture_retention_policy(policy)
+    sanitized = {
+        str(role): str(path).strip()
+        for role, path in dict(capture_paths or {}).items()
+        if str(path or "").strip()
+    }
+    if normalized == RUNTIME_CAPTURE_POLICY_ALL:
+        return sanitized
+    if str(final_result or "").strip().upper() == "NG":
+        return sanitized
+    return {}
+
+
+def delete_capture_artifacts(capture_paths: Dict[str, str] | None) -> None:
+    for raw_path in dict(capture_paths or {}).values():
+        image_text = str(raw_path or "").strip()
+        if not image_text:
+            continue
+        image_path = Path(image_text)
+        json_path = image_path.with_suffix(".json")
+        for path in (image_path, json_path):
+            try:
+                if path.exists():
+                    path.unlink()
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +246,7 @@ class RuntimeController(QtCore.QObject):
         self._last_capture_paths: Dict[str, str] = {}
         self._last_record_path: Optional[str] = None
         self._last_runtime_result: Optional[RuntimeInspectionResult] = None
+        self._capture_retention_policy = RUNTIME_CAPTURE_POLICY_NG_ONLY
         self._camera_settings_store = CameraSettingsStore()
 
         self._camera_manager = None
@@ -220,6 +264,12 @@ class RuntimeController(QtCore.QObject):
         self._tower_light_controller: _UiOnlyTowerLightController = _UiOnlyTowerLightController()
         self._busy = False
         self._pending_camera_settings_by_serial: Dict[str, dict] = {}
+
+    def set_capture_retention_policy(self, policy: object) -> None:
+        self._capture_retention_policy = normalize_capture_retention_policy(policy)
+
+    def capture_retention_policy(self) -> str:
+        return self._capture_retention_policy
 
     # ------------------------------------------------------------------
     # 公开操作方法（RuntimeModePage Signal 直接连到这里）
@@ -428,12 +478,18 @@ class RuntimeController(QtCore.QObject):
         self._last_record_path = ""
         if self._record_service is not None:
             self._last_record_path = str(self._record_service.writer.file_path_for_date())
+        current_capture_paths = dict(self._last_capture_paths)
 
         for role in ("cam1", "cam2"):
-            path = self._last_capture_paths.get(role, "")
+            path = current_capture_paths.get(role, "")
             self.previewUpdated.emit(role, path)
 
         self.recordPathChanged.emit(self._last_record_path or "-")
+        retained_capture_paths = retained_capture_paths_for_policy(
+            self._capture_retention_policy,
+            outcome.final_result,
+            current_capture_paths,
+        )
 
         self._last_runtime_result = aggregate_runtime_outcome(
             product_name=self._session.current_product,
@@ -444,10 +500,17 @@ class RuntimeController(QtCore.QObject):
             final_result=outcome.final_result,
             duration_ms=outcome.duration_ms,
             error_message=outcome.error_message,
-            capture_paths=self._last_capture_paths,
+            capture_paths=retained_capture_paths,
             item_results_by_camera=self._last_item_results_by_camera,
         )
         self._write_runtime_record(self._last_runtime_result)
+        transient_capture_paths = {
+            role: path
+            for role, path in current_capture_paths.items()
+            if path and retained_capture_paths.get(role) != path
+        }
+        delete_capture_artifacts(transient_capture_paths)
+        self._last_capture_paths = dict(retained_capture_paths)
         if self._record_service is not None:
             self._last_record_path = str(self._record_service.writer.file_path_for_date())
             self.recordPathChanged.emit(self._last_record_path or "-")
@@ -805,6 +868,11 @@ class RuntimeController(QtCore.QObject):
         if self._algo.is_embedding_algorithm(algorithm):
             try:
                 self._runtime_context.load_embedding_model(algorithm)
+                if self._algo.model is not None:
+                    self._algo.get_feat_net(
+                        self._algo.model.backbone,
+                        getattr(self._algo.model, "device", None),
+                    )
             except Exception as exc:
                 return False, f"加载模型失败：{exc}"
             if self._algo.model is None:

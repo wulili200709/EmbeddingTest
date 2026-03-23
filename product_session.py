@@ -67,6 +67,7 @@ class SessionData:
     loc_method: str = "line2dup"
     runtime_cam1_serial: Optional[str] = None
     runtime_cam2_serial: Optional[str] = None
+    runtime_capture_policy: str = "ng_only"
 
 
 PRODUCT_NAME_RE = re.compile(r'^[a-zA-Z0-9_\u4e00-\u9fa5]+$')
@@ -220,6 +221,11 @@ class ProductSession:
                 if data.runtime_cam2_serial is not None
                 else str(existing_payload.get("runtime_cam2_serial", "")).strip()
             ),
+            "runtime_capture_policy": (
+                str(data.runtime_capture_policy).strip()
+                if data.runtime_capture_policy is not None
+                else str(existing_payload.get("runtime_capture_policy", "ng_only")).strip()
+            ),
         }
         with open(self.session_json, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -251,6 +257,7 @@ class ProductSession:
             loc_method=str(raw.get("loc_method", "line2dup")),
             runtime_cam1_serial=str(raw.get("runtime_cam1_serial", "")).strip(),
             runtime_cam2_serial=str(raw.get("runtime_cam2_serial", "")).strip(),
+            runtime_capture_policy=str(raw.get("runtime_capture_policy", "ng_only")).strip() or "ng_only",
         )
 
     def delete_session_file(self) -> None:

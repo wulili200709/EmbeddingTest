@@ -53,5 +53,6 @@
   "ref_image": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/ok/1.bmp",
   "loc_method": "line2dup",
   "runtime_cam1_serial": "00E76555119",
-  "runtime_cam2_serial": ""
+  "runtime_cam2_serial": "",
+  "runtime_capture_policy": "ng_only"
 }
