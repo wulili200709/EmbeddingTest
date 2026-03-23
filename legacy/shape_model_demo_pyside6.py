@@ -19,7 +19,7 @@ if __package__ in (None, ""):
         sys.path.insert(0, root_str)
 
 from ui.debug import OverlayShape, RoiCanvas
-from algorithms.scaled_shape_model import ScaledShapeModel
+from legacy.scaled_shape_model import ScaledShapeModel
 
 
 Point = Tuple[float, float]

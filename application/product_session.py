@@ -35,7 +35,6 @@ class ProductPaths:
     session_json: str
     product_params_path: str
     inspection_items_path: str
-    shape_model_path: str
     line2dup_model_path: str
     line2dup_recipe_path: str
 
@@ -49,7 +48,6 @@ class ProductPaths:
             session_json=os.path.join(product_dir, "session.json"),
             product_params_path=os.path.join(product_dir, "product_params.json"),
             inspection_items_path=os.path.join(product_dir, "inspection_items.json"),
-            shape_model_path=os.path.join(product_dir, "shape_model.npz"),
             line2dup_model_path=paths.model_path,
             line2dup_recipe_path=paths.recipe_path,
         )
@@ -128,10 +126,6 @@ class ProductSession:
     @property
     def product_params_path(self) -> str:
         return self.paths.product_params_path if self.paths else ""
-
-    @property
-    def shape_model_path(self) -> str:
-        return self.paths.shape_model_path if self.paths else ""
 
     @property
     def inspection_items_path(self) -> str:
@@ -250,12 +244,16 @@ class ProductSession:
         ref = raw.get("ref_image", "")
         ref_image = ref if isinstance(ref, str) and os.path.exists(ref) else None
 
+        loc_method = str(raw.get("loc_method", "line2dup")).strip() or "line2dup"
+        if loc_method != "line2dup":
+            loc_method = "line2dup"
+
         return SessionData(
             ok_files=_filter(raw.get("ok_files", [])),
             ng_files=_filter(raw.get("ng_files", [])),
             test_files=_filter(raw.get("test_files", [])),
             ref_image=ref_image,
-            loc_method=str(raw.get("loc_method", "line2dup")),
+            loc_method=loc_method,
             runtime_cam1_serial=str(raw.get("runtime_cam1_serial", "")).strip(),
             runtime_cam2_serial=str(raw.get("runtime_cam2_serial", "")).strip(),
             runtime_capture_policy=str(raw.get("runtime_capture_policy", "ng_only")).strip() or "ng_only",

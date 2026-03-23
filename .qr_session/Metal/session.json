@@ -1,15 +1,10 @@
 {
-  "ok_files": [
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/2/test/Image_20260206154251845.bmp"
-  ],
+  "ok_files": [],
   "ng_files": [],
-  "test_files": [
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/2/test/Image_20260206154313772.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/2/test/Image_20260206154331875.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/2/test/Image_20260206154335755.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/2/test/Image_20260206154338279.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/2/test/Image_20260206154340969.bmp"
-  ],
-  "ref_image": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/2/test/Image_20260206154251845.bmp",
-  "loc_method": "line2dup"
+  "test_files": [],
+  "ref_image": "",
+  "loc_method": "line2dup",
+  "runtime_cam1_serial": "",
+  "runtime_cam2_serial": "",
+  "runtime_capture_policy": "ng_only"
 }

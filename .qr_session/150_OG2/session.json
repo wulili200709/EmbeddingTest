@@ -1,23 +1,16 @@
 {
-  "ok_files": [
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/ok/1.bmp"
-  ],
-  "ng_files": [
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/ng/9.bmp"
-  ],
+  "ok_files": [],
+  "ng_files": [],
   "test_files": [
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/10.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/16.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/17.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/18.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/4.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/6.bmp",
     "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\150_OG2\\debug_capture\\debug_cam_20260322_105811_701092.png",
     "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\150_OG2\\debug_capture\\debug_cam_20260322_110007_710709.png",
     "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\150_OG2\\debug_capture\\debug_cam_20260322_113106_343666.png",
     "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\150_OG2\\debug_capture\\debug_cam_20260322_113147_201655.png",
     "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\150_OG2\\debug_capture\\debug_cam_20260322_114958_107581.png"
   ],
-  "ref_image": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/16.bmp",
-  "loc_method": "line2dup"
+  "ref_image": "",
+  "loc_method": "line2dup",
+  "runtime_cam1_serial": "",
+  "runtime_cam2_serial": "",
+  "runtime_capture_policy": "ng_only"
 }

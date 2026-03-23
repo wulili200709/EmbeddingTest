@@ -1,26 +1,10 @@
 {
-  "ok_files": [
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/1/ok/Image_20260206135743336.bmp"
-  ],
-  "ng_files": [
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/1/ng/Image_20260206135824717.bmp"
-  ],
-  "test_files": [
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/1/ng/Image_20260206135824717.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/1/test/Image_20260206135734298.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/1/test/Image_20260206135738065.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/1/test/Image_20260206135743336.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/1/test/Image_20260206135747387.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/1/test/Image_20260206135751849.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/1/test/Image_20260206135804518.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/1/test/Image_20260206135807814.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/1/test/Image_20260206135811429.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/1/test/Image_20260206135821497.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/1/test/Image_20260206135824717.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/1/test/Image_20260206135828794.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/1/test/Image_20260206135833643.bmp",
-    "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/1/test/Image_20260206140014480.bmp"
-  ],
-  "ref_image": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/1/ok/Image_20260206135743336.bmp",
-  "loc_method": "line2dup"
+  "ok_files": [],
+  "ng_files": [],
+  "test_files": [],
+  "ref_image": "",
+  "loc_method": "line2dup",
+  "runtime_cam1_serial": "",
+  "runtime_cam2_serial": "",
+  "runtime_capture_policy": "ng_only"
 }

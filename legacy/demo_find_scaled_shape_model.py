@@ -15,7 +15,7 @@ if __package__ in (None, ""):
     if root_str not in sys.path:
         sys.path.insert(0, root_str)
 
-from algorithms.scaled_shape_model import ScaledShapeModel
+from legacy.scaled_shape_model import ScaledShapeModel
 
 
 def _read_gray(path: Path) -> np.ndarray:

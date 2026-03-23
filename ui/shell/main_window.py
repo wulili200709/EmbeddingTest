@@ -94,6 +94,17 @@ from ui.window_common import (
 _RUNTIME_IMPORT_ERROR = detect_runtime_import_error()
 
 
+def _normalize_application_font(app: QtWidgets.QApplication) -> None:
+    font = QtGui.QFont(app.font())
+    if font.pointSizeF() > 0:
+        return
+    if font.pixelSize() > 0:
+        font.setPointSize(max(1, int(round(font.pixelSize() * 0.75))))
+    else:
+        font.setPointSize(10)
+    app.setFont(font)
+
+
 # ---------------------------------------------------------------------------
 # MainWindow
 # ---------------------------------------------------------------------------
@@ -416,6 +427,7 @@ class MainWindow(QtWidgets.QMainWindow):
 def main() -> None:
     _set_windows_app_id(_WINDOWS_APP_ID)
     app = QtWidgets.QApplication([])
+    _normalize_application_font(app)
     app.setApplicationName(_APP_NAME)
     app.setApplicationDisplayName(_APP_NAME)
     app_icon = _app_icon()

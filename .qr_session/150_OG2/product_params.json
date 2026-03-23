@@ -1,5 +1,5 @@
 {
-  "algorithm": "efficientnet_b0",
+  "algorithm": "meanhsv_v",
   "score_mode": "proto",
   "margin": 0.02,
   "topk": 3,

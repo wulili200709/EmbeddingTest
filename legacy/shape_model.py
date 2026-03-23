@@ -12,11 +12,11 @@ except Exception:  # pragma: no cover
     cv2 = None
 
 try:
-    from .scaled_shape_model import ScaledShapeModel
+    from legacy.scaled_shape_model import ScaledShapeModel
 except Exception:  # pragma: no cover
     ScaledShapeModel = None
 
-from .labelme import (
+from algorithms.labelme import (
     labelme_json_of_image,
     try_read_polygon_points_from_labelme,
     try_read_xywh_from_labelme,
@@ -28,7 +28,7 @@ def _require_shape_model() -> None:
     if cv2 is None:
         raise RuntimeError("OpenCV (cv2) is required for shape-model localization")
     if ScaledShapeModel is None:
-        raise RuntimeError("shape_model_like is unavailable")
+        raise RuntimeError("legacy scaled_shape_model is unavailable")
 
 
 def _rect_xywh_to_points(xywh: Tuple[int, int, int, int]) -> List[Tuple[float, float]]:

@@ -2351,6 +2351,8 @@ tradition
 
 默认值写在 qr_gui_pyside6.py，程序实际读取的是 system_passwords.json，你这份本地配置里当前也是 admin123。放行密码目前是同一个文件里的 run_password，现在是 1234
  
+虽然调试页里保留了 _build_shape_model 和 shape_model 分支，但按钮显示条件是 method == "shape_model"，而当前可选定位方式只有 line2dup，见 tool_page_pyside6.py。也就是说它现在更像“留着的备用链路”，不是正常 UI 主入口。
 
+如果你确定以后只保留 line2dup，我下一步可以把整套 shape_model 相关代码移到 legacy。
 
  

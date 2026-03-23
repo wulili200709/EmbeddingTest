@@ -1,0 +1,136 @@
+"""ToolPage helper binding registry."""
+
+from __future__ import annotations
+
+from . import (
+    analysis_tools,
+    auto_roi,
+    auto_roi_flow,
+    camera_debug,
+    debug_camera_flow,
+    roi_ops,
+    test_runner,
+)
+
+_TOOL_PAGE_BINDINGS = (
+    (
+        roi_ops,
+        (
+            "_load_canvas_image",
+            "_set_status_for_current_image",
+            "_current_label",
+            "_update_save_label_text",
+            "_set_overlay_shapes",
+            "_load_shape_for_label",
+            "_on_shapes_changed",
+            "_roi_xywh_from_canvas",
+        ),
+    ),
+    (
+        auto_roi,
+        (
+            "_line2dup_output_labels",
+            "_inspection_item_labels",
+            "_reload_inspection_items",
+            "_missing_roi_files",
+            "_existing_roi_like_labels",
+            "_clear_roi_labels_for_paths",
+        ),
+    ),
+    (
+        auto_roi_flow,
+        (
+            "_set_reference",
+            "_set_ref_from_current",
+            "_pick_ref_image",
+            "_open_line2dup_template_page",
+            "_on_template_editor_dialog_destroyed",
+            "_on_line2dup_model_saved",
+            "_on_line2dup_reference_regions_changed",
+            "_sync_line2dup_recipe_and_items",
+            "_update_loc_ui",
+            "_on_loc_method_changed",
+            "_resolve_autogen_targets",
+            "_autogen_roi_for_images",
+            "_autogen_roi_current_tab",
+            "_autogen_roi_all",
+            "_clear_roi_for_images",
+            "_clear_roi_current_tab",
+        ),
+    ),
+    (
+        test_runner,
+        (
+            "_predict_image",
+            "_populate_results_table",
+            "_daily_test_log_path",
+            "_append_test_log",
+        ),
+    ),
+    (
+        camera_debug,
+        (
+            "_embedding_test_root",
+            "_selected_debug_camera_serial",
+            "_debug_camera_settings_payload_from_ui",
+            "_load_saved_debug_camera_settings_to_ui",
+            "_save_debug_camera_settings",
+            "_set_debug_preview_placeholder",
+            "_show_debug_preview_image",
+            "_set_debug_preview_running",
+            "_selected_debug_camera_info",
+            "_debug_camera_device",
+            "_default_io_mapping_path",
+            "_find_debug_nkio_config_path",
+            "_cleanup_debug_hardware",
+        ),
+    ),
+    (
+        debug_camera_flow,
+        (
+            "_on_debug_camera_param_editing_finished",
+            "_on_debug_camera_trigger_activated",
+            "_save_debug_camera_image",
+            "_toggle_debug_camera_preview",
+            "_start_debug_camera_preview",
+            "_stop_debug_camera_preview",
+            "_on_debug_preview_frame_ready",
+            "_on_debug_preview_error",
+            "_on_debug_preview_finished",
+            "_set_debug_camera_status",
+            "_ensure_debug_camera_services",
+            "_refresh_debug_camera_list",
+            "_on_debug_camera_selected",
+            "_refresh_debug_camera_info",
+            "_connect_debug_camera",
+            "_disconnect_debug_camera",
+            "_refresh_debug_camera_settings",
+            "_apply_debug_camera_settings",
+            "_grab_debug_camera_once",
+            "_open_debug_io",
+            "_close_debug_io",
+            "_refresh_debug_io_snapshot",
+            "_set_debug_output",
+        ),
+    ),
+    (
+        analysis_tools,
+        (
+            "_summarize_test_rows",
+            "_write_test_rows_csv",
+            "_save_test_result_report",
+            "_suggest_margin_from_rows",
+            "_current_tab_paths_and_name",
+            "_load_roi_mask_crop",
+            "_compute_traditional_baseline_metrics",
+            "_save_traditional_baseline_report",
+        ),
+    ),
+)
+
+
+def bind_tool_page(cls):
+    for module, names in _TOOL_PAGE_BINDINGS:
+        for name in names:
+            setattr(cls, name, getattr(module, name))
+    return cls
