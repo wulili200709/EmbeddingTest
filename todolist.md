@@ -2323,3 +2323,34 @@ traditional 工具：独立阈值
 test/session.json 还是 00E76555119
 test2/session.json 已经是新相机 DA9521010
 所以切到 150A_OG 或 test 时，程序恢复了这个产品历史保存的绑定，后面一连接就会去找旧序列号，最终在 camera.py 报 camera with serial '00E76555119' not found。
+
+
+
+intelligence
+  --efficientnet_b0 
+  --mobilenet_v3_small
+  --mobilenet_v3_large
+tradition
+  -- meanhsv_h
+  --meanintensity
+  --meanhsv_v 
+  --meanhsv_s
+
+  学习工具
+  1.高精度EN工具 -> efficientnet_b0
+  2.轻量MN工具 -> mobilenet_v3_small
+  3.均衡MN工具 -> mobilenet_v3_large
+  传统工具
+  1.色相工具 -> meanhsv_h
+  2.灰度工具 -> meanintensity
+  3.明度工具 -> meanhsv_v
+  4.饱和度工具 -> meanhsv_s
+
+# 密码
+  当前管理员密码是 admin123。
+
+默认值写在 qr_gui_pyside6.py，程序实际读取的是 system_passwords.json，你这份本地配置里当前也是 admin123。放行密码目前是同一个文件里的 run_password，现在是 1234
+ 
+
+
+ 

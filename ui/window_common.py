@@ -6,8 +6,8 @@ from typing import Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from application import AlgorithmController, ProductSession
-import line2dup_locator
-import qr_core_proxy as qr_core
+from line2dup.core import locator as line2dup_locator
+import algorithms.proxy as qr_core
 
 
 _RUNTIME_ROI_PALETTE = [

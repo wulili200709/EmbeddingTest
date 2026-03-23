@@ -13,7 +13,7 @@ from domain import (
     save_inspection_items,
     sync_items_with_labels,
 )
-import line2dup_locator
+from line2dup.core import locator as line2dup_locator
 
 if TYPE_CHECKING:
     from application import AlgorithmController, ProductSession

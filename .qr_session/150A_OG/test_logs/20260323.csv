@@ -1,0 +1,2 @@
+﻿timestamp,product,algorithm,score_mode,margin,topk,file_name,gt,pred,diff,sim_ok,sim_ng,value,threshold,match_ms,total_ms,json_name
+2026-03-23T13:27:06,150A_OG,efficientnet_b0,proto,0.05,3,3.bmp,,OK,0.08189898729324341,0.8637826442718506,0.7818836569786072,,,957.9037000003154,1259.8300999998173,3.json

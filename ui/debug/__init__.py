@@ -7,7 +7,7 @@ from importlib import import_module
 
 _SYMBOL_TO_MODULE = {
     "EmbeddingAnalysisDialog": ".embedding_analysis_dialog",
-    "Line2DupTemplateDialog": ".line2dup_template_page_pyside6",
+    "Line2DupTemplateDialog": "line2dup.ui.template_page_pyside6",
     "OverlayShape": ".roi_canvas_pyside6",
     "RoiCanvas": ".roi_canvas_pyside6",
     "pixmap_from_path": ".roi_canvas_pyside6",
@@ -21,7 +21,10 @@ def __getattr__(name: str):
     module_name = _SYMBOL_TO_MODULE.get(name)
     if module_name is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module = import_module(module_name, __name__)
+    if module_name.startswith("."):
+        module = import_module(module_name, __name__)
+    else:
+        module = import_module(module_name)
     return getattr(module, name)
 
 
