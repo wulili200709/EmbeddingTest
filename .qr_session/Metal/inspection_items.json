@@ -4,7 +4,9 @@
     "display_name": "roi1",
     "camera_id": "cam1",
     "roi_label": "roi1",
-    "algorithm_type": "inherit_product",
-    "enabled": true
+    "algorithm_code": "shared_backbone_register",
+    "enabled": true,
+    "params": {},
+    "algorithm_type": "shared_backbone_register"
   }
 ]

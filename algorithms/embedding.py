@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import glob
+import json
 import os
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
@@ -20,8 +21,6 @@ except Exception:  # pragma: no cover
 from .labelme import (
     clamp_roi_xywh,
     labelme_json_of_image,
-    read_roi_from_labelme,
-    read_shape_from_labelme,
 )
 
 
@@ -67,6 +66,130 @@ def load_images(folder: str) -> List[str]:
     return sorted(files)
 
 
+def _load_image_rgb(img_path: str) -> Image.Image:
+    with Image.open(img_path) as image_raw:
+        return image_raw.convert("RGB")
+
+
+@dataclass
+class _ImageRoiContext:
+    img_path: str
+    image: Image.Image
+    width: int
+    height: int
+    image_np: Optional[np.ndarray]
+    shape_by_label: dict[str, dict]
+
+
+def _build_image_roi_context(img_path: str, *, require_shapes: bool) -> _ImageRoiContext:
+    image = _load_image_rgb(img_path)
+    width, height = image.size
+    shape_by_label: dict[str, dict] = {}
+    if require_shapes:
+        jpath = labelme_json_of_image(img_path)
+        if not os.path.exists(jpath):
+            raise FileNotFoundError(f"Missing labelme json: {jpath}")
+        with open(jpath, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        shape_by_label = {
+            str(shape.get("label", "")): shape
+            for shape in data.get("shapes", [])
+            if isinstance(shape, dict) and str(shape.get("label", "")).strip()
+        }
+    return _ImageRoiContext(
+        img_path=img_path,
+        image=image,
+        width=width,
+        height=height,
+        image_np=None,
+        shape_by_label=shape_by_label,
+    )
+
+
+def _shape_bbox_xywh(shape: dict, *, width: int, height: int) -> Tuple[int, int, int, int]:
+    points = np.asarray(shape.get("points", []), dtype=np.float32)
+    if points.size == 0:
+        raise RuntimeError("ROI points empty")
+    x_min, y_min = points.min(axis=0)
+    x_max, y_max = points.max(axis=0)
+    x = int(round(float(x_min)))
+    y = int(round(float(y_min)))
+    w = int(round(float(x_max - x_min)))
+    h = int(round(float(y_max - y_min)))
+    x, y, w, h = clamp_roi_xywh(x, y, w, h, W=width, H=height)
+    return x, y, w, h
+
+
+def _resolve_roi_image(
+    context: _ImageRoiContext,
+    *,
+    label_name: str = "roi",
+    roi_xywh: Optional[Tuple[int, int, int, int]] = None,
+) -> Image.Image:
+    roi_img: Optional[Image.Image] = None
+    if roi_xywh is None:
+        shape = context.shape_by_label.get(label_name)
+        if shape and str(shape.get("shape_type", "rectangle")) == "polygon":
+            points = np.asarray(shape.get("points", []), dtype=np.float32)
+            if points.shape[0] >= 3 and cv2 is not None:
+                x, y, w, h = _shape_bbox_xywh(shape, width=context.width, height=context.height)
+                if context.image_np is None:
+                    context.image_np = np.array(context.image)
+                crop = context.image_np[y : y + h, x : x + w].copy()
+                rel_points = np.round(points - np.array([[x, y]], dtype=np.float32)).astype(np.int32)
+                mask = np.zeros((h, w), dtype=np.uint8)
+                cv2.fillPoly(mask, [rel_points], 255)
+                crop[mask == 0] = 0
+                roi_img = Image.fromarray(crop)
+            else:
+                x, y, w, h = _shape_bbox_xywh(shape, width=context.width, height=context.height)
+        else:
+            if shape is None:
+                raise RuntimeError(f"Label '{label_name}' not found in {labelme_json_of_image(context.img_path)}")
+            x, y, w, h = _shape_bbox_xywh(shape, width=context.width, height=context.height)
+    else:
+        x, y, w, h = roi_xywh
+
+    if roi_img is None:
+        x, y, w, h = clamp_roi_xywh(x, y, w, h, W=context.width, H=context.height)
+        roi_img = context.image.crop((x, y, x + w, y + h))
+    return roi_img
+
+
+@torch.no_grad()
+def embed_batch(
+    img_path: str,
+    feat_net,
+    label_names: Sequence[str],
+    device: Optional[str] = None,
+    roi_xywhs: Optional[Sequence[Optional[Tuple[int, int, int, int]]]] = None,
+) -> np.ndarray:
+    labels = [str(name or "roi").strip() or "roi" for name in label_names]
+    if not labels:
+        raise ValueError("label_names cannot be empty")
+    if roi_xywhs is not None and len(roi_xywhs) != len(labels):
+        raise ValueError("roi_xywhs must have the same length as label_names")
+
+    device = device or get_device()
+    require_shapes = roi_xywhs is None or any(roi_xywh is None for roi_xywh in roi_xywhs)
+    context = _build_image_roi_context(img_path, require_shapes=require_shapes)
+    tensors = []
+    for index, label_name in enumerate(labels):
+        roi_xywh = roi_xywhs[index] if roi_xywhs is not None else None
+        roi_img = _resolve_roi_image(
+            context,
+            label_name=label_name,
+            roi_xywh=roi_xywh,
+        )
+        tensors.append(TF(roi_img))
+
+    batch = torch.stack(tensors, dim=0).to(device)
+    feat = feat_net(batch)
+    feat = F.adaptive_avg_pool2d(feat, 1).flatten(1)
+    feat = F.normalize(feat, dim=1)
+    return feat.detach().cpu().numpy()
+
+
 @torch.no_grad()
 def embed_one(
     img_path: str,
@@ -75,50 +198,14 @@ def embed_one(
     device: Optional[str] = None,
     roi_xywh: Optional[Tuple[int, int, int, int]] = None,
 ) -> np.ndarray:
-    device = device or get_device()
-    with Image.open(img_path) as image_raw:
-        image = image_raw.convert("RGB")
-    width, height = image.size
-
-    roi_img: Optional[Image.Image] = None
-    if roi_xywh is None:
-        jpath = labelme_json_of_image(img_path)
-        if not os.path.exists(jpath):
-            raise FileNotFoundError(f"Missing labelme json: {jpath}")
-        shape = read_shape_from_labelme(jpath, label_name=label_name)
-        if shape and str(shape.get("shape_type", "rectangle")) == "polygon":
-            points = np.asarray(shape.get("points", []), dtype=np.float32)
-            if points.shape[0] >= 3 and cv2 is not None:
-                x_min, y_min = points.min(axis=0)
-                x_max, y_max = points.max(axis=0)
-                x = int(round(float(x_min)))
-                y = int(round(float(y_min)))
-                w = int(round(float(x_max - x_min)))
-                h = int(round(float(y_max - y_min)))
-                x, y, w, h = clamp_roi_xywh(x, y, w, h, W=width, H=height)
-                image_np = np.array(image)
-                crop = image_np[y : y + h, x : x + w].copy()
-                rel_points = np.round(points - np.array([[x, y]], dtype=np.float32)).astype(np.int32)
-                mask = np.zeros((h, w), dtype=np.uint8)
-                cv2.fillPoly(mask, [rel_points], 255)
-                crop[mask == 0] = 0
-                roi_img = Image.fromarray(crop)
-            else:
-                x, y, w, h = read_roi_from_labelme(jpath, label_name=label_name)
-        else:
-            x, y, w, h = read_roi_from_labelme(jpath, label_name=label_name)
-    else:
-        x, y, w, h = roi_xywh
-
-    if roi_img is None:
-        x, y, w, h = clamp_roi_xywh(x, y, w, h, W=width, H=height)
-        roi_img = image.crop((x, y, x + w, y + h))
-
-    tensor = TF(roi_img).unsqueeze(0).to(device)
-    feat = feat_net(tensor)
-    feat = F.adaptive_avg_pool2d(feat, 1).flatten(1)
-    feat = F.normalize(feat, dim=1)
-    return feat[0].detach().cpu().numpy()
+    embeddings = embed_batch(
+        img_path,
+        feat_net,
+        [label_name],
+        device=device,
+        roi_xywhs=[roi_xywh],
+    )
+    return embeddings[0]
 
 
 def embed_many(
@@ -130,7 +217,7 @@ def embed_many(
     labels = [str(name) for name in label_names if str(name).strip()]
     if not labels:
         raise ValueError("label_names cannot be empty")
-    parts = [embed_one(img_path, feat_net, label_name=label, device=device) for label in labels]
+    parts = [emb for emb in embed_batch(img_path, feat_net, labels, device=device)]
     if len(parts) == 1:
         return parts[0]
     vector = np.concatenate(parts, axis=0)
@@ -319,6 +406,7 @@ def predict_one(
 
 __all__ = [
     "RegisterModel",
+    "embed_batch",
     "embed_many",
     "embed_one",
     "get_device",

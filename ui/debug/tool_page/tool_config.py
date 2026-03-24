@@ -36,7 +36,11 @@ def _sync_inspection_items_row_highlight(tool_page) -> None:
     table = getattr(tool_page, "inspection_items_table", None)
     if table is None:
         return
-    selected_row = int(table.currentRow())
+    selection_model = table.selectionModel()
+    if selection_model is not None and selection_model.hasSelection():
+        selected_row = int(table.currentRow())
+    else:
+        selected_row = -1
     for row in range(table.rowCount()):
         is_selected = row == selected_row
         for column in (2, 3):
@@ -217,9 +221,11 @@ def _refresh_inspection_items_table(tool_page) -> None:
         tool_page._inspection_items_table_loading = False
 
     if table.rowCount() > 0:
-        if selected_row < 0 or selected_row >= table.rowCount():
-            selected_row = 0
-        table.setCurrentCell(selected_row, 1)
+        if 0 <= selected_row < table.rowCount():
+            table.setCurrentCell(selected_row, 1)
+        else:
+            table.clearSelection()
+            table.setCurrentItem(None)
     table.setColumnWidth(0, 52)
     table.setColumnWidth(2, 78)
     _sync_inspection_items_row_highlight(tool_page)
@@ -231,6 +237,9 @@ def _refresh_inspection_items_table(tool_page) -> None:
 def _selected_inspection_item_row(tool_page) -> int:
     table = getattr(tool_page, "inspection_items_table", None)
     if table is None:
+        return -1
+    selection_model = table.selectionModel()
+    if selection_model is None or not selection_model.hasSelection():
         return -1
     row = int(table.currentRow())
     if row < 0 or row >= len(tool_page.inspection_items):
@@ -251,6 +260,8 @@ def _on_inspection_items_selection_changed(tool_page) -> None:
     _sync_inspection_items_row_highlight(tool_page)
     item = _selected_inspection_item(tool_page)
     if item is None:
+        tool_page._update_runtime_widgets()
+        tool_page._update_learning_backbone_hint()
         return
     if tool_page.algo.is_learning_tool(item.algorithm_code):
         algorithm = tool_page.algo.current_learning_backbone()
@@ -263,6 +274,10 @@ def _on_inspection_items_selection_changed(tool_page) -> None:
         tool_page._updating_runtime_params = False
     tool_page.algo.product_params.algorithm = algorithm
     tool_page._update_runtime_widgets()
+    tool_page._update_learning_backbone_hint()
+    image_path = tool_page.canvas.image_path()
+    if image_path:
+        tool_page._load_shape_for_label(image_path, tool_page._current_label())
 
 
 def _on_inspection_items_table_item_changed(tool_page, table_item: QtWidgets.QTableWidgetItem) -> None:

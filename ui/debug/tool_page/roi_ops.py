@@ -18,17 +18,36 @@ from ui.roi_overlay_colors import (
     overlay_style_for_label,
 )
 
+_SELECTED_TOOL_COLOR = QtGui.QColor("#00C8C8")
+
+
+def _selected_tool_roi_label(tool_page) -> str:
+    selected_item_fn = getattr(tool_page, "_selected_inspection_item", None)
+    if not callable(selected_item_fn):
+        return ""
+    selected_item = selected_item_fn()
+    if selected_item is None:
+        return ""
+    return str(getattr(selected_item, "roi_label", "") or "").strip()
+
+
+def _overlay_style_for_tool_label(tool_page, img_path: str, label: str) -> tuple[QtGui.QColor, float, bool]:
+    status = tool_page._roi_status_for_path(img_path, label)
+    color, width, dash = overlay_style_for_label(label, status=status)
+    selected_label = _selected_tool_roi_label(tool_page)
+    if label and label == selected_label:
+        return QtGui.QColor(_SELECTED_TOOL_COLOR), max(float(width), 3.0), False
+    return color, width, dash
+
 
 def _roi_overlay_color(tool_page, img_path: str, label: str) -> QtGui.QColor:
-    status = tool_page._roi_status_for_path(img_path, label)
-    color, _width, _dash = overlay_style_for_label(label, status=status)
+    color, _width, _dash = _overlay_style_for_tool_label(tool_page, img_path, label)
     return color
 
 
 def _canvas_roi_style_for_label(tool_page, img_path: str, label_name: str) -> tuple[QtGui.QColor, bool, float]:
     label = str(label_name or "").strip()
-    status = tool_page._roi_status_for_path(img_path, label)
-    color, width, dash = overlay_style_for_label(label, status=status)
+    color, width, dash = _overlay_style_for_tool_label(tool_page, img_path, label)
     return color, dash, width
 
 
@@ -130,13 +149,13 @@ def _set_overlay_shapes(tool_page, img_path: str, current_label: str) -> None:
         if label == current_label:
             continue
         seen_labels.add(label)
-        color, width, dash = overlay_style_for_label(label, status=tool_page._roi_status_for_path(img_path, label))
+        color, width, dash = _overlay_style_for_tool_label(tool_page, img_path, label)
         add_shape(label, color, width=width, dash=dash)
 
     for label in ["anchor", "roi", "anchor_mask"]:
         if label == current_label or label in seen_labels:
             continue
-        color, width, dash = overlay_style_for_label(label, status=tool_page._roi_status_for_path(img_path, label))
+        color, width, dash = _overlay_style_for_tool_label(tool_page, img_path, label)
         add_shape(label, color, width=width, dash=dash)
 
     tool_page.canvas.set_overlays(overlays)

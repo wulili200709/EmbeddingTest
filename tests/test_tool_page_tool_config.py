@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import json
 import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtGui, QtWidgets
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -16,99 +16,103 @@ root_str = str(ROOT)
 if root_str not in sys.path:
     sys.path.insert(0, root_str)
 
+from algorithms.registry import SHARED_BACKBONE_ALGORITHM_CODE
 from domain.inspection_items import InspectionItem
-from algorithms.registry import is_learning_tool_algorithm
-from ui.debug.tool_page import tool_config
+from ui.debug.tool_page import roi_ops, tool_config
 
 
-class _FakeSignal:
-    def __init__(self) -> None:
-        self.count = 0
+class _DummyAlgo:
+    def __init__(self, product_dir: str) -> None:
+        self.product_params = SimpleNamespace(algorithm="")
+        self._product_dir = product_dir
 
-    def emit(self) -> None:
-        self.count += 1
-
-
-class _FakeAlgo:
-    def __init__(self) -> None:
-        self.product_params = type("Params", (), {"algorithm": "", "traditional_models": {}})()
+    def is_learning_tool(self, algorithm_code: str) -> bool:
+        return algorithm_code == SHARED_BACKBONE_ALGORITHM_CODE
 
     def current_learning_backbone(self) -> str:
-        return "mobilenet_v3_small"
+        return "efficientnet_b0"
 
-    def is_learning_tool(self, code) -> bool:
-        return is_learning_tool_algorithm(code)
+    def embedding_model_path(self, backbone: str, product_dir: str, model_key: str | None = None) -> str:
+        suffix = model_key or "shared"
+        return os.path.join(product_dir, f"{suffix}_{backbone}.npz")
 
-    def resolve_tool_algorithm(self, code) -> str:
-        return str(code or "").strip()
+    def algorithm_display_name(self, algorithm: str) -> str:
+        return algorithm
 
-    def embedding_model_path(self, algorithm: str, product_dir: str, *, model_key: object = "") -> str:
-        suffix = f"{model_key}_register_model_{algorithm}.npz" if model_key else f"register_model_{algorithm}.npz"
-        return str(Path(product_dir) / suffix)
+    def resolve_tool_algorithm(self, algorithm_code: str) -> str:
+        return str(algorithm_code or "").strip()
 
-    def algorithm_display_name(self, algorithm: object) -> str:
-        return str(algorithm or "")
+    def get_traditional_model_dict(self, algorithm: str, model_key: str | None = None):
+        return None
 
-    def traditional_model_storage_key(self, algorithm: str, *, model_key: object = "") -> str:
-        return f"{algorithm}::{model_key}" if model_key else algorithm
+    def traditional_model_storage_key(self, algorithm: str, model_key: str | None = None) -> str:
+        return f"{algorithm}::{model_key or 'shared'}"
 
-    def get_traditional_model_dict(self, algorithm: str, *, model_key: object = ""):
-        key = self.traditional_model_storage_key(algorithm, model_key=model_key)
-        return self.product_params.traditional_models.get(key) or self.product_params.traditional_models.get(algorithm)
+
+class _DummyCanvas:
+    def __init__(self) -> None:
+        self._path: str | None = None
+
+    def image_path(self) -> str | None:
+        return self._path
 
 
 class _ToolConfigHarness:
-    _selected_inspection_item_row = tool_config._selected_inspection_item_row
-    _selected_inspection_item = tool_config._selected_inspection_item
-    _on_inspection_items_selection_changed = tool_config._on_inspection_items_selection_changed
-    _persist_inspection_items = tool_config._persist_inspection_items
-    _refresh_inspection_items_table = tool_config._refresh_inspection_items_table
-    _update_learning_backbone_hint = tool_config._update_learning_backbone_hint
-    _on_inspection_items_table_item_changed = tool_config._on_inspection_items_table_item_changed
-    _on_inspection_item_camera_changed = tool_config._on_inspection_item_camera_changed
-    _on_inspection_item_algorithm_changed = tool_config._on_inspection_item_algorithm_changed
-
-    def __init__(self, inspection_items_path: str) -> None:
-        self.session = type(
-            "Session",
-            (),
-            {
-                "inspection_items_path": inspection_items_path,
-                "product_dir": str(Path(inspection_items_path).parent),
-            },
-        )()
-        self.algo = _FakeAlgo()
+    def __init__(self) -> None:
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.session = SimpleNamespace(
+            product_dir=self._tmpdir.name,
+            inspection_items_path=os.path.join(self._tmpdir.name, "inspection_items.json"),
+        )
+        self.algo = _DummyAlgo(self.session.product_dir)
         self.inspection_items = [
             InspectionItem(
                 item_id="roi1",
-                display_name="ROI1",
+                display_name="roi1",
                 camera_id="cam1",
                 roi_label="roi1",
-                algorithm_code="shared_backbone_register",
-            ),
-            InspectionItem(
-                item_id="roi2",
-                display_name="ROI2",
-                camera_id="cam2",
-                roi_label="roi2",
-                algorithm_code="meanintensity",
-            ),
+                algorithm_code=SHARED_BACKBONE_ALGORITHM_CODE,
+            )
         ]
+        self.inspection_items_table = QtWidgets.QTableWidget(0, 5)
+        self.lbl_tool_config_hint = QtWidgets.QLabel("")
+        self.lbl_tool_config_hint.hide()
+        self.canvas = _DummyCanvas()
         self._inspection_items_table_loading = False
         self._updating_runtime_params = False
-        self.inspectionItemsChanged = _FakeSignal()
-        self.cmb_mode = QtWidgets.QComboBox()
-        self.cmb_mode.setStyleSheet("QComboBox{font-size:12px;}")
-        self.lbl_tool_config_hint = QtWidgets.QLabel("")
-        self.inspection_items_table = QtWidgets.QTableWidget(0, 5)
-        self.inspection_items_table.setHorizontalHeaderLabels(["启用", "名称", "相机", "算法", "状态"])
-        self.inspection_items_table.itemChanged.connect(self._on_inspection_items_table_item_changed)
         self.current_algorithm_value = ""
+        self.runtime_update_calls = 0
+        self.load_shape_calls: list[tuple[str, str]] = []
+
+    def cleanup(self) -> None:
+        self._tmpdir.cleanup()
+
     def _set_current_algorithm(self, algorithm: str) -> None:
-        self.current_algorithm_value = str(algorithm or "")
+        self.current_algorithm_value = algorithm
 
     def _update_runtime_widgets(self) -> None:
+        self.runtime_update_calls += 1
+
+    def _load_shape_for_label(self, image_path: str, label_name: str) -> None:
+        self.load_shape_calls.append((image_path, label_name))
+
+    def _current_label(self) -> str:
+        return "roi"
+
+    def _roi_status_for_path(self, image_path: str, label: str):
         return None
+
+    def _refresh_inspection_items_table(self) -> None:
+        tool_config._refresh_inspection_items_table(self)
+
+    def _selected_inspection_item(self):
+        return tool_config._selected_inspection_item(self)
+
+    def _on_inspection_items_selection_changed(self) -> None:
+        tool_config._on_inspection_items_selection_changed(self)
+
+    def _update_learning_backbone_hint(self) -> None:
+        tool_config._update_learning_backbone_hint(self)
 
 
 class ToolPageToolConfigTest(unittest.TestCase):
@@ -116,46 +120,54 @@ class ToolPageToolConfigTest(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
-    def test_tool_config_table_persists_algorithm_and_enabled_changes(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            inspection_items_path = str(Path(tmpdir) / "inspection_items.json")
-            harness = _ToolConfigHarness(inspection_items_path)
-
+    def test_refresh_does_not_select_any_tool_by_default(self) -> None:
+        harness = _ToolConfigHarness()
+        try:
             harness._refresh_inspection_items_table()
 
-            self.assertEqual(harness.inspection_items_table.rowCount(), 2)
-            self.assertEqual(harness.inspection_items_table.columnCount(), 5)
-            headers = [
-                harness.inspection_items_table.horizontalHeaderItem(i).text()
-                for i in range(harness.inspection_items_table.columnCount())
-            ]
-            self.assertEqual(headers, ["启用", "名称", "相机", "算法", "状态"])
-            self.assertIn("当前工具：ROI1", harness.lbl_tool_config_hint.text())
-            self.assertTrue(harness.lbl_tool_config_hint.isVisible())
-            self.assertEqual(harness.current_algorithm_value, "mobilenet_v3_small")
-            self.assertEqual(harness.inspection_items_table.item(0, 4).text(), "未训练")
-            self.assertEqual(harness.inspection_items_table.item(1, 4).text(), "未标定")
+            self.assertEqual(harness.inspection_items_table.currentRow(), -1)
+            self.assertIsNone(harness._selected_inspection_item())
+            self.assertEqual(harness.lbl_tool_config_hint.text(), "")
+            self.assertFalse(harness.lbl_tool_config_hint.isVisible())
+            self.assertEqual(harness.current_algorithm_value, "")
+            self.assertGreaterEqual(harness.runtime_update_calls, 1)
+        finally:
+            harness.cleanup()
 
-            algo_combo = harness.inspection_items_table.cellWidget(0, 3)
-            self.assertIsNotNone(algo_combo)
-            self.assertEqual(algo_combo.currentData(), "shared_backbone_register")
-            self.assertEqual(algo_combo.currentText(), "学习工具")
-            algo_combo.setCurrentIndex(algo_combo.findData("meanintensity"))
-            self.assertEqual(harness.inspection_items_table.item(0, 4).text(), "未标定")
+    def test_selected_tool_roi_uses_cyan_overlay_style(self) -> None:
+        harness = _ToolConfigHarness()
+        try:
+            harness._refresh_inspection_items_table()
+            harness.inspection_items_table.setCurrentCell(0, 1)
+            harness._on_inspection_items_selection_changed()
 
-            enabled_item = harness.inspection_items_table.item(1, 0)
-            self.assertIsNotNone(enabled_item)
-            enabled_item.setCheckState(QtCore.Qt.CheckState.Unchecked)
-            self.assertEqual(harness.inspection_items_table.item(1, 4).text(), "已禁用")
+            color, width, dash = roi_ops._overlay_style_for_tool_label(harness, "img.png", "roi1")
 
-            self.assertEqual(harness.inspection_items[0].algorithm_code, "meanintensity")
-            self.assertFalse(harness.inspection_items[1].enabled)
-            self.assertGreaterEqual(harness.inspectionItemsChanged.count, 2)
+            self.assertEqual(QtGui.QColor(color).name().lower(), "#00c8c8")
+            self.assertGreaterEqual(width, 3.0)
+            self.assertFalse(dash)
+            self.assertEqual(harness.current_algorithm_value, "efficientnet_b0")
+        finally:
+            harness.cleanup()
 
-            with open(inspection_items_path, "r", encoding="utf-8") as f:
-                payload = json.load(f)
-            self.assertEqual(payload[0]["algorithm_code"], "meanintensity")
-            self.assertFalse(payload[1]["enabled"])
+    def test_clear_selection_removes_partial_highlight_state(self) -> None:
+        harness = _ToolConfigHarness()
+        try:
+            harness._refresh_inspection_items_table()
+            harness.inspection_items_table.setCurrentCell(0, 1)
+            harness.inspection_items_table.clearSelection()
+            harness._on_inspection_items_selection_changed()
+
+            camera_combo = harness.inspection_items_table.cellWidget(0, 2)
+            algorithm_combo = harness.inspection_items_table.cellWidget(0, 3)
+
+            self.assertIsNotNone(camera_combo)
+            self.assertIsNotNone(algorithm_combo)
+            self.assertIn("background:#3a3a3a", camera_combo.styleSheet())
+            self.assertIn("background:#3a3a3a", algorithm_combo.styleSheet())
+            self.assertEqual(harness.lbl_tool_config_hint.text(), "")
+        finally:
+            harness.cleanup()
 
 
 if __name__ == "__main__":

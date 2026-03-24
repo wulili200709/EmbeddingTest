@@ -1,7 +1,36 @@
 {
   "algorithm": "efficientnet_b0",
-  "score_mode": "proto",
-  "margin": 0.05,
+  "learning_backbone": "efficientnet_b0",
+  "score_mode": "topk",
+  "margin": 0.02,
   "topk": 3,
-  "traditional_models": {}
+  "traditional_models": {
+    "meanintensity::cam1__roi2": {
+      "algorithm": "meanintensity",
+      "threshold": 80.17198944091797,
+      "ok_when": "less_equal",
+      "ok_mean": 74.67728169759114,
+      "ng_mean": 94.62178039550781,
+      "accuracy": 0.9,
+      "roi_label": "roi2"
+    },
+    "meanintensity::cam1__roi3": {
+      "algorithm": "meanintensity",
+      "threshold": 73.8577651977539,
+      "ok_when": "less_equal",
+      "ok_mean": 50.52641677856445,
+      "ng_mean": 107.72391815185547,
+      "accuracy": 1.0,
+      "roi_label": "roi3"
+    },
+    "meanhsv_s::cam1__roi2": {
+      "algorithm": "meanhsv_s",
+      "threshold": 92.04428100585938,
+      "ok_when": "less_equal",
+      "ok_mean": 59.06904697418213,
+      "ng_mean": 166.14871978759766,
+      "accuracy": 1.0,
+      "roi_label": "roi2"
+    }
+  }
 }

@@ -124,6 +124,7 @@ class _FakeInspectionExecutor:
             result="NG",
             match_ms=12.5,
             infer_ms=9.0,
+            total_ms=9.0,
             raw_row={
                 "item_rows": [
                     {"pred": "OK", "diff": 0.1},

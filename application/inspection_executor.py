@@ -44,6 +44,7 @@ class InspectionExecutionResponse:
     raw_row: dict | None = None
     match_ms: float = 0.0
     infer_ms: float = 0.0
+    total_ms: float = 0.0
     item_results: List[InspectionItemResult] = field(default_factory=list)
 
 
@@ -72,12 +73,19 @@ class InspectionExecutor:
                 raw_row=row,
                 match_ms=match_ms,
                 infer_ms=infer_ms,
+                total_ms=float(row.get("total_ms") or infer_ms or 0.0),
                 item_results=[],
             )
 
         item_results: List[InspectionItemResult] = []
         item_rows: List[dict] = []
         enabled_item_results: List[InspectionItemResult] = []
+        enabled_items = [item for item in request.items if item.enabled]
+        batch_rows: List[dict] | None = None
+        batch_predict = getattr(self._predictor, "predict_items_batch", None)
+        if callable(batch_predict) and enabled_items:
+            batch_rows = [dict(row) for row in batch_predict(request.image_path, items=enabled_items)]
+        enabled_index = 0
 
         for item in request.items:
             if not item.enabled:
@@ -95,14 +103,18 @@ class InspectionExecutor:
                 )
                 continue
 
-            roi_label = str(item.roi_label or "").strip()
-            labels_override = [roi_label] if roi_label else None
-            row = self._predictor.predict_image(
-                request.image_path,
-                labels_override=labels_override,
-                algorithm_override=item.algorithm_code,
-                model_key_override=item.model_key,
-            )
+            if batch_rows is not None:
+                row = dict(batch_rows[enabled_index]) if enabled_index < len(batch_rows) else {}
+            else:
+                roi_label = str(item.roi_label or "").strip()
+                labels_override = [roi_label] if roi_label else None
+                row = self._predictor.predict_image(
+                    request.image_path,
+                    labels_override=labels_override,
+                    algorithm_override=item.algorithm_code,
+                    model_key_override=item.model_key,
+                )
+            enabled_index += 1
             item_rows.append(dict(row))
             item_result = InspectionItemResult(
                 item_id=item.item_id,
@@ -124,6 +136,7 @@ class InspectionExecutor:
                 result="OK",
                 detail="",
                 raw_row=None,
+                total_ms=0.0,
                 item_results=item_results,
             )
 
@@ -133,6 +146,7 @@ class InspectionExecutor:
             default=0.0,
         )
         infer_ms = sum(self._extract_timing_fields(row)[1] for row in item_rows)
+        total_ms = match_ms + infer_ms if (match_ms > 0.0 or infer_ms > 0.0) else 0.0
         camera_detail = self._build_camera_detail(
             enabled_item_results,
             match_ms=match_ms,
@@ -148,9 +162,11 @@ class InspectionExecutor:
                 "item_rows": item_rows,
                 "match_ms": match_ms,
                 "infer_ms": infer_ms,
+                "total_ms": total_ms,
             },
             match_ms=match_ms,
             infer_ms=infer_ms,
+            total_ms=total_ms,
             item_results=item_results,
         )
 

@@ -28,6 +28,7 @@ class _DummyCanvas:
 
 class _ToolPageSelectionHarness:
     _current_selected_path = ToolPage._current_selected_path
+    _clear_selected_inspection_item = ToolPage._clear_selected_inspection_item
     _show_selected_image_path = ToolPage._show_selected_image_path
     _on_select_ok = ToolPage._on_select_ok
     _on_select_ng = ToolPage._on_select_ng
@@ -46,6 +47,8 @@ class _ToolPageSelectionHarness:
         self.ng_files: list[str] = []
         self.test_files: list[str] = []
         self.canvas = _DummyCanvas()
+        self.inspection_items_table = QtWidgets.QTableWidget(1, 1)
+        self.inspection_items_table.setItem(0, 0, QtWidgets.QTableWidgetItem("roi1"))
         self.load_calls: list[str] = []
         self.status_calls: list[str] = []
 
@@ -90,6 +93,19 @@ class ToolPageSelectionFlowTest(unittest.TestCase):
 
         self.assertEqual(harness.load_calls, [])
         self.assertEqual(harness.status_calls, ["test_a.png"])
+
+    def test_selecting_image_clears_inspection_item_selection(self) -> None:
+        harness = _ToolPageSelectionHarness()
+        harness.ok_files = ["ok_a.png"]
+        harness.ok_list.addItem("ok_a.png")
+        harness.tabs.setCurrentIndex(0)
+        harness.ok_list.setCurrentRow(0)
+        harness.inspection_items_table.setCurrentCell(0, 0)
+
+        harness._on_select_ok()
+
+        self.assertEqual(harness.inspection_items_table.currentRow(), -1)
+        self.assertEqual(harness.status_calls, ["ok_a.png"])
 
     def test_application_font_normalization_sets_valid_point_size(self) -> None:
         app = self.app

@@ -1444,9 +1444,17 @@ class ToolPage(QtWidgets.QWidget):
     def _show_selected_image_path(self, path: Optional[str]) -> None:
         if not path:
             return
+        self._clear_selected_inspection_item()
         if self.canvas.image_path() != path:
             self._load_canvas_image(path)
         self._set_status_for_current_image(path)
+
+    def _clear_selected_inspection_item(self) -> None:
+        table = getattr(self, "inspection_items_table", None)
+        if table is None:
+            return
+        table.clearSelection()
+        table.setCurrentItem(None)
 
     def _on_select_ok(self) -> None:
         self._show_selected_image_path(self._current_selected_path())
@@ -2016,6 +2024,11 @@ class ToolPage(QtWidgets.QWidget):
         rows: List[Dict[str, object]] = []
         log_names: List[str] = []
         raw_rows = []
+        match_ms = float(response.match_ms or 0.0)
+        infer_ms = float(response.infer_ms or 0.0)
+        total_ms = float(response.total_ms or 0.0)
+        if total_ms <= 0.0 and (match_ms > 0.0 or infer_ms > 0.0):
+            total_ms = match_ms + infer_ms
         if isinstance(response.raw_row, dict):
             if isinstance(response.raw_row.get("item_rows"), list):
                 raw_rows = [dict(row) for row in response.raw_row.get("item_rows", [])]
@@ -2033,6 +2046,8 @@ class ToolPage(QtWidgets.QWidget):
                     else self.algo.resolve_tool_algorithm(item_result.algorithm_code)
                 )
                 row.setdefault("pred", item_result.result)
+                row["match_ms"] = match_ms if match_ms > 0.0 else row.get("match_ms")
+                row["total_ms"] = total_ms if total_ms > 0.0 else row.get("total_ms")
                 row["tool_name"] = display_name
                 row["camera_id"] = item_result.camera_id
                 row["roi_label"] = roi_label
@@ -2045,6 +2060,8 @@ class ToolPage(QtWidgets.QWidget):
         else:
             row = dict(raw_rows[0]) if raw_rows else {}
             row.setdefault("pred", response.result)
+            row["match_ms"] = match_ms if match_ms > 0.0 else row.get("match_ms")
+            row["total_ms"] = total_ms if total_ms > 0.0 else row.get("total_ms")
             labels_override = (
                 self._line2dup_output_labels()
                 if self.loc_method == "line2dup"
@@ -2063,8 +2080,6 @@ class ToolPage(QtWidgets.QWidget):
             for row in rows
             if str(row.get("pred", "NG") or "NG") != "OK"
         ]
-        match_ms = float(response.match_ms or 0.0)
-        infer_ms = float(response.infer_ms or 0.0)
         status_text = (
             f"Status: TEST={os.path.basename(p)}  overall={overall_pred}"
             f"  tools={len(rows)}"

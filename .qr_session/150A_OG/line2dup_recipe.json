@@ -1,13 +1,13 @@
 {
   "model_path": "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\150A_OG\\line2dup_model.json",
-  "reference_image": "C:/Users/goney/Desktop/EmbeddingTest/3/TEST/Image_20260204164121943.bmp",
-  "class_id": "150A_OG",
+  "reference_image": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/.qr_session/20261026_250A/OK/debug_cam_20260324_101710_966290.png",
+  "class_id": "20261026_250A",
   "backend": "fusionv2",
-  "threshold": 20.0,
+  "threshold": 30.0,
   "auto_threshold_sweep": false,
   "threshold_sweep_step": 10,
   "threshold_sweep_min": 20,
-  "nms_iou": 0.5,
+  "nms_iou": 0.3,
   "topk": 1,
   "crop_stride": 0,
   "use_scene_mask": false,
@@ -17,44 +17,72 @@
   "reference_shape_type": "rectangle",
   "reference_points": [
     [
-      1098.0,
-      1034.0
+      1029.0,
+      764.0
     ],
     [
-      1137.0,
-      1374.0
+      1277.0,
+      1014.0
     ]
   ],
   "reference_regions": [
     {
       "reference_label": "roi1",
       "output_label": "roi1",
-      "display_name": "X",
+      "display_name": "二次锁",
       "shape_type": "rectangle",
       "points": [
         [
-          1098.0,
-          1034.0
+          1029.0,
+          764.0
         ],
         [
-          1137.0,
-          1374.0
+          1277.0,
+          1014.0
         ]
       ]
     },
     {
       "reference_label": "roi2",
       "output_label": "roi2",
-      "display_name": "W",
+      "display_name": "密封圈1",
+      "shape_type": "polygon",
+      "points": [
+        [
+          412.0,
+          1277.0
+        ],
+        [
+          894.0,
+          1323.0
+        ],
+        [
+          880.0,
+          1578.0
+        ],
+        [
+          419.0,
+          1542.0
+        ],
+        [
+          410.0,
+          1275.0
+        ]
+      ]
+    },
+    {
+      "reference_label": "roi3",
+      "output_label": "roi3",
+      "display_name": "密封圈2",
       "shape_type": "rectangle",
       "points": [
         [
-          1000.0,
-          904.0
+          1435.0,
+          407.0
         ],
         [
-          1036.0,
-          1041.0
+          1636.0,
+          1306.0
         ]
       ]
     }

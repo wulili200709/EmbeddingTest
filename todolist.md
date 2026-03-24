@@ -2724,3 +2724,64 @@ ok_min = 90
 现场看报表时更容易解释
 一句话说：
 这个策略不是改变“先看准确率”，而是在“准确率并列最优”时，再用“离 OK/NG 分界中点最近”来选更合理的阈值。
+
+
+# 已优化
+1.现在是“单次触发内共享前处理 + batch forward”一起生效。
+
+主要变化在 embedding.py (line 70)：
+
+同一张图现在只读一次 image
+同一张图的 labelme json 只读一次
+所有 ROI 的 shape 先建成 label -> shape 映射
+embed_batch() 再批量裁 ROI、stack 后一次 forward
+
+2.[ROI1, ROI2, ROI3] 先裁出来
+stack 成 batch
+一次 forward
+再各自和自己的模型做 OK/NG 比较
+
+# ms
+调试界面：
+match_ms：不是 3 个 ROI 的最大推理时间，而是这次 line2dup 定位耗时。因为 3 个 ROI 共用同一次定位，所以聚合时取 max，本质上就是这一次定位时间。
+infer_ms：不是最大值，是 3 个 ROI 判定时间的总和。
+所以多 ROI 场景下，total_ms = match_ms + infer_ms
+
+# 双相机流程
+开 cam1 光源
+触发 cam1 拍照
+cam1 一拿到图，立刻关 cam1 光源
+把 cam1 图像丢到后台线程开始检测
+同时开 cam2 光源
+触发 cam2 拍照
+cam2 一拿到图，立刻关 cam2 光源
+把 cam2 图像丢到后台线程开始检测
+等 cam1 和 cam2 两边结果都回来
+最终结果做 AND
+也就是 cam1=OK 且 cam2=OK 才是总 OK
+
+## 核心原则
+拍照链建议串行
+算法链建议并行
+汇总链最后统一收口
+## 状态机可以这样分
+
+Idle
+CaptureCam1
+InferCam1Running
+CaptureCam2
+InferCam1Cam2Running
+Finalize
+# 总时间
+拍1 + max(算1, 拍2 + 算2后半段)
+实际总时间会明显更短
+结果结构建议
+## 每次检测保存：
+
+cam1_capture_path
+cam1_result
+cam1_detail
+cam2_capture_path
+cam2_result
+cam2_detail
+final_result = cam1_result AND cam2_result
