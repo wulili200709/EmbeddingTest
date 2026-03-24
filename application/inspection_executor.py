@@ -24,6 +24,8 @@ class PredictorProtocol(Protocol):
         *,
         feat_net=None,
         labels_override: List[str] | None = None,
+        algorithm_override: str | None = None,
+        model_key_override: str | None = None,
     ) -> dict: ...
 
 
@@ -74,43 +76,8 @@ class InspectionExecutor:
             )
 
         item_results: List[InspectionItemResult] = []
-        enabled_items = [item for item in request.items if item.enabled]
-
-        if not enabled_items:
-            for item in request.items:
-                item_results.append(
-                    InspectionItemResult(
-                        item_id=item.item_id,
-                        display_name=item.display_name,
-                        camera_id=item.camera_id,
-                        roi_label=item.roi_label,
-                        enabled=False,
-                        result="DISABLED",
-                    )
-                )
-            return InspectionExecutionResponse(
-                camera_id=request.camera_id,
-                result="OK",
-                detail="",
-                raw_row=None,
-                item_results=item_results,
-            )
-
-        labels_override: List[str] = []
-        for item in enabled_items:
-            roi_label = str(item.roi_label or "").strip()
-            if roi_label and roi_label not in labels_override:
-                labels_override.append(roi_label)
-
-        # Keep runtime semantics aligned with debug TEST:
-        # one line2dup localization + one multi-ROI prediction per camera image.
-        row = self._predictor.predict_image(
-            request.image_path,
-            labels_override=labels_override or None,
-        )
-        final_result = str(row.get("pred", "NG") or "NG")
-        camera_detail = self._build_detail(row)
-        match_ms, infer_ms = self._extract_timing_fields(row)
+        item_rows: List[dict] = []
+        enabled_item_results: List[InspectionItemResult] = []
 
         for item in request.items:
             if not item.enabled:
@@ -120,29 +87,68 @@ class InspectionExecutor:
                         display_name=item.display_name,
                         camera_id=item.camera_id,
                         roi_label=item.roi_label,
+                        algorithm_code=item.algorithm_code,
                         enabled=False,
+                        params=dict(item.params or {}),
                         result="DISABLED",
                     )
                 )
                 continue
 
-            item_results.append(
-                InspectionItemResult(
-                    item_id=item.item_id,
-                    display_name=item.display_name,
-                    camera_id=item.camera_id,
-                    roi_label=item.roi_label,
-                    enabled=True,
-                    result=final_result,
-                    detail=camera_detail,
-                )
+            roi_label = str(item.roi_label or "").strip()
+            labels_override = [roi_label] if roi_label else None
+            row = self._predictor.predict_image(
+                request.image_path,
+                labels_override=labels_override,
+                algorithm_override=item.algorithm_code,
+                model_key_override=item.model_key,
             )
+            item_rows.append(dict(row))
+            item_result = InspectionItemResult(
+                item_id=item.item_id,
+                display_name=item.display_name,
+                camera_id=item.camera_id,
+                roi_label=item.roi_label,
+                algorithm_code=item.algorithm_code,
+                enabled=True,
+                params=dict(item.params or {}),
+                result=str(row.get("pred", "NG") or "NG"),
+                detail=self._build_detail(row),
+            )
+            item_results.append(item_result)
+            enabled_item_results.append(item_result)
+
+        if not enabled_item_results:
+            return InspectionExecutionResponse(
+                camera_id=request.camera_id,
+                result="OK",
+                detail="",
+                raw_row=None,
+                item_results=item_results,
+            )
+
+        final_result = "OK" if all(item.result == "OK" for item in enabled_item_results) else "NG"
+        match_ms = max(
+            (self._extract_timing_fields(row)[0] for row in item_rows),
+            default=0.0,
+        )
+        infer_ms = sum(self._extract_timing_fields(row)[1] for row in item_rows)
+        camera_detail = self._build_camera_detail(
+            enabled_item_results,
+            match_ms=match_ms,
+            infer_ms=infer_ms,
+        )
 
         return InspectionExecutionResponse(
             camera_id=request.camera_id,
             result=final_result,
             detail=camera_detail,
-            raw_row=row,
+            raw_row={
+                "pred": final_result,
+                "item_rows": item_rows,
+                "match_ms": match_ms,
+                "infer_ms": infer_ms,
+            },
             match_ms=match_ms,
             infer_ms=infer_ms,
             item_results=item_results,
@@ -169,6 +175,53 @@ class InspectionExecutor:
             infer_source = row.get("total_ms")
         infer_ms = float(infer_source or 0.0) if infer_source is not None else 0.0
         return match_ms, infer_ms
+
+    @staticmethod
+    def _build_camera_detail(
+        item_results: List[InspectionItemResult],
+        *,
+        match_ms: float,
+        infer_ms: float,
+    ) -> str:
+        parts: List[str] = []
+        ng_items = [item for item in item_results if item.result == "NG"]
+        if ng_items:
+            parts.append(
+                "NG: " + ", ".join(
+                    item.display_name or item.item_id or item.roi_label or "item"
+                    for item in ng_items
+                )
+            )
+            if len(ng_items) == 1 and ng_items[0].detail:
+                detail = InspectionExecutor._strip_timing_tokens(ng_items[0].detail)
+                if detail:
+                    parts.append(detail)
+        elif len(item_results) == 1:
+            if item_results[0].detail:
+                detail = InspectionExecutor._strip_timing_tokens(item_results[0].detail)
+                if detail:
+                    parts.append(detail)
+                else:
+                    parts.append(f"{item_results[0].display_name or item_results[0].item_id or 'item'}=OK")
+            else:
+                parts.append(f"{item_results[0].display_name or item_results[0].item_id or 'item'}=OK")
+        else:
+            parts.append(f"{len(item_results)} items OK")
+
+        if match_ms > 0:
+            parts.append(f"match={match_ms:.1f}ms")
+        if infer_ms > 0:
+            parts.append(f"infer={infer_ms:.1f}ms")
+        return " ".join(part for part in parts if part)
+
+    @staticmethod
+    def _strip_timing_tokens(detail: str) -> str:
+        tokens = []
+        for token in str(detail or "").split():
+            if token.startswith(("match=", "infer=", "total=")):
+                continue
+            tokens.append(token)
+        return " ".join(tokens)
 
 
 __all__ = ["InspectionExecutionRequest", "InspectionExecutionResponse", "InspectionExecutor"]

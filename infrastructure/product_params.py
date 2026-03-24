@@ -9,6 +9,7 @@ from typing import Any, Dict
 @dataclass
 class ProductRuntimeParams:
     algorithm: str = ""
+    learning_backbone: str = ""
     score_mode: str = "proto"
     margin: float = 0.02
     topk: int = 3
@@ -21,6 +22,7 @@ class ProductRuntimeParams:
             traditional_models = {}
         return cls(
             algorithm=str(data.get("algorithm", "")).strip(),
+            learning_backbone=str(data.get("learning_backbone", "")).strip(),
             score_mode=str(data.get("score_mode", "proto")),
             margin=float(data.get("margin", 0.02)),
             topk=int(data.get("topk", 3)),

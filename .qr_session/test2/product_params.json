@@ -1,6 +1,7 @@
 {
-  "algorithm": "efficientnet_b0",
-  "score_mode": "proto",
+  "algorithm": "meanintensity",
+  "learning_backbone": "efficientnet_b0",
+  "score_mode": "topk",
   "margin": 0.02,
   "topk": 3,
   "traditional_models": {}

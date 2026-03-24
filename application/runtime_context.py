@@ -27,6 +27,8 @@ class RuntimePredictorProtocol(Protocol):
         *,
         feat_net=None,
         labels_override: List[str] | None = None,
+        algorithm_override: str | None = None,
+        model_key_override: str | None = None,
     ) -> Dict[str, object]: ...
 
 
@@ -39,7 +41,7 @@ class RuntimeContextProtocol(RuntimePredictorProtocol, Protocol):
 
     def current_algorithm(self) -> str: ...
 
-    def load_embedding_model(self, algorithm: str) -> None: ...
+    def load_embedding_model(self, algorithm: str, model_key: str | None = None) -> None: ...
 
     def reload(self) -> None: ...
 
@@ -59,8 +61,8 @@ class ToolPageRuntimeContext:
     def current_algorithm(self) -> str:
         return self.tool_page.current_algorithm()
 
-    def load_embedding_model(self, algorithm: str) -> None:
-        self.tool_page.load_embedding_model(algorithm)
+    def load_embedding_model(self, algorithm: str, model_key: str | None = None) -> None:
+        self.tool_page.load_embedding_model(algorithm, model_key=model_key)
 
     def predict_image(
         self,
@@ -68,11 +70,15 @@ class ToolPageRuntimeContext:
         *,
         feat_net=None,
         labels_override: List[str] | None = None,
+        algorithm_override: str | None = None,
+        model_key_override: str | None = None,
     ) -> Dict[str, object]:
         return self.tool_page.predict_image(
             path,
             feat_net=feat_net,
             labels_override=labels_override,
+            algorithm_override=algorithm_override,
+            model_key_override=model_key_override,
         )
 
     def reload(self) -> None:
@@ -90,6 +96,7 @@ class ProductRuntimeContext:
         self._inspection_items: List[InspectionItem] = []
         self._recipe = None
         self._ref_image = ""
+        self._line2dup_match_ms_by_image: Dict[str, float] = {}
         self.reload()
 
     @property
@@ -103,8 +110,8 @@ class ProductRuntimeContext:
     def current_algorithm(self) -> str:
         return str(self.algo.product_params.algorithm or "").strip()
 
-    def load_embedding_model(self, algorithm: str) -> None:
-        self.algo.load_model_for_algorithm(algorithm, self.session.product_dir)
+    def load_embedding_model(self, algorithm: str, model_key: str | None = None) -> None:
+        self.algo.load_model_for_algorithm(algorithm, self.session.product_dir, model_key=model_key)
 
     def predict_image(
         self,
@@ -112,6 +119,8 @@ class ProductRuntimeContext:
         *,
         feat_net=None,
         labels_override: List[str] | None = None,
+        algorithm_override: str | None = None,
+        model_key_override: str | None = None,
     ) -> Dict[str, object]:
         if not os.path.exists(path):
             raise FileNotFoundError(path)
@@ -119,24 +128,42 @@ class ProductRuntimeContext:
         total_t0 = time.perf_counter()
         match_ms = None
         if self.loc_method == "line2dup":
-            recipe = self._ensure_recipe_loaded()
-            ref_image = self._reference_image(recipe)
-            if ref_image and os.path.exists(ref_image):
-                run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
-                    tgt_img_path=path,
-                    ref_img_path=ref_image,
-                    product_dir=self.session.product_dir,
-                )
-                match_ms = float(run.locate_ms)
+            if path in self._line2dup_match_ms_by_image:
+                match_ms = float(self._line2dup_match_ms_by_image[path])
+            else:
+                recipe = self._ensure_recipe_loaded()
+                ref_image = self._reference_image(recipe)
+                if ref_image and os.path.exists(ref_image):
+                    run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
+                        tgt_img_path=path,
+                        ref_img_path=ref_image,
+                        product_dir=self.session.product_dir,
+                    )
+                    match_ms = float(run.locate_ms)
+                    self._line2dup_match_ms_by_image[path] = match_ms
 
         labels = list(labels_override or [])
         if not labels:
             labels = self._line2dup_output_labels() if self.loc_method == "line2dup" else ["roi"]
+        effective_algorithm = ""
+        if str(algorithm_override or "").strip():
+            effective_algorithm = self.algo.resolve_tool_algorithm(algorithm_override)
+        elif str(self.algo.product_params.algorithm or "").strip():
+            effective_algorithm = self.algo.resolve_learning_algorithm(self.algo.product_params.algorithm)
+        if effective_algorithm and self.algo.is_embedding_algorithm(effective_algorithm):
+            if not self.algo._loaded_embedding_matches(
+                effective_algorithm,
+                labels=labels,
+                model_key=model_key_override or "",
+            ):
+                self.load_embedding_model(effective_algorithm, model_key=model_key_override)
         result = self.algo.predict_image(
             path,
             labels=labels,
             feat_net=feat_net,
             match_ms=match_ms,
+            algorithm_override=algorithm_override,
+            model_key_override=model_key_override,
         )
         payload = result.to_dict()
         payload["infer_ms"] = (
@@ -149,6 +176,7 @@ class ProductRuntimeContext:
 
     def reload(self) -> None:
         self.algo.load_params(self.session.product_params_path)
+        self._line2dup_match_ms_by_image = {}
         session_data = self.session.load_session()
         self._loc_method = str(session_data.loc_method or "line2dup").strip() or "line2dup"
         self._ref_image = str(session_data.ref_image or "").strip()

@@ -29,7 +29,7 @@
     {
       "reference_label": "roi1",
       "output_label": "roi1",
-      "display_name": "roi1",
+      "display_name": "roi1灰色",
       "shape_type": "rectangle",
       "points": [
         [
@@ -39,6 +39,38 @@
         [
           1173.0,
           1335.0
+        ]
+      ]
+    },
+    {
+      "reference_label": "roi2",
+      "output_label": "roi2",
+      "display_name": "roi橙色",
+      "shape_type": "rectangle",
+      "points": [
+        [
+          1195.0,
+          626.0
+        ],
+        [
+          1446.0,
+          875.0
+        ]
+      ]
+    },
+    {
+      "reference_label": "roi3",
+      "output_label": "roi3",
+      "display_name": "roi3冠簧",
+      "shape_type": "rectangle",
+      "points": [
+        [
+          1345.0,
+          440.0
+        ],
+        [
+          1548.0,
+          557.0
         ]
       ]
     }

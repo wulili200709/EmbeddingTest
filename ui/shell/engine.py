@@ -13,9 +13,10 @@ def start_algorithm_engine_warmup(window) -> None:
     if window._engine_warmup_thread is not None and window._engine_warmup_thread.isRunning():
         return
     window._set_algorithm_engine_status("算法引擎：加载中...")
-    worker = AlgorithmEngineWarmupThread(window)
+    worker = AlgorithmEngineWarmupThread()
     worker.warmupFinished.connect(window._on_algorithm_engine_warmup_finished)
     worker.finished.connect(window._on_algorithm_engine_warmup_thread_finished)
+    worker.finished.connect(worker.deleteLater)
     window._engine_warmup_thread = worker
     worker.start()
 

@@ -95,12 +95,39 @@ def _precheck(runtime):
     if not os.path.exists(runtime._session.line2dup_recipe_path):
         return False, "please generate and save a line2dup template first"
 
-    algorithm = runtime._runtime_context.current_algorithm()
-    if not algorithm:
-        return False, "please select an algorithm first"
-    if runtime._algo.is_embedding_algorithm(algorithm):
+    active_roles = {
+        str(role).strip()
+        for role in runtime._connected_roles()
+        if str(role).strip()
+    }
+    enabled_items = [
+        item
+        for item in runtime._runtime_context.inspection_items
+        if item.enabled and item.camera_id in active_roles
+    ]
+    if not enabled_items:
+        return False, "please enable at least one inspection tool for connected cameras"
+
+    unknown_algorithms = sorted(
+        {
+            str(item.algorithm_code or "").strip()
+            for item in enabled_items
+            if runtime._algo.tool_algorithm_spec(item.algorithm_code) is None
+        }
+    )
+    if unknown_algorithms:
+        return False, f"unsupported inspection algorithm: {unknown_algorithms[0]}"
+
+    learning_items = [
+        item
+        for item in enabled_items
+        if runtime._algo.is_learning_tool(item.algorithm_code)
+    ]
+    if learning_items:
+        algorithm = runtime._algo.current_learning_backbone()
         try:
-            runtime._runtime_context.load_embedding_model(algorithm)
+            for item in learning_items:
+                runtime._runtime_context.load_embedding_model(algorithm, model_key=item.model_key)
             if runtime._algo.model is not None:
                 runtime._algo.get_feat_net(
                     runtime._algo.model.backbone,
@@ -110,8 +137,14 @@ def _precheck(runtime):
             return False, f"failed to load model: {exc}"
         if runtime._algo.model is None:
             return False, f"algorithm {algorithm} does not have a trained model yet"
-    else:
-        model_dict = runtime._algo.product_params.traditional_models.get(algorithm)
+    traditional_items = [
+        item
+        for item in enabled_items
+        if runtime._algo.is_traditional_tool(item.algorithm_code)
+    ]
+    for item in traditional_items:
+        algorithm = runtime._algo.resolve_tool_algorithm(item.algorithm_code)
+        model_dict = runtime._algo.get_traditional_model_dict(algorithm, model_key=item.model_key)
         if not isinstance(model_dict, dict):
             return False, f"traditional algorithm {algorithm} is not trained yet"
 

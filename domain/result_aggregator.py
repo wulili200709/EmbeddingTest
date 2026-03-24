@@ -60,7 +60,9 @@ def build_pending_result(
                 display_name=item.display_name,
                 camera_id=item.camera_id,
                 roi_label=item.roi_label,
+                algorithm_code=item.algorithm_code,
                 enabled=item.enabled,
+                params=dict(item.params or {}),
                 result=result,
             )
         )
@@ -144,7 +146,9 @@ def aggregate_runtime_outcome(
                 display_name=item.display_name,
                 camera_id=item.camera_id,
                 roi_label=item.roi_label,
+                algorithm_code=item.algorithm_code,
                 enabled=item.enabled,
+                params=dict(item.params or {}),
                 result=item_result,
                 detail=detail,
             )

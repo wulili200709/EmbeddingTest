@@ -20,31 +20,41 @@ def _predict_image(
     feat_net=None,
     prefer_canvas_roi: bool = False,
     labels_override: Optional[List[str]] = None,
+    algorithm_override: Optional[str] = None,
+    model_key_override: Optional[str] = None,
 ) -> Dict[str, object]:
     if not os.path.exists(path):
         raise FileNotFoundError(path)
 
     total_t0 = time.perf_counter()
-    algorithm = tool_page.current_algorithm()
+    override_text = str(algorithm_override or "").strip()
+    algorithm = (
+        tool_page.algo.resolve_tool_algorithm(override_text)
+        if override_text
+        else tool_page.current_algorithm()
+    )
 
     match_ms: Optional[float] = None
     if tool_page.loc_method == "line2dup":
-        recipe = tool_page.line2dup_recipe
-        if recipe is None and os.path.exists(tool_page.session.line2dup_recipe_path):
-            recipe = line2dup_locator.load_recipe_for_product(tool_page.session.product_dir)
-            tool_page.line2dup_recipe = recipe
-        ref_image = tool_page.ref_image
-        if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
-            ref_image = recipe.reference_image
-        if ref_image and os.path.exists(ref_image):
-            run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
-                tgt_img_path=path,
-                ref_img_path=ref_image,
-                product_dir=tool_page.session.product_dir,
-            )
-            match_ms = float(run.locate_ms)
-            tool_page._line2dup_match_ms_by_image[path] = match_ms
-            tool_page._line2dup_autogen_ms_by_image[path] = float(run.total_ms)
+        if path in tool_page._line2dup_match_ms_by_image:
+            match_ms = float(tool_page._line2dup_match_ms_by_image[path])
+        else:
+            recipe = tool_page.line2dup_recipe
+            if recipe is None and os.path.exists(tool_page.session.line2dup_recipe_path):
+                recipe = line2dup_locator.load_recipe_for_product(tool_page.session.product_dir)
+                tool_page.line2dup_recipe = recipe
+            ref_image = tool_page.ref_image
+            if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
+                ref_image = recipe.reference_image
+            if ref_image and os.path.exists(ref_image):
+                run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
+                    tgt_img_path=path,
+                    ref_img_path=ref_image,
+                    product_dir=tool_page.session.product_dir,
+                )
+                match_ms = float(run.locate_ms)
+                tool_page._line2dup_match_ms_by_image[path] = match_ms
+                tool_page._line2dup_autogen_ms_by_image[path] = float(run.total_ms)
     elif tool_page.ref_image and os.path.exists(tool_page.ref_image):
         tool_page._autogen_roi_for_images([path], only_missing=True, silent=True)
 
@@ -56,8 +66,12 @@ def _predict_image(
         roi = tool_page._roi_xywh_from_canvas()
 
     if tool_page.algo.is_embedding_algorithm(algorithm):
-        if tool_page.algo.model is None or tool_page.algo.model.backbone != algorithm:
-            tool_page.load_embedding_model(algorithm)
+        if not tool_page.algo._loaded_embedding_matches(
+            algorithm,
+            labels=labels,
+            model_key=model_key_override or "",
+        ):
+            tool_page.load_embedding_model(algorithm, model_key=model_key_override)
 
     result = tool_page.algo.predict_image(
         path,
@@ -65,6 +79,8 @@ def _predict_image(
         feat_net=feat_net,
         roi=roi,
         match_ms=match_ms,
+        algorithm_override=algorithm_override,
+        model_key_override=model_key_override,
     )
     payload = result.to_dict()
     payload["infer_ms"] = (

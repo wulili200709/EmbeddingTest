@@ -18,7 +18,9 @@ class InspectionItemResult:
     display_name: str
     camera_id: str
     roi_label: str
+    algorithm_code: str = ""
     enabled: bool = True
+    params: Dict[str, object] = field(default_factory=dict)
     result: str = "PENDING"  # PENDING/RUNNING/OK/NG/INACTIVE/DISABLED
     detail: str = ""
 
@@ -39,6 +41,7 @@ class InspectionItemResult:
             "display_name": self.display_name,
             "camera_id": self.camera_id,
             "roi_label": self.roi_label,
+            "algorithm_code": self.algorithm_code,
             "enabled": self.enabled,
             "status_kind": kind,
             "status_text": text,
@@ -137,7 +140,9 @@ class RuntimeInspectionResult:
                         "display_name": item.display_name,
                         "camera_id": item.camera_id,
                         "roi_label": item.roi_label,
+                        "algorithm_code": item.algorithm_code,
                         "enabled": item.enabled,
+                        "params": dict(item.params or {}),
                         "result": item.result,
                         "detail": item.detail,
                     }
@@ -159,7 +164,9 @@ class RuntimeInspectionResult:
             row[f"{prefix}_name"] = item.display_name
             row[f"{prefix}_camera"] = item.camera_id
             row[f"{prefix}_roi_label"] = item.roi_label
+            row[f"{prefix}_algorithm_code"] = item.algorithm_code
             row[f"{prefix}_enabled"] = item.enabled
+            row[f"{prefix}_params_json"] = json.dumps(dict(item.params or {}), ensure_ascii=False)
             row[f"{prefix}_result"] = item.result
             row[f"{prefix}_detail"] = item.detail
         return row

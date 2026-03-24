@@ -16,7 +16,15 @@ from domain.result_aggregator import aggregate_runtime_outcome
 
 
 class _FakePredictor:
-    def predict_image(self, path: str, *, feat_net=None, labels_override=None) -> dict:
+    def predict_image(
+        self,
+        path: str,
+        *,
+        feat_net=None,
+        labels_override=None,
+        algorithm_override=None,
+        model_key_override=None,
+    ) -> dict:
         return {
             "pred": "OK",
             "diff": 0.1234,

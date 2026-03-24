@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from domain import build_pending_result, recipe_name_from_path
 
 _RUN_STATE_ZH_FOR_STATUS = {
@@ -78,20 +80,22 @@ def _connected_roles(runtime) -> list[str]:
     return roles
 
 
-def _current_item_signature(runtime) -> list[tuple[str, str, str, str, bool]]:
+def _current_item_signature(runtime) -> list[tuple[str, str, str, str, str, bool, str]]:
     return [
         (
             str(item.item_id),
             str(item.display_name),
             str(item.camera_id),
             str(item.roi_label),
+            str(getattr(item, "algorithm_code", "")),
             bool(item.enabled),
+            json.dumps(dict(getattr(item, "params", {}) or {}), ensure_ascii=False, sort_keys=True),
         )
         for item in runtime._runtime_context.inspection_items
     ]
 
 
-def _result_item_signature(runtime) -> list[tuple[str, str, str, str, bool]]:
+def _result_item_signature(runtime) -> list[tuple[str, str, str, str, str, bool, str]]:
     if runtime._last_runtime_result is None:
         return []
     return [
@@ -100,7 +104,9 @@ def _result_item_signature(runtime) -> list[tuple[str, str, str, str, bool]]:
             str(item.display_name),
             str(item.camera_id),
             str(item.roi_label),
+            str(getattr(item, "algorithm_code", "")),
             bool(item.enabled),
+            json.dumps(dict(getattr(item, "params", {}) or {}), ensure_ascii=False, sort_keys=True),
         )
         for item in runtime._last_runtime_result.item_results
     ]

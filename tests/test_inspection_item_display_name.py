@@ -10,8 +10,8 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from domain.inspection_items import InspectionItem, sync_items_with_labels
-from line2dup.core.recipe import Line2DupRecipe
 from domain.recipe_manager import inspection_item_specs_from_line2dup_recipe
+from line2dup.core.recipe import Line2DupRecipe
 
 
 class InspectionItemDisplayNameTest(unittest.TestCase):
@@ -51,7 +51,7 @@ class InspectionItemDisplayNameTest(unittest.TestCase):
                 display_name="旧名称",
                 camera_id="cam2",
                 roi_label="roi1",
-                algorithm_type="inherit_product",
+                algorithm_code="shared_backbone_register",
                 enabled=True,
             )
         ]
@@ -67,8 +67,24 @@ class InspectionItemDisplayNameTest(unittest.TestCase):
 
         self.assertEqual(synced[0].display_name, "PusherL2")
         self.assertEqual(synced[0].camera_id, "cam2")
+        self.assertEqual(synced[0].algorithm_code, "shared_backbone_register")
         self.assertEqual(synced[1].display_name, "SpringL2")
         self.assertEqual(synced[1].roi_label, "roi2")
+
+    def test_legacy_algorithm_type_payload_maps_to_algorithm_code(self) -> None:
+        item = InspectionItem.from_dict(
+            {
+                "item_id": "roi1",
+                "display_name": "ROI1",
+                "camera_id": "cam1",
+                "roi_label": "roi1",
+                "algorithm_type": "inherit_product",
+                "enabled": True,
+            }
+        )
+
+        self.assertEqual(item.algorithm_code, "shared_backbone_register")
+        self.assertEqual(item.algorithm_type, "shared_backbone_register")
 
 
 if __name__ == "__main__":

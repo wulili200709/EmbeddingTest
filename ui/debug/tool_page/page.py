@@ -253,6 +253,7 @@ class ToolPage(QtWidgets.QWidget):
         self.loc_method: str = "line2dup"
         self.line2dup_recipe: Optional[Line2DupRecipe] = None
         self.inspection_items: List[InspectionItem] = []
+        self._inspection_items_table_loading = False
         self._line2dup_match_ms_by_image: Dict[str, float] = {}
         self._line2dup_autogen_ms_by_image: Dict[str, float] = {}
         self._current_result_rows: List[Dict[str, object]] = []
@@ -347,6 +348,39 @@ class ToolPage(QtWidgets.QWidget):
         if index >= 0:
             self.cmb_algorithm.setCurrentIndex(index)
         self._sync_algorithm_picker()
+        return
+        sec_tools = QtWidgets.QLabel("  检测工具")
+        sec_tools.setFixedHeight(28)
+        sec_tools.setStyleSheet(_section_style)
+        right_vbox.addWidget(sec_tools)
+
+        tool_frame = QtWidgets.QWidget()
+        tool_vbox = QtWidgets.QVBoxLayout(tool_frame)
+        tool_vbox.setContentsMargins(10, 6, 10, 6)
+        tool_vbox.setSpacing(4)
+
+        self.lbl_tool_config_hint = QtWidgets.QLabel("")
+        self.lbl_tool_config_hint.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
+        tool_vbox.addWidget(self.lbl_tool_config_hint)
+
+        self.inspection_items_table = QtWidgets.QTableWidget(0, 5)
+        self.inspection_items_table.setHorizontalHeaderLabels(["启用", "名称", "相机", "ROI", "算法"])
+        self.inspection_items_table.verticalHeader().setVisible(False)
+        self.inspection_items_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        self.inspection_items_table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
+        self.inspection_items_table.horizontalHeader().setStretchLastSection(True)
+        self.inspection_items_table.setStyleSheet(
+            "QTableWidget{background:#333333;color:#d0d0d0;gridline-color:#404040;border:1px solid #404040;font-size:12px;}"
+            "QTableWidget::item:selected{background:#6ec0ff;color:#1a1a1a;}"
+            "QHeaderView::section{background:#3a3a3a;color:#d0d0d0;border:1px solid #404040;padding:4px;}"
+        )
+        self.inspection_items_table.setMinimumHeight(170)
+        self.inspection_items_table.setMaximumHeight(210)
+        self.inspection_items_table.itemChanged.connect(self._on_inspection_items_table_item_changed)
+        self.inspection_items_table.itemSelectionChanged.connect(self._on_inspection_items_selection_changed)
+        tool_vbox.addWidget(self.inspection_items_table)
+        right_vbox.addWidget(tool_frame)
+        self._update_learning_backbone_hint()
 
     def _build_algorithm_picker_menu(self) -> QtWidgets.QMenu:
         menu = QtWidgets.QMenu(self)
@@ -446,7 +480,9 @@ class ToolPage(QtWidgets.QWidget):
                 "display_name": item.display_name,
                 "camera_id": item.camera_id,
                 "roi_label": item.roi_label,
+                "algorithm_code": item.algorithm_code,
                 "algorithm_type": item.algorithm_type,
+                "params": dict(item.params or {}),
                 "enabled": bool(item.enabled),
                 "status_kind": status_kind if item.enabled else "disabled",
                 "status_text": status_text if item.enabled else "已禁用",
@@ -454,9 +490,13 @@ class ToolPage(QtWidgets.QWidget):
             for item in self.inspection_items
         ]
 
-    def load_embedding_model(self, algorithm: str) -> None:
+    def load_embedding_model(self, algorithm: str, model_key: Optional[str] = None) -> None:
         """加载指定算法的 embedding 模型并把状态写入 lbl_status。"""
-        _, msg = self.algo.load_model_for_algorithm(algorithm, self.session.product_dir)
+        _, msg = self.algo.load_model_for_algorithm(
+            algorithm,
+            self.session.product_dir,
+            model_key=model_key or "",
+        )
         self.lbl_status.setText(msg)
 
     def predict_image(
@@ -465,9 +505,17 @@ class ToolPage(QtWidgets.QWidget):
         *,
         feat_net=None,
         labels_override: Optional[List[str]] = None,
+        algorithm_override: Optional[str] = None,
+        model_key_override: Optional[str] = None,
     ) -> Dict[str, object]:
         """供 MainWindow runtime 检测回调使用。"""
-        return self._predict_image(path, feat_net=feat_net, labels_override=labels_override)
+        return self._predict_image(
+            path,
+            feat_net=feat_net,
+            labels_override=labels_override,
+            algorithm_override=algorithm_override,
+            model_key_override=model_key_override,
+        )
 
     def load_session(self) -> None:
         """
@@ -581,6 +629,11 @@ class ToolPage(QtWidgets.QWidget):
         _input_style = (
             "QComboBox,QDoubleSpinBox,QSpinBox{"
             "background:#404040;color:#e0e0e0;border:1px solid #5a5a5a;padding:2px 4px;border-radius:3px;font-size:12px;}"
+            "QComboBox:disabled,QDoubleSpinBox:disabled,QSpinBox:disabled{"
+            "background:#353535;color:#8a8a8a;border:1px solid #4a4a4a;}"
+            "QComboBox::drop-down:disabled,QDoubleSpinBox::up-button:disabled,QDoubleSpinBox::down-button:disabled,"
+            "QSpinBox::up-button:disabled,QSpinBox::down-button:disabled{"
+            "background:#353535;border-left:1px solid #444444;}"
         )
         _section_style = (
             f"background:#404040;color:{_TEXT_LIGHT};font-size:12px;font-weight:bold;"
@@ -660,7 +713,7 @@ class ToolPage(QtWidgets.QWidget):
 
         # 右侧面板
         right_panel = QtWidgets.QFrame()
-        right_panel.setFixedWidth(300)
+        right_panel.setFixedWidth(400)
         right_panel.setStyleSheet(f"background:{_PANEL_BG};border-left:1px solid #505050;")
         right_vbox = QtWidgets.QVBoxLayout(right_panel)
         right_vbox.setContentsMargins(0, 0, 0, 0)
@@ -775,9 +828,8 @@ class ToolPage(QtWidgets.QWidget):
         self.btn_algorithm_picker.setMenu(self._build_algorithm_picker_menu())
         self.btn_algorithm_picker.setStyleSheet(
             "QToolButton{background:#2f2f2f;color:#e0e0e0;border:1px solid #555;"
-            "padding:5px 28px 5px 8px;border-radius:3px;font-size:12px;text-align:left;}"
+            "padding:5px 28px 5px 8px;border-radius:3px;font-size:12px;}"
             "QToolButton:hover{background:#3a3a3a;}"
-            "QToolButton::menu-indicator{subcontrol-origin:padding;subcontrol-position:right center;right:8px;}"
         )
         self.btn_algorithm_picker.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Expanding,
@@ -801,16 +853,76 @@ class ToolPage(QtWidgets.QWidget):
         self.spin_topk.setStyleSheet(_input_style)
 
         _lbl_s = f"color:{_TEXT_DIM};font-size:12px;"
+        _lbl_disabled_s = "color:#7a7a7a;font-size:12px;"
+        self._algo_param_label_style = _lbl_s
+        self._algo_param_label_disabled_style = _lbl_disabled_s
         lbl_a = QtWidgets.QLabel("工具"); lbl_a.setStyleSheet(_lbl_s)
         lbl_m = QtWidgets.QLabel("\u5224\u5b9a"); lbl_m.setStyleSheet(_lbl_s)
         lbl_mg = QtWidgets.QLabel("阈值"); lbl_mg.setStyleSheet(_lbl_s)
-        lbl_tk = QtWidgets.QLabel("TopK"); lbl_tk.setStyleSheet(_lbl_s)
+        self.lbl_topk = QtWidgets.QLabel("TopK")
+        self.lbl_topk.setStyleSheet(self._algo_param_label_style)
         algo_form.addRow(lbl_a, self.btn_algorithm_picker)
         algo_form.addRow(lbl_m, self.cmb_mode)
         algo_form.addRow(lbl_mg, self.spin_margin)
-        algo_form.addRow(lbl_tk, self.spin_topk)
+        algo_form.addRow(self.lbl_topk, self.spin_topk)
         right_vbox.addWidget(algo_frame)
         self._sync_algorithm_picker()
+
+        tool_gap = QtWidgets.QWidget()
+        tool_gap.setFixedHeight(14)
+        right_vbox.addWidget(tool_gap)
+
+        self.btn_toggle_tools = QtWidgets.QToolButton()
+        self.btn_toggle_tools.setText("  检测工具")
+        self.btn_toggle_tools.setCheckable(True)
+        self.btn_toggle_tools.setChecked(True)
+        self.btn_toggle_tools.setArrowType(QtCore.Qt.ArrowType.DownArrow)
+        self.btn_toggle_tools.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.btn_toggle_tools.setStyleSheet(
+            (
+                f"QToolButton{{background:#404040;color:{_TEXT_LIGHT};font-size:12px;"
+                f"font-weight:bold;border:none;border-bottom:1px solid #505050;padding:6px 10px;}}"
+                "QToolButton:hover{background:#474747;}"
+            )
+        )
+        self.btn_toggle_tools.toggled.connect(self._toggle_tool_config_section)
+        right_vbox.addWidget(self.btn_toggle_tools)
+
+        tool_frame = QtWidgets.QWidget()
+        tool_vbox = QtWidgets.QVBoxLayout(tool_frame)
+        tool_vbox.setContentsMargins(10, 6, 10, 6)
+        tool_vbox.setSpacing(4)
+
+        self.lbl_tool_config_hint = QtWidgets.QLabel("")
+        self.lbl_tool_config_hint.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
+        tool_vbox.addWidget(self.lbl_tool_config_hint)
+
+        self.tool_config_frame = tool_frame
+        self.inspection_items_table = QtWidgets.QTableWidget(0, 5)
+        self.inspection_items_table.setHorizontalHeaderLabels(["启用", "名称", "相机", "算法", "状态"])
+        self.inspection_items_table.verticalHeader().setVisible(False)
+        self.inspection_items_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        self.inspection_items_table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
+        header = self.inspection_items_table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.inspection_items_table.setStyleSheet(
+            "QTableWidget{background:#333333;color:#d0d0d0;gridline-color:#404040;border:1px solid #404040;font-size:12px;}"
+            "QTableWidget::item:selected{background:#6ec0ff;color:#1a1a1a;}"
+            "QHeaderView::section{background:#3a3a3a;color:#d0d0d0;border:1px solid #404040;padding:4px;}"
+        )
+        self.inspection_items_table.setMinimumHeight(170)
+        self.inspection_items_table.setMaximumHeight(210)
+        self.inspection_items_table.setColumnWidth(0, 52)
+        self.inspection_items_table.itemChanged.connect(self._on_inspection_items_table_item_changed)
+        self.inspection_items_table.itemSelectionChanged.connect(self._on_inspection_items_selection_changed)
+        tool_vbox.addWidget(self.inspection_items_table)
+        right_vbox.addWidget(tool_frame)
+        self._update_learning_backbone_hint()
 
         # --- 操作按钮 ---
         sec_action = QtWidgets.QLabel("  \u64cd\u4f5c")
@@ -830,7 +942,7 @@ class ToolPage(QtWidgets.QWidget):
             "QPushButton:pressed{background:#244a85;}"
         )
 
-        self.btn_train = QtWidgets.QPushButton(_si(SP.SP_DialogApplyButton), "\u8bad\u7ec3 / \u6ce8\u518c")
+        self.btn_train = QtWidgets.QPushButton(_si(SP.SP_DialogApplyButton), "\u8bad\u7ec3 / \u6807\u5b9a\u5f53\u524d\u5de5\u5177")
         self.btn_train.setStyleSheet(_action_btn)
         self.btn_train.clicked.connect(self._train)
         action_vbox.addWidget(self.btn_train)
@@ -1235,6 +1347,16 @@ class ToolPage(QtWidgets.QWidget):
         self.lbl_template_tool_hint.hide()
         self._normalize_stylesheet_font_units()
 
+    def _toggle_tool_config_section(self, checked: bool) -> None:
+        frame = getattr(self, "tool_config_frame", None)
+        if frame is not None:
+            frame.setVisible(bool(checked))
+        toggle = getattr(self, "btn_toggle_tools", None)
+        if toggle is not None:
+            toggle.setArrowType(
+                QtCore.Qt.ArrowType.DownArrow if checked else QtCore.Qt.ArrowType.RightArrow
+            )
+
     @staticmethod
     def _normalize_font_size_units(style_sheet: str) -> str:
         def replace(match: re.Match[str]) -> str:
@@ -1537,13 +1659,21 @@ class ToolPage(QtWidgets.QWidget):
         finally:
             self._updating_runtime_params = False
         self._update_runtime_widgets()
+        self._update_learning_backbone_hint()
 
     def _update_runtime_widgets(self) -> None:
         algorithm_selected = bool(self.current_algorithm())
         embedding = algorithm_selected and self._is_embedding_algorithm()
+        topk_enabled = embedding and self.cmb_mode.currentText() == "topk"
         self.cmb_mode.setEnabled(embedding)
         self.spin_margin.setEnabled(embedding)
-        self.spin_topk.setEnabled(embedding and self.cmb_mode.currentText() == "topk")
+        self.spin_topk.setEnabled(topk_enabled)
+        topk_label = getattr(self, "lbl_topk", None)
+        if topk_label is not None:
+            enabled_style = getattr(self, "_algo_param_label_style", "")
+            disabled_style = getattr(self, "_algo_param_label_disabled_style", enabled_style)
+            topk_label.setEnabled(topk_enabled)
+            topk_label.setStyleSheet(enabled_style if topk_enabled else disabled_style)
         self.btn_train.setEnabled(algorithm_selected)
         self.btn_test.setEnabled(algorithm_selected)
         margin_button = getattr(self, "btn_validate_margin", None)
@@ -1564,11 +1694,15 @@ class ToolPage(QtWidgets.QWidget):
             self.algo.apply_params_to_model()
         self._save_runtime_params()
         self._update_runtime_widgets()
+        self._update_learning_backbone_hint()
 
     def _on_algorithm_changed(self, *args) -> None:
         algorithm = self.current_algorithm()
         if self._updating_runtime_params:
             return
+        selected_item = self._selected_inspection_item()
+        if algorithm in SUPPORTED_EMBEDDING_ALGORITHMS:
+            self.algo.set_learning_backbone(algorithm)
         if not algorithm:
             self.algo.product_params.algorithm = ""
             self.algo.model = None
@@ -1576,15 +1710,29 @@ class ToolPage(QtWidgets.QWidget):
             self._update_runtime_widgets()
             self.lbl_status.setText("状态：请选择工具")
             return
+        if selected_item is not None:
+            selected_item.algorithm_code = (
+                "shared_backbone_register"
+                if algorithm in SUPPORTED_EMBEDDING_ALGORITHMS
+                else algorithm
+            )
+            self._persist_inspection_items()
+            self._refresh_inspection_items_table()
         self.algo.product_params.algorithm = algorithm
         self._save_runtime_params()
         self._update_runtime_widgets()
+        self._update_learning_backbone_hint()
         try:
-            _, msg = self.algo.load_model_for_algorithm(algorithm, self.session.product_dir)
+            _, msg = self.algo.load_model_for_algorithm(
+                algorithm,
+                self.session.product_dir,
+                model_key=selected_item.model_key if selected_item is not None else "",
+            )
             self.lbl_status.setText(msg)
         except Exception as exc:
             self.algo.model = None
-            self.lbl_status.setText(f"状态：加载算法 {algorithm} 失败 - {exc}")
+            display_name = self.algo.algorithm_display_name(algorithm) or algorithm
+            self.lbl_status.setText(f"状态：加载工具 {display_name} 失败 - {exc}")
 
     # ------------------------------------------------------------------
     # 训练
@@ -1594,24 +1742,47 @@ class ToolPage(QtWidgets.QWidget):
         self.algo.model = None
         self.table.setRowCount(0)
         self._current_result_rows = []
-        algorithm = self.current_algorithm()
+        inspection_item = self._selected_inspection_item()
+        if inspection_item is None:
+            QtWidgets.QMessageBox.information(self, "提示", "请先在检测工具列表里选择一个工具")
+            return
+        if not inspection_item.enabled:
+            QtWidgets.QMessageBox.information(self, "提示", "当前选中的检测工具已禁用")
+            return
+        if self.algo.is_learning_tool(inspection_item.algorithm_code):
+            algorithm = self.algo.current_learning_backbone()
+        else:
+            algorithm = self.algo.resolve_tool_algorithm(inspection_item.algorithm_code)
         if not algorithm:
             QtWidgets.QMessageBox.information(self, "提示", "请先选择工具")
             return
-        label_names = self._line2dup_output_labels() if self.loc_method == "line2dup" else ["roi"]
+        roi_label = str(inspection_item.roi_label or "").strip() or "roi"
+        label_names = [roi_label]
         candidate_paths = list(self.ok_files) + list(self.ng_files)
-        missing_paths = self._missing_roi_files(candidate_paths)
+        missing_paths = []
+        for path in candidate_paths:
+            json_path = qr_core.labelme_json_of_image(path)
+            if not os.path.exists(json_path):
+                missing_paths.append(path)
+                continue
+            if qr_core.read_shape_from_labelme(json_path, roi_label) is None:
+                missing_paths.append(path)
         if missing_paths and self.loc_method == "line2dup":
             try:
                 self._autogen_roi_for_images(missing_paths, only_missing=False, silent=True)
-                missing_paths = self._missing_roi_files(candidate_paths)
+                refreshed_missing_paths = []
+                for path in candidate_paths:
+                    json_path = qr_core.labelme_json_of_image(path)
+                    if not os.path.exists(json_path) or qr_core.read_shape_from_labelme(json_path, roi_label) is None:
+                        refreshed_missing_paths.append(path)
+                missing_paths = refreshed_missing_paths
             except Exception:
                 pass
         missing = [os.path.basename(p) for p in missing_paths]
         if missing:
             QtWidgets.QMessageBox.warning(
                 self, "缺少ROI标注",
-                f"需要每张 OK/NG 图都具备这些 ROI：{', '.join(label_names)}。\n"
+                f"需要每张 OK/NG 图都具备这个 ROI：{roi_label}。\n"
                 "请逐张打开图片 -> 画 ROI -> 保存。\n缺少：\n" + "\n".join(missing[:50]),
             )
             return
@@ -1627,6 +1798,7 @@ class ToolPage(QtWidgets.QWidget):
                 algorithm=algorithm,
                 product_dir=self.session.product_dir,
                 label_names=label_names,
+                model_key=inspection_item.model_key,
             )
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "训练失败", str(e))
@@ -1638,6 +1810,7 @@ class ToolPage(QtWidgets.QWidget):
 
         self._save_runtime_params()
         self._save_session()
+        self._refresh_inspection_items_table()
         self._update_runtime_widgets()
         QtWidgets.QMessageBox.information(self, "训练完成", result.dialog_message)
 
@@ -1653,14 +1826,32 @@ class ToolPage(QtWidgets.QWidget):
             return
         self.canvas.set_overlays([])
 
-        algorithm = self.current_algorithm()
+        inspection_item = self._selected_inspection_item()
+        if inspection_item is not None and inspection_item.enabled:
+            algorithm = (
+                self.algo.current_learning_backbone()
+                if self.algo.is_learning_tool(inspection_item.algorithm_code)
+                else self.algo.resolve_tool_algorithm(inspection_item.algorithm_code)
+            )
+            labels_override = [str(inspection_item.roi_label or "").strip() or "roi"]
+            algorithm_override = inspection_item.algorithm_code
+            model_key_override = inspection_item.model_key
+        else:
+            algorithm = self.current_algorithm()
+            labels_override = None
+            algorithm_override = None
+            model_key_override = None
         if not algorithm:
             QtWidgets.QMessageBox.information(self, "提示", "请先选择工具")
             return
         if self._is_embedding_algorithm(algorithm):
-            if self.algo.model is None or self.algo.model.backbone != algorithm:
+            if not self.algo._loaded_embedding_matches(
+                algorithm,
+                labels=labels_override or (self._line2dup_output_labels() if self.loc_method == "line2dup" else ["roi"]),
+                model_key=model_key_override or "",
+            ):
                 try:
-                    self.load_embedding_model(algorithm)
+                    self.load_embedding_model(algorithm, model_key=model_key_override)
                 except Exception:
                     pass
             if self.algo.model is None:
@@ -1674,7 +1865,14 @@ class ToolPage(QtWidgets.QWidget):
                     self.algo.model.backbone,
                     getattr(self.algo.model, "device", None),
                 )
-            row = self._predict_image(p, feat_net=feat_net, prefer_canvas_roi=True)
+            row = self._predict_image(
+                p,
+                feat_net=feat_net,
+                prefer_canvas_roi=True,
+                labels_override=labels_override,
+                algorithm_override=algorithm_override,
+                model_key_override=model_key_override,
+            )
         except Exception as ex:
             QtWidgets.QMessageBox.critical(self, "测试失败", str(ex))
             return
@@ -1781,12 +1979,31 @@ class ToolPage(QtWidgets.QWidget):
         return json_path, csv_path
 
     def _run_margin_validation(self) -> None:
-        if not self._is_embedding_algorithm():
+        inspection_item = self._selected_inspection_item()
+        if inspection_item is not None and inspection_item.enabled:
+            algorithm = (
+                self.algo.current_learning_backbone()
+                if self.algo.is_learning_tool(inspection_item.algorithm_code)
+                else self.algo.resolve_tool_algorithm(inspection_item.algorithm_code)
+            )
+            labels_override = [str(inspection_item.roi_label or "").strip() or "roi"]
+            algorithm_override = inspection_item.algorithm_code
+            model_key_override = inspection_item.model_key
+        else:
+            algorithm = self.current_algorithm()
+            labels_override = self._line2dup_output_labels() if self.loc_method == "line2dup" else ["roi"]
+            algorithm_override = None
+            model_key_override = None
+        if not self._is_embedding_algorithm(algorithm):
             QtWidgets.QMessageBox.information(self, "提示", "传统算法不支持 Margin 建议，请切回嵌入式算法")
             return
-        if self.algo.model is None or self.algo.model.backbone != self.current_algorithm():
+        if not self.algo._loaded_embedding_matches(
+            algorithm,
+            labels=labels_override,
+            model_key=model_key_override or "",
+        ):
             try:
-                self.load_embedding_model(self.current_algorithm())
+                self.load_embedding_model(algorithm, model_key=model_key_override)
             except Exception:
                 pass
         if self.algo.model is None:
@@ -1803,11 +2020,25 @@ class ToolPage(QtWidgets.QWidget):
         rows: List[Dict[str, object]] = []
         try:
             for path in self.ok_files:
-                row = self._predict_image(path, feat_net=feat_net, prefer_canvas_roi=False)
+                row = self._predict_image(
+                    path,
+                    feat_net=feat_net,
+                    prefer_canvas_roi=False,
+                    labels_override=labels_override,
+                    algorithm_override=algorithm_override,
+                    model_key_override=model_key_override,
+                )
                 row["gt"] = "OK"
                 rows.append(row)
             for path in self.ng_files:
-                row = self._predict_image(path, feat_net=feat_net, prefer_canvas_roi=False)
+                row = self._predict_image(
+                    path,
+                    feat_net=feat_net,
+                    prefer_canvas_roi=False,
+                    labels_override=labels_override,
+                    algorithm_override=algorithm_override,
+                    model_key_override=model_key_override,
+                )
                 row["gt"] = "NG"
                 rows.append(row)
         except Exception as ex:
@@ -1841,13 +2072,21 @@ class ToolPage(QtWidgets.QWidget):
     def _open_embedding_analysis_dialog(self) -> None:
         from ui.debug import EmbeddingAnalysisDialog
 
-        if not self._is_embedding_algorithm():
-            QtWidgets.QMessageBox.information(self, "提示", "传统算法没有 embedding 可视化，请切回嵌入式算法")
+        inspection_item = self._selected_inspection_item()
+        if inspection_item is None:
+            QtWidgets.QMessageBox.information(self, "提示", "请先在检测工具列表中选择一个学习工具")
+            return
+        if not inspection_item.enabled:
+            QtWidgets.QMessageBox.information(self, "提示", "当前选中的检测工具已禁用")
+            return
+        if not self.algo.is_learning_tool(inspection_item.algorithm_code):
+            QtWidgets.QMessageBox.information(self, "提示", "当前选中的不是学习工具，无法做 embedding 可视化")
             return
         dialog = EmbeddingAnalysisDialog(
             session_root=self.session.session_dir,
             initial_product=self.session.current_product,
-            initial_backbone=self.current_algorithm(),
+            initial_backbone=self.algo.current_learning_backbone(),
+            initial_model_key=inspection_item.model_key,
             parent=self,
         )
         dialog.exec()

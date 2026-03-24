@@ -10,6 +10,7 @@ from . import (
     debug_camera_flow,
     roi_ops,
     test_runner,
+    tool_config,
 )
 
 _TOOL_PAGE_BINDINGS = (
@@ -65,6 +66,20 @@ _TOOL_PAGE_BINDINGS = (
             "_populate_results_table",
             "_daily_test_log_path",
             "_append_test_log",
+        ),
+    ),
+    (
+        tool_config,
+        (
+            "_selected_inspection_item_row",
+            "_selected_inspection_item",
+            "_on_inspection_items_selection_changed",
+            "_persist_inspection_items",
+            "_refresh_inspection_items_table",
+            "_update_learning_backbone_hint",
+            "_on_inspection_items_table_item_changed",
+            "_on_inspection_item_camera_changed",
+            "_on_inspection_item_algorithm_changed",
         ),
     ),
     (

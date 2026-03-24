@@ -9,6 +9,7 @@ import algorithms.proxy as qr_core
 
 from domain import (
     clearable_roi_labels,
+    inspection_item_specs_from_line2dup_recipe,
     load_inspection_items,
     output_labels_from_line2dup_recipe,
     save_inspection_items,
@@ -27,12 +28,22 @@ def _inspection_item_labels(tool_page) -> List[str]:
 
 def _reload_inspection_items(tool_page) -> None:
     path = tool_page.session.inspection_items_path
-    tool_page.inspection_items = load_inspection_items(path)
-    sync_items_with_labels(
-        tool_page.inspection_items,
-        tool_page._line2dup_output_labels() if tool_page.loc_method == "line2dup" else ["roi"],
+    labels = tool_page._line2dup_output_labels() if tool_page.loc_method == "line2dup" else ["roi"]
+    display_names_by_label = {}
+    if tool_page.loc_method == "line2dup":
+        specs = inspection_item_specs_from_line2dup_recipe(tool_page.line2dup_recipe)
+        display_names_by_label = {
+            str(spec.get("roi_label", "")).strip(): str(spec.get("display_name", "")).strip()
+            for spec in specs
+            if str(spec.get("roi_label", "")).strip()
+        }
+    tool_page.inspection_items = sync_items_with_labels(
+        load_inspection_items(path),
+        labels,
+        display_names_by_label=display_names_by_label,
     )
     save_inspection_items(tool_page.inspection_items, path)
+    tool_page._refresh_inspection_items_table()
     tool_page.inspectionItemsChanged.emit()
 
 

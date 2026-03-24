@@ -420,6 +420,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.tool_page._cleanup_debug_hardware()
         except Exception:
             pass
+        worker = self._engine_warmup_thread
+        if worker is not None and worker.isRunning():
+            worker.wait()
+            self._engine_warmup_thread = None
         self.runtime_ctrl.disconnect(silent=True)
         super().closeEvent(event)
 

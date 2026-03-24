@@ -4,6 +4,7 @@ import os
 from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
+from algorithms.registry import algorithm_display_name
 
 try:
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -14,7 +15,8 @@ except Exception:  # pragma: no cover - handled in UI
 
 from tools.visualize_embeddings import (
     EmbeddingAnalysisResult,
-    list_available_backbones,
+    EmbeddingModelEntry,
+    list_available_embedding_models,
     list_product_names,
     load_product_analysis,
 )
@@ -26,6 +28,7 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
         session_root: str,
         initial_product: str = "",
         initial_backbone: str = "",
+        initial_model_key: str = "",
         parent: Optional[QtWidgets.QWidget] = None,
     ):
         super().__init__(parent)
@@ -35,7 +38,7 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
         self._result: Optional[EmbeddingAnalysisResult] = None
 
         self._build_ui()
-        self._load_products(initial_product, initial_backbone)
+        self._load_products(initial_product, initial_backbone, initial_model_key)
         self._refresh_analysis()
 
     def _build_ui(self):
@@ -44,7 +47,7 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
         controls = QtWidgets.QGridLayout()
         self.cmb_product = QtWidgets.QComboBox()
         self.cmb_product.currentTextChanged.connect(self._on_product_changed)
-        self.cmb_backbone = QtWidgets.QComboBox()
+        self.cmb_model = QtWidgets.QComboBox()
         self.cmb_projection = QtWidgets.QComboBox()
         self.cmb_projection.addItems(["tsne", "pca"])
         self.btn_refresh = QtWidgets.QPushButton("刷新分析")
@@ -57,8 +60,8 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
 
         controls.addWidget(QtWidgets.QLabel("产品"), 0, 0)
         controls.addWidget(self.cmb_product, 0, 1)
-        controls.addWidget(QtWidgets.QLabel("Backbone"), 0, 2)
-        controls.addWidget(self.cmb_backbone, 0, 3)
+        controls.addWidget(QtWidgets.QLabel("学习工具"), 0, 2)
+        controls.addWidget(self.cmb_model, 0, 3)
         controls.addWidget(QtWidgets.QLabel("投影"), 0, 4)
         controls.addWidget(self.cmb_projection, 0, 5)
         controls.addWidget(self.btn_refresh, 0, 6)
@@ -109,7 +112,7 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
         btn_box.rejected.connect(self.reject)
         root.addWidget(btn_box)
 
-    def _load_products(self, initial_product: str, initial_backbone: str):
+    def _load_products(self, initial_product: str, initial_backbone: str, initial_model_key: str):
         names = list_product_names(self.session_root)
         self.cmb_product.blockSignals(True)
         self.cmb_product.clear()
@@ -119,40 +122,56 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
             self.cmb_product.setCurrentText(initial_product)
         elif names:
             self.cmb_product.setCurrentIndex(0)
-        self._load_backbones(initial_backbone)
+        self._load_models(initial_backbone, initial_model_key)
 
-    def _load_backbones(self, initial_backbone: str = ""):
+    def _load_models(self, initial_backbone: str = "", initial_model_key: str = ""):
         product_name = self.cmb_product.currentText().strip()
         product_dir = os.path.join(self.session_root, product_name)
-        backbones = list_available_backbones(product_dir)
-        self.cmb_backbone.blockSignals(True)
-        self.cmb_backbone.clear()
-        self.cmb_backbone.addItems(backbones)
-        self.cmb_backbone.blockSignals(False)
-        if initial_backbone and initial_backbone in backbones:
-            self.cmb_backbone.setCurrentText(initial_backbone)
-        elif backbones:
-            self.cmb_backbone.setCurrentIndex(0)
+        entries = list_available_embedding_models(product_dir)
+        self.cmb_model.blockSignals(True)
+        self.cmb_model.clear()
+        for entry in entries:
+            self.cmb_model.addItem(entry.display_name, entry)
+        self.cmb_model.blockSignals(False)
+        initial_backbone = str(initial_backbone or "").strip()
+        initial_model_key = str(initial_model_key or "").strip()
+        if entries:
+            selected_index = 0
+            for index, entry in enumerate(entries):
+                if initial_model_key and entry.model_key != initial_model_key:
+                    continue
+                if initial_backbone and entry.backbone != initial_backbone:
+                    continue
+                selected_index = index
+                break
+            self.cmb_model.setCurrentIndex(selected_index)
 
     def _on_product_changed(self, _product_name: str):
-        self._load_backbones()
+        self._load_models()
+
+    def _current_model_entry(self) -> Optional[EmbeddingModelEntry]:
+        entry = self.cmb_model.currentData()
+        if isinstance(entry, EmbeddingModelEntry):
+            return entry
+        return None
 
     def _refresh_analysis(self):
         product_name = self.cmb_product.currentText().strip()
-        backbone = self.cmb_backbone.currentText().strip()
         projection = self.cmb_projection.currentText().strip()
+        entry = self._current_model_entry()
         if not product_name:
             self._show_error("没有可用产品。")
             return
-        if not backbone:
-            self._show_error("当前产品下没有可用 register_model_*.npz。")
+        if entry is None:
+            self._show_error("当前产品下没有可用学习工具模型。")
             return
 
         try:
             result = load_product_analysis(
                 session_root=self.session_root,
                 product_name=product_name,
-                backbone=backbone,
+                backbone=entry.backbone,
+                model_key=entry.model_key,
                 projection_method=projection,
             )
         except Exception as exc:
@@ -183,7 +202,9 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
         m = result.metrics
         lines = [
             f"产品: {result.product_name}",
-            f"Backbone: {result.backbone}",
+            f"学习工具: {result.tool_name or '共享模型'}",
+            f"工具子类: {algorithm_display_name(result.backbone) or result.backbone}",
+            f"ROI: {', '.join(result.label_names) if result.label_names else '-'}",
             f"投影: {result.projection_method.upper()}",
             f"特征维度: {result.feature_dim}",
             f"OK 样本数: {int(m['ok_count'])}",
@@ -253,7 +274,9 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
         for idx, name in enumerate(result.point_names):
             ax.annotate(name, (coords[idx, 0], coords[idx, 1]), fontsize=8, alpha=0.75)
 
-        ax.set_title(f"{result.product_name} / {result.backbone} / {result.projection_method.upper()}")
+        ax.set_title(
+            f"{result.product_name} / {result.tool_name or '共享模型'} / {result.projection_method.upper()}"
+        )
         ax.set_xlabel("Dimension 1")
         ax.set_ylabel("Dimension 2")
         ax.grid(True, alpha=0.25)

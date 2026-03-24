@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -25,6 +25,8 @@ if __package__ in (None, ""):
         sys.path.insert(0, root_str)
 
 import algorithms.proxy as qr_core
+from algorithms.registry import algorithm_display_name
+from domain import load_inspection_items
 from infrastructure.product_params import load_product_params
 
 
@@ -53,6 +55,18 @@ class EmbeddingAnalysisResult:
     rows: List[EmbeddingAnalysisRow]
     metrics: Dict[str, float]
     notes: List[str]
+    model_key: str = ""
+    tool_name: str = ""
+    label_names: List[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class EmbeddingModelEntry:
+    model_key: str
+    backbone: str
+    model_path: str
+    display_name: str
+    tool_name: str
 
 
 def list_product_names(session_root: str) -> List[str]:
@@ -66,20 +80,96 @@ def list_product_names(session_root: str) -> List[str]:
     return names
 
 
-def list_available_backbones(product_dir: str) -> List[str]:
-    backbones: List[str] = []
-    if not os.path.isdir(product_dir):
-        return backbones
-    prefix = "register_model_"
-    suffix = ".npz"
-    for name in sorted(os.listdir(product_dir)):
-        if name.startswith(prefix) and name.endswith(suffix):
-            backbones.append(name[len(prefix) : -len(suffix)])
-    return backbones
+def _parse_register_model_filename(name: str) -> Optional[Tuple[str, str]]:
+    if not str(name or "").endswith(".npz"):
+        return None
+    stem = str(name)[:-4]
+    if stem.startswith("register_model_"):
+        backbone = stem[len("register_model_") :]
+        return ("", backbone) if backbone else None
+    marker = "_register_model_"
+    if marker not in stem:
+        return None
+    model_key, backbone = stem.rsplit(marker, 1)
+    if not backbone:
+        return None
+    return model_key, backbone
 
 
-def register_model_path(product_dir: str, backbone: str) -> str:
+def register_model_path(product_dir: str, backbone: str, *, model_key: str = "") -> str:
+    normalized_key = str(model_key or "").strip()
+    if normalized_key:
+        return os.path.join(product_dir, f"{normalized_key}_register_model_{backbone}.npz")
     return os.path.join(product_dir, f"register_model_{backbone}.npz")
+
+
+def list_available_embedding_models(product_dir: str) -> List[EmbeddingModelEntry]:
+    entries: List[EmbeddingModelEntry] = []
+    if not os.path.isdir(product_dir):
+        return entries
+
+    inspection_items_path = os.path.join(product_dir, "inspection_items.json")
+    items_by_key = {
+        item.model_key: item
+        for item in load_inspection_items(inspection_items_path)
+    }
+
+    for name in sorted(os.listdir(product_dir)):
+        parsed = _parse_register_model_filename(name)
+        if parsed is None:
+            continue
+        model_key, backbone = parsed
+        item = items_by_key.get(model_key) if model_key else None
+        tool_name = "共享模型"
+        if item is not None:
+            base_name = str(item.display_name or item.roi_label or item.item_id or model_key).strip()
+            roi_hint = f"{item.camera_id}/{item.roi_label}".strip("/")
+            tool_name = f"{base_name} ({roi_hint})" if roi_hint and base_name != roi_hint else (base_name or roi_hint or model_key)
+        elif model_key:
+            tool_name = model_key
+        learning_name = algorithm_display_name(backbone) or backbone
+        entries.append(
+            EmbeddingModelEntry(
+                model_key=model_key,
+                backbone=backbone,
+                model_path=os.path.join(product_dir, name),
+                display_name=f"{tool_name} / {learning_name}",
+                tool_name=tool_name,
+            )
+        )
+    return entries
+
+
+def list_available_backbones(product_dir: str) -> List[str]:
+    return sorted({entry.backbone for entry in list_available_embedding_models(product_dir)})
+
+
+def _find_embedding_model_entry(
+    product_dir: str,
+    *,
+    backbone: str = "",
+    model_key: str = "",
+) -> Optional[EmbeddingModelEntry]:
+    normalized_backbone = str(backbone or "").strip()
+    normalized_model_key = str(model_key or "").strip()
+    entries = list_available_embedding_models(product_dir)
+    for entry in entries:
+        if normalized_backbone and entry.backbone != normalized_backbone:
+            continue
+        if normalized_model_key and entry.model_key != normalized_model_key:
+            continue
+        return entry
+    if normalized_backbone:
+        legacy_path = register_model_path(product_dir, normalized_backbone)
+        if os.path.exists(legacy_path):
+            return EmbeddingModelEntry(
+                model_key="",
+                backbone=normalized_backbone,
+                model_path=legacy_path,
+                display_name=f"共享模型 / {algorithm_display_name(normalized_backbone) or normalized_backbone}",
+                tool_name="共享模型",
+            )
+    return None
 
 
 def load_session_lists(session_file: str) -> Tuple[List[str], List[str], List[str]]:
@@ -201,22 +291,26 @@ def load_product_analysis(
     session_root: str,
     product_name: str,
     backbone: str,
+    model_key: str = "",
     projection_method: str = "tsne",
 ) -> EmbeddingAnalysisResult:
     product_dir = os.path.join(session_root, product_name)
     if not os.path.isdir(product_dir):
         raise FileNotFoundError(f"product dir not found: {product_dir}")
 
-    model_path = register_model_path(product_dir, backbone)
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(f"register model not found: {model_path}")
+    entry = _find_embedding_model_entry(product_dir, backbone=backbone, model_key=model_key)
+    if entry is None:
+        raise FileNotFoundError(
+            f"register model not found: backbone={backbone!r}, model_key={model_key!r}"
+        )
+    model_path = entry.model_path
 
     session_file = os.path.join(product_dir, "session.json")
     ok_files, ng_files, _ = load_session_lists(session_file)
     model = qr_core.load_register_model_npz(model_path)
     params_path = os.path.join(product_dir, "product_params.json")
     params = load_product_params(params_path)
-    if params.algorithm == backbone:
+    if params.learning_backbone == entry.backbone or params.algorithm == entry.backbone:
         model.score_mode = params.score_mode
         model.margin = float(params.margin)
         model.topk = int(params.topk)
@@ -262,7 +356,7 @@ def load_product_analysis(
 
     return EmbeddingAnalysisResult(
         product_name=product_name,
-        backbone=backbone,
+        backbone=entry.backbone,
         model_path=model_path,
         session_file=session_file,
         projection_method=used_method,
@@ -273,6 +367,9 @@ def load_product_analysis(
         rows=rows,
         metrics=metrics,
         notes=notes,
+        model_key=entry.model_key,
+        tool_name=entry.tool_name,
+        label_names=list(model.effective_label_names()),
     )
 
 

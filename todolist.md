@@ -2356,3 +2356,64 @@ tradition
 如果你确定以后只保留 line2dup，我下一步可以把整套 shape_model 相关代码移到 legacy。
 
  
+
+
+稳的方案是：
+
+产品级只保存 learning_backbone
+例如 mobilenet_v3_small、efficientnet_b0
+每个 ROI 工具只保存 algorithm_code
+例如 shared_backbone_register、meanhsv_h、meanintensity、variance
+算法的“学习/传统”属性，不放在 ROI 上硬编码判断，而是由算法注册表决定
+这样你以后新增“方差计算”时，只要注册一个新算法，ROI 下拉框里就能直接选，不用再改一圈业务分支。
+
+我建议把现在 inspection_items.py 里的 algorithm_type 演进成这套：
+
+InspectionItem:
+  item_id
+  display_name
+  camera_id
+  roi_label
+  algorithm_code
+  enabled
+  params
+然后新增一个统一注册表，比如 algorithms/registry.py，每个算法都长这样：
+
+ToolAlgorithmSpec(
+    code="variance",
+    display_name="方差计算",
+    family="traditional",   # learning / traditional
+    fit_mode="calibrate",   # register / calibrate
+    default_params={},
+    fit_fn=...,
+    predict_fn=...,
+)
+学习工具也一样注册：
+
+ToolAlgorithmSpec(
+    code="shared_backbone_register",
+    display_name="学习工具(共享Backbone)",
+    family="learning",
+    fit_mode="register",
+    default_params={"margin": 0.02},
+    fit_fn=...,
+    predict_fn=...,
+)
+这样运行规则就很清楚：
+
+如果工具选的是 learning 家族
+用产品当前的 learning_backbone
+ROI 只做独立注册、独立阈值、独立结果
+如果工具选的是 traditional 家族
+不看产品 backbone
+直接按工具自己的 algorithm_code 跑
+所以以后你加 variance
+注册进去
+UI 自动显示
+ROI 可直接选
+训练时走它自己的 fit_fn
+运行时走它自己的 predict_fn
+这比“ROI 先选传统/学习，再选子算法”更好。
+更建议直接让 ROI 选“算法”，系统自己从注册表判断它属于学习还是传统。
+
+![alt text](image.png)
