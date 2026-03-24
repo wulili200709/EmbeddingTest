@@ -673,6 +673,7 @@ class ToolPage(QtWidgets.QWidget):
 
         self.lbl_status = QtWidgets.QLabel("\u72b6\u6001\uff1a\u672a\u8bad\u7ec3")
         self.lbl_status.setStyleSheet(f"color:{_TEXT_DIM};font-size:13px;")
+        self.lbl_status.hide()
         header_layout.addWidget(self.lbl_status)
 
         root.addWidget(header)
