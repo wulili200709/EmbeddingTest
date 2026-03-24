@@ -12,6 +12,23 @@ import algorithms.proxy as qr_core
 from domain import output_labels_from_line2dup_recipe
 from line2dup.core import locator as line2dup_locator
 from ui.debug import OverlayShape
+from ui.roi_overlay_colors import color_for_roi_status, is_roi_label
+
+
+def _roi_overlay_color(tool_page, img_path: str, label: str) -> QtGui.QColor:
+    status = tool_page._roi_status_for_path(img_path, label)
+    return color_for_roi_status(status)
+
+
+def _canvas_roi_style_for_label(tool_page, img_path: str, label_name: str) -> tuple[QtGui.QColor, bool]:
+    label = str(label_name or "").strip()
+    if is_roi_label(label):
+        return _roi_overlay_color(tool_page, img_path, label), False
+    if label == "anchor":
+        return QtGui.QColor(0, 255, 255), True
+    if label == "anchor_mask":
+        return QtGui.QColor(255, 0, 0), True
+    return QtGui.QColor(0, 255, 0), False
 
 
 def _load_canvas_image(tool_page, path: str) -> None:
@@ -44,8 +61,6 @@ def _update_save_label_text(tool_page) -> None:
 
 
 def _set_overlay_shapes(tool_page, img_path: str, current_label: str) -> None:
-    from . import page as page_module
-
     j = qr_core.labelme_json_of_image(img_path)
     overlays: List[OverlayShape] = []
     visible_roi_labels: Optional[set[str]] = None
@@ -108,13 +123,13 @@ def _set_overlay_shapes(tool_page, img_path: str, current_label: str) -> None:
             overlays.append(OverlayShape(shape_type="rect", xywh=xywh, color=color, width=width, dash=dash))
 
     seen_labels: set[str] = set()
-    for idx, label in enumerate(qr_core.sorted_label_names_from_labelme(j, label_prefix="roi")):
+    for label in qr_core.sorted_label_names_from_labelme(j, label_prefix="roi"):
         if visible_roi_labels is not None and label not in visible_roi_labels:
             continue
         if label == current_label:
             continue
         seen_labels.add(label)
-        add_shape(label, page_module.ROI_OVERLAY_PALETTE[idx % len(page_module.ROI_OVERLAY_PALETTE)], width=2, dash=False)
+        add_shape(label, _roi_overlay_color(tool_page, img_path, label), width=2, dash=False)
 
     for label, color, dash in [
         ("anchor", QtGui.QColor(0, 255, 255), True),
@@ -123,6 +138,8 @@ def _set_overlay_shapes(tool_page, img_path: str, current_label: str) -> None:
     ]:
         if label == current_label or label in seen_labels:
             continue
+        if is_roi_label(label):
+            color = _roi_overlay_color(tool_page, img_path, label)
         add_shape(label, color, width=2, dash=dash)
 
     tool_page.canvas.set_overlays(overlays)
@@ -130,6 +147,8 @@ def _set_overlay_shapes(tool_page, img_path: str, current_label: str) -> None:
 
 def _load_shape_for_label(tool_page, img_path: str, label_name: str) -> None:
     tool_page.canvas.clear_roi()
+    roi_color, roi_dash = _canvas_roi_style_for_label(tool_page, img_path, label_name)
+    tool_page.canvas.set_roi_style(roi_color=roi_color, roi_dash=roi_dash)
     j = qr_core.labelme_json_of_image(img_path)
     loaded = False
     if os.path.exists(j):

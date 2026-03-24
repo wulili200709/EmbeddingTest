@@ -131,6 +131,7 @@ def _append_test_log(tool_page, row: Dict[str, object]) -> str:
     csv_path = tool_page._daily_test_log_path()
     fields = [
         "timestamp", "product", "algorithm", "score_mode", "margin", "topk",
+        "tool_name", "camera_id", "roi_label",
         "file_name", "gt", "pred", "diff", "sim_ok", "sim_ng",
         "value", "threshold", "match_ms", "total_ms", "json_name",
     ]
@@ -142,10 +143,13 @@ def _append_test_log(tool_page, row: Dict[str, object]) -> str:
         writer.writerow({
             "timestamp": datetime.now().isoformat(timespec="seconds"),
             "product": tool_page.session.current_product,
-            "algorithm": tool_page.current_algorithm(),
+            "algorithm": row.get("algorithm", tool_page.current_algorithm()),
             "score_mode": tool_page.cmb_mode.currentText(),
             "margin": float(tool_page.spin_margin.value()),
             "topk": int(tool_page.spin_topk.value()),
+            "tool_name": row.get("tool_name", ""),
+            "camera_id": row.get("camera_id", ""),
+            "roi_label": row.get("roi_label", ""),
             "file_name": row.get("file_name", ""),
             "gt": row.get("gt", ""),
             "pred": row.get("pred", ""),

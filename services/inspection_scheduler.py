@@ -19,9 +19,11 @@ class InspectionScheduler:
         self,
         state_machine: RunStateMachine,
         permission_manager: PermissionManager,
+        lock_on_ng: bool = True,
     ) -> None:
         self.state_machine = state_machine
         self.permission_manager = permission_manager
+        self._lock_on_ng = bool(lock_on_ng)
 
     @property
     def state(self) -> RunState:
@@ -75,17 +77,22 @@ class InspectionScheduler:
             return
 
         self.state_machine.transition_to(RunState.CompletedNg)
-        self.permission_manager.lock_for_ng()
-        self.state_machine.transition_to(RunState.LockedByNg)
+        if self._lock_on_ng:
+            self.permission_manager.lock_for_ng()
+            self.state_machine.transition_to(RunState.LockedByNg)
+            return
+        self.permission_manager.reset_after_success()
+        self.state_machine.transition_to(RunState.WaitingTrigger)
 
     def on_error(self, *, lock_as_ng: bool = True) -> None:
         if self.state != RunState.Error:
             self.state_machine.transition_to(RunState.Error)
-        if lock_as_ng:
+        should_lock = bool(lock_as_ng and self._lock_on_ng)
+        if should_lock:
             self.permission_manager.lock_for_ng()
             self.state_machine.transition_to(RunState.LockedByNg)
         else:
-            self.permission_manager.restore_pending_release()
+            self.permission_manager.reset_after_success()
             self.state_machine.transition_to(RunState.WaitingTrigger)
 
     def reset_to_waiting(self) -> None:

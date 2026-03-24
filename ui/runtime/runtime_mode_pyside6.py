@@ -25,6 +25,8 @@ from __future__ import annotations
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from ui.roi_overlay_colors import merge_roi_statuses
+
 
 _DARK_BG = "#2d2d2d"
 _PANEL_BG = "#363636"
@@ -194,6 +196,8 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._release_pwd = ""
         self._active_role_set: set[str] = set()
         self._busy = False
+        self._inspection_rows: list[dict] = []
+        self._camera_source_paths: dict[str, str] = {"cam1": "", "cam2": ""}
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -506,6 +510,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._refresh_trigger_buttons()
 
     def set_inspection_items(self, rows: list[dict]) -> None:
+        self._inspection_rows = list(rows or [])
         while self._items_vbox.count():
             item = self._items_vbox.takeAt(0)
             widget = item.widget()
@@ -554,6 +559,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._items_vbox.addStretch(1)
         self._items_container.update()
         self._items_scroll.viewport().update()
+        self._refresh_camera_previews()
 
     def set_camera_pixmap(self, role: str, pixmap: QtGui.QPixmap | None, *, placeholder: str | None = None) -> None:
         if role == "cam1":
@@ -561,8 +567,15 @@ class RuntimeModePage(QtWidgets.QWidget):
         elif role == "cam2":
             self.view_cam2.set_runtime_pixmap(pixmap, placeholder=placeholder)
 
+    def set_camera_source_path(self, role: str, path: str) -> None:
+        self._camera_source_paths[str(role).strip() or "cam1"] = str(path or "").strip()
+
+    def roi_statuses_for_camera(self, camera_id: str) -> dict[str, str]:
+        return merge_roi_statuses(self._inspection_rows, camera_id=camera_id)
+
     def clear_camera_views(self) -> None:
         self._active_role_set = set()
+        self._camera_source_paths = {"cam1": "", "cam2": ""}
         self.view_cam1.set_runtime_pixmap(None, placeholder="Cam1")
         self.view_cam2.set_runtime_pixmap(None, placeholder="Cam2")
         self.set_camera_results({})
@@ -576,6 +589,13 @@ class RuntimeModePage(QtWidgets.QWidget):
         }
         for camera_id, header in self._camera_section_headers.items():
             header.set_result(normalized.get(camera_id, ""))
+
+    def _refresh_camera_previews(self) -> None:
+        from ui.window_common import update_runtime_preview
+
+        for role, path in self._camera_source_paths.items():
+            if path:
+                update_runtime_preview(self, role, path)
 
     def append_log(self, message: str) -> None:
         self.log_output.appendPlainText(message)

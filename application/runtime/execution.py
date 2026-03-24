@@ -64,13 +64,13 @@ def _finalize_trigger_outcome(runtime, outcome, release_status_before) -> None:
             result="consumed",
             message=f"release consumed when valid inspection started, result={outcome.final_result}",
         )
-    if outcome.final_result == "NG":
+    if outcome.final_result == "NG" and runtime._lock_on_ng:
         runtime._write_release_log(
             event_type="ng_lock",
             result="locked",
             message=detail_text,
         )
-    elif outcome.error_message:
+    elif outcome.error_message and runtime._lock_on_ng:
         runtime._write_release_log(
             event_type="runtime_error_lock",
             result="locked",
@@ -125,6 +125,8 @@ def _precheck(runtime):
     ]
     if learning_items:
         algorithm = runtime._algo.current_learning_backbone()
+        if not str(algorithm or "").strip():
+            return False, "please choose a learning tool subtype first"
         try:
             for item in learning_items:
                 runtime._runtime_context.load_embedding_model(algorithm, model_key=item.model_key)
@@ -228,9 +230,9 @@ def _write_runtime_record(runtime, runtime_result) -> None:
             duration_ms=runtime_result.duration_ms,
             is_error=runtime_result.is_system_error,
             error_message=runtime_result.error_message,
-            lock_required=(runtime_result.final_result == "NG"),
-            release_required=(runtime_result.final_result == "NG"),
-            release_result="pending" if runtime_result.final_result == "NG" else "",
+            lock_required=(runtime_result.final_result == "NG" and runtime._lock_on_ng),
+            release_required=(runtime_result.final_result == "NG" and runtime._lock_on_ng),
+            release_result="pending" if runtime_result.final_result == "NG" and runtime._lock_on_ng else "",
             extra_fields=runtime_result.to_record_extra_fields(),
         )
     except Exception as exc:

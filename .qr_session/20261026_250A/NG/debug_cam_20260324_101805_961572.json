@@ -1,0 +1,90 @@
+{
+  "version": "5.5.0",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "roi1",
+      "points": [
+        [
+          1517.0,
+          721.0
+        ],
+        [
+          1765.0,
+          721.0
+        ],
+        [
+          1765.0,
+          971.0
+        ],
+        [
+          1517.0,
+          971.0
+        ]
+      ],
+      "group_id": null,
+      "shape_type": "polygon",
+      "flags": {}
+    },
+    {
+      "label": "roi2",
+      "points": [
+        [
+          929.0,
+          1282.0
+        ],
+        [
+          922.0,
+          1364.0
+        ],
+        [
+          1363.0,
+          1403.0
+        ],
+        [
+          1365.0,
+          1321.0
+        ],
+        [
+          924.0,
+          1282.0
+        ]
+      ],
+      "group_id": null,
+      "shape_type": "polygon",
+      "flags": {}
+    },
+    {
+      "label": "roi3",
+      "points": [
+        [
+          1999.0,
+          439.0
+        ],
+        [
+          1943.0,
+          1152.0
+        ],
+        [
+          1984.0,
+          1152.0
+        ],
+        [
+          2040.0,
+          436.0
+        ],
+        [
+          2001.0,
+          434.0
+        ]
+      ],
+      "group_id": null,
+      "shape_type": "polygon",
+      "flags": {}
+    }
+  ],
+  "imagePath": "debug_cam_20260324_101805_961572.png",
+  "imageData": null,
+  "imageHeight": 2048,
+  "imageWidth": 2448
+}

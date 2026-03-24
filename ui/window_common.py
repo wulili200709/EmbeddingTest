@@ -8,16 +8,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from application import AlgorithmController, ProductSession
 from line2dup.core import locator as line2dup_locator
 import algorithms.proxy as qr_core
-
-
-_RUNTIME_ROI_PALETTE = [
-    QtGui.QColor(255, 215, 0),
-    QtGui.QColor(255, 64, 128),
-    QtGui.QColor(0, 0, 255),
-    QtGui.QColor(0, 255, 128),
-    QtGui.QColor(255, 128, 0),
-    QtGui.QColor(128, 255, 0),
-]
+from ui.roi_overlay_colors import color_for_roi_status, is_roi_label
 
 
 def embedding_test_root(anchor_file: str) -> Path:
@@ -98,8 +89,16 @@ def connect_runtime_dialogs(window: QtWidgets.QWidget, runtime_ctrl) -> None:
 
 
 def update_runtime_preview(runtime_page, role: str, path: str) -> None:
+    if hasattr(runtime_page, "set_camera_source_path"):
+        runtime_page.set_camera_source_path(role, path)
     if path and Path(path).exists():
-        runtime_page.set_camera_pixmap(role, _render_runtime_overlay_pixmap(path))
+        roi_statuses = {}
+        if hasattr(runtime_page, "roi_statuses_for_camera"):
+            roi_statuses = dict(runtime_page.roi_statuses_for_camera(role) or {})
+        runtime_page.set_camera_pixmap(
+            role,
+            _render_runtime_overlay_pixmap(path, roi_statuses=roi_statuses),
+        )
         return
     runtime_page.set_camera_pixmap(
         role,
@@ -108,7 +107,11 @@ def update_runtime_preview(runtime_page, role: str, path: str) -> None:
     )
 
 
-def _render_runtime_overlay_pixmap(path: str) -> QtGui.QPixmap:
+def _render_runtime_overlay_pixmap(
+    path: str,
+    *,
+    roi_statuses: Optional[dict[str, str]] = None,
+) -> QtGui.QPixmap:
     pixmap = QtGui.QPixmap(path)
     if pixmap.isNull():
         return pixmap
@@ -118,7 +121,7 @@ def _render_runtime_overlay_pixmap(path: str) -> QtGui.QPixmap:
     painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
 
     _draw_runtime_search_region(painter, path)
-    _draw_runtime_roi_shapes(painter, path)
+    _draw_runtime_roi_shapes(painter, path, roi_statuses=roi_statuses)
 
     painter.end()
     return canvas
@@ -159,10 +162,20 @@ def _draw_runtime_search_region(painter: QtGui.QPainter, path: str) -> None:
     painter.drawPolygon(polygon)
 
 
-def _draw_runtime_roi_shapes(painter: QtGui.QPainter, path: str) -> None:
+def _draw_runtime_roi_shapes(
+    painter: QtGui.QPainter,
+    path: str,
+    *,
+    roi_statuses: Optional[dict[str, str]] = None,
+) -> None:
     jpath = qr_core.labelme_json_of_image(path)
     if not Path(jpath).exists():
         return
+    roi_statuses = {
+        str(label).strip(): str(status or "").strip().lower()
+        for label, status in dict(roi_statuses or {}).items()
+        if str(label).strip()
+    }
 
     def draw_shape(label: str, color: QtGui.QColor, *, width: float = 2.0, dash: bool = False) -> bool:
         polygon = qr_core.try_read_polygon_points_from_labelme(jpath, label)
@@ -188,9 +201,9 @@ def _draw_runtime_roi_shapes(painter: QtGui.QPainter, path: str) -> None:
         return False
 
     seen_labels: set[str] = set()
-    for idx, label in enumerate(qr_core.sorted_label_names_from_labelme(jpath, label_prefix="roi")):
+    for label in qr_core.sorted_label_names_from_labelme(jpath, label_prefix="roi"):
         seen_labels.add(label)
-        draw_shape(label, _RUNTIME_ROI_PALETTE[idx % len(_RUNTIME_ROI_PALETTE)], width=2.0, dash=False)
+        draw_shape(label, color_for_roi_status(roi_statuses.get(label, "")), width=2.0, dash=False)
 
     for label, color, dash in [
         ("anchor", QtGui.QColor(0, 255, 255), True),
@@ -199,4 +212,6 @@ def _draw_runtime_roi_shapes(painter: QtGui.QPainter, path: str) -> None:
     ]:
         if label in seen_labels:
             continue
+        if is_roi_label(label):
+            color = color_for_roi_status(roi_statuses.get(label, ""))
         draw_shape(label, color, width=2.0, dash=dash)

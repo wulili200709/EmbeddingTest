@@ -232,6 +232,7 @@ class RuntimeController(QtCore.QObject):
         runtime_context: RuntimeContextProtocol,
         import_error: Optional[Exception] = None,
         release_password: str = DEFAULT_RELEASE_PASSWORD,
+        lock_on_ng: bool = True,
         parent: Optional[QtCore.QObject] = None,
     ) -> None:
         super().__init__(parent)
@@ -240,6 +241,7 @@ class RuntimeController(QtCore.QObject):
         self._runtime_context = runtime_context
         self._import_error = import_error
         self._release_password = release_password
+        self._lock_on_ng = bool(lock_on_ng)
 
         self._frame_lock = threading.RLock()
         self._inspect_lock = threading.RLock()
@@ -493,6 +495,7 @@ class RuntimeController(QtCore.QObject):
             else None
         )
         self._set_busy(True)
+        self._last_item_results_by_camera = {}
         self._last_runtime_result = self._build_pending_runtime_result(status="RUNNING")
         self._emit_runtime_context()
         self._update_status(f"手动调试：正在触发相机{cam_index}…")
@@ -549,6 +552,7 @@ class RuntimeController(QtCore.QObject):
             else None
         )
         self._set_busy(True)
+        self._last_item_results_by_camera = {}
         self._last_runtime_result = self._build_pending_runtime_result(status="RUNNING")
         self._emit_runtime_context()
         self._update_status("开始执行脚踏触发链路")

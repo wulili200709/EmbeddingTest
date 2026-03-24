@@ -93,6 +93,11 @@ from ui.window_common import (
 
 _RUNTIME_IMPORT_ERROR = detect_runtime_import_error()
 
+# Test-stage switch:
+# False = 测试模式：NG时不自动弹出放行密码框，且不进入NG锁定，可直接继续下一次测试
+# True  = 产线模式：NG时自动弹出放行密码框，并进入NG锁定
+AUTO_SHOW_RELEASE_DIALOG_ON_NG = False
+
 
 def _normalize_application_font(app: QtWidgets.QApplication) -> None:
     font = QtGui.QFont(app.font())
@@ -148,6 +153,7 @@ class MainWindow(QtWidgets.QMainWindow):
             runtime_context=ToolPageRuntimeContext(self.tool_page),
             import_error=_RUNTIME_IMPORT_ERROR,
             release_password=self._release_password,
+            lock_on_ng=AUTO_SHOW_RELEASE_DIALOG_ON_NG,
             parent=self,
         )
         self.runtime_ctrl.set_capture_retention_policy(self._runtime_capture_policy)
@@ -386,6 +392,8 @@ class MainWindow(QtWidgets.QMainWindow):
     @QtCore.Slot(str, str)
     def _on_runtime_trigger_result(self, result: str, _detail: str) -> None:
         if str(result).strip().upper() != "NG":
+            return
+        if not AUTO_SHOW_RELEASE_DIALOG_ON_NG:
             return
         QtCore.QTimer.singleShot(80, self._show_release_dialog)
 

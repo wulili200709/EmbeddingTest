@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from algorithms.registry import (
     is_traditional_tool_algorithm,
     normalize_tool_algorithm_code,
 )
+from application.algorithm_controller import AlgorithmController
 from infrastructure.product_params import ProductRuntimeParams
 
 
@@ -51,6 +53,13 @@ class ToolAlgorithmRegistryTest(unittest.TestCase):
         fallback = ProductRuntimeParams.from_dict({})
         self.assertEqual(fallback.learning_backbone, "")
         self.assertEqual(DEFAULT_LEARNING_BACKBONE, "efficientnet_b0")
+
+    def test_algorithm_controller_keeps_learning_tool_unselected_when_params_empty(self) -> None:
+        controller = AlgorithmController()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            controller.load_params(str(Path(tmpdir) / "product_params.json"))
+        self.assertEqual(controller.product_params.algorithm, "")
+        self.assertEqual(controller.current_learning_backbone(), "")
 
 
 if __name__ == "__main__":

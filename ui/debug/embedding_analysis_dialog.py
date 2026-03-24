@@ -23,6 +23,7 @@ from tools.visualize_embeddings import (
 
 
 class EmbeddingAnalysisDialog(QtWidgets.QDialog):
+    _analysis_cache: dict[tuple[str, str, str, str, int, int, int], EmbeddingAnalysisResult] = {}
     def __init__(
         self,
         session_root: str,
@@ -36,10 +37,13 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
         self.resize(1200, 760)
         self.session_root = session_root
         self._result: Optional[EmbeddingAnalysisResult] = None
+        self._refresh_timer = QtCore.QTimer(self)
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.timeout.connect(self._refresh_analysis)
 
         self._build_ui()
         self._load_products(initial_product, initial_backbone, initial_model_key)
-        self._refresh_analysis()
+        QtCore.QTimer.singleShot(0, self._refresh_analysis)
 
     def _build_ui(self):
         root = QtWidgets.QVBoxLayout(self)
@@ -48,8 +52,10 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
         self.cmb_product = QtWidgets.QComboBox()
         self.cmb_product.currentTextChanged.connect(self._on_product_changed)
         self.cmb_model = QtWidgets.QComboBox()
+        self.cmb_model.currentIndexChanged.connect(self._schedule_refresh_analysis)
         self.cmb_projection = QtWidgets.QComboBox()
         self.cmb_projection.addItems(["tsne", "pca"])
+        self.cmb_projection.currentIndexChanged.connect(self._schedule_refresh_analysis)
         self.btn_refresh = QtWidgets.QPushButton("刷新分析")
         self.btn_refresh.clicked.connect(self._refresh_analysis)
 
@@ -148,12 +154,38 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
 
     def _on_product_changed(self, _product_name: str):
         self._load_models()
+        self._schedule_refresh_analysis()
+
+    def _schedule_refresh_analysis(self):
+        self._refresh_timer.start(50)
 
     def _current_model_entry(self) -> Optional[EmbeddingModelEntry]:
         entry = self.cmb_model.currentData()
         if isinstance(entry, EmbeddingModelEntry):
             return entry
         return None
+
+    def _analysis_cache_key(
+        self,
+        product_name: str,
+        entry: EmbeddingModelEntry,
+        projection: str,
+    ) -> tuple[str, str, str, str, int, int, int]:
+        product_dir = os.path.join(self.session_root, product_name)
+        session_file = os.path.join(product_dir, "session.json")
+        params_file = os.path.join(product_dir, "product_params.json")
+        model_mtime = int(os.path.getmtime(entry.model_path) * 1000) if os.path.exists(entry.model_path) else -1
+        session_mtime = int(os.path.getmtime(session_file) * 1000) if os.path.exists(session_file) else -1
+        params_mtime = int(os.path.getmtime(params_file) * 1000) if os.path.exists(params_file) else -1
+        return (
+            product_name,
+            entry.backbone,
+            entry.model_key,
+            str(projection or "tsne").strip().lower(),
+            model_mtime,
+            session_mtime,
+            params_mtime,
+        )
 
     def _refresh_analysis(self):
         product_name = self.cmb_product.currentText().strip()
@@ -166,20 +198,31 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
             self._show_error("当前产品下没有可用学习工具模型。")
             return
 
+        cache_key = self._analysis_cache_key(product_name, entry, projection)
+        self.btn_refresh.setEnabled(False)
+        self.txt_summary.setPlainText("Loading analysis...")
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        QtWidgets.QApplication.processEvents()
         try:
-            result = load_product_analysis(
-                session_root=self.session_root,
-                product_name=product_name,
-                backbone=entry.backbone,
-                model_key=entry.model_key,
-                projection_method=projection,
-            )
+            result = self._analysis_cache.get(cache_key)
+            if result is None:
+                result = load_product_analysis(
+                    session_root=self.session_root,
+                    product_name=product_name,
+                    backbone=entry.backbone,
+                    model_key=entry.model_key,
+                    projection_method=projection,
+                )
+                self._analysis_cache[cache_key] = result
         except Exception as exc:
             self._show_error(str(exc))
-            return
-
-        self._result = result
-        self._render_result(result)
+        else:
+            self._result = result
+            self._render_result(result)
+        finally:
+            self.btn_refresh.setEnabled(True)
+            if QtWidgets.QApplication.overrideCursor() is not None:
+                QtWidgets.QApplication.restoreOverrideCursor()
 
     def _show_error(self, message: str):
         self._result = None

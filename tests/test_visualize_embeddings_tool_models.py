@@ -41,7 +41,7 @@ class VisualizeEmbeddingsToolModelsTest(unittest.TestCase):
                 ],
                 str(product_dir / "inspection_items.json"),
             )
-            (product_dir / "cam1__roi1_register_model_efficientnet_b0.npz").write_bytes(b"npz")
+            (product_dir / "cam1__roi1_register_model_lt01.npz").write_bytes(b"npz")
 
             entries = list_available_embedding_models(str(product_dir))
 
@@ -97,7 +97,7 @@ class VisualizeEmbeddingsToolModelsTest(unittest.TestCase):
                 ],
                 str(product_dir / "inspection_items.json"),
             )
-            model_path = product_dir / "cam1__roi1_register_model_efficientnet_b0.npz"
+            model_path = product_dir / "cam1__roi1_register_model_lt01.npz"
             model_path.write_bytes(b"npz")
 
             model = RegisterModel(
@@ -136,7 +136,7 @@ class VisualizeEmbeddingsToolModelsTest(unittest.TestCase):
                     projection_method="pca",
                 )
 
-        self.assertTrue(result.model_path.endswith("cam1__roi1_register_model_efficientnet_b0.npz"))
+        self.assertTrue(result.model_path.endswith("cam1__roi1_register_model_lt01.npz"))
         self.assertEqual(result.tool_name, "螺丝1 (cam1/roi1)")
         self.assertEqual(result.label_names, ["roi1"])
         self.assertEqual(len(result.rows), 2)

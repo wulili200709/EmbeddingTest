@@ -1,0 +1,96 @@
+{
+  "product": "20261026_250A",
+  "algorithm": "efficientnet_b0",
+  "score_mode": "proto",
+  "topk": 3,
+  "margin": 0.02,
+  "loc_method": "line2dup",
+  "summary": {
+    "current_margin": 0.02,
+    "current_accuracy": 1.0,
+    "current_confusion": {
+      "tp_ok": 2,
+      "tn_ng": 2,
+      "fp_ok_as_ng": 0,
+      "fp_ng_as_ok": 0
+    },
+    "suggested_margin": 0.1904851347208023,
+    "suggested_accuracy": 1.0,
+    "suggested_confusion": {
+      "tp_ok": 2,
+      "tn_ng": 2,
+      "fp_ng_as_ok": 0,
+      "fp_ok_as_ng": 0
+    },
+    "ok_diff_min": 0.3692895174026489,
+    "ok_diff_max": 0.444732666015625,
+    "ng_diff_min": -0.29976004362106323,
+    "ng_diff_max": 0.011680752038955688,
+    "safe_range": [
+      0.011680752038955688,
+      0.3692895174026489
+    ]
+  },
+  "rows": [
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/.qr_session/20261026_250A/OK/debug_cam_20260324_101710_966290.png",
+      "file_name": "debug_cam_20260324_101710_966290.png",
+      "gt": "OK",
+      "pred": "OK",
+      "diff": 0.444732666015625,
+      "sim_ok": 0.7824605703353882,
+      "sim_ng": 0.3377279043197632,
+      "value": null,
+      "threshold": null,
+      "match_ms": 504.4869999983348,
+      "total_ms": 797.3645999882137,
+      "json_name": "debug_cam_20260324_101710_966290.json",
+      "infer_ms": 164.25210000306834
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/.qr_session/20261026_250A/OK/debug_cam_20260324_101746_962899.png",
+      "file_name": "debug_cam_20260324_101746_962899.png",
+      "gt": "OK",
+      "pred": "OK",
+      "diff": 0.3692895174026489,
+      "sim_ok": 0.7944335341453552,
+      "sim_ng": 0.4251440167427063,
+      "value": null,
+      "threshold": null,
+      "match_ms": 435.22030000167433,
+      "total_ms": 755.1048000023002,
+      "json_name": "debug_cam_20260324_101746_962899.json",
+      "infer_ms": 161.27830000186805
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/.qr_session/20261026_250A/NG/debug_cam_20260324_101759_505793.png",
+      "file_name": "debug_cam_20260324_101759_505793.png",
+      "gt": "NG",
+      "pred": "NG",
+      "diff": -0.29976004362106323,
+      "sim_ok": 0.4715338349342346,
+      "sim_ng": 0.7712938785552979,
+      "value": null,
+      "threshold": null,
+      "match_ms": 463.7940999964485,
+      "total_ms": 186.85650000406895,
+      "json_name": "debug_cam_20260324_101759_505793.json",
+      "infer_ms": 186.75230001099408
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/.qr_session/20261026_250A/NG/debug_cam_20260324_101805_961572.png",
+      "file_name": "debug_cam_20260324_101805_961572.png",
+      "gt": "NG",
+      "pred": "NG",
+      "diff": 0.011680752038955688,
+      "sim_ok": 0.3494557738304138,
+      "sim_ng": 0.33777502179145813,
+      "value": null,
+      "threshold": null,
+      "match_ms": 385.5287999904249,
+      "total_ms": 170.90909999387804,
+      "json_name": "debug_cam_20260324_101805_961572.json",
+      "infer_ms": 170.75520000071265
+    }
+  ]
+}

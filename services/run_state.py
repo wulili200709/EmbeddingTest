@@ -60,6 +60,7 @@ class RunStateMachine:
         },
         RunState.CompletedNg: {
             RunState.LockedByNg,
+            RunState.WaitingTrigger,
             RunState.Error,
         },
         RunState.LockedByNg: {

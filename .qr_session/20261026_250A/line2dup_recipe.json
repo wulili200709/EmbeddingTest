@@ -1,0 +1,104 @@
+{
+  "model_path": "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\20261026_250A\\line2dup_model.json",
+  "reference_image": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/.qr_session/20261026_250A/OK/debug_cam_20260324_101710_966290.png",
+  "class_id": "20261026_250A",
+  "backend": "fusionv2",
+  "threshold": 30.0,
+  "auto_threshold_sweep": false,
+  "threshold_sweep_step": 10,
+  "threshold_sweep_min": 20,
+  "nms_iou": 0.3,
+  "topk": 1,
+  "crop_stride": 0,
+  "use_scene_mask": false,
+  "follow_mode": "affine_roi",
+  "output_label": "roi1",
+  "reference_label": "roi1",
+  "reference_shape_type": "rectangle",
+  "reference_points": [
+    [
+      1029.0,
+      764.0
+    ],
+    [
+      1277.0,
+      1014.0
+    ]
+  ],
+  "reference_regions": [
+    {
+      "reference_label": "roi1",
+      "output_label": "roi1",
+      "display_name": "二次锁",
+      "shape_type": "rectangle",
+      "points": [
+        [
+          1029.0,
+          764.0
+        ],
+        [
+          1277.0,
+          1014.0
+        ]
+      ]
+    },
+    {
+      "reference_label": "roi2",
+      "output_label": "roi2",
+      "display_name": "密封圈1",
+      "shape_type": "polygon",
+      "points": [
+        [
+          441.0,
+          1325.0
+        ],
+        [
+          434.0,
+          1407.0
+        ],
+        [
+          875.0,
+          1446.0
+        ],
+        [
+          877.0,
+          1364.0
+        ],
+        [
+          436.0,
+          1325.0
+        ]
+      ]
+    },
+    {
+      "reference_label": "roi3",
+      "output_label": "roi3",
+      "display_name": "密封圈2",
+      "shape_type": "polygon",
+      "points": [
+        [
+          1511.0,
+          482.0
+        ],
+        [
+          1455.0,
+          1195.0
+        ],
+        [
+          1496.0,
+          1195.0
+        ],
+        [
+          1552.0,
+          479.0
+        ],
+        [
+          1513.0,
+          477.0
+        ]
+      ]
+    }
+  ],
+  "search_shape_type": "",
+  "search_points": null
+}

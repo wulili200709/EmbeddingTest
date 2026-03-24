@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -22,15 +20,25 @@ LEGACY_SHARED_BACKBONE_ALGORITHM_CODES = {
 }
 
 _LEARNING_DISPLAY_NAMES = {
-    "efficientnet_b0": "高精度EN工具",
-    "mobilenet_v3_small": "轻量MN工具",
-    "mobilenet_v3_large": "均衡MN工具",
+    "efficientnet_b0": "高精度学习工具",
+    "mobilenet_v3_small": "轻量学习工具",
+    "mobilenet_v3_large": "均衡学习工具",
+}
+
+_LEARNING_STORAGE_CODES = {
+    "efficientnet_b0": "lt01",
+    "mobilenet_v3_small": "lt02",
+    "mobilenet_v3_large": "lt03",
+}
+_STORAGE_CODE_TO_BACKBONE = {
+    value: key
+    for key, value in _LEARNING_STORAGE_CODES.items()
 }
 
 _TRADITIONAL_DISPLAY_NAMES = {
     "meanintensity": "灰度工具",
     "meanhsv_h": "色相工具",
-    "meanhsv_v": "亮度工具",
+    "meanhsv_v": "明度工具",
     "meanhsv_s": "饱和度工具",
 }
 
@@ -104,6 +112,20 @@ def algorithm_display_name(code: object) -> str:
     return normalized
 
 
+def learning_backbone_storage_code(code: object) -> str:
+    normalized = str(code or "").strip()
+    if not normalized:
+        return ""
+    return _LEARNING_STORAGE_CODES.get(normalized, normalized)
+
+
+def storage_code_backbone(code: object) -> str:
+    normalized = str(code or "").strip()
+    if not normalized:
+        return ""
+    return _STORAGE_CODE_TO_BACKBONE.get(normalized, normalized)
+
+
 def is_learning_tool_algorithm(code: object) -> bool:
     spec = get_tool_algorithm_spec(code)
     return bool(spec is not None and spec.family == "learning")
@@ -124,7 +146,9 @@ __all__ = [
     "get_tool_algorithm_spec",
     "is_learning_tool_algorithm",
     "is_traditional_tool_algorithm",
+    "learning_backbone_storage_code",
     "list_tool_algorithm_codes",
     "list_tool_algorithm_specs",
     "normalize_tool_algorithm_code",
+    "storage_code_backbone",
 ]

@@ -33,6 +33,7 @@ def _rebuild_runner(runtime) -> bool:
     runtime._scheduler = runtime_controller_module.InspectionScheduler(
         state_machine=runtime_controller_module.RunStateMachine(),
         permission_manager=runtime._permission_manager,
+        lock_on_ng=runtime._lock_on_ng,
     )
     records_dir = os.path.join(runtime._session.product_dir, "runtime_records")
     release_logs_dir = os.path.join(runtime._session.product_dir, "release_logs")

@@ -291,7 +291,7 @@ def _grab_debug_camera_once(self) -> None:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     image_path = os.path.join(capture_dir, f"debug_cam_{stamp}.png")
     if frame_to_bgr_image is None:
-        QtWidgets.QMessageBox.critical(self, "鐩告満璋冭瘯", "鐩告満褰╄壊杞崲鏈嶅姟涓嶅彲鐢?")
+        QtWidgets.QMessageBox.critical(self, "相机调试", "相机图像转换服务不可用")
         return
     image = frame_to_bgr_image(frame)
     if image.ndim == 3 and image.shape[2] > 3:

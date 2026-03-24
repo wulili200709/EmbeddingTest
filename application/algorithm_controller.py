@@ -40,6 +40,7 @@ from algorithms.registry import (
     get_tool_algorithm_spec,
     is_learning_tool_algorithm,
     is_traditional_tool_algorithm,
+    learning_backbone_storage_code,
     normalize_tool_algorithm_code,
 )
 from infrastructure.product_params import (
@@ -142,12 +143,12 @@ class AlgorithmController:
             if alg in SUPPORTED_EMBEDDING_ALGORITHMS:
                 learning_backbone = alg
             else:
-                learning_backbone = DEFAULT_LEARNING_BACKBONE
+                learning_backbone = ""
         self.product_params.learning_backbone = learning_backbone
         if alg and alg not in SUPPORTED_ALGORITHMS:
-            self.product_params.algorithm = learning_backbone
+            self.product_params.algorithm = ""
         elif not alg:
-            self.product_params.algorithm = learning_backbone
+            self.product_params.algorithm = ""
         else:
             self.product_params.algorithm = alg
         if str(self.product_params.score_mode or "") not in SUPPORTED_SCORE_MODES:
@@ -175,7 +176,7 @@ class AlgorithmController:
         algorithm = str(self.product_params.algorithm or "").strip()
         if algorithm in SUPPORTED_EMBEDDING_ALGORITHMS:
             return algorithm
-        return DEFAULT_LEARNING_BACKBONE
+        return ""
 
     def set_learning_backbone(self, backbone: str) -> str:
         normalized = str(backbone or "").strip()
@@ -221,6 +222,13 @@ class AlgorithmController:
         return self._normalize_model_key(model_key)
 
     def embedding_model_path(self, algorithm: str, product_dir: str, *, model_key: object = "") -> str:
+        normalized_key = self.tool_model_key(model_key)
+        storage_code = learning_backbone_storage_code(algorithm)
+        if normalized_key:
+            return os.path.join(product_dir, f"{normalized_key}_register_model_{storage_code}.npz")
+        return os.path.join(product_dir, f"register_model_{storage_code}.npz")
+
+    def embedding_model_legacy_path(self, algorithm: str, product_dir: str, *, model_key: object = "") -> str:
         normalized_key = self.tool_model_key(model_key)
         if normalized_key:
             return os.path.join(product_dir, f"{normalized_key}_register_model_{algorithm}.npz")
@@ -316,9 +324,28 @@ class AlgorithmController:
         source_model_key = normalized_model_key
         if not os.path.exists(model_file) and normalized_model_key:
             legacy_model_file = self.embedding_model_path(algorithm, product_dir)
+            legacy_raw_model_file = self.embedding_model_legacy_path(
+                algorithm,
+                product_dir,
+                model_key=normalized_model_key,
+            )
             if os.path.exists(legacy_model_file):
                 model_file = legacy_model_file
                 source_model_key = ""
+            elif os.path.exists(legacy_raw_model_file):
+                model_file = legacy_raw_model_file
+        if not os.path.exists(model_file):
+            legacy_model_file = self.embedding_model_legacy_path(
+                algorithm,
+                product_dir,
+                model_key=normalized_model_key,
+            )
+            if os.path.exists(legacy_model_file):
+                model_file = legacy_model_file
+        if not os.path.exists(model_file) and not normalized_model_key:
+            legacy_shared_model = self.embedding_model_legacy_path(algorithm, product_dir)
+            if os.path.exists(legacy_shared_model):
+                model_file = legacy_shared_model
         if not os.path.exists(model_file):
             self.model = None
             self._loaded_embedding_model_key = ("", "")

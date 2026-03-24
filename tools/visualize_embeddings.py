@@ -25,7 +25,11 @@ if __package__ in (None, ""):
         sys.path.insert(0, root_str)
 
 import algorithms.proxy as qr_core
-from algorithms.registry import algorithm_display_name
+from algorithms.registry import (
+    algorithm_display_name,
+    learning_backbone_storage_code,
+    storage_code_backbone,
+)
 from domain import load_inspection_items
 from infrastructure.product_params import load_product_params
 
@@ -85,12 +89,13 @@ def _parse_register_model_filename(name: str) -> Optional[Tuple[str, str]]:
         return None
     stem = str(name)[:-4]
     if stem.startswith("register_model_"):
-        backbone = stem[len("register_model_") :]
+        backbone = storage_code_backbone(stem[len("register_model_") :])
         return ("", backbone) if backbone else None
     marker = "_register_model_"
     if marker not in stem:
         return None
     model_key, backbone = stem.rsplit(marker, 1)
+    backbone = storage_code_backbone(backbone)
     if not backbone:
         return None
     return model_key, backbone
@@ -98,9 +103,10 @@ def _parse_register_model_filename(name: str) -> Optional[Tuple[str, str]]:
 
 def register_model_path(product_dir: str, backbone: str, *, model_key: str = "") -> str:
     normalized_key = str(model_key or "").strip()
+    storage_code = learning_backbone_storage_code(backbone)
     if normalized_key:
-        return os.path.join(product_dir, f"{normalized_key}_register_model_{backbone}.npz")
-    return os.path.join(product_dir, f"register_model_{backbone}.npz")
+        return os.path.join(product_dir, f"{normalized_key}_register_model_{storage_code}.npz")
+    return os.path.join(product_dir, f"register_model_{storage_code}.npz")
 
 
 def list_available_embedding_models(product_dir: str) -> List[EmbeddingModelEntry]:

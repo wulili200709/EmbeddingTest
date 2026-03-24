@@ -77,6 +77,8 @@ def _inspection_item_status(tool_page, inspection_item):
 
     if tool_page.algo.is_learning_tool(inspection_item.algorithm_code):
         backbone = tool_page.algo.current_learning_backbone()
+        if not backbone:
+            return "未选择", "请先为学习工具选择子类。", "#d98c8c"
         model_path = tool_page.algo.embedding_model_path(
             backbone,
             tool_page.session.product_dir,
