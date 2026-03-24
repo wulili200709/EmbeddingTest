@@ -2,17 +2,6 @@
 product_session.py
 
 产品与会话管理，纯文件 I/O，零 UI 依赖。
-
-职责：
-  - 维护产品列表（products.json）
-  - 计算并持有当前产品下所有路径
-  - 读写 session.json（ok/ng/test 文件列表、参考图、定位方式）
-  - 提供「新建产品 / 切换产品 / 清空会话」的数据层操作
-
-不负责：
-  - 任何 Qt Widget 操作
-  - 模型加载 / 算法参数
-  - 运行链路状态
 """
 
 from __future__ import annotations
@@ -21,13 +10,8 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import List, Optional
 
-
-# ---------------------------------------------------------------------------
-# 产品路径集合（只读快照）
-# ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class ProductPaths:
@@ -35,12 +19,13 @@ class ProductPaths:
     session_json: str
     product_params_path: str
     inspection_items_path: str
+    camera_settings_path: str
     line2dup_model_path: str
     line2dup_recipe_path: str
 
     @classmethod
     def build(cls, product_dir: str) -> "ProductPaths":
-        from line2dup.core.locator import product_paths  # 运行时延迟导入，避免循环依赖
+        from line2dup.core.locator import product_paths
 
         paths = product_paths(product_dir)
         return cls(
@@ -48,14 +33,11 @@ class ProductPaths:
             session_json=os.path.join(product_dir, "session.json"),
             product_params_path=os.path.join(product_dir, "product_params.json"),
             inspection_items_path=os.path.join(product_dir, "inspection_items.json"),
+            camera_settings_path=os.path.join(product_dir, "camera_settings.json"),
             line2dup_model_path=paths.model_path,
             line2dup_recipe_path=paths.recipe_path,
         )
 
-
-# ---------------------------------------------------------------------------
-# Session 数据快照（从 session.json 读出的内容）
-# ---------------------------------------------------------------------------
 
 @dataclass
 class SessionData:
@@ -69,23 +51,10 @@ class SessionData:
     runtime_capture_policy: str = "ng_only"
 
 
-PRODUCT_NAME_RE = re.compile(r'^[a-zA-Z0-9_\u4e00-\u9fa5]+$')
+PRODUCT_NAME_RE = re.compile(r"^[a-zA-Z0-9_\u4e00-\u9fa5]+$")
 
-
-# ---------------------------------------------------------------------------
-# ProductSession
-# ---------------------------------------------------------------------------
 
 class ProductSession:
-    """
-    管理产品列表、当前产品路径、session 读写。
-
-    使用方式：
-        session = ProductSession(session_dir)
-        session.load()                    # 读取 products.json
-        session.switch_product("Default") # 设置当前产品并更新路径
-    """
-
     _DEFAULT_PRODUCTS: dict = {
         "products": ["Default"],
         "current_product": "Default",
@@ -94,22 +63,9 @@ class ProductSession:
     def __init__(self, session_dir: str) -> None:
         self.session_dir: str = session_dir
         self.products_json: str = os.path.join(session_dir, "products.json")
-
-        # 产品列表元数据
-        self._products_data: dict = {
-            "products": ["Default"],
-            "current_product": "Default",
-        }
-
-        # 当前产品名
+        self._products_data: dict = dict(self._DEFAULT_PRODUCTS)
         self.current_product: str = "Default"
-
-        # 当前产品路径集（switch_product 后才有效）
         self.paths: Optional[ProductPaths] = None
-
-    # ------------------------------------------------------------------
-    # 属性代理（让调用方可以直接 session.product_dir 而不用 session.paths.product_dir）
-    # ------------------------------------------------------------------
 
     @property
     def product_names(self) -> List[str]:
@@ -132,6 +88,10 @@ class ProductSession:
         return self.paths.inspection_items_path if self.paths else ""
 
     @property
+    def camera_settings_path(self) -> str:
+        return self.paths.camera_settings_path if self.paths else ""
+
+    @property
     def line2dup_model_path(self) -> str:
         return self.paths.line2dup_model_path if self.paths else ""
 
@@ -139,12 +99,7 @@ class ProductSession:
     def line2dup_recipe_path(self) -> str:
         return self.paths.line2dup_recipe_path if self.paths else ""
 
-    # ------------------------------------------------------------------
-    # 产品列表操作
-    # ------------------------------------------------------------------
-
     def load(self) -> None:
-        """从 products.json 加载产品列表；不存在则使用默认值。"""
         if os.path.exists(self.products_json):
             try:
                 with open(self.products_json, "r", encoding="utf-8") as f:
@@ -153,43 +108,35 @@ class ProductSession:
                     self._products_data = data
             except Exception:
                 pass
+        self._remove_missing_product_entries()
         self.current_product = str(self._products_data.get("current_product", "Default"))
         self._ensure_current_product_in_list()
 
     def save_products(self) -> None:
-        """把当前产品列表元数据写回 products.json。"""
         os.makedirs(self.session_dir, exist_ok=True)
         with open(self.products_json, "w", encoding="utf-8") as f:
             json.dump(self._products_data, f, ensure_ascii=False, indent=2)
 
     def create_product(self, name: str) -> str:
-        """
-        新建产品。
-        成功返回空字符串，失败返回错误描述。
-        """
         name = name.strip()
         if not name:
             return "产品名称不能为空"
         if not PRODUCT_NAME_RE.match(name):
             return "产品名称只能包含字母、数字、下划线和中文字符"
         if name in self._products_data["products"]:
-            return "产品名称已存在"
+            if self._product_dir_exists(name):
+                return "产品名称已存在"
+            self._remove_product_name(name)
         self._products_data["products"].append(name)
         self.save_products()
         return ""
 
     def switch_product(self, name: str) -> None:
-        """切换当前产品并刷新路径。"""
         self.current_product = name
         self._products_data["current_product"] = name
         self._refresh_paths()
 
-    # ------------------------------------------------------------------
-    # Session 读写
-    # ------------------------------------------------------------------
-
     def save_session(self, data: SessionData) -> None:
-        """把当前会话数据写入 session.json。"""
         if not self.session_json:
             return
         os.makedirs(self.product_dir, exist_ok=True)
@@ -226,10 +173,6 @@ class ProductSession:
             json.dump(payload, f, ensure_ascii=False, indent=2)
 
     def load_session(self) -> SessionData:
-        """
-        从 session.json 读取会话数据，过滤掉不存在的文件路径。
-        不存在或读取失败时返回空 SessionData。
-        """
         raw: dict = {}
         if self.session_json and os.path.exists(self.session_json):
             try:
@@ -260,16 +203,11 @@ class ProductSession:
         )
 
     def delete_session_file(self) -> None:
-        """清空会话：删除 session.json 文件（不影响产品配置）。"""
         try:
             if self.session_json and os.path.exists(self.session_json):
                 os.remove(self.session_json)
         except Exception:
             pass
-
-    # ------------------------------------------------------------------
-    # 内部工具
-    # ------------------------------------------------------------------
 
     def _refresh_paths(self) -> None:
         product_dir = os.path.join(self.session_dir, self.current_product)
@@ -280,3 +218,42 @@ class ProductSession:
         products = self._products_data.setdefault("products", ["Default"])
         if self.current_product not in products:
             products.append(self.current_product)
+
+    def _product_dir_exists(self, name: str) -> bool:
+        product_name = str(name or "").strip()
+        if not product_name:
+            return False
+        return os.path.isdir(os.path.join(self.session_dir, product_name))
+
+    def _remove_product_name(self, name: str) -> None:
+        product_name = str(name or "").strip()
+        if not product_name:
+            return
+        products = [
+            item
+            for item in self._products_data.setdefault("products", ["Default"])
+            if str(item).strip() != product_name
+        ]
+        if not products:
+            products = ["Default"]
+        self._products_data["products"] = products
+        if str(self._products_data.get("current_product", "")).strip() == product_name:
+            self._products_data["current_product"] = products[0]
+            self.current_product = products[0]
+
+    def _remove_missing_product_entries(self) -> None:
+        products = [
+            str(item).strip()
+            for item in self._products_data.get("products", ["Default"])
+            if str(item).strip()
+        ]
+        kept: List[str] = []
+        for name in products:
+            if name == "Default" or self._product_dir_exists(name):
+                kept.append(name)
+        if not kept:
+            kept = ["Default"]
+        self._products_data["products"] = kept
+        current = str(self._products_data.get("current_product", "Default")).strip() or "Default"
+        if current not in kept:
+            self._products_data["current_product"] = kept[0]

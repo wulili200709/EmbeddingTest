@@ -1,0 +1,132 @@
+{
+  "model_path": "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\2026_250A_3\\line2dup_model.json",
+  "reference_image": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/.qr_session/2026_250A_3/debug_capture/debug_cam_20260324_152404_794823.png",
+  "class_id": "2026_250A_3",
+  "backend": "fusionv2",
+  "threshold": 30.0,
+  "auto_threshold_sweep": false,
+  "threshold_sweep_step": 10,
+  "threshold_sweep_min": 20,
+  "nms_iou": 0.3,
+  "topk": 1,
+  "crop_stride": 0,
+  "use_scene_mask": false,
+  "follow_mode": "affine_roi",
+  "output_label": "roi1",
+  "reference_label": "roi1",
+  "reference_shape_type": "polygon",
+  "reference_points": [
+    [
+      1499.0,
+      805.0
+    ],
+    [
+      1518.0,
+      1075.0
+    ],
+    [
+      1511.0,
+      1477.0
+    ],
+    [
+      1554.0,
+      1482.0
+    ],
+    [
+      1569.0,
+      1135.0
+    ],
+    [
+      1542.0,
+      798.0
+    ],
+    [
+      1496.0,
+      800.0
+    ]
+  ],
+  "reference_regions": [
+    {
+      "reference_label": "roi1",
+      "output_label": "roi1",
+      "display_name": "密封圈1",
+      "shape_type": "polygon",
+      "points": [
+        [
+          1499.0,
+          805.0
+        ],
+        [
+          1518.0,
+          1075.0
+        ],
+        [
+          1511.0,
+          1477.0
+        ],
+        [
+          1554.0,
+          1482.0
+        ],
+        [
+          1569.0,
+          1135.0
+        ],
+        [
+          1542.0,
+          798.0
+        ],
+        [
+          1496.0,
+          800.0
+        ]
+      ]
+    },
+    {
+      "reference_label": "roi2",
+      "output_label": "roi2",
+      "display_name": "密封圈2",
+      "shape_type": "polygon",
+      "points": [
+        [
+          458.0,
+          499.0
+        ],
+        [
+          877.0,
+          496.0
+        ],
+        [
+          882.0,
+          569.0
+        ],
+        [
+          472.0,
+          583.0
+        ],
+        [
+          451.0,
+          501.0
+        ]
+      ]
+    },
+    {
+      "reference_label": "roi3",
+      "output_label": "roi3",
+      "display_name": "roi3",
+      "shape_type": "rectangle",
+      "points": [
+        [
+          818.0,
+          1108.0
+        ],
+        [
+          1287.0,
+          1223.0
+        ]
+      ]
+    }
+  ],
+  "search_shape_type": "",
+  "search_points": null
+}

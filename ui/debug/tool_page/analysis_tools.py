@@ -267,6 +267,7 @@ def _compute_traditional_baseline_metrics(tool_page, img_path: str, preferred_la
         "roi_label": str(roi["label_name"]),
         "bbox_xywh": list(roi["bbox_xywh"]),
         "mean_intensity": float(np.mean(valid_gray)),
+        "mean_std": float(np.std(valid_gray)),
         "hsv_h_mean": float(np.mean(h_vals)),
         "hsv_h_std": float(np.std(h_vals)),
         "hsv_s_mean": float(np.mean(s_vals)),
@@ -281,22 +282,29 @@ def _save_traditional_baseline_report(
     tool_page,
     rows: List[Dict[str, object]],
     tab_name: str,
+    roi_label: str = "roi1",
 ) -> Tuple[str, str]:
     report_dir = os.path.join(tool_page.session.product_dir, "traditional_baseline_reports")
     os.makedirs(report_dir, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base = f"baseline_roi1_hsv_{tab_name.lower()}_{stamp}"
+    roi_slug = str(roi_label or "roi").strip() or "roi"
+    base = f"baseline_{roi_slug}_hsv_{tab_name.lower()}_{stamp}"
     json_path = os.path.join(report_dir, base + ".json")
     csv_path = os.path.join(report_dir, base + ".csv")
 
-    payload = {"product": tool_page.session.current_product, "tab": tab_name, "rows": rows}
+    payload = {
+        "product": tool_page.session.current_product,
+        "tab": tab_name,
+        "roi_label": roi_slug,
+        "rows": rows,
+    }
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
     with open(csv_path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([
-            "file", "roi_label", "bbox_xywh", "mean_intensity",
+            "file", "roi_label", "bbox_xywh", "mean_intensity", "mean_std",
             "hsv_h_mean", "hsv_h_std", "hsv_s_mean", "hsv_s_std",
             "hsv_v_mean", "hsv_v_std", "roi_area", "error",
         ])
@@ -306,6 +314,7 @@ def _save_traditional_baseline_report(
                 row.get("roi_label", ""),
                 row.get("bbox_xywh", ""),
                 row.get("mean_intensity", ""),
+                row.get("mean_std", ""),
                 row.get("hsv_h_mean", ""),
                 row.get("hsv_h_std", ""),
                 row.get("hsv_s_mean", ""),

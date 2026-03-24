@@ -1,0 +1,7 @@
+{
+  "DA9521010": {
+    "exposure_time_us": 5000.0,
+    "gain": 0.0,
+    "trigger_mode": "continuous"
+  }
+}

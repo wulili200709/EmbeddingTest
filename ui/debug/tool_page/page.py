@@ -119,6 +119,7 @@ ALGORITHM_GROUPS = [
         [
             ("色相工具", "meanhsv_h", True),
             ("灰度工具", "meanintensity", True),
+            ("偏差工具", "meanstd", True),
             ("明度工具", "meanhsv_v", True),
             ("饱和度工具", "meanhsv_s", True),
         ],
@@ -275,7 +276,7 @@ class ToolPage(QtWidgets.QWidget):
         self._debug_io_timer = QtCore.QTimer(self)
         self._debug_io_timer.setInterval(500)
         self._debug_io_timer.timeout.connect(self._refresh_debug_io_snapshot)
-        self._camera_settings_store = CameraSettingsStore()
+        self._camera_settings_store = CameraSettingsStore(self.session.camera_settings_path)
         # ?? setValue/????????????????????
         self._debug_camera_block_spin_apply = False
 
@@ -429,6 +430,9 @@ class ToolPage(QtWidgets.QWidget):
     def current_product_name(self) -> str:
         return self.session.current_product
 
+    def _sync_camera_settings_store_path(self) -> None:
+        self._camera_settings_store.set_path(self.session.camera_settings_path)
+
     def connected_debug_camera_serial(self) -> str:
         device = self._debug_camera_device()
         if device is not None:
@@ -513,6 +517,7 @@ class ToolPage(QtWidgets.QWidget):
         # Load algorithm params and session data, then refresh UI.
         # Emits sessionLoaded after the session is applied.
 
+        self._sync_camera_settings_store_path()
 
         self.algo.load_params(self.session.product_params_path)
         self.algo.model = None
@@ -558,6 +563,7 @@ class ToolPage(QtWidgets.QWidget):
 
         self.session.switch_product(name)
         self.session.save_products()
+        self._sync_camera_settings_store_path()
 
         self.algo.model = None
         self.line2dup_recipe = None
@@ -2285,25 +2291,35 @@ class ToolPage(QtWidgets.QWidget):
             QtWidgets.QMessageBox.information(self, "Info", "Current list has no images.")
             return
 
+        inspection_item = self._selected_inspection_item()
+        if inspection_item is None:
+            QtWidgets.QMessageBox.information(self, "Info", "Please select an inspection tool first.")
+            return
+        roi_label = str(inspection_item.roi_label or "").strip() or "roi"
+        display_name = str(
+            inspection_item.display_name or inspection_item.roi_label or inspection_item.item_id or roi_label
+        ).strip()
+
         rows: List[Dict[str, object]] = []
         ok = 0
         for path in paths:
             try:
-                row = self._compute_traditional_baseline_metrics(path, preferred_label="roi1")
+                row = self._compute_traditional_baseline_metrics(path, preferred_label=roi_label)
                 ok += 1
             except Exception as exc:
                 row = {
                     "file_path": path, "file_name": os.path.basename(path),
-                    "roi_label": "", "bbox_xywh": "", "mean_intensity": "",
+                    "roi_label": "", "bbox_xywh": "", "mean_intensity": "", "mean_std": "",
                     "hsv_h_mean": "", "hsv_h_std": "", "hsv_s_mean": "", "hsv_s_std": "",
                     "hsv_v_mean": "", "hsv_v_std": "", "roi_area": "", "error": str(exc),
                 }
             rows.append(row)
 
-        json_path, csv_path = self._save_traditional_baseline_report(rows, tab_name=tab_name)
-        self.lbl_status.setText(f"Status: baseline debug done, success {ok}/{len(paths)}")
+        json_path, csv_path = self._save_traditional_baseline_report(rows, tab_name=tab_name, roi_label=roi_label)
+        self.lbl_status.setText(f"Status: baseline debug done for {display_name}, success {ok}/{len(paths)}")
         QtWidgets.QMessageBox.information(
             self,
             "Traditional Baseline Debug",
-            f"Completed baseline metrics for {tab_name}.\nSuccess: {ok}/{len(paths)}\n\nJSON:\n{json_path}\n\nCSV:\n{csv_path}",
+            f"Completed baseline metrics for {display_name} ({roi_label}) in {tab_name}.\n"
+            f"Success: {ok}/{len(paths)}\n\nJSON:\n{json_path}\n\nCSV:\n{csv_path}",
         )

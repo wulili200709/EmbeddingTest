@@ -1,5 +1,5 @@
 {
-  "algorithm": "meanintensity",
+  "algorithm": "efficientnet_b0",
   "learning_backbone": "efficientnet_b0",
   "score_mode": "proto",
   "margin": 0.02,
@@ -16,7 +16,7 @@
     },
     "meanintensity::cam1__roi3": {
       "algorithm": "meanintensity",
-      "threshold": 53.857765197753906,
+      "threshold": 73.8577651977539,
       "ok_when": "less_equal",
       "ok_mean": 50.52641677856445,
       "ng_mean": 107.72391815185547,

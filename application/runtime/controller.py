@@ -249,7 +249,7 @@ class RuntimeController(QtCore.QObject):
         self._last_record_path: Optional[str] = None
         self._last_runtime_result: Optional[RuntimeInspectionResult] = None
         self._capture_retention_policy = RUNTIME_CAPTURE_POLICY_NG_ONLY
-        self._camera_settings_store = CameraSettingsStore()
+        self._camera_settings_store = CameraSettingsStore(self._session.camera_settings_path)
 
         self._camera_manager = None
         self._frame_grab_service = None
@@ -272,6 +272,9 @@ class RuntimeController(QtCore.QObject):
 
     def capture_retention_policy(self) -> str:
         return self._capture_retention_policy
+
+    def _sync_camera_settings_store_path(self) -> None:
+        self._camera_settings_store.set_path(self._session.camera_settings_path)
 
     # ------------------------------------------------------------------
     # 公开操作方法（RuntimeModePage Signal 直接连到这里）
@@ -313,6 +316,7 @@ class RuntimeController(QtCore.QObject):
 
     def connect_cameras(self, bindings_obj) -> None:
         """解析绑定关系并连接相机。"""
+        self._sync_camera_settings_store_path()
         bindings = dict(bindings_obj or {})
         cam1 = str(bindings.get("cam1", "")).strip()
         cam2 = str(bindings.get("cam2", "")).strip()
@@ -359,6 +363,7 @@ class RuntimeController(QtCore.QObject):
         self._update_status("相机已连接，可开始触发")
 
     def try_connect_cameras(self, bindings_obj) -> bool:
+        self._sync_camera_settings_store_path()
         bindings = dict(bindings_obj or {})
         cam1 = str(bindings.get("cam1", "")).strip()
         cam2 = str(bindings.get("cam2", "")).strip()
@@ -444,6 +449,7 @@ class RuntimeController(QtCore.QObject):
         self._update_status("相机已断开")
 
     def apply_camera_settings_for_serial(self, serial: str, settings_payload) -> None:
+        self._sync_camera_settings_store_path()
         serial_text = str(serial).strip()
         if not serial_text or HikCameraSettings is None:
             return
@@ -478,6 +484,7 @@ class RuntimeController(QtCore.QObject):
 
     def trigger_camera(self, cam_index: int) -> None:
         """手动触发指定物理序号相机的检测流程（仅该路采图+检测，调试用）。"""
+        self._sync_camera_settings_store_path()
         self._reload_runtime_context()
         if self._runner is None:
             self.logAppended.emit("[运行] 忽略触发：请先刷新并连接相机")
@@ -643,6 +650,7 @@ class RuntimeController(QtCore.QObject):
         """
         主动推送所有状态 Signal（产品切换 / 会话清空后 MainWindow 调用）。
         """
+        self._sync_camera_settings_store_path()
         self._reload_runtime_context()
         self._update_status(message)
 

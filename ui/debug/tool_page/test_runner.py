@@ -117,7 +117,7 @@ def _populate_results_table(tool_page, rows: List[Dict[str, object]]) -> None:
             gt = str(row.get("gt", ""))
             pred = str(row.get("pred", ""))
             if gt and pred and gt != pred:
-                item.setForeground(QtGui.QBrush(QtGui.QColor(192, 32, 32)))
+                item.setForeground(QtGui.QBrush(QtGui.QColor(220, 30, 30)))
             tool_page.table.setItem(row_idx, col_idx, item)
 
 

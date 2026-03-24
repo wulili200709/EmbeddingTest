@@ -5,6 +5,8 @@ from typing import List, Optional, Tuple
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from ui.roi_overlay_colors import ROI_STROKE_WIDTH
+
 
 def pixmap_from_path(path: str) -> QtGui.QPixmap:
     return QtGui.QPixmap(path)
@@ -68,10 +70,10 @@ class RoiCanvas(QtWidgets.QLabel):
 
         self._roi_color = QtGui.QColor(0, 255, 0)
         self._roi_dash = False
-        self._roi_width = 2.0
+        self._roi_width = ROI_STROKE_WIDTH
         self._preview_color = QtGui.QColor(255, 0, 0)
         self._preview_dash = True
-        self._preview_width = 2.0
+        self._preview_width = ROI_STROKE_WIDTH
 
     def has_image(self) -> bool:
         return self._pixmap is not None and self._img_path is not None

@@ -1,0 +1,67 @@
+{
+  "product": "2026_250A_3",
+  "tab": "OK",
+  "roi_label": "roi3",
+  "rows": [
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/.qr_session/2026_250A_3/debug_capture/debug_cam_20260324_152404_794823.png",
+      "file_name": "debug_cam_20260324_152404_794823.png",
+      "roi_label": "roi3",
+      "bbox_xywh": [
+        816,
+        1107,
+        469,
+        115
+      ],
+      "mean_intensity": 144.51986694335938,
+      "mean_std": 26.56281280517578,
+      "hsv_h_mean": 12.34650993347168,
+      "hsv_h_std": 0.7255558967590332,
+      "hsv_s_mean": 195.99960327148438,
+      "hsv_s_std": 7.912742614746094,
+      "hsv_v_mean": 222.53945922851562,
+      "hsv_v_std": 37.64998245239258,
+      "roi_area": 53935
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/.qr_session/2026_250A_3/debug_capture/debug_cam_20260324_152413_156475.png",
+      "file_name": "debug_cam_20260324_152413_156475.png",
+      "roi_label": "roi3",
+      "bbox_xywh": [
+        855,
+        1082,
+        481,
+        270
+      ],
+      "mean_intensity": 145.44635009765625,
+      "mean_std": 26.581331253051758,
+      "hsv_h_mean": 12.313676834106445,
+      "hsv_h_std": 0.702406644821167,
+      "hsv_s_mean": 195.3534393310547,
+      "hsv_s_std": 7.403468608856201,
+      "hsv_v_mean": 223.67408752441406,
+      "hsv_v_std": 38.019287109375,
+      "roi_area": 54349
+    },
+    {
+      "file_path": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/.qr_session/2026_250A_3/debug_capture/debug_cam_20260324_152416_099859.png",
+      "file_name": "debug_cam_20260324_152416_099859.png",
+      "roi_label": "roi3",
+      "bbox_xywh": [
+        926,
+        1031,
+        434,
+        390
+      ],
+      "mean_intensity": 144.8379364013672,
+      "mean_std": 26.419292449951172,
+      "hsv_h_mean": 12.38938045501709,
+      "hsv_h_std": 0.7026035785675049,
+      "hsv_s_mean": 196.2182159423828,
+      "hsv_s_std": 7.025920867919922,
+      "hsv_v_mean": 222.98855590820312,
+      "hsv_v_std": 37.919517517089844,
+      "roi_area": 54258
+    }
+  ]
+}

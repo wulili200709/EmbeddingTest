@@ -4,14 +4,17 @@ import os
 from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
+
 from algorithms.registry import algorithm_display_name
 
 try:
+    from matplotlib import font_manager as mpl_font_manager
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
     from matplotlib.figure import Figure
 except Exception:  # pragma: no cover - handled in UI
     FigureCanvas = None
     Figure = None
+    mpl_font_manager = None
 
 from tools.visualize_embeddings import (
     EmbeddingAnalysisResult,
@@ -24,6 +27,8 @@ from tools.visualize_embeddings import (
 
 class EmbeddingAnalysisDialog(QtWidgets.QDialog):
     _analysis_cache: dict[tuple[str, str, str, str, int, int, int], EmbeddingAnalysisResult] = {}
+    _plot_font_props = None
+
     def __init__(
         self,
         session_root: str,
@@ -195,7 +200,7 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
             self._show_error("没有可用产品。")
             return
         if entry is None:
-            self._show_error("当前产品下没有可用学习工具模型。")
+            self._show_error("当前产品下没有可用的学习工具模型。")
             return
 
         cache_key = self._analysis_cache_key(product_name, entry, projection)
@@ -234,6 +239,40 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
             self.figure.clear()
             self.figure_canvas.draw_idle()
 
+    @classmethod
+    def _resolve_plot_font_props(cls):
+        if cls._plot_font_props is not None or mpl_font_manager is None:
+            return cls._plot_font_props
+        font_families = [
+            "Microsoft YaHei",
+            "Microsoft JhengHei",
+            "SimHei",
+            "SimSun",
+            "Noto Sans CJK SC",
+            "Source Han Sans SC",
+            "PingFang SC",
+            "WenQuanYi Micro Hei",
+            "Arial Unicode MS",
+        ]
+        for family in font_families:
+            try:
+                font_path = mpl_font_manager.findfont(
+                    mpl_font_manager.FontProperties(family=family),
+                    fallback_to_default=False,
+                )
+            except Exception:
+                continue
+            if font_path and os.path.exists(font_path):
+                cls._plot_font_props = mpl_font_manager.FontProperties(fname=font_path)
+                break
+        return cls._plot_font_props
+
+    @classmethod
+    def _plot_text(cls, text: str) -> str:
+        if cls._resolve_plot_font_props() is not None:
+            return text
+        return text.encode("ascii", "replace").decode("ascii")
+
     def _render_result(self, result: EmbeddingAnalysisResult):
         self.lbl_model_path.setText(result.model_path)
         self.lbl_session_path.setText(result.session_file)
@@ -252,7 +291,7 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
             f"特征维度: {result.feature_dim}",
             f"OK 样本数: {int(m['ok_count'])}",
             f"NG 样本数: {int(m['ng_count'])}",
-            f"训练集判定准确率: {m['train_accuracy']:.4f}",
+            f"训练集准确率: {m['train_accuracy']:.4f}",
             f"OK 类内平均相似度: {m['ok_intra_mean']:.4f}",
             f"NG 类内平均相似度: {m['ng_intra_mean']:.4f}",
             f"OK-NG 类间平均相似度: {m['ok_ng_cross_mean']:.4f}",
@@ -294,10 +333,11 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
             return
         self.figure.clear()
         ax = self.figure.add_subplot(111)
+        font_props = self._resolve_plot_font_props()
 
         coords = result.point_coords
         if coords.size == 0:
-            ax.set_title("无特征可显示")
+            ax.set_title(self._plot_text("无特征可显示"), fontproperties=font_props)
             self.figure_canvas.draw_idle()
             return
 
@@ -315,10 +355,19 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
             ax.scatter([center[0]], [center[1]], c="darkred", marker="*", s=260, label="NG center")
 
         for idx, name in enumerate(result.point_names):
-            ax.annotate(name, (coords[idx, 0], coords[idx, 1]), fontsize=8, alpha=0.75)
+            ax.annotate(
+                self._plot_text(name),
+                (coords[idx, 0], coords[idx, 1]),
+                fontsize=8,
+                alpha=0.75,
+                fontproperties=font_props,
+            )
 
         ax.set_title(
-            f"{result.product_name} / {result.tool_name or '共享模型'} / {result.projection_method.upper()}"
+            self._plot_text(
+                f"{result.product_name} / {result.tool_name or '共享模型'} / {result.projection_method.upper()}"
+            ),
+            fontproperties=font_props,
         )
         ax.set_xlabel("Dimension 1")
         ax.set_ylabel("Dimension 2")

@@ -37,6 +37,7 @@ _STORAGE_CODE_TO_BACKBONE = {
 
 _TRADITIONAL_DISPLAY_NAMES = {
     "meanintensity": "灰度工具",
+    "meanstd": "偏差工具",
     "meanhsv_h": "色相工具",
     "meanhsv_v": "明度工具",
     "meanhsv_s": "饱和度工具",

@@ -1,0 +1,2 @@
+﻿timestamp,product,algorithm,score_mode,margin,topk,tool_name,camera_id,roi_label,file_name,gt,pred,diff,sim_ok,sim_ng,value,threshold,match_ms,total_ms,json_name
+2026-03-24T18:06:36,20000,efficientnet_b0,proto,0.02,3,roi1,cam1,roi1,debug_cam_20260324_180149_760864.png [roi1],,NG,-0.001542508602142334,0.9981511235237122,0.9996936321258545,,,422.85570000240114,210.27979999780655,debug_cam_20260324_180149_760864.json

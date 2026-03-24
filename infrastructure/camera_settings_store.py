@@ -46,6 +46,9 @@ class CameraSettingsStore:
     def path(self) -> Path:
         return self._path
 
+    def set_path(self, path: str | Path) -> None:
+        self._path = Path(path)
+
     def load_for_serial(self, serial: str) -> dict[str, Any] | None:
         serial_text = str(serial).strip()
         if not serial_text:

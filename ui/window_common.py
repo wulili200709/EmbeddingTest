@@ -8,7 +8,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from application import AlgorithmController, ProductSession
 from line2dup.core import locator as line2dup_locator
 import algorithms.proxy as qr_core
-from ui.roi_overlay_colors import color_for_roi_status, is_roi_label
+from ui.roi_overlay_colors import overlay_style_for_label, search_region_style
 
 
 def embedding_test_root(anchor_file: str) -> Path:
@@ -142,8 +142,10 @@ def _draw_runtime_search_region(painter: QtGui.QPainter, path: str) -> None:
     if len(points) < 2:
         return
 
-    pen = QtGui.QPen(QtGui.QColor(0, 0, 255))
-    pen.setWidthF(1.0)
+    color, width, dash = search_region_style()
+    pen = QtGui.QPen(color)
+    pen.setWidthF(width)
+    pen.setStyle(QtCore.Qt.DashLine if dash else QtCore.Qt.SolidLine)
     painter.setPen(pen)
     painter.setBrush(QtCore.Qt.NoBrush)
 
@@ -203,15 +205,11 @@ def _draw_runtime_roi_shapes(
     seen_labels: set[str] = set()
     for label in qr_core.sorted_label_names_from_labelme(jpath, label_prefix="roi"):
         seen_labels.add(label)
-        draw_shape(label, color_for_roi_status(roi_statuses.get(label, "")), width=2.0, dash=False)
+        color, width, dash = overlay_style_for_label(label, status=roi_statuses.get(label, ""))
+        draw_shape(label, color, width=width, dash=dash)
 
-    for label, color, dash in [
-        ("anchor", QtGui.QColor(0, 255, 255), True),
-        ("roi", QtGui.QColor(255, 165, 0), False),
-        ("anchor_mask", QtGui.QColor(255, 0, 0), True),
-    ]:
+    for label in ["anchor", "roi", "anchor_mask"]:
         if label in seen_labels:
             continue
-        if is_roi_label(label):
-            color = color_for_roi_status(roi_statuses.get(label, ""))
-        draw_shape(label, color, width=2.0, dash=dash)
+        color, width, dash = overlay_style_for_label(label, status=roi_statuses.get(label, ""))
+        draw_shape(label, color, width=width, dash=dash)

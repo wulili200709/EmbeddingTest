@@ -5,8 +5,14 @@ from collections.abc import Iterable, Mapping
 from PySide6 import QtGui
 
 
-ROI_DEFAULT_COLOR = QtGui.QColor("#22c55e")
-ROI_NG_COLOR = QtGui.QColor("#ef4444")
+ROI_DEFAULT_COLOR = QtGui.QColor(55, 155, 55)
+ROI_NG_COLOR = QtGui.QColor(220, 30, 30)
+ROI_STROKE_WIDTH = 2.0
+SEARCH_REGION_COLOR = QtGui.QColor(0, 0, 255)
+SEARCH_REGION_WIDTH = 0.5
+ANCHOR_COLOR = QtGui.QColor(0, 255, 255)
+ANCHOR_MASK_COLOR = QtGui.QColor(255, 0, 0)
+REFERENCE_ROI_COLOR = QtGui.QColor(255, 165, 0)
 
 
 def is_roi_label(label: object) -> bool:
@@ -19,6 +25,27 @@ def is_ng_status(status: object) -> bool:
 
 def color_for_roi_status(status: object) -> QtGui.QColor:
     return QtGui.QColor(ROI_NG_COLOR if is_ng_status(status) else ROI_DEFAULT_COLOR)
+
+
+def overlay_style_for_label(
+    label: object,
+    *,
+    status: object = "",
+) -> tuple[QtGui.QColor, float, bool]:
+    label_text = str(label or "").strip()
+    if is_roi_label(label_text):
+        return color_for_roi_status(status), ROI_STROKE_WIDTH, False
+    if label_text == "anchor":
+        return QtGui.QColor(ANCHOR_COLOR), ROI_STROKE_WIDTH, True
+    if label_text == "anchor_mask":
+        return QtGui.QColor(ANCHOR_MASK_COLOR), ROI_STROKE_WIDTH, True
+    if label_text == "roi":
+        return QtGui.QColor(REFERENCE_ROI_COLOR), ROI_STROKE_WIDTH, False
+    return QtGui.QColor(ROI_DEFAULT_COLOR), ROI_STROKE_WIDTH, False
+
+
+def search_region_style() -> tuple[QtGui.QColor, float, bool]:
+    return QtGui.QColor(SEARCH_REGION_COLOR), SEARCH_REGION_WIDTH, False
 
 
 def merge_roi_statuses(
@@ -48,8 +75,16 @@ def merge_roi_statuses(
 __all__ = [
     "ROI_DEFAULT_COLOR",
     "ROI_NG_COLOR",
+    "ROI_STROKE_WIDTH",
+    "SEARCH_REGION_COLOR",
+    "SEARCH_REGION_WIDTH",
+    "ANCHOR_COLOR",
+    "ANCHOR_MASK_COLOR",
+    "REFERENCE_ROI_COLOR",
     "color_for_roi_status",
     "is_ng_status",
     "is_roi_label",
     "merge_roi_statuses",
+    "overlay_style_for_label",
+    "search_region_style",
 ]

@@ -10,7 +10,7 @@ import numpy as np
 from .labelme import labelme_json_of_image, read_shape_from_labelme
 
 
-TRADITIONAL_ALGORITHMS = ["meanintensity", "meanhsv_h", "meanhsv_v", "meanhsv_s"]
+TRADITIONAL_ALGORITHMS = ["meanintensity", "meanstd", "meanhsv_h", "meanhsv_v", "meanhsv_s"]
 
 
 @dataclass
@@ -127,6 +127,8 @@ def compute_roi_metrics(img_path: str, preferred_label: str = "roi1") -> Dict[st
         "bbox_xywh": list(roi["bbox_xywh"]),
         "meanintensity": float(np.mean(valid_gray)),
         "mean_intensity": float(np.mean(valid_gray)),
+        "meanstd": float(np.std(valid_gray)),
+        "mean_std": float(np.std(valid_gray)),
         "meanhsv_h": float(np.mean(valid_hsv[:, 0])),
         "meanhsv_s": float(np.mean(valid_hsv[:, 1])),
         "meanhsv_v": float(np.mean(valid_hsv[:, 2])),
@@ -153,6 +155,27 @@ def _iter_thresholds(values: Iterable[float]) -> List[float]:
     candidates.extend((a + b) * 0.5 for a, b in zip(ordered, ordered[1:]))
     candidates.append(ordered[-1] + 1e-6)
     return candidates
+
+
+def _target_threshold_center(
+    ok_values: Sequence[float],
+    ng_values: Sequence[float],
+    ok_when: str,
+) -> float:
+    ok_mean = float(np.mean(ok_values))
+    ng_mean = float(np.mean(ng_values))
+    fallback_mid = (ok_mean + ng_mean) * 0.5
+
+    if ok_when == "greater_equal":
+        lower = float(max(ng_values))
+        upper = float(min(ok_values))
+    else:
+        lower = float(max(ok_values))
+        upper = float(min(ng_values))
+
+    if lower < upper:
+        return (lower + upper) * 0.5
+    return fallback_mid
 
 
 def train_threshold_model(
@@ -184,7 +207,7 @@ def train_threshold_model(
         rows.append({"gt": "NG", "value": value, **metrics})
 
     best_acc = -1.0
-    best_model: TraditionalThresholdModel | None = None
+    best_candidates: List[Tuple[str, float]] = []
     all_values = ok_values + ng_values
     for ok_when in ["greater_equal", "less_equal"]:
         for threshold in _iter_thresholds(all_values):
@@ -198,17 +221,27 @@ def train_threshold_model(
             acc = float(correct) / float(len(ok_values) + len(ng_values))
             if acc > best_acc + 1e-12:
                 best_acc = acc
-                best_model = TraditionalThresholdModel(
-                    algorithm=str(algorithm),
-                    threshold=float(threshold),
-                    ok_when=ok_when,
-                    ok_mean=float(np.mean(ok_values)),
-                    ng_mean=float(np.mean(ng_values)),
-                    accuracy=acc,
-                    roi_label=preferred_label,
-                )
+                best_candidates = [(ok_when, float(threshold))]
+            elif abs(acc - best_acc) <= 1e-12:
+                best_candidates.append((ok_when, float(threshold)))
 
-    assert best_model is not None
+    assert best_candidates
+    best_ok_when, best_threshold = min(
+        best_candidates,
+        key=lambda item: (
+            abs(item[1] - _target_threshold_center(ok_values, ng_values, item[0])),
+            item[1],
+        ),
+    )
+    best_model = TraditionalThresholdModel(
+        algorithm=str(algorithm),
+        threshold=float(best_threshold),
+        ok_when=best_ok_when,
+        ok_mean=float(np.mean(ok_values)),
+        ng_mean=float(np.mean(ng_values)),
+        accuracy=best_acc,
+        roi_label=preferred_label,
+    )
     return best_model, rows
 
 
