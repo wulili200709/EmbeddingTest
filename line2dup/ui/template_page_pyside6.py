@@ -22,6 +22,7 @@ from ..core.template_core import (
     MaskRect,
     RoiRect,
     angle_deg_to_label,
+    build_mask_from_rects,
     build_multi_backend_detector,
     clone_levels,
     label_to_angle_deg,
@@ -364,17 +365,24 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         point_l = QtWidgets.QGridLayout(point_box)
         self.chk_edit_points = QtWidgets.QCheckBox("启用点编辑")
         self.chk_edit_points.toggled.connect(self._on_point_edit_toggled)
+        self.chk_edit_points.setText("Edit Points")
         self.spin_point_label = QtWidgets.QSpinBox()
         self.spin_point_label.setRange(0, 7)
+        self.btn_extract_points = QtWidgets.QPushButton("Extract Points From ROI")
+        self.btn_extract_points.clicked.connect(self._extract_points_from_roi)
+        self.btn_extract_points.setEnabled(False)
         self.btn_reset_points = QtWidgets.QPushButton("恢复模型特征点")
         self.btn_reset_points.clicked.connect(self._reset_editor_levels_from_detector)
         self.lbl_point_help = QtWidgets.QLabel("左击添加点，短拖可设置方向；右击删除最近特征点。")
         self.lbl_point_help.setWordWrap(True)
+        self.lbl_point_help.setText("宸﹀嚮娣诲姞鐐癸紝鐭嫋鍙缃柟鍚戯紱鍙冲嚮鍒犻櫎閫変腑/闄勮繎鐗瑰緛鐐广€?")
         point_l.addWidget(self.chk_edit_points, 0, 0, 1, 2)
         point_l.addWidget(QtWidgets.QLabel("默认方向label"), 1, 0)
         point_l.addWidget(self.spin_point_label, 1, 1)
         point_l.addWidget(self.btn_reset_points, 2, 0, 1, 2)
         point_l.addWidget(self.lbl_point_help, 3, 0, 1, 2)
+        point_l.addWidget(self.btn_extract_points, 4, 0, 1, 2)
+        self.lbl_point_help.setText("左击添加点，短拖可设置方向；右击删除选中/附近特征点。")
         left.addWidget(point_box)
 
         param_box = QtWidgets.QGroupBox("模板参数")
@@ -457,7 +465,9 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         action_row = QtWidgets.QHBoxLayout()
         self.btn_build = QtWidgets.QPushButton("创建并保存模型")
         self.btn_build.clicked.connect(self._build_and_save)
+        self.btn_build.setText("淇濆瓨")
         action_row.addWidget(self.btn_build)
+        self.btn_build.setText("保存")
         left.addLayout(action_row)
 
         self.lbl_status = QtWidgets.QLabel("状态：先选参考图并设置 template_roi。")
@@ -482,6 +492,16 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             "\n启用点编辑后：左击添加点，短拖设置方向，右击删除最近特征点。"
         )
         help_text.setWordWrap(True)
+        help_text.setText(
+            "Create锛氬厛鐢?template_roi锛屽啀鎸夐渶鐢?exclude_mask銆?"
+            "\n鍙厛鐐?Extract Points From ROI 鎻愬彇鐗瑰緛鐐广€?"
+            "\n鍚敤 Edit Points 鍚庯細宸﹀嚮娣诲姞鐐癸紝鐭嫋璁炬柟鍚戯紝鍙冲嚮鍒犻櫎閫変腑/闄勮繎鐗瑰緛鐐广€?"
+        )
+        help_text.setText(
+            "Create：先画 template_roi，再按需画 exclude_mask。"
+            "\n可先点 Extract Points From ROI 提取特征点。"
+            "\n启用 Edit Points 后：左击添加点，短拖设置方向，右击删除选中/附近特征点。"
+        )
         right.addWidget(help_text)
 
         self._on_role_changed(self.cmb_role.currentText())
@@ -928,6 +948,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.detector = detector
         self.detector_path = self.paths.model_path
         self.template_roi = roi_rect
+        self.btn_extract_points.setEnabled(self.template_roi is not None)
         self.mask_rects = [MaskRect(x=int(r.x), y=int(r.y), w=int(r.w), h=int(r.h)) for r in mask_rects]
         self.editor_levels = clone_levels(editor_levels)
         self.original_mode = str(source_info.get("original_mode", "auto")) if isinstance(source_info, dict) else "auto"
@@ -935,6 +956,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._hover_feature_index = None
         self._point_drag_start = None
         self._point_drag_end = None
+        self.btn_extract_points.setEnabled(False)
         self.create_canvas.clear_roi()
         self.edit_class_id.setText(class_id)
         self.find_model_path = self.paths.model_path
@@ -943,6 +965,62 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.lbl_status.setText(
             f"状态：已加载模型 {os.path.basename(self.paths.model_path)}，特征点={self._feature_count}"
         )
+
+    def _extract_points_from_roi(self) -> None:
+        if self.image_bgr is None or not self.image_path:
+            QtWidgets.QMessageBox.warning(self, "提示", "请先加载参考图。")
+            return
+        if self.template_roi is None:
+            QtWidgets.QMessageBox.warning(self, "提示", "请先设置 template_roi。")
+            return
+
+        x, y, w, h = self.template_roi.x, self.template_roi.y, self.template_roi.w, self.template_roi.h
+        roi_img = self.image_bgr[y : y + h, x : x + w].copy()
+        if roi_img.size == 0:
+            QtWidgets.QMessageBox.critical(self, "模板无效", "模板ROI超出图像范围。")
+            return
+
+        try:
+            levels = parse_levels(self.edit_levels.text().strip())
+            class_id = self.edit_class_id.text().strip() or self.product_name or "object"
+            num_features = int(self.spin_num_features.value())
+            weak_threshold = float(self.spin_weak.value())
+            strong_threshold = float(self.spin_strong.value())
+            roi_mask = build_mask_from_rects(roi_img.shape[1], roi_img.shape[0], self.mask_rects)
+            detector = Line2DupLikeDetector(
+                num_features=num_features,
+                T_levels=levels,
+                weak_threshold=weak_threshold,
+                strong_threshold=strong_threshold,
+            )
+            template_id = detector.add_template(
+                roi_img,
+                class_id=class_id,
+                object_mask=roi_mask,
+                num_features=num_features,
+                metadata={"angle": 0.0, "scale": 1.0},
+                backend="original",
+            )
+            if template_id < 0:
+                raise RuntimeError("No template extracted. Try lower strong/weak threshold or select a clearer ROI.")
+            extracted_levels = clone_levels(detector.get_templates(class_id, template_id, backend="original"))
+            if not extracted_levels:
+                raise RuntimeError("No template extracted.")
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "提取失败", str(exc))
+            return
+
+        self.editor_levels = [extracted_levels[0]]
+        self._sync_editor_levels()
+        self.original_mode = "manual_points"
+        self.points_dirty = False
+        self._hover_feature_index = None
+        self._point_drag_start = None
+        self._point_drag_end = None
+        self.chk_edit_points.setChecked(True)
+        self._refresh_create_overlays()
+        self.lbl_status.setText(f"状态：已提取特征点，当前总数={self._feature_count}")
+        self.lbl_status.setText(f"鐘舵€侊細宸叉彁鍙栫壒寰佺偣锛屽綋鍓嶆€绘暟={self._feature_count}")
 
     def _build_and_save(self) -> None:
         if self.image_bgr is None or not self.image_path:
@@ -1003,6 +1081,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._hover_feature_index = None
         self._point_drag_start = None
         self._point_drag_end = None
+        self.btn_extract_points.setEnabled(False)
         self.create_canvas.clear_roi()
         self._refresh_create_overlays()
         self.lbl_status.setText(
@@ -1030,6 +1109,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         if role == "template_roi":
             self.template_roi = RoiRect(*xywh)
             self.mask_rects = []
+            self.btn_extract_points.setEnabled(True)
             self.editor_levels = []
             self.points_dirty = False
             self.original_mode = "auto"
@@ -1065,6 +1145,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
 
     def _clear_masks(self) -> None:
         self.mask_rects = []
+        self.btn_extract_points.setEnabled(self.template_roi is not None)
         self.create_canvas.clear_roi()
         self._refresh_create_overlays()
         self.lbl_status.setText("状态：已清空 mask。")
@@ -1095,6 +1176,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.btn_apply_selection.setEnabled(not enabled)
         self.btn_clear_roi.setEnabled(not enabled)
         self.btn_clear_masks.setEnabled(not enabled)
+        self.btn_extract_points.setEnabled(self.template_roi is not None)
         if enabled:
             self.lbl_status.setText("状态：点编辑已开启。左击添加，短拖设方向，右击删最近点。")
         else:
@@ -1119,6 +1201,10 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self._point_drag_end = (int(x), int(y))
             self._refresh_create_overlays()
         elif button == _button_right():
+            idx = self._hover_feature_index
+            if idx is not None and self._delete_feature_index(int(idx)):
+                self.lbl_status.setText(f"鐘舵€侊細宸插垹闄ょ壒寰佺偣锛屽墿浣?{self._feature_count}")
+                return
             if self._delete_feature_near(x, y):
                 self.lbl_status.setText(f"状态：已删除特征点，剩余={self._feature_count}")
             else:
@@ -1223,12 +1309,11 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._sync_editor_levels()
         self._refresh_create_overlays()
 
-    def _delete_feature_near(self, x: int, y: int) -> bool:
+    def _delete_feature_index(self, idx: int) -> bool:
         level0 = self._editor_level0()
         if level0 is None:
             return False
-        idx = self._find_nearest_feature_index(x, y)
-        if idx is None:
+        if idx < 0 or idx >= len(level0.features):
             return False
         del level0.features[int(idx)]
         self.points_dirty = True
@@ -1236,6 +1321,15 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._sync_editor_levels()
         self._refresh_create_overlays()
         return True
+
+    def _delete_feature_near(self, x: int, y: int) -> bool:
+        level0 = self._editor_level0()
+        if level0 is None:
+            return False
+        idx = self._find_nearest_feature_index(x, y)
+        if idx is None:
+            return False
+        return self._delete_feature_index(int(idx))
 
     def _reset_editor_levels_from_detector(self) -> None:
         if self.detector is None:

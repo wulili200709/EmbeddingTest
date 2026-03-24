@@ -2,6 +2,9 @@
   "ok_files": [],
   "ng_files": [],
   "test_files": [],
-  "ref_image": null,
-  "loc_method": "line2dup"
+  "ref_image": "",
+  "loc_method": "line2dup",
+  "runtime_cam1_serial": "",
+  "runtime_cam2_serial": "",
+  "runtime_capture_policy": "ng_only"
 }
