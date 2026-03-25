@@ -2808,5 +2808,24 @@ Python
 
 
 # 运行界面的总时间
+match_ms
+不再只记 locate_and_follow 的 locate_ms，而是直接用 line2dup 整段 run.total_ms。
+也就是：
 
+定位
+删除旧 ROI
+回写/更新 labelme json
+这一整段都算进 match_ms
+infer_ms
+学习工具多 ROI 批量路径里，不再只包 embed_batch(...)。
+现在改成从这里开始计时：
+
+load_embedding_model(...)
+apply_params_to_model()
+get_feat_net(...)
+embed_batch(...)
+predict_one_with_model(...) 循环
+到整组结束为止
+然后再均分回每个 ROI 行，聚合后顶部看到的 infer_ms 就是这整组的真实总推理时间。
+我顺手把调试页也统一成同样口径了，不然调试/运行会继续不一致。
 

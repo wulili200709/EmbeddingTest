@@ -245,7 +245,7 @@ def _autogen_roi_for_images(self, paths: List[str], only_missing: bool, silent: 
                     product_dir=self.session.product_dir,
                     camera_role=self.current_camera_role(),
                 )
-                self._line2dup_match_ms_by_image[p] = float(run.locate_ms)
+                self._line2dup_match_ms_by_image[p] = float(run.total_ms)
                 self._line2dup_autogen_ms_by_image[p] = float(run.total_ms)
             else:
                 qr_core.autogen_roi_json_from_reference(

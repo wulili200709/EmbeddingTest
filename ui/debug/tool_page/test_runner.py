@@ -48,7 +48,7 @@ def _predict_image(
                 product_dir=tool_page.session.product_dir,
                 camera_role=camera_role,
             )
-            match_ms = float(run.locate_ms)
+            match_ms = float(run.total_ms)
             tool_page._line2dup_match_ms_by_image[path] = match_ms
             tool_page._line2dup_autogen_ms_by_image[path] = float(run.total_ms)
     elif tool_page.ref_image and os.path.exists(tool_page.ref_image):

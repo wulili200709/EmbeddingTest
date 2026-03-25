@@ -85,6 +85,7 @@ def _predict_learning_items_batch_rows(
     for algorithm, group in learning_groups.items():
         if not str(algorithm or "").strip():
             raise RuntimeError("please choose a learning tool subtype first")
+        group_infer_t0 = time.perf_counter()
         models: List[Any] = []
         for item in group:
             load_embedding_model(algorithm, model_key=item.model_key)
@@ -99,15 +100,12 @@ def _predict_learning_items_batch_rows(
                 getattr(models[0], "device", None),
             )
         roi_labels = [str(item.roi_label or "").strip() or "roi" for item in group]
-        infer_t0 = time.perf_counter()
         embeddings = qr_core.embed_batch(
             path,
             group_feat_net,
             roi_labels,
             device=getattr(models[0], "device", None),
         )
-        infer_total_ms = float((time.perf_counter() - infer_t0) * 1000.0)
-        per_item_infer_ms = infer_total_ms / float(len(group)) if group else 0.0
         for item, model, embedding in zip(group, models, embeddings):
             pred, diff, sim_ok, sim_ng = qr_core.predict_one_with_model(embedding, model)
             rows_by_key[item.model_key] = {
@@ -121,10 +119,15 @@ def _predict_learning_items_batch_rows(
                 "value": None,
                 "threshold": None,
                 "match_ms": match_ms,
-                "infer_ms": per_item_infer_ms,
-                "total_ms": per_item_infer_ms,
+                "infer_ms": 0.0,
+                "total_ms": 0.0,
                 "json_name": json_name,
             }
+        group_infer_total_ms = float((time.perf_counter() - group_infer_t0) * 1000.0)
+        per_item_infer_ms = group_infer_total_ms / float(len(group)) if group else 0.0
+        for item in group:
+            rows_by_key[item.model_key]["infer_ms"] = per_item_infer_ms
+            rows_by_key[item.model_key]["total_ms"] = per_item_infer_ms
     return rows_by_key
 
 
@@ -196,7 +199,7 @@ class ToolPageRuntimeContext:
                     product_dir=tool_page.session.product_dir,
                     camera_role=camera_role,
                 )
-                match_ms = float(run.locate_ms)
+                match_ms = float(run.total_ms)
                 tool_page._line2dup_match_ms_by_image[path] = match_ms
                 tool_page._line2dup_autogen_ms_by_image[path] = float(run.total_ms)
         elif tool_page.ref_image and os.path.exists(tool_page.ref_image):
@@ -280,7 +283,7 @@ class ProductRuntimeContext:
                     product_dir=self.session.product_dir,
                     camera_role=camera_role,
                 )
-                match_ms = float(run.locate_ms)
+                match_ms = float(run.total_ms)
                 self._line2dup_match_ms_by_image[path] = match_ms
 
         labels = list(labels_override or [])
@@ -341,7 +344,7 @@ class ProductRuntimeContext:
                     product_dir=self.session.product_dir,
                     camera_role=camera_role,
                 )
-                match_ms = float(run.locate_ms)
+                match_ms = float(run.total_ms)
                 self._line2dup_match_ms_by_image[path] = match_ms
 
         rows_by_key = _predict_learning_items_batch_rows(

@@ -511,7 +511,7 @@ class ToolPage(QtWidgets.QWidget):
                     product_dir=self.session.product_dir,
                     camera_role=role,
                 )
-                self._line2dup_match_ms_by_image[path] = float(run.locate_ms)
+                self._line2dup_match_ms_by_image[path] = float(run.total_ms)
                 self._line2dup_autogen_ms_by_image[path] = float(run.total_ms)
                 ok_count += 1
             except Exception as exc:
