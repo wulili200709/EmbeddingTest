@@ -28,6 +28,7 @@ _RUNTIME_CONTROLLER_BINDINGS = (
         (
             "_finalize_trigger_outcome",
             "_precheck",
+            "_precheck_for_roles",
             "_save_frame",
             "_inspect_frame",
             "_write_release_log",

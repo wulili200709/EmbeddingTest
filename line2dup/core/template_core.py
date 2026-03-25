@@ -10,7 +10,7 @@ from .bootstrap import ensure_repo_root_on_path
 
 ensure_repo_root_on_path()
 
-from line2dup_like_matcher import (  # noqa: E402
+from ..like_matcher import (  # noqa: E402
     Feature,
     Line2DupLikeDetector,
     TemplateLevel,
@@ -307,7 +307,7 @@ def transform_levels_for_pose(
 
     if auto_crop and out and all(len(level.features) > 0 for level in out):
         try:
-            from line2dup_like_matcher import crop_templates  # noqa: E402
+            from ..like_matcher import crop_templates  # noqa: E402
 
             crop_templates(out)
         except Exception:
@@ -490,6 +490,9 @@ def build_multi_backend_detector(
 
     if original_editor_levels:
         base_editor_levels = clone_levels(original_editor_levels)
+        if len(base_editor_levels) == 1 and detector.pyramid_levels > 1:
+            shapes = roi_level_shapes_from_image(roi_img, detector.pyramid_levels)
+            base_editor_levels = sync_levels_from_level0(base_editor_levels[0], shapes)
     else:
         original_native_for_editor = create_native_detector(
             num_features=num_features,

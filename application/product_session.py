@@ -27,7 +27,7 @@ class ProductPaths:
     def build(cls, product_dir: str) -> "ProductPaths":
         from line2dup.core.locator import product_paths
 
-        paths = product_paths(product_dir)
+        paths = product_paths(product_dir, "cam1")
         return cls(
             product_dir=product_dir,
             session_json=os.path.join(product_dir, "session.json"),
@@ -98,6 +98,21 @@ class ProductSession:
     @property
     def line2dup_recipe_path(self) -> str:
         return self.paths.line2dup_recipe_path if self.paths else ""
+
+    def line2dup_paths_for_role(self, camera_role: str):
+        if not self.product_dir:
+            from line2dup.core.locator import product_paths
+
+            return product_paths("", camera_role)
+        from line2dup.core.locator import product_paths
+
+        return product_paths(self.product_dir, camera_role)
+
+    def line2dup_model_path_for_role(self, camera_role: str) -> str:
+        return self.line2dup_paths_for_role(camera_role).model_path
+
+    def line2dup_recipe_path_for_role(self, camera_role: str) -> str:
+        return self.line2dup_paths_for_role(camera_role).recipe_path
 
     def load(self) -> None:
         if os.path.exists(self.products_json):

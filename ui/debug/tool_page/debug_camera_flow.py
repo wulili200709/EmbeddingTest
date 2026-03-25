@@ -21,7 +21,6 @@ _qimage_from_hik_frame = page_module._qimage_from_hik_frame
 
 
 def _on_debug_camera_param_editing_finished(self) -> None:
-    """曝光/增益编辑结束：已连接则写入相机，否则仅写入本地缓存。"""
     if self._debug_camera_block_spin_apply:
         return
     serial = self._selected_debug_camera_serial()
@@ -32,6 +31,7 @@ def _on_debug_camera_param_editing_finished(self) -> None:
             )
         return
     self._apply_debug_camera_settings(quiet=True)
+
 
 def _on_debug_camera_trigger_activated(self, _index: int) -> None:
     if self._debug_camera_block_spin_apply:
@@ -45,13 +45,17 @@ def _on_debug_camera_trigger_activated(self, _index: int) -> None:
         return
     self._apply_debug_camera_settings(quiet=True)
 
+
 def _save_debug_camera_image(self) -> None:
     pixmap = self.view_debug_camera._pixmap
     if pixmap is None or pixmap.isNull():
         self.lbl_debug_camera_status.setText("相机状态：没有可保存的图片")
         return
     path, _ = QtWidgets.QFileDialog.getSaveFileName(
-        self, "保存图片", "", "BMP (*.bmp);;PNG (*.png);;JPEG (*.jpg *.jpeg);;所有文件 (*)"
+        self,
+        "保存图片",
+        "",
+        "BMP (*.bmp);;PNG (*.png);;JPEG (*.jpg *.jpeg);;所有文件 (*)",
     )
     if path:
         if pixmap.save(path):
@@ -59,11 +63,13 @@ def _save_debug_camera_image(self) -> None:
         else:
             self.lbl_debug_camera_status.setText("相机状态：保存图片失败")
 
+
 def _toggle_debug_camera_preview(self, checked: bool) -> None:
     if checked:
         self._start_debug_camera_preview()
         return
     self._stop_debug_camera_preview()
+
 
 def _start_debug_camera_preview(self) -> None:
     if self._debug_frame_grab_service is None or "debug" not in self._debug_frame_grab_service.roles():
@@ -81,6 +87,7 @@ def _start_debug_camera_preview(self) -> None:
     worker.start()
     self._set_debug_camera_status("实时预览中")
 
+
 def _stop_debug_camera_preview(self, *, clear_view: bool = True) -> None:
     worker = self._debug_preview_thread
     self._debug_preview_thread = None
@@ -94,15 +101,18 @@ def _stop_debug_camera_preview(self, *, clear_view: bool = True) -> None:
             pass
     self._set_debug_preview_running(False)
     if clear_view:
-        self._set_debug_preview_placeholder("未开启实时预览")
+        self._set_debug_preview_placeholder("预览关闭")
+
 
 @QtCore.Slot(QtGui.QImage)
 def _on_debug_preview_frame_ready(self, image: QtGui.QImage) -> None:
     self._show_debug_preview_image(image)
 
+
 @QtCore.Slot(str)
 def _on_debug_preview_error(self, message: str) -> None:
     self._set_debug_camera_status(f"实时预览异常：{message}")
+
 
 @QtCore.Slot()
 def _on_debug_preview_finished(self) -> None:
@@ -110,8 +120,10 @@ def _on_debug_preview_finished(self) -> None:
         return
     self._set_debug_preview_running(False)
 
+
 def _set_debug_camera_status(self, message: str) -> None:
     self.lbl_debug_camera_status.setText(f"相机状态：{message}")
+
 
 def _ensure_debug_camera_services(self) -> bool:
     if FrameGrabService is None or HikCameraManager is None or HikCameraSettings is None:
@@ -123,10 +135,14 @@ def _ensure_debug_camera_services(self) -> bool:
         self._debug_frame_grab_service = FrameGrabService(self._debug_camera_manager)
     return True
 
+
 def _refresh_debug_camera_list(self) -> None:
     if not self._ensure_debug_camera_services():
         return
-    current_serial = str(self.cmb_debug_camera.currentData() or "")
+    current_serial = str(self.cmb_debug_camera.currentData() or "").strip()
+    preferred_serial = str(
+        self._load_debug_role_binding(self._selected_debug_camera_role()) or ""
+    ).strip()
     try:
         infos = self._debug_camera_manager.enumerate_cameras()
     except Exception as exc:
@@ -134,25 +150,50 @@ def _refresh_debug_camera_list(self) -> None:
         self._set_debug_camera_status(f"扫描失败：{exc}")
         return
     self._debug_camera_infos = list(infos)
-    self.cmb_debug_camera.clear()
-    for info in infos:
-        label = f"{info.serial_number} / {info.model_name or 'UnknownModel'} / {info.transport_layer}"
-        self.cmb_debug_camera.addItem(label, info.serial_number)
-    if current_serial:
-        index = self.cmb_debug_camera.findData(current_serial)
-        if index >= 0:
-            self.cmb_debug_camera.setCurrentIndex(index)
+    self.cmb_debug_camera.blockSignals(True)
+    try:
+        self.cmb_debug_camera.clear()
+        for info in infos:
+            label = f"{info.serial_number} / {info.model_name or 'UnknownModel'} / {info.transport_layer}"
+            self.cmb_debug_camera.addItem(label, info.serial_number)
+        target_serial = preferred_serial or current_serial
+        if target_serial:
+            index = self.cmb_debug_camera.findData(target_serial)
+            if index >= 0:
+                self.cmb_debug_camera.setCurrentIndex(index)
+    finally:
+        self.cmb_debug_camera.blockSignals(False)
     self._refresh_debug_camera_info()
+    self._load_saved_debug_camera_settings_to_ui(self._selected_debug_camera_serial())
     self._set_debug_camera_status(f"已扫描到 {len(infos)} 台相机")
+
+
+def _on_debug_camera_role_changed(self) -> None:
+    self._set_current_camera_role(self._selected_debug_camera_role(), sync_debug_role=False)
+    connected_serial = str(getattr(self._debug_camera_device(), "serial_number", "") or "").strip()
+    self._refresh_debug_role_status()
+    self._apply_debug_role_binding_to_camera_combo()
+    self._refresh_debug_camera_info()
+    self._load_saved_debug_camera_settings_to_ui(self._selected_debug_camera_serial())
+    selected_serial = self._selected_debug_camera_serial()
+    if connected_serial and connected_serial != selected_serial:
+        self._disconnect_debug_camera()
+        self._set_debug_camera_status(f"已切换到 {self._selected_debug_camera_role()}，请重新连接")
+
 
 def _on_debug_camera_selected(self) -> None:
     self._refresh_debug_camera_info()
-    self._load_saved_debug_camera_settings_to_ui(self._selected_debug_camera_serial())
+    serial = self._selected_debug_camera_serial()
+    if serial:
+        self._save_debug_role_binding(self._selected_debug_camera_role(), serial)
+    self._load_saved_debug_camera_settings_to_ui(serial)
+
 
 def _refresh_debug_camera_info(self) -> None:
     info = self._selected_debug_camera_info()
     if info is None:
         self.lbl_debug_camera_info.setText("相机信息：-")
+        self._refresh_debug_role_status()
         return
     self.lbl_debug_camera_info.setText(
         "相机信息："
@@ -162,6 +203,8 @@ def _refresh_debug_camera_info(self) -> None:
         + f"厂商={info.manufacturer_name or '-'}  "
         + f"传输层={info.transport_layer}"
     )
+    self._refresh_debug_role_status()
+
 
 def _connect_debug_camera(self) -> None:
     if not self._ensure_debug_camera_services():
@@ -170,9 +213,10 @@ def _connect_debug_camera(self) -> None:
     if not serial:
         QtWidgets.QMessageBox.information(self, "相机调试", "请先扫描并选择一台相机")
         return
+    role = self._selected_debug_camera_role()
     self.debugCameraConnectRequested.emit(serial)
     try:
-        saved_settings = self._camera_settings_store.load_for_serial(serial)
+        saved_settings = self._camera_settings_store.load_for_role(role, serial=serial)
         settings = {
             "debug": HikCameraSettings(
                 **hik_settings_kwargs_from_mapping(
@@ -186,11 +230,12 @@ def _connect_debug_camera(self) -> None:
         QtWidgets.QMessageBox.critical(self, "相机调试", f"连接调试相机失败：{exc}")
         self._set_debug_camera_status(f"连接失败：{exc}")
         return
+    self._save_debug_role_binding(role, serial)
     self._refresh_debug_camera_settings()
     self._set_debug_preview_placeholder("已连接调试相机，可开启实时预览")
-    self._set_debug_camera_status(f"已连接调试相机：{serial}")
+    self._set_debug_camera_status(f"已连接 {role} 调试相机：{serial}")
+    self.debugCameraConnected.emit(role, serial)
 
-    self.debugCameraConnected.emit(serial)
 
 def _disconnect_debug_camera(self) -> None:
     self._stop_debug_camera_preview()
@@ -209,6 +254,8 @@ def _disconnect_debug_camera(self) -> None:
     self.lbl_debug_camera_info.setText("相机信息：-")
     self._set_debug_preview_placeholder("未连接调试相机")
     self._set_debug_camera_status("已断开")
+    self._refresh_debug_role_status()
+
 
 def _refresh_debug_camera_settings(self) -> None:
     device = self._debug_camera_device()
@@ -233,12 +280,18 @@ def _refresh_debug_camera_settings(self) -> None:
             )
         except Exception:
             pass
+        serial = getattr(device, "serial_number", self._selected_debug_camera_serial())
         self._save_debug_camera_settings(
-            getattr(device, "serial_number", self._selected_debug_camera_serial()),
+            serial,
             self._debug_camera_settings_payload_from_ui(),
+        )
+        self._save_debug_role_binding(
+            self._selected_debug_camera_role(),
+            serial,
         )
     finally:
         self._debug_camera_block_spin_apply = False
+
 
 def _apply_debug_camera_settings(self, *, quiet: bool = False) -> None:
     device = self._debug_camera_device()
@@ -257,19 +310,15 @@ def _apply_debug_camera_settings(self, *, quiet: bool = False) -> None:
     except Exception as exc:
         QtWidgets.QMessageBox.critical(self, "相机调试", f"应用相机参数失败：{exc}")
         return
-    self._save_debug_camera_settings(
-        getattr(device, "serial_number", self._selected_debug_camera_serial()),
-        self._debug_camera_settings_payload_from_ui(),
-    )
+    serial = str(getattr(device, "serial_number", self._selected_debug_camera_serial()) or "").strip()
+    payload = dict(self._debug_camera_settings_payload_from_ui())
+    self._save_debug_camera_settings(serial, payload)
+    self._save_debug_role_binding(self._selected_debug_camera_role(), serial)
     if not quiet:
-        self.cameraSettingsApplied.emit(
-            str(getattr(device, "serial_number", self._selected_debug_camera_serial()) or "").strip(),
-            dict(self._debug_camera_settings_payload_from_ui()),
-        )
+        self.cameraSettingsApplied.emit(serial, payload)
     self._refresh_debug_camera_settings()
-    self._set_debug_camera_status(
-        "参数已写入相机" if quiet else "相机参数已应用"
-    )
+    self._set_debug_camera_status("参数已写入相机" if quiet else "相机参数已应用")
+
 
 def _grab_debug_camera_once(self) -> None:
     if self._debug_frame_grab_service is None or "debug" not in self._debug_frame_grab_service.roles():
@@ -289,7 +338,8 @@ def _grab_debug_camera_once(self) -> None:
     capture_dir = os.path.join(self.session.product_dir, "debug_capture")
     os.makedirs(capture_dir, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    image_path = os.path.join(capture_dir, f"debug_cam_{stamp}.png")
+    role = self._selected_debug_camera_role()
+    image_path = os.path.join(capture_dir, f"{role}_debug_cam_{stamp}.png")
     if frame_to_bgr_image is None:
         QtWidgets.QMessageBox.critical(self, "相机调试", "相机图像转换服务不可用")
         return
@@ -305,8 +355,9 @@ def _grab_debug_camera_once(self) -> None:
         self._save_session()
     self.tabs.setCurrentIndex(2)
     self._load_canvas_image(image_path)
-    self._set_debug_camera_status(f"拍照成功：{os.path.basename(image_path)}")
-    self.lbl_status.setText(f"状态：调试拍照已保存到 TEST -> {os.path.basename(image_path)}")
+    self._set_debug_camera_status(f"{role} 拍照成功：{os.path.basename(image_path)}")
+    self.lbl_status.setText(f"状态：{role} 调试拍照已保存到 TEST -> {os.path.basename(image_path)}")
+
 
 def _open_debug_io(self) -> None:
     if IoController is None:
@@ -329,6 +380,7 @@ def _open_debug_io(self) -> None:
     self._refresh_debug_io_snapshot()
     self.lbl_status.setText("状态：DI/DO 调试已打开")
 
+
 def _close_debug_io(self, *, silent: bool = False) -> None:
     self._debug_io_timer.stop()
     if self._debug_io_controller is not None:
@@ -350,6 +402,7 @@ def _close_debug_io(self, *, silent: bool = False) -> None:
     if not silent:
         self.lbl_status.setText("状态：DI/DO 调试已关闭")
 
+
 def _refresh_debug_io_snapshot(self) -> None:
     if self._debug_io_controller is None or not self._debug_io_controller.is_open:
         return
@@ -361,16 +414,19 @@ def _refresh_debug_io_snapshot(self) -> None:
         self.lbl_debug_do_snapshot.setText(f"DO：读取失败 ({exc})")
         return
     self.lbl_debug_di_snapshot.setText(
-        "DI：" + "  ".join(f"{name}={'ON' if state else 'OFF'}" for name, state in sorted(inputs.items()))
+        "DI："
+        + "  ".join(f"{name}={'ON' if state else 'OFF'}" for name, state in sorted(inputs.items()))
     )
     self.lbl_debug_do_snapshot.setText(
-        "DO：" + "  ".join(f"{name}={'ON' if state else 'OFF'}" for name, state in sorted(outputs.items()))
+        "DO："
+        + "  ".join(f"{name}={'ON' if state else 'OFF'}" for name, state in sorted(outputs.items()))
     )
     for name, button in self._debug_output_buttons.items():
         state = bool(outputs.get(name, False))
         button.blockSignals(True)
         button.setChecked(state)
         button.blockSignals(False)
+
 
 def _set_debug_output(self, name: str, on: bool) -> None:
     if self._debug_io_controller is None or not self._debug_io_controller.is_open:

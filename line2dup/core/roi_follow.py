@@ -20,7 +20,7 @@ from .template_core import (
 
 ensure_repo_root_on_path()
 
-from line2dup_like_matcher import (  # noqa: E402
+from ..like_matcher import (  # noqa: E402
     Line2DupLikeDetector,
     Match,
     load_detector_model,

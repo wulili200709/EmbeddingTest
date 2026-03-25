@@ -1,6 +1,6 @@
 {
-  "model_path": "c:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\Block\\line2dup_model.json",
-  "reference_image": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/1/ok/Image_20260206135743336.bmp",
+  "model_path": "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\Block\\line2dup_model.json",
+  "reference_image": "",
   "class_id": "Block",
   "backend": "fusion",
   "threshold": 20.0,
@@ -29,6 +29,7 @@
     {
       "reference_label": "roi1",
       "output_label": "roi1",
+      "display_name": "roi1",
       "shape_type": "rectangle",
       "points": [
         [
@@ -44,6 +45,7 @@
     {
       "reference_label": "roi2",
       "output_label": "roi2",
+      "display_name": "roi2",
       "shape_type": "rectangle",
       "points": [
         [
@@ -56,5 +58,7 @@
         ]
       ]
     }
-  ]
+  ],
+  "search_shape_type": "",
+  "search_points": null
 }

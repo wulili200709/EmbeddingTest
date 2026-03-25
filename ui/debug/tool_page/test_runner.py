@@ -36,25 +36,21 @@ def _predict_image(
 
     match_ms: Optional[float] = None
     if tool_page.loc_method == "line2dup":
-        if path in tool_page._line2dup_match_ms_by_image:
-            match_ms = float(tool_page._line2dup_match_ms_by_image[path])
-        else:
-            recipe = tool_page.line2dup_recipe
-            if recipe is None and os.path.exists(tool_page.session.line2dup_recipe_path):
-                recipe = line2dup_locator.load_recipe_for_product(tool_page.session.product_dir)
-                tool_page.line2dup_recipe = recipe
-            ref_image = tool_page.ref_image
-            if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
-                ref_image = recipe.reference_image
-            if ref_image and os.path.exists(ref_image):
-                run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
-                    tgt_img_path=path,
-                    ref_img_path=ref_image,
-                    product_dir=tool_page.session.product_dir,
-                )
-                match_ms = float(run.locate_ms)
-                tool_page._line2dup_match_ms_by_image[path] = match_ms
-                tool_page._line2dup_autogen_ms_by_image[path] = float(run.total_ms)
+        camera_role = tool_page.current_camera_role()
+        recipe = tool_page.line2dup_recipe_for_role(camera_role)
+        ref_image = tool_page.ref_image
+        if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
+            ref_image = recipe.reference_image
+        if ref_image and os.path.exists(ref_image):
+            run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
+                tgt_img_path=path,
+                ref_img_path=ref_image,
+                product_dir=tool_page.session.product_dir,
+                camera_role=camera_role,
+            )
+            match_ms = float(run.locate_ms)
+            tool_page._line2dup_match_ms_by_image[path] = match_ms
+            tool_page._line2dup_autogen_ms_by_image[path] = float(run.total_ms)
     elif tool_page.ref_image and os.path.exists(tool_page.ref_image):
         tool_page._autogen_roi_for_images([path], only_missing=True, silent=True)
 

@@ -58,11 +58,12 @@
     "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\20261026_250A\\debug_capture\\debug_cam_20260324_105027_701575.png",
     "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\20261026_250A\\debug_capture\\debug_cam_20260324_105031_304146.png",
     "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\20261026_250A\\debug_capture\\debug_cam_20260324_105040_799227.png",
-    "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\20261026_250A\\debug_capture\\debug_cam_20260324_105044_584157.png"
+    "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\20261026_250A\\debug_capture\\debug_cam_20260324_105044_584157.png",
+    "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\150A_OG\\debug_capture\\cam2_debug_cam_20260325_103019_070463.png"
   ],
   "ref_image": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/.qr_session/20261026_250A/OK/debug_cam_20260324_101710_966290.png",
   "loc_method": "line2dup",
-  "runtime_cam1_serial": "DA9521010",
-  "runtime_cam2_serial": "",
+  "runtime_cam1_serial": "00E76555119",
+  "runtime_cam2_serial": "DA5447943",
   "runtime_capture_policy": "ng_only"
 }

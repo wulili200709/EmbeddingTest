@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional
+import re
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -17,6 +18,16 @@ def embedding_test_root(anchor_file: str) -> Path:
         if parent.name == "EmbeddingTest":
             return parent
     return current.parent
+
+
+_CAMERA_ROLE_RE = re.compile(r"(?:^|[_-])(cam[12])(?=[_.-]|$)", re.IGNORECASE)
+
+
+def _camera_role_from_path(path: str) -> str:
+    match = _CAMERA_ROLE_RE.search(Path(path).name)
+    if not match:
+        return "cam1"
+    return str(match.group(1) or "cam1").lower()
 
 
 def default_session_dir(anchor_file: str) -> str:
@@ -130,7 +141,7 @@ def _render_runtime_overlay_pixmap(
 def _draw_runtime_search_region(painter: QtGui.QPainter, path: str) -> None:
     try:
         product_dir = str(Path(path).resolve().parent.parent)
-        recipe = line2dup_locator.load_recipe_for_product(product_dir)
+        recipe = line2dup_locator.load_recipe_for_product(product_dir, _camera_role_from_path(path))
     except Exception:
         return
 

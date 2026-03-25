@@ -29,7 +29,7 @@ def app_icon() -> QtGui.QIcon:
 
 
 def load_app_version() -> str:
-    setup_path = embedding_test_root(__file__).parent / "setup.py"
+    setup_path = embedding_test_root(__file__) / "setup.py"
     try:
         text = setup_path.read_text(encoding="utf-8", errors="ignore")
     except Exception:

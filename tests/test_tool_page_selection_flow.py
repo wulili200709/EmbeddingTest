@@ -34,6 +34,7 @@ class _ToolPageSelectionHarness:
     _on_select_ng = ToolPage._on_select_ng
     _on_select_test = ToolPage._on_select_test
     _on_tab_changed = ToolPage._on_tab_changed
+    _remove_selected_from = ToolPage._remove_selected_from
 
     def __init__(self) -> None:
         self.tabs = QtWidgets.QTabWidget()
@@ -51,6 +52,8 @@ class _ToolPageSelectionHarness:
         self.inspection_items_table.setItem(0, 0, QtWidgets.QTableWidgetItem("roi1"))
         self.load_calls: list[str] = []
         self.status_calls: list[str] = []
+        self.refresh_calls = 0
+        self.save_calls = 0
 
     def _load_canvas_image(self, path: str) -> None:
         self.load_calls.append(path)
@@ -58,6 +61,12 @@ class _ToolPageSelectionHarness:
 
     def _set_status_for_current_image(self, path: str) -> None:
         self.status_calls.append(path)
+
+    def _refresh_lists(self) -> None:
+        self.refresh_calls += 1
+
+    def _save_session(self) -> None:
+        self.save_calls += 1
 
 
 class ToolPageSelectionFlowTest(unittest.TestCase):
@@ -106,6 +115,16 @@ class ToolPageSelectionFlowTest(unittest.TestCase):
 
         self.assertEqual(harness.inspection_items_table.currentRow(), -1)
         self.assertEqual(harness.status_calls, ["ok_a.png"])
+
+    def test_remove_selected_from_test_tab_removes_current_image(self) -> None:
+        harness = _ToolPageSelectionHarness()
+        harness.test_files = ["test_a.png", "test_b.png"]
+        harness.test_list.addItems(["test_a.png", "test_b.png"])
+        harness.test_list.setCurrentRow(0)
+
+        harness._remove_selected_from("TEST")
+
+        self.assertEqual(harness.test_files, ["test_b.png"])
 
     def test_application_font_normalization_sets_valid_point_size(self) -> None:
         app = self.app

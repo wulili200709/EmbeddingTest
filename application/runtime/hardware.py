@@ -200,13 +200,18 @@ def _apply_camera_settings_now(
     roles = matched_roles if matched_roles is not None else runtime._matching_runtime_roles_by_serial(serial)
     if not roles:
         return
-    settings = runtime_controller_module.HikCameraSettings(
-        **runtime_controller_module.hik_settings_kwargs_from_mapping(
-            settings_payload,
-            default_trigger_mode="continuous",
-        )
-    )
     for role in roles:
+        effective_payload = (
+            dict(settings_payload)
+            if settings_payload
+            else (runtime._camera_settings_store.load_for_role(role, serial=serial) or {})
+        )
+        settings = runtime_controller_module.HikCameraSettings(
+            **runtime_controller_module.hik_settings_kwargs_from_mapping(
+                effective_payload,
+                default_trigger_mode="continuous",
+            )
+        )
         device = runtime._frame_grab_service.get_device(role)
         device.apply_settings(settings)
 

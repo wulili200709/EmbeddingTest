@@ -11,7 +11,12 @@ from typing import Any
 
 SDK_OK = 0
 
-_MVIMPORT_DIR = Path(__file__).resolve().parents[2] / "Python" / "MvImport"
+_EMBEDDING_ROOT = Path(__file__).resolve().parents[1]
+_MVIMPORT_CANDIDATES = [
+    _EMBEDDING_ROOT / "third_party" / "MvImport",
+    _EMBEDDING_ROOT.parent / "Python" / "MvImport",
+]
+_MVIMPORT_DIR = next((path for path in _MVIMPORT_CANDIDATES if path.exists()), _MVIMPORT_CANDIDATES[0])
 if str(_MVIMPORT_DIR) not in sys.path:
     sys.path.insert(0, str(_MVIMPORT_DIR))
 
@@ -40,7 +45,7 @@ try:
     )
 except Exception as exc:  # pragma: no cover - depends on local Hikvision SDK runtime
     raise RuntimeError(
-        "Failed to import Hikvision Python SDK modules from 'Python/MvImport'. "
+        "Failed to import Hikvision Python SDK modules from 'EmbeddingTest/third_party/MvImport'. "
         "Please confirm the Hikvision SDK runtime is installed and the SDK Python files are present."
     ) from exc
 

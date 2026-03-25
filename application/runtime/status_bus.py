@@ -21,6 +21,24 @@ _RUN_STATE_ZH_FOR_STATUS = {
 }
 
 
+def _recipe_path_for_role(runtime, role: str) -> str:
+    getter = getattr(runtime._session, "line2dup_recipe_path_for_role", None)
+    if callable(getter):
+        try:
+            return str(getter(role) or "")
+        except Exception:
+            return str(getattr(runtime._session, "line2dup_recipe_path", "") or "")
+    return str(getattr(runtime._session, "line2dup_recipe_path", "") or "")
+
+
+def _runtime_recipe_name(runtime) -> str:
+    for role in _connected_roles(runtime):
+        path = _recipe_path_for_role(runtime, role)
+        if path:
+            return recipe_name_from_path(path)
+    return recipe_name_from_path(str(getattr(runtime._session, "line2dup_recipe_path", "") or ""))
+
+
 def _update_status(runtime, message=None) -> None:
     runtime._emit_runtime_context()
     if runtime._import_error is not None:
@@ -136,7 +154,7 @@ def _emit_runtime_context(runtime) -> None:
 def _build_pending_runtime_result(runtime, *, status: str):
     return build_pending_result(
         product_name=runtime._session.current_product,
-        recipe_name=recipe_name_from_path(runtime._session.line2dup_recipe_path),
+        recipe_name=_runtime_recipe_name(runtime),
         items=runtime._runtime_context.inspection_items,
         active_roles=runtime._connected_roles(),
         status=status,

@@ -4,7 +4,7 @@
   "test_files": [],
   "ref_image": "",
   "loc_method": "line2dup",
-  "runtime_cam1_serial": "",
-  "runtime_cam2_serial": "",
+  "runtime_cam1_serial": "DA5447943",
+  "runtime_cam2_serial": "DA5447943",
   "runtime_capture_policy": "ng_only"
 }

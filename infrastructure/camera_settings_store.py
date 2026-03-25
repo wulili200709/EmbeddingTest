@@ -53,7 +53,13 @@ class CameraSettingsStore:
         serial_text = str(serial).strip()
         if not serial_text:
             return None
-        raw = self._load_all().get(serial_text)
+        payload = self._load_all()
+        serial_block = payload.get("by_serial")
+        raw = None
+        if isinstance(serial_block, dict):
+            raw = serial_block.get(serial_text)
+        if raw is None:
+            raw = payload.get(serial_text)
         if not isinstance(raw, dict):
             return None
         normalized = _normalize_settings_payload(raw)
@@ -64,12 +70,70 @@ class CameraSettingsStore:
         if not serial_text:
             return
         payload = self._load_all()
-        payload[serial_text] = _normalize_settings_payload(settings)
+        by_serial = payload.get("by_serial")
+        if not isinstance(by_serial, dict):
+            by_serial = {}
+            payload["by_serial"] = by_serial
+        by_serial[serial_text] = _normalize_settings_payload(settings)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+
+    def load_for_role(self, role: str, *, serial: str = "") -> dict[str, Any] | None:
+        role_text = str(role).strip()
+        payload = self._load_all()
+        if role_text:
+            by_role = payload.get("by_role")
+            if isinstance(by_role, dict):
+                raw = by_role.get(role_text)
+                if isinstance(raw, dict):
+                    settings = raw.get("settings")
+                    if isinstance(settings, dict):
+                        normalized = _normalize_settings_payload(settings)
+                        if normalized:
+                            return normalized
+        return self.load_for_serial(serial)
+
+    def save_for_role(self, role: str, serial: str, settings: Mapping[str, Any]) -> None:
+        role_text = str(role).strip()
+        serial_text = str(serial).strip()
+        normalized = _normalize_settings_payload(settings)
+        payload = self._load_all()
+        if role_text:
+            by_role = payload.get("by_role")
+            if not isinstance(by_role, dict):
+                by_role = {}
+                payload["by_role"] = by_role
+            by_role[role_text] = {
+                "serial": serial_text,
+                "settings": normalized,
+            }
+        if serial_text:
+            by_serial = payload.get("by_serial")
+            if not isinstance(by_serial, dict):
+                by_serial = {}
+                payload["by_serial"] = by_serial
+            by_serial[serial_text] = normalized
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def serial_for_role(self, role: str) -> str:
+        role_text = str(role).strip()
+        if not role_text:
+            return ""
+        payload = self._load_all()
+        by_role = payload.get("by_role")
+        if not isinstance(by_role, dict):
+            return ""
+        raw = by_role.get(role_text)
+        if not isinstance(raw, dict):
+            return ""
+        return str(raw.get("serial", "")).strip()
 
     def _load_all(self) -> dict[str, Any]:
         if not self._path.exists():

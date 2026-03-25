@@ -74,6 +74,8 @@ class _FakeAlgo:
 
 class _TrainAllHarness:
     _resolve_training_algorithm = ToolPage._resolve_training_algorithm
+    _training_camera_roles_in_lists = ToolPage._training_camera_roles_in_lists
+    _warn_mixed_training_camera_samples = ToolPage._warn_mixed_training_camera_samples
     _missing_training_roi_paths = ToolPage._missing_training_roi_paths
     _train_inspection_item = ToolPage._train_inspection_item
     _train_all_tools = ToolPage._train_all_tools
@@ -111,6 +113,7 @@ class _TrainAllHarness:
         self.spin_topk = QtWidgets.QSpinBox()
         self.spin_topk.setValue(3)
         self._selected_index = 0
+        self.current_camera = "cam1"
         self.saved_runtime_params = 0
         self.saved_session = 0
         self.refresh_count = 0
@@ -120,6 +123,9 @@ class _TrainAllHarness:
         if 0 <= self._selected_index < len(self.inspection_items):
             return self.inspection_items[self._selected_index]
         return None
+
+    def current_camera_role(self) -> str:
+        return self.current_camera
 
     def _autogen_roi_for_images(self, paths, only_missing=False, silent=False):
         return None
@@ -138,6 +144,9 @@ class _TrainAllHarness:
 
     def _update_runtime_widgets(self):
         self.update_count += 1
+
+    def _ensure_training_roi_reviewed(self, _camera_role, *, action_name: str, action_key: str = ""):
+        return True
 
 
 class ToolPageTrainAllTest(unittest.TestCase):
@@ -161,6 +170,7 @@ class ToolPageTrainAllTest(unittest.TestCase):
             )
 
             harness = _TrainAllHarness(tmpdir, [str(ok_path)], [str(ng_path)])
+            harness.loc_method = "manual"
 
             with (
                 mock.patch("PySide6.QtWidgets.QMessageBox.information") as info,
@@ -189,5 +199,82 @@ class ToolPageTrainAllTest(unittest.TestCase):
             self.assertEqual(harness.saved_session, 1)
             self.assertEqual(harness.refresh_count, 1)
             self.assertEqual(harness.update_count, 1)
+            self.assertTrue(info.called)
+            self.assertFalse(warning.called)
+
+    def test_train_all_uses_current_role_samples_when_global_lists_mix_cam1_cam2(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ok_cam1 = Path(tmpdir) / "cam1_ok.png"
+            ok_cam2 = Path(tmpdir) / "cam2_ok.png"
+            ng_cam1 = Path(tmpdir) / "cam1_ng.png"
+            ng_cam2 = Path(tmpdir) / "cam2_ng.png"
+            for path in (ok_cam1, ok_cam2, ng_cam1, ng_cam2):
+                path.write_bytes(b"x")
+                path.with_suffix(".json").write_text(
+                    '{"shapes":[{"label":"roi1"},{"label":"roi2"}]}',
+                    encoding="utf-8",
+                )
+
+            harness = _TrainAllHarness(
+                tmpdir,
+                [str(ok_cam1), str(ok_cam2)],
+                [str(ng_cam1), str(ng_cam2)],
+            )
+            harness.loc_method = "manual"
+
+            with (
+                mock.patch("PySide6.QtWidgets.QMessageBox.information") as info,
+                mock.patch("PySide6.QtWidgets.QMessageBox.warning") as warning,
+            ):
+                harness._train_all_tools()
+
+            self.assertEqual(
+                harness.algo.train_calls,
+                [
+                    {
+                        "algorithm": "efficientnet_b0",
+                        "label_names": ["roi1"],
+                        "model_key": "cam1__roi1",
+                        "product_dir": tmpdir,
+                    },
+                    {
+                        "algorithm": "meanintensity",
+                        "label_names": ["roi2"],
+                        "model_key": "cam1__roi2",
+                        "product_dir": tmpdir,
+                    },
+                ],
+            )
+            self.assertEqual(harness.saved_runtime_params, 1)
+            self.assertEqual(harness.saved_session, 1)
+            self.assertEqual(harness.refresh_count, 1)
+            self.assertEqual(harness.update_count, 1)
+            self.assertTrue(info.called)
+            self.assertFalse(warning.called)
+
+    def test_train_all_line2dup_requires_second_click_after_roi_refresh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ok_path = Path(tmpdir) / "cam1_ok.png"
+            ng_path = Path(tmpdir) / "cam1_ng.png"
+            for path in (ok_path, ng_path):
+                path.write_bytes(b"x")
+                path.with_suffix(".json").write_text(
+                    '{"shapes":[{"label":"roi1"},{"label":"roi2"}]}',
+                    encoding="utf-8",
+                )
+
+            harness = _TrainAllHarness(tmpdir, [str(ok_path)], [str(ng_path)])
+
+            with (
+                mock.patch.object(harness, "_ensure_training_roi_reviewed", side_effect=[False, True], create=True) as ensure_roi,
+                mock.patch("PySide6.QtWidgets.QMessageBox.information") as info,
+                mock.patch("PySide6.QtWidgets.QMessageBox.warning") as warning,
+            ):
+                harness._train_all_tools()
+                self.assertEqual(harness.algo.train_calls, [])
+                harness._train_all_tools()
+
+            self.assertEqual(ensure_roi.call_count, 2)
+            self.assertEqual(len(harness.algo.train_calls), 2)
             self.assertTrue(info.called)
             self.assertFalse(warning.called)

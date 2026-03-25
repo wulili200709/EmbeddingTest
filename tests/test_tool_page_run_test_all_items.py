@@ -94,6 +94,9 @@ class _Harness:
     def _selected_inspection_item(self):
         return self._selected_item
 
+    def current_camera_role(self) -> str:
+        return "cam1"
+
     def _line2dup_output_labels(self):
         return ["roi1", "roi2", "roi3"]
 

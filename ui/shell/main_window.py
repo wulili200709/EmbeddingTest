@@ -310,11 +310,15 @@ class MainWindow(QtWidgets.QMainWindow):
     def _activate_runtime_workspace(self) -> str:
         return _activate_runtime_workspace_impl(self)
 
-    def _on_debug_camera_connected(self, serial: str) -> None:
-        _on_debug_camera_connected_impl(self, serial)
+    def _on_debug_camera_connected(self, role: str, serial: str) -> None:
+        _on_debug_camera_connected_impl(self, role, serial)
 
-    def _ensure_runtime_camera_connection(self, *, debug_serial: str = "") -> str:
-        return _ensure_runtime_camera_connection_impl(self, debug_serial=debug_serial)
+    def _ensure_runtime_camera_connection(self, *, debug_role: str = "", debug_serial: str = "") -> str:
+        return _ensure_runtime_camera_connection_impl(
+            self,
+            debug_role=debug_role,
+            debug_serial=debug_serial,
+        )
 
     def _sync_shell_status(self) -> None:
         _sync_shell_status_impl(self)

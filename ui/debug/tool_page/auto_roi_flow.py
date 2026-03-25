@@ -14,15 +14,21 @@ line2dup_locator = page_module.line2dup_locator
 
 
 def _set_reference(self, path: str) -> None:
+    camera_role = self.current_camera_role()
+    self._clear_training_roi_review_state(camera_role)
     self.ref_image = path
     if self.lbl_ref is not None:
         self.lbl_ref.setText(f"参考图：{os.path.basename(path)}")
         self.lbl_ref.setToolTip(path)
     try:
-        recipe = line2dup_locator.load_recipe_for_product(self.session.product_dir)
+        recipe = self.line2dup_recipe_for_role(camera_role) or line2dup_locator.load_recipe_for_product(
+            self.session.product_dir,
+            camera_role,
+        )
         recipe.reference_image = path
-        recipe.model_path = self.session.line2dup_model_path
-        line2dup_locator.save_recipe_for_product(self.session.product_dir, recipe)
+        recipe.model_path = self.line2dup_model_path_for_role(camera_role)
+        line2dup_locator.save_recipe_for_product(self.session.product_dir, recipe, camera_role)
+        self._line2dup_recipes_by_role[camera_role] = recipe
         self.line2dup_recipe = recipe
     except Exception:
         pass
@@ -55,6 +61,7 @@ def _open_line2dup_template_page(self) -> None:
     dlg = Line2DupTemplateDialog(
         product_name=self.session.current_product,
         product_dir=self.session.product_dir,
+        camera_role=self.current_camera_role(),
         initial_image_path=initial,
         parent=self.window(),
     )
@@ -72,14 +79,18 @@ def _on_template_editor_dialog_destroyed(self, *_args) -> None:
     self._template_editor_dialog = None
 
 def _on_line2dup_model_saved(self, model_path: str, recipe_path: str) -> None:
+    camera_role = self.current_camera_role()
+    self._clear_training_roi_review_state(camera_role)
     try:
-        self.line2dup_recipe = line2dup_locator.load_recipe_for_product(self.session.product_dir)
+        self.line2dup_recipe = self.line2dup_recipe_for_role(camera_role, force_reload=True)
     except Exception:
         self.line2dup_recipe = None
     self._reload_inspection_items()
+    self._apply_current_role_recipe_state()
     self.lbl_status.setText(f"状态：模板模型已保存 {os.path.basename(model_path)}")
 
 def _on_line2dup_reference_regions_changed(self) -> None:
+    self._clear_training_roi_review_state(self.current_camera_role())
     self._sync_line2dup_recipe_and_items()
     current_path = self.canvas.image_path()
     if current_path and os.path.exists(current_path):
@@ -88,7 +99,7 @@ def _on_line2dup_reference_regions_changed(self) -> None:
 
 def _sync_line2dup_recipe_and_items(self) -> None:
     try:
-        self.line2dup_recipe = line2dup_locator.load_recipe_for_product(self.session.product_dir)
+        self.line2dup_recipe = self.line2dup_recipe_for_role(self.current_camera_role(), force_reload=True)
     except Exception:
         self.line2dup_recipe = None
     self._reload_inspection_items()
@@ -98,6 +109,7 @@ def _update_loc_ui(self) -> None:
 
 def _on_loc_method_changed(self, method: str) -> None:
     self.loc_method = method
+    self._clear_training_roi_review_state()
     self._update_loc_ui()
     self._save_session()
 
@@ -155,8 +167,9 @@ def _autogen_roi_for_images(self, paths: List[str], only_missing: bool, silent: 
     ref_image = self.ref_image
     method = self.loc_method
     if method == "line2dup":
+        camera_role = self.current_camera_role()
         try:
-            recipe = line2dup_locator.load_recipe_for_product(self.session.product_dir)
+            recipe = self.line2dup_recipe_for_role(camera_role, force_reload=True)
             self.line2dup_recipe = recipe
         except Exception as exc:
             QtWidgets.QMessageBox.warning(self, "提示", f"无法加载模板 recipe：{exc}")
@@ -165,7 +178,7 @@ def _autogen_roi_for_images(self, paths: List[str], only_missing: bool, silent: 
             ref_image = recipe.reference_image
             if self.ref_image != ref_image:
                 self._set_reference(ref_image)
-        if not os.path.exists(self.session.line2dup_model_path):
+        if not os.path.exists(self.line2dup_model_path_for_role(camera_role)):
             QtWidgets.QMessageBox.warning(self, "提示", "当前产品还没有模板模型，请先创建模板。")
             return
         labels = self._line2dup_output_labels()
@@ -230,6 +243,7 @@ def _autogen_roi_for_images(self, paths: List[str], only_missing: bool, silent: 
                 run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
                     tgt_img_path=p, ref_img_path=ref_image,
                     product_dir=self.session.product_dir,
+                    camera_role=self.current_camera_role(),
                 )
                 self._line2dup_match_ms_by_image[p] = float(run.locate_ms)
                 self._line2dup_autogen_ms_by_image[p] = float(run.total_ms)
@@ -249,6 +263,9 @@ def _autogen_roi_for_images(self, paths: List[str], only_missing: bool, silent: 
         QtWidgets.QMessageBox.information(self, "完成", msg)
         if ok:
             self.lbl_status.setText(f"状态：当前列表已生成ROI，成功 {ok} 张，失败 {len(errs)} 张")
+
+    if ok:
+        self._reload_inspection_items()
 
     cur = self.canvas.image_path()
     if cur and cur in todo:
@@ -280,6 +297,7 @@ def _clear_roi_for_images(
         if not silent:
             QtWidgets.QMessageBox.information(self, "提示", "没有可处理的图片")
         return
+    self._clear_training_roi_review_state(self.current_camera_role())
     if labels is None:
         labels, _clear_mode = self._clear_roi_labels_for_paths(paths)
     labels = [str(label).strip() for label in (labels or []) if str(label).strip()] or ["roi"]

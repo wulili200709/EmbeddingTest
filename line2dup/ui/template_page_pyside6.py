@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import os
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, cast
 
 import cv2
 import numpy as np
@@ -12,7 +12,11 @@ from PySide6 import QtCore, QtGui, QtWidgets
 import algorithms.proxy as qr_core
 
 from ..core.bootstrap import ensure_repo_root_on_path
-from ..core.locator import product_paths
+from ..core.locator import (
+    product_paths,
+    resolved_model_path_for_product,
+    resolved_recipe_path_for_product,
+)
 from ..core.recipe import Line2DupRecipe, load_recipe, save_recipe
 from ..core.roi_follow import FollowResult, locate_and_follow
 from ..core.template_core import (
@@ -37,7 +41,7 @@ from ui.debug import OverlayShape, RoiCanvas, pixmap_from_path
 
 ensure_repo_root_on_path()
 
-from line2dup_like_matcher import (  # noqa: E402
+from ..like_matcher import (  # noqa: E402
     Feature,
     Line2DupLikeDetector,
     TemplateLevel,
@@ -259,6 +263,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         *,
         product_name: str,
         product_dir: str,
+        camera_role: str = "cam1",
         initial_image_path: str = "",
         parent: Optional[QtWidgets.QWidget] = None,
     ) -> None:
@@ -270,7 +275,10 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
 
         self.product_name = product_name
         self.product_dir = product_dir
-        self.paths = product_paths(product_dir)
+        self.camera_role = str(camera_role or "cam1").strip() or "cam1"
+        self.paths = product_paths(product_dir, self.camera_role)
+        self._resolved_recipe_path = resolved_recipe_path_for_product(product_dir, self.camera_role)
+        self._resolved_model_path = resolved_model_path_for_product(product_dir, self.camera_role)
 
         self.image_path = initial_image_path
         self.image_bgr: Optional[np.ndarray] = None
@@ -279,7 +287,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.detector_path: str = ""
         self.find_detector: Optional[Line2DupLikeDetector] = None
         self.find_detector_path: str = ""
-        self.find_model_path = self.paths.model_path
+        self.find_model_path = self._resolved_model_path
 
         self.template_roi: Optional[RoiRect] = None
         self.mask_rects: List[MaskRect] = []
@@ -304,7 +312,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._load_recipe()
         if self.image_path and os.path.exists(self.image_path):
             self._set_image(self.image_path, reset_state=False)
-        if os.path.exists(self.paths.model_path):
+        if os.path.exists(self.find_model_path):
             self._load_existing_model(silent=True)
         self._update_find_model_label()
 
@@ -341,6 +349,10 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         file_l.addWidget(self.lbl_image, 0, 0, 1, 2)
         file_l.addWidget(self.btn_open_image, 1, 0)
         file_l.addWidget(self.btn_load_model, 1, 1)
+        file_box.setTitle("参考图")
+        self.lbl_image.setText("(未加载)")
+        self.btn_open_image.setText("打开图片...")
+        self.btn_load_model.setText("加载已有模型")
         left.addWidget(file_box)
 
         select_box = QtWidgets.QGroupBox("模板编辑")
@@ -359,6 +371,11 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         select_l.addWidget(self.btn_apply_selection, 1, 0, 1, 2)
         select_l.addWidget(self.btn_clear_roi, 2, 0)
         select_l.addWidget(self.btn_clear_masks, 2, 1)
+        select_box.setTitle("模板编辑")
+        cast(QtWidgets.QLabel, select_l.itemAtPosition(0, 0).widget()).setText("当前用途")
+        self.btn_apply_selection.setText("应用当前框")
+        self.btn_clear_roi.setText("清空模板ROI")
+        self.btn_clear_masks.setText("清空Mask")
         left.addWidget(select_box)
 
         point_box = QtWidgets.QGroupBox("特征点编辑")
@@ -382,6 +399,11 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         point_l.addWidget(self.btn_reset_points, 2, 0, 1, 2)
         point_l.addWidget(self.lbl_point_help, 3, 0, 1, 2)
         point_l.addWidget(self.btn_extract_points, 4, 0, 1, 2)
+        self.lbl_point_help.setText("左击添加点，短拖可设置方向；右击删除选中/附近特征点。")
+        point_box.setTitle("特征点编辑")
+        self.chk_edit_points.setText("Edit Points")
+        cast(QtWidgets.QLabel, point_l.itemAtPosition(1, 0).widget()).setText("默认方向label")
+        self.btn_reset_points.setText("恢复模型特征点")
         self.lbl_point_help.setText("左击添加点，短拖可设置方向；右击删除选中/附近特征点。")
         left.addWidget(point_box)
 
@@ -428,6 +450,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         form.addRow("scale_start", self.spin_scale_start)
         form.addRow("scale_end", self.spin_scale_end)
         form.addRow("scale_step", self.spin_scale_step)
+        param_box.setTitle("模板参数")
         left.addWidget(param_box)
 
         recipe_box = QtWidgets.QGroupBox("定位Recipe")
@@ -448,6 +471,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         recipe_form.addRow("threshold", self.spin_threshold_create)
         recipe_form.addRow("nms_iou", self.spin_nms_create)
         recipe_form.addRow("follow_mode", self.cmb_follow_create)
+        recipe_box.setTitle("定位Recipe")
         left.addWidget(recipe_box)
         recipe_box.setVisible(False)
 
@@ -465,13 +489,13 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         action_row = QtWidgets.QHBoxLayout()
         self.btn_build = QtWidgets.QPushButton("创建并保存模型")
         self.btn_build.clicked.connect(self._build_and_save)
-        self.btn_build.setText("淇濆瓨")
         action_row.addWidget(self.btn_build)
         self.btn_build.setText("保存")
         left.addLayout(action_row)
 
         self.lbl_status = QtWidgets.QLabel("状态：先选参考图并设置 template_roi。")
         self.lbl_status.setWordWrap(True)
+        self.lbl_status.setText("状态：先选参考图并设置 template_roi。")
         left.addWidget(self.lbl_status)
         left.addStretch(1)
 
@@ -502,10 +526,21 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             "\n可先点 Extract Points From ROI 提取特征点。"
             "\n启用 Edit Points 后：左击添加点，短拖设置方向，右击删除选中/附近特征点。"
         )
+        help_text.setText(
+            "Create：先画 template_roi，再按需画 exclude_mask。"
+            "\n可先点 Extract Points From ROI 提取特征点。"
+            "\n启用 Edit Points 后：左击添加点，短拖设置方向，右击删除选中/附近特征点。"
+        )
+        help_text.setText(
+            "Create：先画 template_roi，再按需画 exclude_mask。\n"
+            "可先点 Extract Points From ROI 提取特征点。\n"
+            "启用 Edit Points 后：左击添加点，短拖设置方向，右击删除选中/附近特征点。"
+        )
         right.addWidget(help_text)
 
         self._on_role_changed(self.cmb_role.currentText())
         self._on_point_edit_toggled(False)
+        self.lbl_status.setText("状态：先选参考图并设置 template_roi。")
 
     def _build_reference_tab(self) -> None:
         layout = QtWidgets.QHBoxLayout(self.tab_reference)
@@ -739,9 +774,12 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self.detector = None
             self.detector_path = ""
         self._refresh_create_overlays()
+        self.lbl_status.setText(f"状态：已提取特征点，当前总数={self._feature_count}")
         if not self._apply_reference_roi_from_recipe():
             self._load_reference_roi_from_json(silent=True)
         self._save_recipe()
+
+        self.lbl_status.setText("状态：已加载参考图。")
 
     def _sync_recipe_controls(self, source: str) -> None:
         if self._syncing_recipe_controls:
@@ -837,14 +875,16 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
     def _save_recipe(self) -> None:
         recipe = self._recipe_from_controls(use_find_values=False)
         recipe.model_path = self.paths.model_path
+        os.makedirs(self.paths.role_dir, exist_ok=True)
         save_recipe(recipe, self.paths.recipe_path)
 
     def _load_recipe(self) -> None:
-        if not os.path.exists(self.paths.recipe_path):
+        recipe_path = self._resolved_recipe_path
+        if not os.path.exists(recipe_path):
             self._refresh_reference_region_fields()
             self._apply_find_backend_default()
             return
-        recipe = load_recipe(self.paths.recipe_path)
+        recipe = load_recipe(recipe_path)
         if recipe.reference_image and os.path.exists(recipe.reference_image) and not self.image_path:
             self.image_path = recipe.reference_image
         self.edit_class_id.setText(recipe.class_id or self.product_name or "object")
@@ -1020,7 +1060,6 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.chk_edit_points.setChecked(True)
         self._refresh_create_overlays()
         self.lbl_status.setText(f"状态：已提取特征点，当前总数={self._feature_count}")
-        self.lbl_status.setText(f"鐘舵€侊細宸叉彁鍙栫壒寰佺偣锛屽綋鍓嶆€绘暟={self._feature_count}")
 
     def _build_and_save(self) -> None:
         if self.image_bgr is None or not self.image_path:
@@ -1063,6 +1102,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
                 original_editor_levels=original_editor_levels,
                 source_image_path=self.image_path,
             )
+            os.makedirs(self.paths.role_dir, exist_ok=True)
             save_detector_model(detector, self.paths.model_path)
         except Exception as exc:
             QtWidgets.QMessageBox.critical(self, "创建失败", str(exc))
@@ -1194,6 +1234,8 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         if self.template_roi is None or not self.editor_levels:
             self.lbl_status.setText("状态：请先创建或加载模型后再编辑特征点。")
             return
+            self.lbl_status.setText("状态：请先创建或加载模型后再编辑特征点。")
+            return
         if not self._point_in_template_roi(x, y):
             return
         if button == _button_left():
@@ -1203,11 +1245,17 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         elif button == _button_right():
             idx = self._hover_feature_index
             if idx is not None and self._delete_feature_index(int(idx)):
+                self.lbl_status.setText(f"状态：已删除选中特征点，剩余 {self._feature_count}。")
+                return
                 self.lbl_status.setText(f"鐘舵€侊細宸插垹闄ょ壒寰佺偣锛屽墿浣?{self._feature_count}")
                 return
             if self._delete_feature_near(x, y):
+                self.lbl_status.setText(f"状态：已删除附近特征点，剩余 {self._feature_count}。")
+                return
                 self.lbl_status.setText(f"状态：已删除特征点，剩余={self._feature_count}")
             else:
+                self.lbl_status.setText("状态：右击位置附近没有可删除的特征点。")
+                return
                 self.lbl_status.setText("状态：右击位置附近没有可删除的特征点。")
 
     def _on_create_canvas_moved(self, _buttons: int, x: int, y: int) -> None:

@@ -72,7 +72,14 @@ class _ToolConfigHarness:
                 camera_id="cam1",
                 roi_label="roi1",
                 algorithm_code=SHARED_BACKBONE_ALGORITHM_CODE,
-            )
+            ),
+            InspectionItem(
+                item_id="roi2",
+                display_name="roi2",
+                camera_id="cam2",
+                roi_label="roi2",
+                algorithm_code=SHARED_BACKBONE_ALGORITHM_CODE,
+            ),
         ]
         self.inspection_items_table = QtWidgets.QTableWidget(0, 5)
         self.lbl_tool_config_hint = QtWidgets.QLabel("")
@@ -83,6 +90,8 @@ class _ToolConfigHarness:
         self.current_algorithm_value = ""
         self.runtime_update_calls = 0
         self.load_shape_calls: list[tuple[str, str]] = []
+        self.refresh_list_calls = 0
+        self.current_camera = "cam1"
 
     def cleanup(self) -> None:
         self._tmpdir.cleanup()
@@ -95,6 +104,12 @@ class _ToolConfigHarness:
 
     def _load_shape_for_label(self, image_path: str, label_name: str) -> None:
         self.load_shape_calls.append((image_path, label_name))
+
+    def _refresh_lists(self) -> None:
+        self.refresh_list_calls += 1
+
+    def current_camera_role(self) -> str:
+        return self.current_camera
 
     def _current_label(self) -> str:
         return "roi"
@@ -131,6 +146,7 @@ class ToolPageToolConfigTest(unittest.TestCase):
             self.assertFalse(harness.lbl_tool_config_hint.isVisible())
             self.assertEqual(harness.current_algorithm_value, "")
             self.assertGreaterEqual(harness.runtime_update_calls, 1)
+            self.assertEqual(harness.inspection_items_table.rowCount(), 1)
         finally:
             harness.cleanup()
 
@@ -166,6 +182,19 @@ class ToolPageToolConfigTest(unittest.TestCase):
             self.assertIn("background:#3a3a3a", camera_combo.styleSheet())
             self.assertIn("background:#3a3a3a", algorithm_combo.styleSheet())
             self.assertEqual(harness.lbl_tool_config_hint.text(), "")
+        finally:
+            harness.cleanup()
+
+    def test_table_only_shows_items_for_current_camera_role(self) -> None:
+        harness = _ToolConfigHarness()
+        try:
+            harness.current_camera = "cam2"
+            harness._refresh_inspection_items_table()
+
+            self.assertEqual(harness.inspection_items_table.rowCount(), 1)
+            item = harness.inspection_items_table.item(0, 1)
+            self.assertIsNotNone(item)
+            self.assertEqual(item.text(), "roi2")
         finally:
             harness.cleanup()
 

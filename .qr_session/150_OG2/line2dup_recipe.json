@@ -1,6 +1,6 @@
 {
   "model_path": "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.qr_session\\150_OG2\\line2dup_model.json",
-  "reference_image": "C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/16.bmp",
+  "reference_image": "",
   "class_id": "150_OG2",
   "backend": "fusionv2",
   "threshold": 20.0,

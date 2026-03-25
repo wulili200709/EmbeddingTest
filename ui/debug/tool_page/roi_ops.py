@@ -85,13 +85,7 @@ def _set_overlay_shapes(tool_page, img_path: str, current_label: str) -> None:
     overlays: List[OverlayShape] = []
     visible_roi_labels: Optional[set[str]] = None
 
-    recipe = tool_page.line2dup_recipe
-    if recipe is None and os.path.exists(tool_page.session.line2dup_recipe_path):
-        try:
-            recipe = line2dup_locator.load_recipe_for_product(tool_page.session.product_dir)
-            tool_page.line2dup_recipe = recipe
-        except Exception:
-            recipe = None
+    recipe = tool_page.line2dup_recipe_for_role(tool_page.current_camera_role())
     if tool_page.loc_method == "line2dup":
         labels = [str(label).strip() for label in output_labels_from_line2dup_recipe(recipe) if str(label).strip()]
         visible_roi_labels = set(labels) if labels else None

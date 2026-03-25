@@ -492,6 +492,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.lbl_final_result.setStyleSheet(
             f"background:{bg};color:white;font-size:16px;font-weight:bold;border-radius:4px;"
         )
+        self.lbl_final_result.setToolTip(str(detail_text or ""))
 
     def set_record_path(self, record_path: str) -> None:
         self.lbl_footer_record.setText(record_path or "")
@@ -560,6 +561,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._items_container.update()
         self._items_scroll.viewport().update()
         self._refresh_camera_previews()
+        self._refresh_trigger_buttons()
 
     def set_camera_pixmap(self, role: str, pixmap: QtGui.QPixmap | None, *, placeholder: str | None = None) -> None:
         if role == "cam1":
@@ -637,10 +639,17 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.lbl_duration.setText(self._format_timing_label("总流程", duration_ms))
 
     def _refresh_trigger_buttons(self) -> None:
-        allow_cam1 = (not self._busy) and ("cam1" in self._active_role_set)
-        allow_cam2 = (not self._busy) and ("cam2" in self._active_role_set)
+        allow_cam1 = (not self._busy) and ("cam1" in self._active_role_set) and self._has_enabled_items("cam1")
+        allow_cam2 = (not self._busy) and ("cam2" in self._active_role_set) and self._has_enabled_items("cam2")
         self.btn_trigger_cam1.setEnabled(allow_cam1)
         self.btn_trigger_cam2.setEnabled(allow_cam2)
+
+    def _has_enabled_items(self, camera_id: str) -> bool:
+        camera_text = str(camera_id or "").strip()
+        return any(
+            bool(row.get("enabled", True)) and str(row.get("camera_id", "")).strip() == camera_text
+            for row in self._inspection_rows
+        )
 
     def _emit_connect_requested(self) -> None:
         self.connectCamerasRequested.emit(self.camera_bindings())

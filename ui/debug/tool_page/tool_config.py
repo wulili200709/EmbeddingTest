@@ -11,6 +11,30 @@ from algorithms.registry import list_tool_algorithm_specs, normalize_tool_algori
 from domain import SUPPORTED_CAMERA_IDS, save_inspection_items
 
 
+def _current_camera_role(tool_page) -> str:
+    getter = getattr(tool_page, "current_camera_role", None)
+    if callable(getter):
+        return str(getter() or "cam1").strip() or "cam1"
+    return "cam1"
+
+
+def _visible_inspection_item_indexes(tool_page) -> list[int]:
+    current_role = _current_camera_role(tool_page)
+    visible: list[int] = []
+    for index, inspection_item in enumerate(getattr(tool_page, "inspection_items", [])):
+        item_role = str(getattr(inspection_item, "camera_id", "") or "").strip() or "cam1"
+        if item_role == current_role:
+            visible.append(index)
+    return visible
+
+
+def _actual_inspection_item_index(tool_page, visible_row: int) -> int:
+    indexes = list(getattr(tool_page, "_visible_inspection_item_indexes", []))
+    if visible_row < 0 or visible_row >= len(indexes):
+        return -1
+    return int(indexes[visible_row])
+
+
 def _persist_inspection_items(tool_page) -> None:
     save_inspection_items(tool_page.inspection_items, tool_page.session.inspection_items_path)
     tool_page.inspectionItemsChanged.emit()
@@ -145,14 +169,18 @@ def _refresh_inspection_items_table(tool_page) -> None:
     if table is None:
         return
 
-    selected_row = table.currentRow()
+    selected_item = _selected_inspection_item(tool_page)
+    selected_item_id = str(getattr(selected_item, "item_id", "") or "").strip()
+    visible_indexes = _visible_inspection_item_indexes(tool_page)
+    tool_page._visible_inspection_item_indexes = list(visible_indexes)
     tool_page._inspection_items_table_loading = True
     table.blockSignals(True)
     try:
-        table.setRowCount(len(tool_page.inspection_items))
+        table.setRowCount(len(visible_indexes))
         algorithm_specs = list_tool_algorithm_specs()
 
-        for row, inspection_item in enumerate(tool_page.inspection_items):
+        for row, actual_index in enumerate(visible_indexes):
+            inspection_item = tool_page.inspection_items[actual_index]
             enabled_item = QtWidgets.QTableWidgetItem("")
             enabled_item.setFlags(
                 QtCore.Qt.ItemFlag.ItemIsEnabled
@@ -183,7 +211,7 @@ def _refresh_inspection_items_table(tool_page) -> None:
             camera_index = max(0, camera_combo.findData(inspection_item.camera_id))
             camera_combo.setCurrentIndex(camera_index)
             camera_combo.currentTextChanged.connect(
-                lambda value, row_index=row: tool_page._on_inspection_item_camera_changed(row_index, value)
+                lambda value, row_index=actual_index: tool_page._on_inspection_item_camera_changed(row_index, value)
             )
             table.setCellWidget(row, 2, camera_combo)
 
@@ -197,7 +225,7 @@ def _refresh_inspection_items_table(tool_page) -> None:
                 algorithm_index = 0
             algorithm_combo.setCurrentIndex(algorithm_index)
             algorithm_combo.currentIndexChanged.connect(
-                lambda _index, row_index=row, combo=algorithm_combo: tool_page._on_inspection_item_algorithm_changed(
+                lambda _index, row_index=actual_index, combo=algorithm_combo: tool_page._on_inspection_item_algorithm_changed(
                     row_index,
                     combo.currentData(),
                 )
@@ -221,8 +249,15 @@ def _refresh_inspection_items_table(tool_page) -> None:
         tool_page._inspection_items_table_loading = False
 
     if table.rowCount() > 0:
-        if 0 <= selected_row < table.rowCount():
-            table.setCurrentCell(selected_row, 1)
+        restored_row = -1
+        if selected_item_id:
+            for visible_row, actual_index in enumerate(visible_indexes):
+                item = tool_page.inspection_items[actual_index]
+                if str(getattr(item, "item_id", "") or "").strip() == selected_item_id:
+                    restored_row = visible_row
+                    break
+        if 0 <= restored_row < table.rowCount():
+            table.setCurrentCell(restored_row, 1)
         else:
             table.clearSelection()
             table.setCurrentItem(None)
@@ -241,7 +276,8 @@ def _selected_inspection_item_row(tool_page) -> int:
     selection_model = table.selectionModel()
     if selection_model is None or not selection_model.hasSelection():
         return -1
-    row = int(table.currentRow())
+    visible_row = int(table.currentRow())
+    row = _actual_inspection_item_index(tool_page, visible_row)
     if row < 0 or row >= len(tool_page.inspection_items):
         return -1
     return row
@@ -260,6 +296,7 @@ def _on_inspection_items_selection_changed(tool_page) -> None:
     _sync_inspection_items_row_highlight(tool_page)
     item = _selected_inspection_item(tool_page)
     if item is None:
+        tool_page._refresh_lists()
         tool_page._update_runtime_widgets()
         tool_page._update_learning_backbone_hint()
         return
@@ -273,6 +310,7 @@ def _on_inspection_items_selection_changed(tool_page) -> None:
     finally:
         tool_page._updating_runtime_params = False
     tool_page.algo.product_params.algorithm = algorithm
+    tool_page._refresh_lists()
     tool_page._update_runtime_widgets()
     tool_page._update_learning_backbone_hint()
     image_path = tool_page.canvas.image_path()
@@ -283,7 +321,7 @@ def _on_inspection_items_selection_changed(tool_page) -> None:
 def _on_inspection_items_table_item_changed(tool_page, table_item: QtWidgets.QTableWidgetItem) -> None:
     if getattr(tool_page, "_inspection_items_table_loading", False):
         return
-    row = table_item.row()
+    row = _actual_inspection_item_index(tool_page, table_item.row())
     if row < 0 or row >= len(tool_page.inspection_items):
         return
     inspection_item = tool_page.inspection_items[row]
@@ -317,6 +355,7 @@ def _on_inspection_item_camera_changed(tool_page, row: int, camera_id: str) -> N
     tool_page.inspection_items[row].camera_id = normalized
     _persist_inspection_items(tool_page)
     _refresh_inspection_items_table(tool_page)
+    tool_page._refresh_lists()
 
 
 def _on_inspection_item_algorithm_changed(tool_page, row: int, algorithm_code: object) -> None:

@@ -147,23 +147,27 @@ def activate_runtime_workspace(window) -> str:
     return ensure_runtime_camera_connection(window)
 
 
-def on_debug_camera_connected(window, serial: str) -> None:
+def on_debug_camera_connected(window, role: str, serial: str) -> None:
     if window.main_pages.currentWidget() is not window.runtime_page:
         return
-    runtime_message = ensure_runtime_camera_connection(window, debug_serial=serial)
+    runtime_message = ensure_runtime_camera_connection(window, debug_role=role, debug_serial=serial)
     if runtime_message:
         window._bottom_status_bar.showMessage(runtime_message, 3000)
 
 
-def ensure_runtime_camera_connection(window, *, debug_serial: str = "") -> str:
+def ensure_runtime_camera_connection(window, *, debug_role: str = "", debug_serial: str = "") -> str:
     if window.runtime_ctrl.connected_roles():
         return ""
 
     bindings = window.runtime_page.camera_bindings()
     debug_serial = str(debug_serial or window.tool_page.connected_debug_camera_serial()).strip()
+    debug_role = str(debug_role or getattr(window.tool_page, "_selected_debug_camera_role", lambda: "cam1")()).strip() or "cam1"
 
-    if debug_serial and not str(bindings.get("cam1", "")).strip():
-        window.runtime_page.edit_cam1_serial.setText(debug_serial)
+    if debug_serial and not str(bindings.get(debug_role, "")).strip():
+        if debug_role == "cam2":
+            window.runtime_page.edit_cam2_serial.setText(debug_serial)
+        else:
+            window.runtime_page.edit_cam1_serial.setText(debug_serial)
         bindings = window.runtime_page.camera_bindings()
 
     if not bindings:

@@ -339,7 +339,7 @@ class RuntimeController(QtCore.QObject):
 
         settings_by_role = {}
         for role, serial in bindings.items():
-            saved_settings = self._camera_settings_store.load_for_serial(serial)
+            saved_settings = self._camera_settings_store.load_for_role(role, serial=serial)
             settings_by_role[role] = HikCameraSettings(
                 **hik_settings_kwargs_from_mapping(
                     saved_settings,
@@ -386,7 +386,7 @@ class RuntimeController(QtCore.QObject):
 
         settings_by_role = {}
         for role, serial in bindings.items():
-            saved_settings = self._camera_settings_store.load_for_serial(serial)
+            saved_settings = self._camera_settings_store.load_for_role(role, serial=serial)
             settings_by_role[role] = HikCameraSettings(
                 **hik_settings_kwargs_from_mapping(
                     saved_settings,
@@ -508,7 +508,10 @@ class RuntimeController(QtCore.QObject):
         self._update_status(f"手动调试：正在触发相机{cam_index}…")
         self.logAppended.emit(f"[运行] 手动触发相机{cam_index}")
 
+        role_text = f"cam{int(cam_index)}"
+        original_precheck = getattr(self._runner, "precheck_callback", None)
         try:
+            self._runner.precheck_callback = lambda: self._precheck_for_roles([role_text])
             outcome = self._runner.on_single_camera_debug_trigger(cam_index)
         except Exception as exc:
             self.logAppended.emit(f"[运行] 触发异常：{exc}")
@@ -518,6 +521,7 @@ class RuntimeController(QtCore.QObject):
             self._update_status(f"运行异常：{exc}")
             return
         finally:
+            self._runner.precheck_callback = original_precheck
             self._set_busy(False)
 
         if outcome is None:

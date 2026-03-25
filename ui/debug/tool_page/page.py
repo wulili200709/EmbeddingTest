@@ -105,6 +105,46 @@ ROI_OVERLAY_PALETTE = [
     QtGui.QColor(128, 255, 0),
 ]
 
+_CAMERA_ROLE_RE = re.compile(r"(?:^|[_-])(cam[12])(?=[_.-]|$)", re.IGNORECASE)
+
+
+def _normalize_camera_role(camera_id: object) -> str:
+    text = str(camera_id or "").strip().lower()
+    if text in {"cam1", "cam2"}:
+        return text
+    return ""
+
+
+def _camera_role_from_path(path: str) -> str:
+    name = os.path.basename(str(path or "")).lower()
+    match = _CAMERA_ROLE_RE.search(name)
+    if not match:
+        return ""
+    return _normalize_camera_role(match.group(1))
+
+
+def _selected_image_list_camera_role(tool_page) -> str:
+    getter = getattr(tool_page, "current_camera_role", None)
+    if callable(getter):
+        role = _normalize_camera_role(getter())
+        if role:
+            return role
+    role_getter = getattr(tool_page, "_selected_debug_camera_role", None)
+    if callable(role_getter):
+        role = _normalize_camera_role(role_getter())
+        if role:
+            return role
+    return "cam1"
+
+
+def _filter_paths_for_camera(tool_page, paths: List[str], camera_id: object) -> List[str]:
+    role = _normalize_camera_role(camera_id)
+    if not role:
+        return list(paths)
+    if not any(_camera_role_from_path(path) for path in paths):
+        return list(paths)
+    return [path for path in paths if _camera_role_from_path(path) == role]
+
 ALGORITHM_GROUPS = [
     (
         "学习工具",
@@ -237,7 +277,7 @@ class ToolPage(QtWidgets.QWidget):
     sessionLoaded = QtCore.Signal()
     inspectionItemsChanged = QtCore.Signal()
     debugCameraConnectRequested = QtCore.Signal(str)
-    debugCameraConnected = QtCore.Signal(str)
+    debugCameraConnected = QtCore.Signal(str, str)
     cameraSettingsApplied = QtCore.Signal(str, object)
 
 
@@ -257,7 +297,11 @@ class ToolPage(QtWidgets.QWidget):
         self.ref_image: Optional[str] = None
         self.loc_method: str = "line2dup"
         self.line2dup_recipe: Optional[Line2DupRecipe] = None
+        self._line2dup_recipes_by_role: Dict[str, Optional[Line2DupRecipe]] = {}
+        self._training_roi_ready_signatures: Dict[str, str] = {}
+        self._training_roi_pending_actions: Dict[str, str] = {}
         self.inspection_items: List[InspectionItem] = []
+        self._visible_inspection_item_indexes: List[int] = []
         self._inspection_items_table_loading = False
         self._line2dup_match_ms_by_image: Dict[str, float] = {}
         self._line2dup_autogen_ms_by_image: Dict[str, float] = {}
@@ -277,10 +321,12 @@ class ToolPage(QtWidgets.QWidget):
         self._debug_io_timer.setInterval(500)
         self._debug_io_timer.timeout.connect(self._refresh_debug_io_snapshot)
         self._camera_settings_store = CameraSettingsStore(self.session.camera_settings_path)
+        self._current_camera_role = "cam1"
         # ?? setValue/????????????????????
         self._debug_camera_block_spin_apply = False
 
         self._build_ui()
+        self._set_current_camera_role(self._current_camera_role)
         self.destroyed.connect(lambda *_: self._cleanup_debug_hardware())
 
     # ------------------------------------------------------------------
@@ -292,6 +338,250 @@ class ToolPage(QtWidgets.QWidget):
         if value is None:
             return ""
         return str(value).strip()
+
+    def current_camera_role(self) -> str:
+        combo = getattr(self, "cmb_current_camera_role", None)
+        if combo is None:
+            return _normalize_camera_role(getattr(self, "_current_camera_role", "cam1")) or "cam1"
+        return _normalize_camera_role(combo.currentData() or combo.currentText() or self._current_camera_role) or "cam1"
+
+    def line2dup_paths_for_role(self, camera_role: object = None):
+        role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        return self.session.line2dup_paths_for_role(role)
+
+    def load_line2dup_recipe_for_role(
+        self,
+        camera_role: object = None,
+        *,
+        force_reload: bool = False,
+    ) -> Optional[Line2DupRecipe]:
+        role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        if not force_reload and role in self._line2dup_recipes_by_role:
+            recipe = self._line2dup_recipes_by_role.get(role)
+        else:
+            paths = self.line2dup_paths_for_role(role)
+            if not (os.path.exists(paths.recipe_path) or os.path.exists(paths.legacy_recipe_path)):
+                recipe = None
+            else:
+                try:
+                    recipe = line2dup_locator.load_recipe_for_product(self.session.product_dir, role)
+                except Exception:
+                    recipe = None
+            self._line2dup_recipes_by_role[role] = recipe
+        if role == self.current_camera_role():
+            self.line2dup_recipe = recipe
+        return recipe
+
+    def line2dup_recipe_for_role(
+        self,
+        camera_role: object = None,
+        *,
+        force_reload: bool = False,
+    ) -> Optional[Line2DupRecipe]:
+        return self.load_line2dup_recipe_for_role(camera_role, force_reload=force_reload)
+
+    def line2dup_model_path_for_role(self, camera_role: object = None) -> str:
+        role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        paths = self.line2dup_paths_for_role(role)
+        return line2dup_locator.resolved_model_path_for_product(self.session.product_dir, role)
+
+    def line2dup_recipe_path_for_role(self, camera_role: object = None) -> str:
+        role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        return line2dup_locator.resolved_recipe_path_for_product(self.session.product_dir, role)
+
+    def _apply_current_role_recipe_state(self) -> None:
+        recipe = self.load_line2dup_recipe_for_role(self.current_camera_role())
+        self.line2dup_recipe = recipe
+        ref_image = ""
+        if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
+            ref_image = str(recipe.reference_image)
+        self.ref_image = ref_image or None
+        if self.ref_image:
+            self.lbl_ref.setText(f"参考图: {os.path.basename(self.ref_image)}")
+            self.lbl_ref.setToolTip(self.ref_image)
+        else:
+            self.lbl_ref.setText("参考图：未设置")
+            self.lbl_ref.setToolTip("")
+
+    def _training_sample_groups_for_role(self, camera_role: object = None) -> tuple[List[str], List[str], List[str]]:
+        role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        training_ok_files = _filter_paths_for_camera(self, self.ok_files, role)
+        training_ng_files = _filter_paths_for_camera(self, self.ng_files, role)
+        return training_ok_files, training_ng_files, list(training_ok_files) + list(training_ng_files)
+
+    def _training_roi_ready_signature(self, camera_role: object = None) -> str:
+        role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        _training_ok_files, _training_ng_files, candidate_paths = self._training_sample_groups_for_role(role)
+        recipe_path = self.line2dup_recipe_path_for_role(role)
+        model_path = self.line2dup_model_path_for_role(role)
+        recipe_mtime = os.path.getmtime(recipe_path) if recipe_path and os.path.exists(recipe_path) else -1.0
+        model_mtime = os.path.getmtime(model_path) if model_path and os.path.exists(model_path) else -1.0
+        return "|".join(
+            [
+                role,
+                str(recipe_mtime),
+                str(model_mtime),
+                str(self.ref_image or ""),
+                *sorted(str(path) for path in candidate_paths),
+            ]
+        )
+
+    def _refresh_current_image_after_roi_update(self, candidate_paths: List[str]) -> None:
+        current_path = self.canvas.image_path()
+        if not current_path or current_path not in set(candidate_paths):
+            return
+        self._load_canvas_image(current_path)
+        self._set_status_for_current_image(current_path)
+
+    def _clear_training_roi_review_state(self, camera_role: object = None) -> None:
+        if camera_role is None:
+            self._training_roi_ready_signatures = {}
+            self._training_roi_pending_actions = {}
+        else:
+            role = _normalize_camera_role(camera_role) or "cam1"
+            self._training_roi_ready_signatures.pop(role, None)
+            self._training_roi_pending_actions.pop(role, None)
+        self._update_runtime_widgets()
+
+    def _sync_training_action_buttons(self) -> None:
+        train_button = getattr(self, "btn_train", None)
+        train_current_button = getattr(self, "btn_train_current", None)
+        if train_button is None or train_current_button is None:
+            return
+
+        current_role = self.current_camera_role()
+        pending_action = getattr(self, "_training_roi_pending_actions", {}).get(current_role, "")
+        default_train_text = "训练 / 标定全部启用工具"
+        default_current_text = "标定当前工具"
+        default_train_style = getattr(self, "_train_action_btn_style", "")
+        default_current_style = getattr(self, "_train_current_btn_style", "")
+        confirm_style = getattr(self, "_train_confirm_btn_style", default_train_style)
+
+        if pending_action == "all":
+            train_button.setText("再次点击开始训练 / 标定全部启用工具")
+            train_button.setStyleSheet(confirm_style)
+        else:
+            train_button.setText(default_train_text)
+            train_button.setStyleSheet(default_train_style)
+
+        if pending_action == "current":
+            train_current_button.setText("再次点击开始标定当前工具")
+            train_current_button.setStyleSheet(confirm_style)
+            return
+
+        train_current_button.setText(default_current_text)
+        train_current_button.setStyleSheet(default_current_style)
+
+    def _ensure_training_roi_reviewed(self, camera_role: object, *, action_name: str, action_key: str) -> bool:
+        role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        if self.loc_method != "line2dup":
+            return True
+        training_ok_files, training_ng_files, candidate_paths = self._training_sample_groups_for_role(role)
+        if not training_ok_files or not training_ng_files:
+            return True
+
+        signature = self._training_roi_ready_signature(role)
+        if (
+            self._training_roi_ready_signatures.get(role) == signature
+            and self._training_roi_pending_actions.get(role) == action_key
+        ):
+            self._training_roi_ready_signatures.pop(role, None)
+            self._training_roi_pending_actions.pop(role, None)
+            self._update_runtime_widgets()
+            return True
+
+        recipe = self.line2dup_recipe_for_role(role, force_reload=True)
+        if recipe is None:
+            QtWidgets.QMessageBox.warning(self, "提示", f"{role} 尚未加载 line2dup 配方，请先创建模板。")
+            return False
+        ref_image = self.ref_image
+        if recipe.reference_image and os.path.exists(recipe.reference_image):
+            ref_image = recipe.reference_image
+        if not ref_image or not os.path.exists(ref_image):
+            QtWidgets.QMessageBox.warning(self, "提示", f"{role} 缺少参考图，请先确认位置修正模板。")
+            return False
+
+        ok_count = 0
+        errors: List[str] = []
+        for path in candidate_paths:
+            try:
+                run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
+                    tgt_img_path=path,
+                    ref_img_path=ref_image,
+                    product_dir=self.session.product_dir,
+                    camera_role=role,
+                )
+                self._line2dup_match_ms_by_image[path] = float(run.locate_ms)
+                self._line2dup_autogen_ms_by_image[path] = float(run.total_ms)
+                ok_count += 1
+            except Exception as exc:
+                errors.append(f"{os.path.basename(path)}: {exc}")
+
+        self._refresh_current_image_after_roi_update(candidate_paths)
+
+        if errors:
+            self._clear_training_roi_review_state(role)
+            QtWidgets.QMessageBox.warning(
+                self,
+                "ROI 生成失败",
+                "训练前自动更新 ROI 失败，请先检查模板或图片。\n\n"
+                + "\n".join(errors[:20]),
+            )
+            return False
+
+        self._training_roi_ready_signatures[role] = signature
+        self._training_roi_pending_actions[role] = action_key
+        self._update_runtime_widgets()
+        self.lbl_status.setText(f"状态：已更新 {role} 的 ROI，请检查后再次点击{action_name}")
+        QtWidgets.QMessageBox.information(
+            self,
+            "ROI 已更新",
+            f"已更新 {role} 的 OK/NG ROI，共 {ok_count} 张。\n请检查当前图片上的 ROI 后，再次点击“{action_name}”。",
+        )
+        return False
+
+    def _set_current_camera_role(self, role: object, *, sync_debug_role: bool = True) -> None:
+        normalized = _normalize_camera_role(role) or "cam1"
+        previous = getattr(self, "_current_camera_role", "cam1")
+        self._current_camera_role = normalized
+
+        combo = getattr(self, "cmb_current_camera_role", None)
+        if combo is not None:
+            index = combo.findData(normalized)
+            if index >= 0 and combo.currentIndex() != index:
+                blocker = QtCore.QSignalBlocker(combo)
+                combo.setCurrentIndex(index)
+                del blocker
+
+        if sync_debug_role:
+            debug_combo = getattr(self, "cmb_debug_camera_role", None)
+            if debug_combo is not None:
+                index = debug_combo.findData(normalized)
+                if index >= 0 and debug_combo.currentIndex() != index:
+                    blocker = QtCore.QSignalBlocker(debug_combo)
+                    debug_combo.setCurrentIndex(index)
+                    del blocker
+
+        if previous != normalized:
+            self._clear_image_view_for_role_switch()
+        self._apply_current_role_recipe_state()
+        self._refresh_lists()
+        self._refresh_inspection_items_table()
+        self._update_runtime_widgets()
+        refresh_role_status = getattr(self, "_refresh_debug_role_status", None)
+        if callable(refresh_role_status):
+            refresh_role_status()
+
+    def _on_current_camera_role_changed(self, value: str) -> None:
+        self._set_current_camera_role(value, sync_debug_role=True)
+        connected_serial = str(getattr(self._debug_camera_device(), "serial_number", "") or "").strip()
+        self._apply_debug_role_binding_to_camera_combo()
+        self._refresh_debug_camera_info()
+        self._load_saved_debug_camera_settings_to_ui(self._selected_debug_camera_serial())
+        selected_serial = self._selected_debug_camera_serial()
+        if connected_serial and connected_serial != selected_serial:
+            self._disconnect_debug_camera()
+            self._set_debug_camera_status(f"已切换到 {self.current_camera_role()}，请重新连接")
 
     def current_algorithm_display_name(self) -> str:
         algorithm = self.current_algorithm()
@@ -398,6 +688,8 @@ class ToolPage(QtWidgets.QWidget):
             self.camera_debug_page,
             size=(1100, 700),
         )
+        self._refresh_debug_role_status()
+        self._refresh_debug_camera_list()
 
     def open_io_debug_dialog(self) -> None:
         self._show_tool_dialog(
@@ -528,28 +820,16 @@ class ToolPage(QtWidgets.QWidget):
         self.ok_files = sd.ok_files
         self.ng_files = sd.ng_files
         self.test_files = sd.test_files
-        self.ref_image = sd.ref_image
         self.loc_method = sd.loc_method
-
-        if self.ref_image:
+        self._line2dup_recipes_by_role = {}
+        self._clear_training_roi_review_state()
+        self.cmb_loc.setCurrentText(self.loc_method)
+        self._apply_current_role_recipe_state()
+        if not self.ref_image and sd.ref_image and os.path.exists(sd.ref_image):
+            self.ref_image = sd.ref_image
             self.lbl_ref.setText(f"参考图: {os.path.basename(self.ref_image)}")
             self.lbl_ref.setToolTip(self.ref_image)
-        self.cmb_loc.setCurrentText(self.loc_method)
         self._refresh_lists()
-
-        if os.path.exists(self.session.line2dup_recipe_path):
-            try:
-                self.line2dup_recipe = line2dup_locator.load_recipe_for_product(self.session.product_dir)
-                if (
-                    not self.ref_image
-                    and self.line2dup_recipe.reference_image
-                    and os.path.exists(self.line2dup_recipe.reference_image)
-                ):
-                    self.ref_image = self.line2dup_recipe.reference_image
-                    self.lbl_ref.setText(f"参考图: {os.path.basename(self.ref_image)}")
-                    self.lbl_ref.setToolTip(self.ref_image)
-            except Exception:
-                self.line2dup_recipe = None
 
         self._reload_inspection_items()
         self._sync_footer()
@@ -567,6 +847,8 @@ class ToolPage(QtWidgets.QWidget):
 
         self.algo.model = None
         self.line2dup_recipe = None
+        self._line2dup_recipes_by_role = {}
+        self._clear_training_roi_review_state()
         self.ref_image = None
         self._line2dup_match_ms_by_image = {}
         self._line2dup_autogen_ms_by_image = {}
@@ -596,6 +878,8 @@ class ToolPage(QtWidgets.QWidget):
         self.test_files = []
         self.algo.model = None
         self.line2dup_recipe = None
+        self._line2dup_recipes_by_role = {}
+        self._clear_training_roi_review_state()
         self.ref_image = None
         self._line2dup_match_ms_by_image = {}
         self._line2dup_autogen_ms_by_image = {}
@@ -669,6 +953,16 @@ class ToolPage(QtWidgets.QWidget):
         self.btn_new_product.clicked.connect(self._new_product)
         header_layout.addWidget(self.btn_new_product)
 
+        header_layout.addSpacing(10)
+        header_layout.addWidget(QtWidgets.QLabel("当前相机:"))
+        self.cmb_current_camera_role = QtWidgets.QComboBox()
+        self.cmb_current_camera_role.setFixedWidth(84)
+        self.cmb_current_camera_role.addItem("cam1", "cam1")
+        self.cmb_current_camera_role.addItem("cam2", "cam2")
+        self.cmb_current_camera_role.setStyleSheet(_input_style)
+        self.cmb_current_camera_role.currentTextChanged.connect(self._on_current_camera_role_changed)
+        header_layout.addWidget(self.cmb_current_camera_role)
+
         header_layout.addStretch(1)
 
         self.lbl_status = QtWidgets.QLabel("\u72b6\u6001\uff1a\u672a\u8bad\u7ec3")
@@ -721,10 +1015,10 @@ class ToolPage(QtWidgets.QWidget):
         right_vbox.setSpacing(0)
 
         # --- 图片列表 ---
-        sec_images = QtWidgets.QLabel("  \u56fe\u7247\u5217\u8868")
-        sec_images.setFixedHeight(28)
-        sec_images.setStyleSheet(_section_style)
-        right_vbox.addWidget(sec_images)
+        self.lbl_images_section = QtWidgets.QLabel("  \u56fe\u7247\u5217\u8868")
+        self.lbl_images_section.setFixedHeight(28)
+        self.lbl_images_section.setStyleSheet(_section_style)
+        right_vbox.addWidget(self.lbl_images_section)
 
         self.tabs = QtWidgets.QTabWidget()
         self.tabs.setStyleSheet(
@@ -942,14 +1236,23 @@ class ToolPage(QtWidgets.QWidget):
             "QPushButton:hover{background:#3a6abf;}"
             "QPushButton:pressed{background:#244a85;}"
         )
+        _confirm_action_btn = (
+            "QPushButton{background:#b36a19;color:white;border:none;"
+            "padding:6px 12px;border-radius:3px;font-size:13px;font-weight:bold;}"
+            "QPushButton:hover{background:#ca7b22;}"
+            "QPushButton:pressed{background:#985914;}"
+        )
 
         self.btn_train = QtWidgets.QPushButton(_si(SP.SP_DialogApplyButton), "\u8bad\u7ec3 / \u6807\u5b9a\u5168\u90e8\u542f\u7528\u5de5\u5177")
-        self.btn_train.setStyleSheet(_action_btn)
+        self._train_action_btn_style = _action_btn
+        self._train_current_btn_style = _compact_btn
+        self._train_confirm_btn_style = _confirm_action_btn
+        self.btn_train.setStyleSheet(self._train_action_btn_style)
         self.btn_train.clicked.connect(self._train_all_tools)
         action_vbox.addWidget(self.btn_train)
 
         self.btn_train_current = QtWidgets.QPushButton("\u6807\u5b9a\u5f53\u524d\u5de5\u5177")
-        self.btn_train_current.setStyleSheet(_compact_btn)
+        self.btn_train_current.setStyleSheet(self._train_current_btn_style)
         self.btn_train_current.clicked.connect(self._train)
         action_vbox.addWidget(self.btn_train_current)
 
@@ -973,6 +1276,7 @@ class ToolPage(QtWidgets.QWidget):
         act_row.addWidget(self.btn_clear_session)
         action_vbox.addLayout(act_row)
         right_vbox.addWidget(action_frame)
+        self._sync_training_action_buttons()
 
         body.addWidget(right_panel, 0)
         root.addLayout(body, 1)
@@ -1082,6 +1386,21 @@ class ToolPage(QtWidgets.QWidget):
         cam_left_title.setStyleSheet(f"background:#404040;color:{_TEXT_LIGHT};font-size:12px;font-weight:bold;border-bottom:1px solid #505050;padding-left:8px;")
         cam_left_vbox.addWidget(cam_left_title)
 
+        role_row = QtWidgets.QWidget()
+        role_layout = QtWidgets.QHBoxLayout(role_row)
+        role_layout.setContentsMargins(8, 6, 8, 2)
+        role_layout.setSpacing(6)
+        lbl_debug_role = QtWidgets.QLabel("调试角色")
+        lbl_debug_role.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
+        role_layout.addWidget(lbl_debug_role)
+        self.cmb_debug_camera_role = QtWidgets.QComboBox()
+        self.cmb_debug_camera_role.setStyleSheet(_input_style)
+        self.cmb_debug_camera_role.addItem("cam1", "cam1")
+        self.cmb_debug_camera_role.addItem("cam2", "cam2")
+        self.cmb_debug_camera_role.currentIndexChanged.connect(self._on_debug_camera_role_changed)
+        role_layout.addWidget(self.cmb_debug_camera_role, 1)
+        cam_left_vbox.addWidget(role_row)
+
         self.cmb_debug_camera = QtWidgets.QComboBox()
         self.cmb_debug_camera.setStyleSheet(_input_style)
         self.cmb_debug_camera.currentIndexChanged.connect(self._on_debug_camera_selected)
@@ -1102,6 +1421,9 @@ class ToolPage(QtWidgets.QWidget):
         self.lbl_debug_camera_info.setWordWrap(True)
         self.lbl_debug_camera_info.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;padding:8px;")
         cam_left_vbox.addWidget(self.lbl_debug_camera_info)
+        self.lbl_debug_current_role = QtWidgets.QLabel("当前调试角色：cam1")
+        self.lbl_debug_current_role.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;padding:0 8px 8px 8px;")
+        cam_left_vbox.addWidget(self.lbl_debug_current_role)
         cam_left_vbox.addStretch(1)
         cam_main.addWidget(cam_left)
 
@@ -1398,12 +1720,37 @@ class ToolPage(QtWidgets.QWidget):
     # ------------------------------------------------------------------
 
     def _refresh_lists(self) -> None:
+        current_role = _selected_image_list_camera_role(self)
+        if hasattr(self, "lbl_images_section"):
+            title = "  图片列表"
+            if current_role:
+                title = f"{title}（{current_role}）"
+            self.lbl_images_section.setText(title)
+
+        def visible_files(files: List[str]) -> List[str]:
+            if not current_role:
+                return list(files)
+            return _filter_paths_for_camera(self, files, current_role)
+
         def fill(listw: QtWidgets.QListWidget, files: List[str]) -> None:
+            current_item = listw.currentItem()
+            current_path = None
+            if current_item is not None:
+                current_path = current_item.data(QtCore.Qt.UserRole) or current_item.toolTip()
+            filtered_files = visible_files(files)
+            blocker = QtCore.QSignalBlocker(listw)
             listw.clear()
-            for p in files:
+            selected_row = -1
+            for index, p in enumerate(filtered_files):
                 it = QtWidgets.QListWidgetItem(os.path.basename(p))
                 it.setToolTip(p)
+                it.setData(QtCore.Qt.UserRole, p)
                 listw.addItem(it)
+                if current_path and p == current_path:
+                    selected_row = index
+            if selected_row >= 0:
+                listw.setCurrentRow(selected_row)
+            del blocker
 
         fill(self.ok_list, self.ok_files)
         fill(self.ng_list, self.ng_files)
@@ -1428,19 +1775,31 @@ class ToolPage(QtWidgets.QWidget):
             items = self.ok_list.selectedItems()
             if not items:
                 return None
+            path = items[0].data(QtCore.Qt.UserRole) or items[0].toolTip()
+            if path:
+                return str(path)
+            visible = _filter_paths_for_camera(self, self.ok_files, _selected_image_list_camera_role(self))
             row = self.ok_list.row(items[0])
-            return self.ok_files[row] if row < len(self.ok_files) else None
+            return visible[row] if row < len(visible) else None
         if tab == 1:
             items = self.ng_list.selectedItems()
             if not items:
                 return None
+            path = items[0].data(QtCore.Qt.UserRole) or items[0].toolTip()
+            if path:
+                return str(path)
+            visible = _filter_paths_for_camera(self, self.ng_files, _selected_image_list_camera_role(self))
             row = self.ng_list.row(items[0])
-            return self.ng_files[row] if row < len(self.ng_files) else None
+            return visible[row] if row < len(visible) else None
         items = self.test_list.selectedItems()
         if not items:
             return None
+        path = items[0].data(QtCore.Qt.UserRole) or items[0].toolTip()
+        if path:
+            return str(path)
+        visible = _filter_paths_for_camera(self, self.test_files, _selected_image_list_camera_role(self))
         row = self.test_list.row(items[0])
-        return self.test_files[row] if row < len(self.test_files) else None
+        return visible[row] if row < len(visible) else None
 
     def _show_selected_image_path(self, path: Optional[str]) -> None:
         if not path:
@@ -1449,6 +1808,18 @@ class ToolPage(QtWidgets.QWidget):
         if self.canvas.image_path() != path:
             self._load_canvas_image(path)
         self._set_status_for_current_image(path)
+
+    def _clear_image_view_for_role_switch(self) -> None:
+        for listw in (self.ok_list, self.ng_list, self.test_list):
+            blocker = QtCore.QSignalBlocker(listw)
+            listw.clearSelection()
+            listw.setCurrentItem(None)
+            del blocker
+        self.canvas.clear_image()
+        self.table.clearSelection()
+        self.table.setCurrentCell(-1, -1)
+        self._current_result_rows = []
+        self.lbl_status.setText(f"状态：已切换到 {self.current_camera_role()}，请重新选择图片。")
 
     def _clear_selected_inspection_item(self) -> None:
         table = getattr(self, "inspection_items_table", None)
@@ -1485,6 +1856,7 @@ class ToolPage(QtWidgets.QWidget):
             self.test_files.extend(files)
             self.test_files = sorted(list(dict.fromkeys(self.test_files)))
         self._refresh_lists()
+        self._clear_training_roi_review_state()
         self._save_session()
 
     def _remove_selected_from(self, kind: str) -> None:
@@ -1492,33 +1864,52 @@ class ToolPage(QtWidgets.QWidget):
             items = self.ok_list.selectedItems()
             if not items:
                 return
-            idx = self.ok_list.row(items[0])
-            self.ok_files.pop(idx)
+            path = items[0].data(QtCore.Qt.UserRole) or items[0].toolTip()
+            if not path:
+                visible = _filter_paths_for_camera(self, self.ok_files, _selected_image_list_camera_role(self))
+                idx = self.ok_list.row(items[0])
+                path = visible[idx] if idx < len(visible) else None
+            if not path or path not in self.ok_files:
+                return
+            self.ok_files.remove(str(path))
         elif kind == "NG":
             items = self.ng_list.selectedItems()
             if not items:
                 return
-            idx = self.ng_list.row(items[0])
-            self.ng_files.pop(idx)
+            path = items[0].data(QtCore.Qt.UserRole) or items[0].toolTip()
+            if not path:
+                visible = _filter_paths_for_camera(self, self.ng_files, _selected_image_list_camera_role(self))
+                idx = self.ng_list.row(items[0])
+                path = visible[idx] if idx < len(visible) else None
+            if not path or path not in self.ng_files:
+                return
+            self.ng_files.remove(str(path))
         else:
-            f"Select images to add into {kind}",
+            items = self.test_list.selectedItems()
             if not items:
                 return
-            idx = self.test_list.row(items[0])
-            self.test_files.pop(idx)
+            path = items[0].data(QtCore.Qt.UserRole) or items[0].toolTip()
+            if not path:
+                visible = _filter_paths_for_camera(self, self.test_files, _selected_image_list_camera_role(self))
+                idx = self.test_list.row(items[0])
+                path = visible[idx] if idx < len(visible) else None
+            if not path or path not in self.test_files:
+                return
+            self.test_files.remove(str(path))
         self._refresh_lists()
+        self._clear_training_roi_review_state()
         self._save_session()
 
     def _on_tab_changed(self, index: int) -> None:
         if index == 0:
             listw = self.ok_list
-            files = self.ok_files
+            files = _filter_paths_for_camera(self, self.ok_files, _selected_image_list_camera_role(self))
         elif index == 1:
             listw = self.ng_list
-            files = self.ng_files
+            files = _filter_paths_for_camera(self, self.ng_files, _selected_image_list_camera_role(self))
         else:
             listw = self.test_list
-            files = self.test_files
+            files = _filter_paths_for_camera(self, self.test_files, _selected_image_list_camera_role(self))
 
         if not files:
             return
@@ -1679,7 +2070,12 @@ class ToolPage(QtWidgets.QWidget):
         embedding = algorithm_selected and self._is_embedding_algorithm()
         topk_enabled = embedding and self.cmb_mode.currentText() == "topk"
         inspection_items = list(getattr(self, "inspection_items", []) or [])
-        has_enabled_items = any(getattr(item, "enabled", False) for item in inspection_items)
+        current_role = self.current_camera_role()
+        has_enabled_items = any(
+            getattr(item, "enabled", False)
+            and _normalize_camera_role(getattr(item, "camera_id", "")) == current_role
+            for item in inspection_items
+        )
         selected_item_fn = getattr(self, "_selected_inspection_item", None)
         selected_item = selected_item_fn() if callable(selected_item_fn) else None
         selected_tool_enabled = bool(
@@ -1707,6 +2103,7 @@ class ToolPage(QtWidgets.QWidget):
         embedding_button = getattr(self, "btn_embedding_analysis", None)
         if embedding_button is not None:
             embedding_button.setEnabled(embedding)
+        self._sync_training_action_buttons()
 
     def _on_runtime_params_changed(self, *args) -> None:
         if self._updating_runtime_params:
@@ -1768,6 +2165,36 @@ class ToolPage(QtWidgets.QWidget):
             return self.algo.current_learning_backbone()
         return self.algo.resolve_tool_algorithm(inspection_item.algorithm_code)
 
+    def _training_camera_roles_in_lists(self, camera_id: object | None = None) -> List[str]:
+        if camera_id is None:
+            candidate_paths = list(self.ok_files) + list(self.ng_files)
+        else:
+            candidate_paths = _filter_paths_for_camera(
+                self,
+                list(self.ok_files) + list(self.ng_files),
+                camera_id,
+            )
+        roles = {
+            _camera_role_from_path(path)
+            for path in candidate_paths
+        }
+        roles.discard("")
+        return sorted(roles)
+
+    def _warn_mixed_training_camera_samples(self, camera_id: object | None = None) -> bool:
+        roles = self._training_camera_roles_in_lists(camera_id)
+        if len(roles) < 2:
+            return False
+        role_text = _normalize_camera_role(camera_id) if camera_id is not None else ""
+        suffix = f"（当前角色 {role_text}）" if role_text else ""
+        QtWidgets.QMessageBox.warning(
+            self,
+            "训练样本提示",
+            f"当前 OK/NG 列表{suffix}同时包含 cam1 和 cam2 图片。\n"
+            "请先分开整理样本后，再执行训练/注册/标定。",
+        )
+        return True
+
     def _missing_training_roi_paths(self, roi_label: str, candidate_paths: List[str]) -> List[str]:
         missing_paths: List[str] = []
         for path in candidate_paths:
@@ -1801,9 +2228,19 @@ class ToolPage(QtWidgets.QWidget):
             raise RuntimeError("please select an inspection tool")
 
         roi_label = str(inspection_item.roi_label or "").strip() or "roi"
+        training_ok_files = _filter_paths_for_camera(self, self.ok_files, inspection_item.camera_id)
+        training_ng_files = _filter_paths_for_camera(self, self.ng_files, inspection_item.camera_id)
+        missing_groups: List[str] = []
+        if not training_ok_files:
+            missing_groups.append("OK")
+        if not training_ng_files:
+            missing_groups.append("NG")
+        if missing_groups:
+            camera_id = _normalize_camera_role(inspection_item.camera_id) or "cam1"
+            raise RuntimeError(f"missing {'/'.join(missing_groups)} images for {camera_id}")
         missing_paths = self._missing_training_roi_paths(
             roi_label,
-            list(self.ok_files) + list(self.ng_files),
+            list(training_ok_files) + list(training_ng_files),
         )
         if missing_paths:
             missing = [os.path.basename(path) for path in missing_paths[:50]]
@@ -1816,8 +2253,8 @@ class ToolPage(QtWidgets.QWidget):
         self.algo.product_params.margin = float(self.spin_margin.value())
         self.algo.product_params.topk = int(self.spin_topk.value())
         return self.algo.train(
-            self.ok_files,
-            self.ng_files,
+            training_ok_files,
+            training_ng_files,
             algorithm=algorithm,
             product_dir=self.session.product_dir,
             label_names=[roi_label],
@@ -1828,10 +2265,23 @@ class ToolPage(QtWidgets.QWidget):
         self.algo.model = None
         self.table.setRowCount(0)
         self._current_result_rows = []
+        if self._warn_mixed_training_camera_samples(self.current_camera_role()):
+            return
+        if not self._ensure_training_roi_reviewed(
+            self.current_camera_role(),
+            action_name="训练 / 标定全部启用工具",
+            action_key="all",
+        ):
+            return
 
-        enabled_items = [item for item in self.inspection_items if item.enabled]
+        current_role = self.current_camera_role()
+        enabled_items = [
+            item
+            for item in self.inspection_items
+            if item.enabled and _normalize_camera_role(getattr(item, "camera_id", "")) == current_role
+        ]
         if not enabled_items:
-            QtWidgets.QMessageBox.information(self, "Info", "Please enable at least one inspection tool.")
+            QtWidgets.QMessageBox.information(self, "Info", f"Please enable at least one inspection tool for {current_role}.")
             return
 
         selected_item = self._selected_inspection_item()
@@ -1895,6 +2345,14 @@ class ToolPage(QtWidgets.QWidget):
         if inspection_item is None:
             QtWidgets.QMessageBox.information(self, "Info", "Please select one inspection tool in the table first.")
             return
+        if self._warn_mixed_training_camera_samples(inspection_item.camera_id):
+            return
+        if not self._ensure_training_roi_reviewed(
+            inspection_item.camera_id,
+            action_name="标定当前工具",
+            action_key="current",
+        ):
+            return
         if not inspection_item.enabled:
             QtWidgets.QMessageBox.information(self, "提示", "当前选中的检测工具已禁用")
             return
@@ -1907,7 +2365,22 @@ class ToolPage(QtWidgets.QWidget):
             return
         roi_label = str(inspection_item.roi_label or "").strip() or "roi"
         label_names = [roi_label]
-        candidate_paths = list(self.ok_files) + list(self.ng_files)
+        training_ok_files = _filter_paths_for_camera(self, self.ok_files, inspection_item.camera_id)
+        training_ng_files = _filter_paths_for_camera(self, self.ng_files, inspection_item.camera_id)
+        missing_groups: List[str] = []
+        if not training_ok_files:
+            missing_groups.append("OK")
+        if not training_ng_files:
+            missing_groups.append("NG")
+        if missing_groups:
+            camera_id = _normalize_camera_role(inspection_item.camera_id) or "cam1"
+            QtWidgets.QMessageBox.warning(
+                self,
+                "训练样本不足",
+                f"{camera_id} 缺少 {'/'.join(missing_groups)} 图片，请先补齐对应角色的样本。",
+            )
+            return
+        candidate_paths = list(training_ok_files) + list(training_ng_files)
         missing_paths = []
         for path in candidate_paths:
             json_path = qr_core.labelme_json_of_image(path)
@@ -1944,7 +2417,8 @@ class ToolPage(QtWidgets.QWidget):
 
         try:
             result: TrainResult = self.algo.train(
-                self.ok_files, self.ng_files,
+                training_ok_files,
+                training_ng_files,
                 algorithm=algorithm,
                 product_dir=self.session.product_dir,
                 label_names=label_names,
@@ -1969,27 +2443,12 @@ class ToolPage(QtWidgets.QWidget):
     # ------------------------------------------------------------------
 
     def _test_target_inspection_items(self) -> List[InspectionItem]:
-        enabled_items = [item for item in self.inspection_items if item.enabled]
-        if not enabled_items:
-            return []
-
-        selected_item = self._selected_inspection_item()
-        selected_camera_id = (
-            str(selected_item.camera_id or "").strip()
-            if selected_item is not None
-            else ""
-        )
-        if not selected_camera_id:
-            selected_camera_id = str(enabled_items[0].camera_id or "").strip()
-        if selected_camera_id:
-            camera_items = [
-                item
-                for item in enabled_items
-                if str(item.camera_id or "").strip() == selected_camera_id
-            ]
-            if camera_items:
-                return camera_items
-        return enabled_items
+        current_role = self.current_camera_role()
+        return [
+            item
+            for item in self.inspection_items
+            if item.enabled and _normalize_camera_role(getattr(item, "camera_id", "")) == current_role
+        ]
 
     def _run_test(self) -> None:
         p = self.canvas.image_path()
@@ -2002,11 +2461,7 @@ class ToolPage(QtWidgets.QWidget):
         camera_id = (
             str(target_items[0].camera_id or "").strip()
             if target_items
-            else (
-                str((self._selected_inspection_item().camera_id or "")).strip()
-                if self._selected_inspection_item() is not None
-                else "cam1"
-            )
+            else self.current_camera_role()
         ) or "cam1"
 
         executor = InspectionExecutor(ToolPageRuntimeContext(self))

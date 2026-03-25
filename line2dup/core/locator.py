@@ -17,8 +17,12 @@ from .roi_follow import FollowResult, locate_and_follow
 @dataclass
 class ProductLine2DupPaths:
     product_dir: str
+    camera_role: str
+    role_dir: str
     model_path: str
     recipe_path: str
+    legacy_model_path: str
+    legacy_recipe_path: str
 
 
 @dataclass
@@ -52,32 +56,68 @@ def _delete_stale_line2dup_roi_shapes(tgt_img_path: str, recipe: Line2DupRecipe)
     return removed
 
 
-def product_paths(product_dir: str) -> ProductLine2DupPaths:
+def _normalize_camera_role(camera_role: str) -> str:
+    role = str(camera_role or "").strip().lower()
+    return role if role in {"cam1", "cam2"} else "cam1"
+
+
+def product_paths(product_dir: str, camera_role: str = "cam1") -> ProductLine2DupPaths:
+    normalized_role = _normalize_camera_role(camera_role)
+    role_dir = os.path.join(product_dir, "line2dup", normalized_role)
     return ProductLine2DupPaths(
         product_dir=product_dir,
-        model_path=os.path.join(product_dir, "line2dup_model.json"),
-        recipe_path=os.path.join(product_dir, "line2dup_recipe.json"),
+        camera_role=normalized_role,
+        role_dir=role_dir,
+        model_path=os.path.join(role_dir, "model.json"),
+        recipe_path=os.path.join(role_dir, "recipe.json"),
+        legacy_model_path=os.path.join(product_dir, "line2dup_model.json"),
+        legacy_recipe_path=os.path.join(product_dir, "line2dup_recipe.json"),
     )
 
 
-def load_recipe_for_product(product_dir: str) -> Line2DupRecipe:
-    paths = product_paths(product_dir)
-    recipe = load_recipe(paths.recipe_path)
-    if not recipe.model_path:
-        recipe.model_path = paths.model_path
+def _resolve_recipe_file(paths: ProductLine2DupPaths) -> str:
+    if os.path.exists(paths.recipe_path):
+        return paths.recipe_path
+    if os.path.exists(paths.legacy_recipe_path):
+        return paths.legacy_recipe_path
+    return paths.recipe_path
+
+
+def _resolve_model_file(paths: ProductLine2DupPaths) -> str:
+    if os.path.exists(paths.model_path):
+        return paths.model_path
+    if os.path.exists(paths.legacy_model_path):
+        return paths.legacy_model_path
+    return paths.model_path
+
+
+def load_recipe_for_product(product_dir: str, camera_role: str = "cam1") -> Line2DupRecipe:
+    paths = product_paths(product_dir, camera_role)
+    recipe = load_recipe(_resolve_recipe_file(paths))
+    recipe.model_path = _resolve_model_file(paths)
     return recipe
 
 
-def save_recipe_for_product(product_dir: str, recipe: Line2DupRecipe) -> None:
-    paths = product_paths(product_dir)
-    if not recipe.model_path:
-        recipe.model_path = paths.model_path
+def resolved_recipe_path_for_product(product_dir: str, camera_role: str = "cam1") -> str:
+    return _resolve_recipe_file(product_paths(product_dir, camera_role))
+
+
+def resolved_model_path_for_product(product_dir: str, camera_role: str = "cam1") -> str:
+    return _resolve_model_file(product_paths(product_dir, camera_role))
+
+
+def save_recipe_for_product(product_dir: str, recipe: Line2DupRecipe, camera_role: str = "cam1") -> None:
+    paths = product_paths(product_dir, camera_role)
+    os.makedirs(paths.role_dir, exist_ok=True)
+    recipe.model_path = paths.model_path
     save_recipe(recipe, paths.recipe_path)
 
 
-def recipe_is_ready(product_dir: str) -> bool:
-    paths = product_paths(product_dir)
-    return os.path.exists(paths.model_path) and os.path.exists(paths.recipe_path)
+def recipe_is_ready(product_dir: str, camera_role: str = "cam1") -> bool:
+    paths = product_paths(product_dir, camera_role)
+    recipe_path = _resolve_recipe_file(paths)
+    model_path = _resolve_model_file(paths)
+    return os.path.exists(model_path) and os.path.exists(recipe_path)
 
 
 def autogen_roi_json_from_line2dup_timed(
@@ -85,14 +125,17 @@ def autogen_roi_json_from_line2dup_timed(
     ref_img_path: str,
     product_dir: str,
     *,
+    camera_role: str = "cam1",
     scene_mask_path: str = "",
 ) -> Line2DupAutogenRun:
     total_t0 = time.perf_counter()
-    paths = product_paths(product_dir)
-    if not os.path.exists(paths.model_path):
-        raise FileNotFoundError(f"Missing line2dup model: {paths.model_path}")
-    recipe = load_recipe(paths.recipe_path)
-    recipe.model_path = paths.model_path
+    paths = product_paths(product_dir, camera_role)
+    model_path = _resolve_model_file(paths)
+    recipe_path = _resolve_recipe_file(paths)
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"Missing line2dup model: {model_path}")
+    recipe = load_recipe(recipe_path)
+    recipe.model_path = model_path
     if (not ref_img_path) and recipe.reference_image:
         ref_img_path = recipe.reference_image
 
@@ -129,12 +172,14 @@ def autogen_roi_json_from_line2dup(
     ref_img_path: str,
     product_dir: str,
     *,
+    camera_role: str = "cam1",
     scene_mask_path: str = "",
 ) -> Tuple[str, FollowResult]:
     run = autogen_roi_json_from_line2dup_timed(
         tgt_img_path,
         ref_img_path,
         product_dir,
+        camera_role=camera_role,
         scene_mask_path=scene_mask_path,
     )
     return run.jpath, run.result
@@ -148,5 +193,7 @@ __all__ = [
     "load_recipe_for_product",
     "product_paths",
     "recipe_is_ready",
+    "resolved_model_path_for_product",
+    "resolved_recipe_path_for_product",
     "save_recipe_for_product",
 ]

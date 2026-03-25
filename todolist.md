@@ -2785,3 +2785,28 @@ cam2_capture_path
 cam2_result
 cam2_detail
 final_result = cam1_result AND cam2_result
+
+# 双相机调试
+“右侧图片列表跟随当前角色/当前工具相机过滤”，所以在取图工具里把调试角色切到 cam1 时，右侧 OK/NG/TEST 默认只显示 cam1 图片；切到 cam2 就只显示 cam2
+
+
+
+# 新机安装环境
+
+Python 3.12 x64
+## pip安装
+numpy
+opencv-python
+PySide6
+torch
+torchvision
+
+pip install opencv-python
+## vs code安装python
+打开 VS Code → 左边扩展（Extensions）搜索：
+Python
+
+
+# 运行界面的总时间
+
+

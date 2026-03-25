@@ -12,9 +12,11 @@ def _repo_root() -> Path:
 
 def _iter_candidate_dll_paths(dll_name: str) -> Iterable[Path]:
     repo_root = _repo_root()
+    yield repo_root / "EmbeddingTest" / "third_party" / "nkio" / dll_name
     yield repo_root / "NKDIOLC_SDK" / "Sample" / "C#" / "NK_IO_LC_TEST_CSharp" / "Lib" / "x64" / dll_name
     yield repo_root / "NKDIOLC_SDK" / "Sample" / "C#" / "NK_IO_LC_TEST_CSharp" / "bin" / "Release" / dll_name
     yield repo_root / "NKDIOLC_SDK" / "Sample" / "C#" / "NK_IO_LC_TEST_CSharp" / "bin" / "Debug" / dll_name
+    yield repo_root / "NKDIOLC_SDK" / "Lib" / "x64" / dll_name
     yield repo_root / "NKDIOLC_SDK" / "Bin" / dll_name
     yield Path(dll_name)
 

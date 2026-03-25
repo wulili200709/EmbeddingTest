@@ -12,6 +12,25 @@ from domain import aggregate_runtime_outcome, recipe_name_from_path
 from .capture_policy import delete_capture_artifacts, retained_capture_paths_for_policy
 
 
+def _recipe_path_for_role(runtime, role: str) -> str:
+    getter = getattr(runtime._session, "line2dup_recipe_path_for_role", None)
+    if callable(getter):
+        try:
+            return str(getter(role) or "")
+        except Exception:
+            return str(getattr(runtime._session, "line2dup_recipe_path", "") or "")
+    return str(getattr(runtime._session, "line2dup_recipe_path", "") or "")
+
+
+def _recipe_name_for_roles(runtime, roles) -> str:
+    role_list = [str(role).strip() for role in roles if str(role).strip()]
+    for role in role_list:
+        path = _recipe_path_for_role(runtime, role)
+        if path:
+            return recipe_name_from_path(path)
+    return recipe_name_from_path(str(getattr(runtime._session, "line2dup_recipe_path", "") or ""))
+
+
 def _finalize_trigger_outcome(runtime, outcome, release_status_before) -> None:
     runtime._last_record_path = ""
     if runtime._record_service is not None:
@@ -31,7 +50,7 @@ def _finalize_trigger_outcome(runtime, outcome, release_status_before) -> None:
 
     runtime._last_runtime_result = aggregate_runtime_outcome(
         product_name=runtime._session.current_product,
-        recipe_name=recipe_name_from_path(runtime._session.line2dup_recipe_path),
+        recipe_name=_recipe_name_for_roles(runtime, runtime._connected_roles()),
         items=runtime._runtime_context.inspection_items,
         active_roles=runtime._connected_roles(),
         camera_outcomes=outcome.camera_outcomes,
@@ -80,10 +99,14 @@ def _finalize_trigger_outcome(runtime, outcome, release_status_before) -> None:
     runtime.triggerResultReady.emit(outcome.final_result, detail_text)
     runtime.logAppended.emit(f"[runtime] result={outcome.final_result} detail={detail_text}")
     runtime._emit_runtime_context()
-    runtime._update_status(f"result={outcome.final_result}")
+    runtime._update_status(detail_text or f"result={outcome.final_result}")
 
 
 def _precheck(runtime):
+    return _precheck_for_roles(runtime, runtime._connected_roles())
+
+
+def _precheck_for_roles(runtime, roles) -> tuple[bool, str]:
     from . import controller as runtime_controller_module
 
     if runtime._frame_grab_service is None or not runtime._frame_grab_service.roles():
@@ -92,20 +115,37 @@ def _precheck(runtime):
     if runtime._runtime_context.loc_method != "line2dup":
         return False, "runtime currently only supports line2dup localization"
 
-    if not os.path.exists(runtime._session.line2dup_recipe_path):
-        return False, "please generate and save a line2dup template first"
-
     active_roles = {
         str(role).strip()
         for role in runtime._connected_roles()
         if str(role).strip()
     }
+    requested_roles = {
+        str(role).strip()
+        for role in roles
+        if str(role).strip()
+    }
+    if requested_roles:
+        active_roles &= requested_roles
+    if not active_roles:
+        return False, "requested camera is not connected"
+    missing_recipe_roles = [
+        role for role in sorted(active_roles)
+        if not os.path.exists(_recipe_path_for_role(runtime, role))
+    ]
+    if missing_recipe_roles:
+        if len(missing_recipe_roles) == 1:
+            return False, f"please generate and save a line2dup template first for {missing_recipe_roles[0]}"
+        return False, "please generate and save line2dup templates first for connected cameras"
     enabled_items = [
         item
         for item in runtime._runtime_context.inspection_items
         if item.enabled and item.camera_id in active_roles
     ]
     if not enabled_items:
+        if len(active_roles) == 1:
+            role = next(iter(active_roles))
+            return False, f"please enable at least one inspection tool for {role}"
         return False, "please enable at least one inspection tool for connected cameras"
 
     unknown_algorithms = sorted(
@@ -203,7 +243,7 @@ def _write_release_log(runtime, *, event_type: str, result: str, message: str = 
     try:
         runtime._release_log_service.write_event(
             product_name=runtime._session.current_product,
-            recipe_name=recipe_name_from_path(runtime._session.line2dup_recipe_path),
+            recipe_name=_recipe_name_for_roles(runtime, runtime._connected_roles()),
             event_type=event_type,
             result=result,
             message=message,

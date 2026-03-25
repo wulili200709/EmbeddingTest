@@ -29,6 +29,8 @@ def _inspection_item_labels(tool_page) -> List[str]:
 def _reload_inspection_items(tool_page) -> None:
     path = tool_page.session.inspection_items_path
     labels = tool_page._line2dup_output_labels() if tool_page.loc_method == "line2dup" else ["roi"]
+    current_role_getter = getattr(tool_page, "current_camera_role", None)
+    current_role = str(current_role_getter() if callable(current_role_getter) else "cam1").strip() or "cam1"
     display_names_by_label = {}
     if tool_page.loc_method == "line2dup":
         specs = inspection_item_specs_from_line2dup_recipe(tool_page.line2dup_recipe)
@@ -37,11 +39,25 @@ def _reload_inspection_items(tool_page) -> None:
             for spec in specs
             if str(spec.get("roi_label", "")).strip()
         }
-    tool_page.inspection_items = sync_items_with_labels(
-        load_inspection_items(path),
-        labels,
-        display_names_by_label=display_names_by_label,
-    )
+    existing_items = load_inspection_items(path)
+    current_role_items = [
+        item for item in existing_items
+        if str(getattr(item, "camera_id", "") or "").strip() == current_role
+    ]
+    other_role_items = [
+        item for item in existing_items
+        if str(getattr(item, "camera_id", "") or "").strip() != current_role
+    ]
+    if tool_page.line2dup_recipe is None and not current_role_items:
+        synced_current_role_items = []
+    else:
+        synced_current_role_items = sync_items_with_labels(
+            current_role_items,
+            labels,
+            default_camera_id=current_role,
+            display_names_by_label=display_names_by_label,
+        )
+    tool_page.inspection_items = other_role_items + synced_current_role_items
     save_inspection_items(tool_page.inspection_items, path)
     tool_page._refresh_inspection_items_table()
     tool_page.inspectionItemsChanged.emit()

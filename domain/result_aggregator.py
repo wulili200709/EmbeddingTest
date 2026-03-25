@@ -118,15 +118,17 @@ def aggregate_runtime_outcome(
             infer_ms=infer_ms,
         )
 
-    explicit_item_results: dict[str, InspectionItemResult] = {}
+    explicit_item_results: dict[tuple[str, str], InspectionItemResult] = {}
     for role, rows in item_results_by_camera.items():
         for row in rows or []:
             if isinstance(row, InspectionItemResult):
-                explicit_item_results[row.item_id] = row
+                explicit_item_results[(str(row.camera_id or "").strip(), str(row.item_id or "").strip())] = row
 
     item_results: list[InspectionItemResult] = []
     for item in items:
-        explicit = explicit_item_results.get(item.item_id)
+        explicit = explicit_item_results.get(
+            (str(item.camera_id or "").strip(), str(item.item_id or "").strip())
+        )
         if explicit is not None:
             item_results.append(explicit)
             continue
