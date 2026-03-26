@@ -155,8 +155,6 @@ def build_menu_bar(window) -> None:
         )
     )
     window._sync_runtime_capture_policy_actions()
-    for action in list(runtime_menu.actions())[:3]:
-        runtime_menu.removeAction(action)
     runtime_menu.addSeparator()
     runtime_menu.addAction(
         shell_icon(SP.SP_MediaPlay), "脚踏触发"

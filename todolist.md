@@ -2828,4 +2828,28 @@ predict_one_with_model(...) 循环
 到整组结束为止
 然后再均分回每个 ROI 行，聚合后顶部看到的 infer_ms 就是这整组的真实总推理时间。
 我顺手把调试页也统一成同样口径了，不然调试/运行会继续不一致。
+一样的部分
 
+match_ms 口径现在基本统一了，调试页和运行页都按 line2dup 整段 run.total_ms 来记，不再只看 locate_ms。runtime_context.py test_runner.py
+infer_ms 口径也统一到了“学习工具整组完整推理时间”，包括：
+load_embedding_model
+apply_params_to_model
+get_feat_net
+embed_batch
+predict_one_with_model
+这一块调试页和运行页都走同一套 runtime_context / inspection_executor 逻辑。runtime_context.py inspection_executor.py
+不一样的部分
+
+调试页的 total_ms 更接近“算法链总时间”，主要是 match + infer 这条测试链。page.py
+运行页显示的“总流程”不是这个 total_ms，而是 duration_ms，它从正式触发开始计时，到整次运行结束为止，额外包含：
+取图
+存图
+运行链调度
+结果汇总
+一部分 UI/记录开销
+这条在 inspection_runtime.py 和 runtime_mode_pyside6.py
+所以一句话：
+
+match_ms / infer_ms：现在基本一致
+总时间：还不一致
+调试页偏“算法总耗时”，运行页偏“整条运行流程耗时”

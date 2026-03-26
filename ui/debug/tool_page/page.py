@@ -446,6 +446,8 @@ class ToolPage(QtWidgets.QWidget):
     def _sync_training_action_buttons(self) -> None:
         train_button = getattr(self, "btn_train", None)
         train_current_button = getattr(self, "btn_train_current", None)
+        cancel_train_button = getattr(self, "btn_train_cancel", None)
+        cancel_current_button = getattr(self, "btn_train_current_cancel", None)
         if train_button is None or train_current_button is None:
             return
 
@@ -458,19 +460,39 @@ class ToolPage(QtWidgets.QWidget):
         confirm_style = getattr(self, "_train_confirm_btn_style", default_train_style)
 
         if pending_action == "all":
-            train_button.setText("再次点击开始训练 / 标定全部启用工具")
+            train_button.setText("确认开始训练 / 标定全部启用工具")
             train_button.setStyleSheet(confirm_style)
+            if cancel_train_button is not None:
+                cancel_train_button.setVisible(True)
         else:
             train_button.setText(default_train_text)
             train_button.setStyleSheet(default_train_style)
+            if cancel_train_button is not None:
+                cancel_train_button.setVisible(False)
 
         if pending_action == "current":
-            train_current_button.setText("再次点击开始标定当前工具")
+            train_current_button.setText("确认开始标定当前工具")
             train_current_button.setStyleSheet(confirm_style)
+            if cancel_current_button is not None:
+                cancel_current_button.setVisible(True)
             return
 
         train_current_button.setText(default_current_text)
         train_current_button.setStyleSheet(default_current_style)
+        if cancel_current_button is not None:
+            cancel_current_button.setVisible(False)
+
+    def _cancel_training_pending_action(self, action_key: str | None = None) -> None:
+        role = self.current_camera_role()
+        pending_action = self._training_roi_pending_actions.get(role, "")
+        if action_key and pending_action != action_key:
+            return
+        if not pending_action:
+            return
+        self._training_roi_pending_actions.pop(role, None)
+        self._update_runtime_widgets()
+        action_text = "训练 / 标定全部启用工具" if pending_action == "all" else "标定当前工具"
+        self.lbl_status.setText(f"状态：已取消“{action_text}”确认")
 
     def _ensure_training_roi_reviewed(self, camera_role: object, *, action_name: str, action_key: str) -> bool:
         role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
@@ -1242,6 +1264,16 @@ class ToolPage(QtWidgets.QWidget):
             "QPushButton:hover{background:#ca7b22;}"
             "QPushButton:pressed{background:#985914;}"
         )
+        _cancel_action_btn = (
+            "QPushButton{background:#4a4a4a;color:#e0e0e0;border:1px solid #666666;"
+            "padding:0px;border-radius:3px;font-size:13px;font-weight:bold;min-width:24px;max-width:24px;min-height:34px;max-height:34px;}"
+            "QPushButton:hover{background:#5a5a5a;color:white;}"
+            "QPushButton:pressed{background:#3d3d3d;}"
+        )
+
+        train_row = QtWidgets.QHBoxLayout()
+        train_row.setContentsMargins(0, 0, 0, 0)
+        train_row.setSpacing(4)
 
         self.btn_train = QtWidgets.QPushButton(_si(SP.SP_DialogApplyButton), "\u8bad\u7ec3 / \u6807\u5b9a\u5168\u90e8\u542f\u7528\u5de5\u5177")
         self._train_action_btn_style = _action_btn
@@ -1249,12 +1281,32 @@ class ToolPage(QtWidgets.QWidget):
         self._train_confirm_btn_style = _confirm_action_btn
         self.btn_train.setStyleSheet(self._train_action_btn_style)
         self.btn_train.clicked.connect(self._train_all_tools)
-        action_vbox.addWidget(self.btn_train)
+        train_row.addWidget(self.btn_train, 1)
+
+        self.btn_train_cancel = QtWidgets.QPushButton("×")
+        self.btn_train_cancel.setToolTip("取消训练确认")
+        self.btn_train_cancel.setStyleSheet(_cancel_action_btn)
+        self.btn_train_cancel.setVisible(False)
+        self.btn_train_cancel.clicked.connect(lambda: self._cancel_training_pending_action("all"))
+        train_row.addWidget(self.btn_train_cancel, 0)
+        action_vbox.addLayout(train_row)
+
+        train_current_row = QtWidgets.QHBoxLayout()
+        train_current_row.setContentsMargins(0, 0, 0, 0)
+        train_current_row.setSpacing(4)
 
         self.btn_train_current = QtWidgets.QPushButton("\u6807\u5b9a\u5f53\u524d\u5de5\u5177")
         self.btn_train_current.setStyleSheet(self._train_current_btn_style)
         self.btn_train_current.clicked.connect(self._train)
-        action_vbox.addWidget(self.btn_train_current)
+        train_current_row.addWidget(self.btn_train_current, 1)
+
+        self.btn_train_current_cancel = QtWidgets.QPushButton("×")
+        self.btn_train_current_cancel.setToolTip("取消当前工具确认")
+        self.btn_train_current_cancel.setStyleSheet(_cancel_action_btn)
+        self.btn_train_current_cancel.setVisible(False)
+        self.btn_train_current_cancel.clicked.connect(lambda: self._cancel_training_pending_action("current"))
+        train_current_row.addWidget(self.btn_train_current_cancel, 0)
+        action_vbox.addLayout(train_current_row)
 
         act_row = QtWidgets.QHBoxLayout()
         act_row.setSpacing(4)
