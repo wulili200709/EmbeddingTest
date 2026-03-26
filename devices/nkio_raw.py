@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import os
 from ctypes import POINTER, byref, c_char_p, c_int, c_ubyte, c_ushort
 from pathlib import Path
 from typing import Iterable
@@ -12,13 +13,50 @@ def _repo_root() -> Path:
 
 def _iter_candidate_dll_paths(dll_name: str) -> Iterable[Path]:
     repo_root = _repo_root()
-    yield repo_root / "EmbeddingTest" / "third_party" / "nkio" / dll_name
-    yield repo_root / "NKDIOLC_SDK" / "Sample" / "C#" / "NK_IO_LC_TEST_CSharp" / "Lib" / "x64" / dll_name
+    yield repo_root / "NKDIOLC_SDK" / "Bin" / dll_name
+    yield repo_root / "NKDIOLC_SDK" / "Lib" / "x64" / dll_name
     yield repo_root / "NKDIOLC_SDK" / "Sample" / "C#" / "NK_IO_LC_TEST_CSharp" / "bin" / "Release" / dll_name
     yield repo_root / "NKDIOLC_SDK" / "Sample" / "C#" / "NK_IO_LC_TEST_CSharp" / "bin" / "Debug" / dll_name
-    yield repo_root / "NKDIOLC_SDK" / "Lib" / "x64" / dll_name
-    yield repo_root / "NKDIOLC_SDK" / "Bin" / dll_name
+    yield repo_root / "NKDIOLC_SDK" / "Sample" / "C#" / "NK_IO_LC_TEST_CSharp" / "Lib" / "x64" / dll_name
+    yield repo_root / "EmbeddingTest" / "third_party" / "nkio" / dll_name
     yield Path(dll_name)
+
+
+def _iter_candidate_search_dirs(dll_path: Path) -> Iterable[Path]:
+    repo_root = _repo_root()
+    seen: set[Path] = set()
+    candidates = [
+        dll_path.parent,
+        repo_root / "NKDIOLC_SDK" / "Bin",
+        repo_root / "NKDIOLC_SDK" / "Lib" / "x64",
+        repo_root / "NKDIOLC_SDK" / "Sample" / "C#" / "NK_IO_LC_TEST_CSharp" / "bin" / "Release",
+        repo_root / "NKDIOLC_SDK" / "Sample" / "C#" / "NK_IO_LC_TEST_CSharp" / "bin" / "Debug",
+        repo_root / "EmbeddingTest" / "third_party" / "nkio",
+    ]
+    for path in candidates:
+        resolved = Path(path)
+        if resolved in seen or not resolved.exists():
+            continue
+        seen.add(resolved)
+        yield resolved
+
+
+def _load_cdll_with_search_dirs(dll_path: Path) -> tuple[ctypes.CDLL, list[object]]:
+    handles: list[object] = []
+    add_dir = getattr(os, "add_dll_directory", None)
+    try:
+        for search_dir in _iter_candidate_search_dirs(dll_path):
+            if add_dir is None:
+                continue
+            handles.append(add_dir(str(search_dir)))
+        return ctypes.CDLL(str(dll_path)), handles
+    except Exception:
+        for handle in reversed(handles):
+            try:
+                handle.close()
+            except Exception:
+                pass
+        raise
 
 
 def find_default_nkio_dll_path() -> Path:
@@ -33,12 +71,34 @@ class NkioRawLib:
     """Thin ctypes wrapper around NKIOLIBx64.dll."""
 
     def __init__(self, dll_path: str | Path | None = None) -> None:
-        resolved_path = Path(dll_path) if dll_path is not None else find_default_nkio_dll_path()
-        if not resolved_path.exists():
-            raise FileNotFoundError(resolved_path)
-        self.dll_path = resolved_path
-        self._dll = ctypes.CDLL(str(self.dll_path))
+        self._dll_search_handles: list[object] = []
+        if dll_path is not None:
+            resolved_path = Path(dll_path)
+            if not resolved_path.exists():
+                raise FileNotFoundError(resolved_path)
+            self.dll_path = resolved_path
+            self._dll, self._dll_search_handles = _load_cdll_with_search_dirs(self.dll_path)
+        else:
+            self.dll_path, self._dll, self._dll_search_handles = self._load_first_available_default_dll()
         self._bind()
+
+    @staticmethod
+    def _load_first_available_default_dll() -> tuple[Path, ctypes.CDLL, list[object]]:
+        errors: list[str] = []
+        for path in _iter_candidate_dll_paths("NKIOLIBx64.dll"):
+            if not path.exists():
+                continue
+            try:
+                dll, handles = _load_cdll_with_search_dirs(path)
+            except OSError as exc:
+                errors.append(f"{path}: {exc}")
+                continue
+            return path, dll, handles
+        searched = "\n".join(str(p) for p in _iter_candidate_dll_paths("NKIOLIBx64.dll"))
+        detail = "\n".join(errors)
+        if detail:
+            raise OSError(f"Could not load NKIOLIBx64.dll from any candidate path.\nSearched:\n{searched}\nErrors:\n{detail}")
+        raise FileNotFoundError(f"Could not locate NKIOLIBx64.dll. Searched:\n{searched}")
 
     def _bind(self) -> None:
         self._dll.NKDIO_LibraryInit.argtypes = [c_char_p]

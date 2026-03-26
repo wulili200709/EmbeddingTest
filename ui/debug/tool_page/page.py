@@ -317,6 +317,12 @@ class ToolPage(QtWidgets.QWidget):
         self._debug_preview_thread: Optional[_DebugCameraPreviewThread] = None
         self._debug_io_controller = None
         self._debug_output_buttons: Dict[str, QtWidgets.QPushButton] = {}
+        self._debug_di_cards: Dict[int, QtWidgets.QFrame] = {}
+        self._debug_di_indicators: Dict[int, QtWidgets.QLabel] = {}
+        self._debug_di_hints: Dict[int, QtWidgets.QLabel] = {}
+        self._debug_do_cards: Dict[int, QtWidgets.QFrame] = {}
+        self._debug_do_channel_buttons: Dict[int, QtWidgets.QPushButton] = {}
+        self._debug_do_hints: Dict[int, QtWidgets.QLabel] = {}
         self._debug_io_timer = QtCore.QTimer(self)
         self._debug_io_timer.setInterval(500)
         self._debug_io_timer.timeout.connect(self._refresh_debug_io_snapshot)
@@ -1676,7 +1682,12 @@ class ToolPage(QtWidgets.QWidget):
         self.lbl_debug_do_snapshot.setWordWrap(True)
         self.lbl_debug_do_snapshot.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
         io_status_layout.addWidget(self.lbl_debug_do_snapshot)
-        self.btn_debug_refresh_io = QtWidgets.QPushButton(_si(SP.SP_BrowserReload), " Refresh DI/DO Status")
+
+        self.lbl_debug_io_mapping_summary = QtWidgets.QLabel("映射：未加载")
+        self.lbl_debug_io_mapping_summary.setWordWrap(True)
+        self.lbl_debug_io_mapping_summary.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
+        io_status_layout.addWidget(self.lbl_debug_io_mapping_summary)
+
         io_left_vbox.addWidget(io_status_w)
         io_left_vbox.addStretch(1)
         io_main.addWidget(io_left)
@@ -1684,42 +1695,113 @@ class ToolPage(QtWidgets.QWidget):
         io_right = QtWidgets.QWidget()
         io_right_vbox = QtWidgets.QVBoxLayout(io_right)
         io_right_vbox.setContentsMargins(0, 0, 0, 0)
-        io_right_vbox.setSpacing(0)
+        io_right_vbox.setSpacing(12)
 
-        io_output_title = QtWidgets.QLabel("  DO 输出点动控制")
-        io_output_title.setFixedHeight(28)
-        io_output_title.setStyleSheet(f"background:#404040;color:{_TEXT_LIGHT};font-size:12px;font-weight:bold;border-bottom:1px solid #505050;padding-left:8px;")
-        io_status_title = QtWidgets.QLabel("  IO Status")
+        io_panel_title = QtWidgets.QLabel("  DI / DO 通道面板")
+        io_panel_title.setFixedHeight(28)
+        io_panel_title.setStyleSheet(
+            f"background:#404040;color:{_TEXT_LIGHT};font-size:12px;font-weight:bold;"
+            "border-bottom:1px solid #505050;padding-left:8px;"
+        )
+        io_right_vbox.addWidget(io_panel_title)
 
-        io_grid_w = QtWidgets.QWidget()
-        io_grid_w.setStyleSheet(f"background:{_DARK_BG};")
-        io_grid = QtWidgets.QGridLayout(io_grid_w)
-        io_grid.setContentsMargins(16, 16, 16, 16)
-        io_grid.setSpacing(10)
+        io_panel_w = QtWidgets.QWidget()
+        io_panel_w.setStyleSheet(f"background:{_DARK_BG};")
+        io_panel_layout = QtWidgets.QVBoxLayout(io_panel_w)
+        io_panel_layout.setContentsMargins(16, 16, 16, 16)
+        io_panel_layout.setSpacing(16)
 
-        _toggle_btn_css = (
-            "QPushButton{background:#444444;color:#d0d0d0;border:1px solid #5a5a5a;"
-            "padding:10px 20px;border-radius:4px;font-size:13px;font-weight:bold;}"
-            "QPushButton:hover{background:#505050;}"
-            "QPushButton:checked{background:#3794ff;color:white;border:1px solid #3794ff;}"
+        _channel_card_css = (
+            f"QFrame{{background:{_PANEL_BG};border:1px solid #4f4f4f;border-radius:8px;}}"
+        )
+        _di_indicator_off = "background:#7a7a7a;border:2px solid #9a9a9a;border-radius:16px;"
+        _do_button_css = (
+            "QPushButton{background:#4a4a4a;color:#d8d8d8;border:1px solid #666666;"
+            "border-radius:6px;padding:8px 6px;font-size:12px;font-weight:bold;}"
+            "QPushButton:hover:!disabled{background:#5b5b5b;}"
+            "QPushButton:checked{background:#1f9d55;color:white;border:1px solid #1f9d55;}"
+            "QPushButton:disabled{background:#363636;color:#737373;border:1px solid #474747;}"
         )
 
-        output_specs = [
-            ("tower_red", "红灯"), ("tower_green", "绿灯"), ("tower_blue", "蓝灯"),
-            ("light_cam1", "光源1"), ("light_cam2", "光源2"),
-        ]
-        for index, (name, label) in enumerate(output_specs):
-            button = QtWidgets.QPushButton(label)
-            button.setCheckable(True)
-            button.setStyleSheet(_toggle_btn_css)
-            button.setMinimumHeight(40)
-            button.toggled.connect(lambda checked, output_name=name: self._set_debug_output(output_name, checked))
-            self._debug_output_buttons[name] = button
-            row = index // 3
-            col = index % 3
-            io_grid.addWidget(button, row, col)
+        di_title = QtWidgets.QLabel("DI 输入监视")
+        di_title.setStyleSheet(f"color:{_TEXT_LIGHT};font-size:13px;font-weight:bold;")
+        io_panel_layout.addWidget(di_title)
 
-        io_right_vbox.addWidget(io_grid_w)
+        di_grid = QtWidgets.QGridLayout()
+        di_grid.setHorizontalSpacing(10)
+        di_grid.setVerticalSpacing(10)
+        for channel in range(16):
+            card = QtWidgets.QFrame()
+            card.setStyleSheet(_channel_card_css)
+            card.setVisible(False)
+            card_layout = QtWidgets.QVBoxLayout(card)
+            card_layout.setContentsMargins(8, 8, 8, 8)
+            card_layout.setSpacing(6)
+
+            title = QtWidgets.QLabel(f"DI_{channel}")
+            title.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            title.setStyleSheet(f"color:{_TEXT_LIGHT};font-size:11px;font-weight:bold;border:none;")
+            card_layout.addWidget(title)
+
+            indicator = QtWidgets.QLabel()
+            indicator.setFixedSize(32, 32)
+            indicator.setStyleSheet(_di_indicator_off)
+            indicator.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            card_layout.addWidget(indicator, alignment=QtCore.Qt.AlignmentFlag.AlignCenter)
+
+            hint = QtWidgets.QLabel("未映射")
+            hint.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            hint.setWordWrap(True)
+            hint.setStyleSheet(f"color:{_TEXT_DIM};font-size:9px;border:none;")
+            card_layout.addWidget(hint)
+
+            self._debug_di_cards[channel] = card
+            self._debug_di_indicators[channel] = indicator
+            self._debug_di_hints[channel] = hint
+            di_grid.addWidget(card, channel // 8, channel % 8)
+
+        io_panel_layout.addLayout(di_grid)
+
+        do_title = QtWidgets.QLabel("DO 输出控制")
+        do_title.setStyleSheet(f"color:{_TEXT_LIGHT};font-size:13px;font-weight:bold;")
+        io_panel_layout.addWidget(do_title)
+
+        do_grid = QtWidgets.QGridLayout()
+        do_grid.setHorizontalSpacing(10)
+        do_grid.setVerticalSpacing(10)
+        for channel in range(16):
+            card = QtWidgets.QFrame()
+            card.setStyleSheet(_channel_card_css)
+            card.setVisible(False)
+            card_layout = QtWidgets.QVBoxLayout(card)
+            card_layout.setContentsMargins(8, 8, 8, 8)
+            card_layout.setSpacing(6)
+
+            button = QtWidgets.QPushButton(f"DO_{channel}")
+            button.setCheckable(True)
+            button.setEnabled(False)
+            button.setMinimumHeight(34)
+            button.setStyleSheet(_do_button_css)
+            button.toggled.connect(
+                lambda checked, do_channel=channel: self._set_debug_output_channel(do_channel, checked)
+            )
+            card_layout.addWidget(button)
+
+            hint = QtWidgets.QLabel("未映射")
+            hint.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            hint.setWordWrap(True)
+            hint.setStyleSheet(f"color:{_TEXT_DIM};font-size:9px;border:none;")
+            card_layout.addWidget(hint)
+
+            self._debug_do_cards[channel] = card
+            self._debug_do_channel_buttons[channel] = button
+            self._debug_do_hints[channel] = hint
+            do_grid.addWidget(card, channel // 8, channel % 8)
+
+        io_panel_layout.addLayout(do_grid)
+        io_panel_layout.addStretch(1)
+
+        io_right_vbox.addWidget(io_panel_w)
         io_right_vbox.addStretch(1)
         io_main.addWidget(io_right, 1)
 

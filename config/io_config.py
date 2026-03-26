@@ -1,49 +1,52 @@
-"""
-io_config.py
-
-第一版 IO 默认配置。
-
-当前已确认：
-  - 三色灯低电平有效
-  - 光源极性待确认，因此保留为可配置项
-"""
+"""Default IO mapping helpers for the project."""
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Dict
 
 
 @dataclass(frozen=True)
 class IoChannelConfig:
-    channel: str
+    channel: int
     active_high: bool
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "channel": int(self.channel),
+            "active_high": bool(self.active_high),
+        }
 
 
 @dataclass(frozen=True)
 class IoConfig:
-    board_model: str
-    foot_switch_di: str
-    tower_red: IoChannelConfig
-    tower_green: IoChannelConfig
-    tower_blue: IoChannelConfig
-    light_cam1: IoChannelConfig
-    light_cam2: IoChannelConfig
+    di: Dict[str, IoChannelConfig]
+    do: Dict[str, IoChannelConfig]
 
     def to_dict(self) -> Dict[str, object]:
-        return asdict(self)
+        return {
+            "di": {name: cfg.to_dict() for name, cfg in self.di.items()},
+            "do": {name: cfg.to_dict() for name, cfg in self.do.items()},
+        }
 
 
 def default_io_config() -> IoConfig:
     return IoConfig(
-        board_model="NP-6133-16I16O",
-        foot_switch_di="DI0",
-        tower_red=IoChannelConfig(channel="DO0", active_high=False),
-        tower_green=IoChannelConfig(channel="DO1", active_high=False),
-        tower_blue=IoChannelConfig(channel="DO2", active_high=False),
-        # 光源极性暂未确认：这里先给出占位默认值，后续以现场配置为准。
-        light_cam1=IoChannelConfig(channel="DO3", active_high=False),
-        light_cam2=IoChannelConfig(channel="DO4", active_high=False),
+        di={
+            "foot_switch": IoChannelConfig(channel=0, active_high=True),
+            "reject_signal": IoChannelConfig(channel=1, active_high=True),
+            "reserved_in_1": IoChannelConfig(channel=2, active_high=True),
+            "reserved_in_2": IoChannelConfig(channel=3, active_high=True),
+        },
+        do={
+            "tower_red": IoChannelConfig(channel=0, active_high=False),
+            "tower_green": IoChannelConfig(channel=1, active_high=False),
+            "tower_blue": IoChannelConfig(channel=2, active_high=False),
+            "light_cam1": IoChannelConfig(channel=3, active_high=False),
+            "light_cam2": IoChannelConfig(channel=4, active_high=False),
+            "reserved_out_1": IoChannelConfig(channel=5, active_high=False),
+            "reserved_out_2": IoChannelConfig(channel=6, active_high=False),
+        },
     )
 
 

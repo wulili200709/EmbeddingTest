@@ -1,25 +1,50 @@
 {
-  "board_model": "NP-6133-16I16O",
-  "foot_switch_di": "DI0",
-  "tower_red": {
-    "channel": "DO0",
-    "active_high": false
+  "di": {
+    "foot_switch": {
+      "channel": 0,
+      "active_high": true
+    },
+    "reject_signal": {
+      "channel": 1,
+      "active_high": true
+    },
+    "reserved_in_1": {
+      "channel": 2,
+      "active_high": true
+    },
+    "reserved_in_2": {
+      "channel": 3,
+      "active_high": true
+    }
   },
-  "tower_green": {
-    "channel": "DO1",
-    "active_high": false
-  },
-  "tower_blue": {
-    "channel": "DO2",
-    "active_high": false
-  },
-  "light_cam1": {
-    "channel": "DO3",
-    "active_high": false
-  },
-  "light_cam2": {
-    "channel": "DO4",
-    "active_high": false
-  },
-  "_comment": "三色灯已确认低电平有效；光源极性仍待现场确认，当前值仅为占位默认值。"
+  "do": {
+    "tower_red": {
+      "channel": 0,
+      "active_high": false
+    },
+    "tower_green": {
+      "channel": 1,
+      "active_high": false
+    },
+    "tower_blue": {
+      "channel": 2,
+      "active_high": false
+    },
+    "light_cam1": {
+      "channel": 3,
+      "active_high": false
+    },
+    "light_cam2": {
+      "channel": 4,
+      "active_high": false
+    },
+    "reserved_out_1": {
+      "channel": 5,
+      "active_high": false
+    },
+    "reserved_out_2": {
+      "channel": 6,
+      "active_high": false
+    }
+  }
 }

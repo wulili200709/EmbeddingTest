@@ -131,6 +131,7 @@ _TOOL_PAGE_BINDINGS = (
             "_open_debug_io",
             "_close_debug_io",
             "_refresh_debug_io_snapshot",
+            "_set_debug_output_channel",
             "_set_debug_output",
         ),
     ),

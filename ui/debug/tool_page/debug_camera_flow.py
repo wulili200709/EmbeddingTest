@@ -19,6 +19,20 @@ hik_settings_kwargs_from_mapping = page_module.hik_settings_kwargs_from_mapping
 _DebugCameraPreviewThread = page_module._DebugCameraPreviewThread
 _qimage_from_hik_frame = page_module._qimage_from_hik_frame
 
+_DEBUG_IO_NAME_LABELS = {
+    "foot_switch": "脚踏触发\nDI_FOOT_SWITCH",
+    "reject_signal": "废品信号\nDI_REJECT_SIGNAL",
+    "reserved_in_1": "预留输入1\nDI_RESERVED_1",
+    "reserved_in_2": "预留输入2\nDI_RESERVED_2",
+    "tower_red": "三色灯红\nDO_TOWER_RED",
+    "tower_green": "三色灯绿\nDO_TOWER_GREEN",
+    "tower_blue": "三色灯蓝\nDO_TOWER_BLUE",
+    "light_cam1": "相机1光源\nDO_LIGHT_CAM1",
+    "light_cam2": "相机2光源\nDO_LIGHT_CAM2",
+    "reserved_out_1": "预留输出1\nDO_RESERVED_1",
+    "reserved_out_2": "预留输出2\nDO_RESERVED_2",
+}
+
 
 def _on_debug_camera_param_editing_finished(self) -> None:
     if self._debug_camera_block_spin_apply:
@@ -359,14 +373,145 @@ def _grab_debug_camera_once(self) -> None:
     self.lbl_status.setText(f"状态：{role} 调试拍照已保存到 TEST -> {os.path.basename(image_path)}")
 
 
+def _debug_io_display_name(name: str) -> str:
+    return _DEBUG_IO_NAME_LABELS.get(str(name), str(name))
+
+
+def _debug_io_channel_maps(io_controller):
+    di_map = {}
+    do_map = {}
+    mapping = getattr(io_controller, "mapping", None)
+    if mapping is None:
+        return di_map, do_map
+    for name in mapping.di_names():
+        cfg = mapping.get_input(name)
+        di_map[int(cfg.channel)] = (name, cfg)
+    for name in mapping.do_names():
+        cfg = mapping.get_output(name)
+        do_map[int(cfg.channel)] = (name, cfg)
+    return di_map, do_map
+
+
+def _set_debug_di_indicator(indicator, active: bool) -> None:
+    indicator.setStyleSheet(
+        "background:#2fbf71;border:2px solid #86efac;border-radius:16px;"
+        if active
+        else "background:#7a7a7a;border:2px solid #9a9a9a;border-radius:16px;"
+    )
+
+
+def _reset_debug_io_panels(self) -> None:
+    self._debug_output_buttons.clear()
+    for channel, card in self._debug_di_cards.items():
+        card.setVisible(False)
+    for channel, indicator in self._debug_di_indicators.items():
+        _set_debug_di_indicator(indicator, False)
+        indicator.setToolTip(f"DI_{channel}\n未连接")
+    for channel, hint in self._debug_di_hints.items():
+        hint.setText("未映射")
+        hint.setToolTip(f"DI_{channel}\n未映射")
+    for channel, card in self._debug_do_cards.items():
+        card.setVisible(False)
+    for channel, button in self._debug_do_channel_buttons.items():
+        button.blockSignals(True)
+        button.setChecked(False)
+        button.setEnabled(False)
+        button.blockSignals(False)
+        button.setToolTip(f"DO_{channel}\n未连接")
+    for channel, hint in self._debug_do_hints.items():
+        hint.setText("未映射")
+        hint.setToolTip(f"DO_{channel}\n未映射")
+    self.lbl_debug_io_mapping_summary.setText("映射：未加载")
+
+
+def _update_debug_io_panels(self, di_word: int, do_word: int) -> None:
+    di_map, do_map = _debug_io_channel_maps(self._debug_io_controller)
+    self._debug_output_buttons.clear()
+
+    for channel, indicator in self._debug_di_indicators.items():
+        mapped = di_map.get(channel)
+        self._debug_di_cards[channel].setVisible(mapped is not None)
+        if mapped is None:
+            continue
+
+        name, cfg = mapped
+        raw_state = bool(int(di_word) & (1 << channel))
+        display_state = raw_state if cfg.active_high else not raw_state
+        tooltip = (
+            f"DI_{channel}\n"
+            f"name: {name}\n"
+            f"active: {'high' if cfg.active_high else 'low'}\n"
+            f"level: {'HIGH' if raw_state else 'LOW'}\n"
+            f"logic: {'ON' if display_state else 'OFF'}"
+        )
+        _set_debug_di_indicator(indicator, display_state)
+        indicator.setToolTip(tooltip)
+        hint = self._debug_di_hints[channel]
+        hint.setText(_debug_io_display_name(name))
+        hint.setToolTip(tooltip)
+
+    for channel, button in self._debug_do_channel_buttons.items():
+        mapped = do_map.get(channel)
+        self._debug_do_cards[channel].setVisible(mapped is not None)
+        if mapped is None:
+            button.blockSignals(True)
+            button.setEnabled(False)
+            button.setChecked(False)
+            button.blockSignals(False)
+            continue
+
+        name, cfg = mapped
+        raw_state = bool(int(do_word) & (1 << channel))
+        display_state = raw_state if cfg.active_high else not raw_state
+        tooltip = (
+            f"DO_{channel}\n"
+            f"name: {name}\n"
+            f"active: {'high' if cfg.active_high else 'low'}\n"
+            f"level: {'HIGH' if raw_state else 'LOW'}\n"
+            f"logic: {'ON' if display_state else 'OFF'}"
+        )
+        self._debug_output_buttons[name] = button
+        button.blockSignals(True)
+        button.setEnabled(True)
+        button.setChecked(display_state)
+        button.blockSignals(False)
+        button.setToolTip(tooltip)
+        hint = self._debug_do_hints[channel]
+        hint.setText(_debug_io_display_name(name))
+        hint.setToolTip(tooltip)
+
+    input_states = []
+    for channel, (name, cfg) in sorted(di_map.items()):
+        raw_state = bool(int(di_word) & (1 << channel))
+        state = raw_state if cfg.active_high else not raw_state
+        input_states.append(f"{name}={'ON' if state else 'OFF'}")
+
+    output_states = []
+    for channel, (name, cfg) in sorted(do_map.items()):
+        raw_state = bool(int(do_word) & (1 << channel))
+        state = raw_state if cfg.active_high else not raw_state
+        output_states.append(f"{name}={'ON' if state else 'OFF'}")
+
+    self.lbl_debug_di_snapshot.setText(
+        f"DI 0x{int(di_word):04X}" + (f"  {'  '.join(input_states)}" if input_states else "")
+    )
+    self.lbl_debug_do_snapshot.setText(
+        f"DO 0x{int(do_word):04X}" + (f"  {'  '.join(output_states)}" if output_states else "")
+    )
+    enabled_channels = ", ".join(f"DO_{channel}" for channel in sorted(do_map)) or "-"
+    self.lbl_debug_io_mapping_summary.setText(
+        f"Mapping: DI {len(di_map)} / DO {len(do_map)}; enabled output channels {enabled_channels}"
+    )
+
+
 def _open_debug_io(self) -> None:
     if IoController is None:
-        QtWidgets.QMessageBox.warning(self, "DI/DO 调试", "当前环境未启用 IO 调试服务")
+        QtWidgets.QMessageBox.warning(self, "DI/DO Debug", "IO debug service is unavailable in the current environment")
         return
     mapping_path = self._default_io_mapping_path()
     board_config = self._find_debug_nkio_config_path()
     if not board_config:
-        QtWidgets.QMessageBox.warning(self, "DI/DO 调试", "未找到 nkio_config.ini")
+        QtWidgets.QMessageBox.warning(self, "DI/DO Debug", "Could not find nkio_config.ini")
         return
     try:
         self._close_debug_io(silent=True)
@@ -374,11 +519,11 @@ def _open_debug_io(self) -> None:
         self._debug_io_controller.open()
     except Exception as exc:
         self._debug_io_controller = None
-        QtWidgets.QMessageBox.critical(self, "DI/DO 调试", f"打开 IO 调试失败：{exc}")
+        QtWidgets.QMessageBox.critical(self, "DI/DO Debug", f"Failed to open IO debug: {exc}")
         return
     self._debug_io_timer.start()
     self._refresh_debug_io_snapshot()
-    self.lbl_status.setText("状态：DI/DO 调试已打开")
+    self.lbl_status.setText("Status: DI/DO debug opened")
 
 
 def _close_debug_io(self, *, silent: bool = False) -> None:
@@ -393,52 +538,62 @@ def _close_debug_io(self, *, silent: bool = False) -> None:
         except Exception:
             pass
     self._debug_io_controller = None
-    self.lbl_debug_di_snapshot.setText("DI：未连接")
-    self.lbl_debug_do_snapshot.setText("DO：未连接")
-    for button in self._debug_output_buttons.values():
-        button.blockSignals(True)
-        button.setChecked(False)
-        button.blockSignals(False)
+    self.lbl_debug_di_snapshot.setText("DI: disconnected")
+    self.lbl_debug_do_snapshot.setText("DO: disconnected")
+    _reset_debug_io_panels(self)
     if not silent:
-        self.lbl_status.setText("状态：DI/DO 调试已关闭")
+        self.lbl_status.setText("Status: DI/DO debug closed")
 
 
 def _refresh_debug_io_snapshot(self) -> None:
     if self._debug_io_controller is None or not self._debug_io_controller.is_open:
         return
     try:
-        inputs = self._debug_io_controller.snapshot_inputs()
-        outputs = self._debug_io_controller.snapshot_outputs()
+        di_word = self._debug_io_controller.board.read_di_word()
+        do_word = self._debug_io_controller.board.read_do_word()
     except Exception as exc:
-        self.lbl_debug_di_snapshot.setText(f"DI：读取失败 ({exc})")
-        self.lbl_debug_do_snapshot.setText(f"DO：读取失败 ({exc})")
+        self.lbl_debug_di_snapshot.setText(f"DI read failed ({exc})")
+        self.lbl_debug_do_snapshot.setText(f"DO read failed ({exc})")
+        self.lbl_debug_io_mapping_summary.setText("Mapping: read failed")
         return
-    self.lbl_debug_di_snapshot.setText(
-        "DI："
-        + "  ".join(f"{name}={'ON' if state else 'OFF'}" for name, state in sorted(inputs.items()))
-    )
-    self.lbl_debug_do_snapshot.setText(
-        "DO："
-        + "  ".join(f"{name}={'ON' if state else 'OFF'}" for name, state in sorted(outputs.items()))
-    )
-    for name, button in self._debug_output_buttons.items():
-        state = bool(outputs.get(name, False))
-        button.blockSignals(True)
-        button.setChecked(state)
-        button.blockSignals(False)
+    _update_debug_io_panels(self, di_word, do_word)
 
 
-def _set_debug_output(self, name: str, on: bool) -> None:
+def _set_debug_output_channel(self, channel: int, on: bool) -> None:
+    button = self._debug_do_channel_buttons.get(int(channel))
     if self._debug_io_controller is None or not self._debug_io_controller.is_open:
-        QtWidgets.QMessageBox.information(self, "DI/DO 调试", "请先打开 IO 调试")
-        button = self._debug_output_buttons.get(name)
+        QtWidgets.QMessageBox.information(self, "DI/DO Debug", "Open IO debug first")
         if button is not None:
             button.blockSignals(True)
             button.setChecked(False)
             button.blockSignals(False)
         return
+
+    _di_map, do_map = _debug_io_channel_maps(self._debug_io_controller)
+    mapped = do_map.get(int(channel))
+    if mapped is None:
+        if button is not None:
+            button.blockSignals(True)
+            button.setChecked(False)
+            button.blockSignals(False)
+        QtWidgets.QMessageBox.information(self, "DI/DO Debug", f"DO_{channel} is not mapped and cannot be written")
+        return
+
+    name, _cfg = mapped
     try:
         self._debug_io_controller.set_output(name, on)
     except Exception as exc:
-        QtWidgets.QMessageBox.critical(self, "DI/DO 调试", f"{name} 输出失败：{exc}")
+        QtWidgets.QMessageBox.critical(self, "DI/DO Debug", f"{name} output failed: {exc}")
     self._refresh_debug_io_snapshot()
+
+
+def _set_debug_output(self, name: str, on: bool) -> None:
+    if self._debug_io_controller is None or not self._debug_io_controller.is_open:
+        QtWidgets.QMessageBox.information(self, "DI/DO Debug", "Open IO debug first")
+        return
+    _di_map, do_map = _debug_io_channel_maps(self._debug_io_controller)
+    for channel, (mapped_name, _cfg) in do_map.items():
+        if mapped_name == name:
+            self._set_debug_output_channel(channel, on)
+            return
+    QtWidgets.QMessageBox.information(self, "DI/DO Debug", f"{name} has no mapped output channel")
