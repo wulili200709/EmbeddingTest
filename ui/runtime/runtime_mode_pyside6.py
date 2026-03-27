@@ -234,6 +234,15 @@ class RuntimeModePage(QtWidgets.QWidget):
             "QPushButton:hover{background:#505050;}"
             "QPushButton:pressed{background:#3794ff;color:white;}"
         )
+        self.btn_simulate_foot = QtWidgets.QPushButton("▶ 模拟脚踏")
+        self.btn_simulate_foot.setStyleSheet(_trigger_btn_css)
+        self.btn_simulate_foot.setAutoDefault(False)
+        self.btn_simulate_foot.setDefault(False)
+        self.btn_simulate_foot.setFocusPolicy(QtCore.Qt.NoFocus)
+        self.btn_simulate_foot.setEnabled(False)
+        self.btn_simulate_foot.setToolTip("按正式运行链路模拟一次脚踏触发")
+        self.btn_simulate_foot.clicked.connect(self.triggerRequested.emit)
+        header_layout.addWidget(self.btn_simulate_foot)
         self.btn_trigger_cam1 = QtWidgets.QPushButton("▶ 触发相机1")
         self.btn_trigger_cam1.setStyleSheet(_trigger_btn_css)
         self.btn_trigger_cam1.setAutoDefault(False)
@@ -641,6 +650,10 @@ class RuntimeModePage(QtWidgets.QWidget):
     def _refresh_trigger_buttons(self) -> None:
         allow_cam1 = (not self._busy) and ("cam1" in self._active_role_set) and self._has_enabled_items("cam1")
         allow_cam2 = (not self._busy) and ("cam2" in self._active_role_set) and self._has_enabled_items("cam2")
+        allow_full_trigger = (not self._busy) and any(
+            self._has_enabled_items(role) for role in self._active_role_set
+        )
+        self.btn_simulate_foot.setEnabled(allow_full_trigger)
         self.btn_trigger_cam1.setEnabled(allow_cam1)
         self.btn_trigger_cam2.setEnabled(allow_cam2)
 
