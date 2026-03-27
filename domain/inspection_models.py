@@ -92,12 +92,24 @@ class RuntimeInspectionResult:
         }
 
     def timing_breakdown(self) -> Dict[str, float]:
-        return {
+        payload = {
             "capture_ms": float(self.capture_ms or 0.0),
             "match_ms": float(self.match_ms or 0.0),
             "infer_ms": float(self.infer_ms or 0.0),
             "duration_ms": float(self.duration_ms or 0.0),
         }
+        for camera_id, camera_result in sorted(self.camera_results.items()):
+            camera_key = str(camera_id or "").strip()
+            if not camera_key:
+                continue
+            capture_ms = float(camera_result.capture_ms or 0.0)
+            match_ms = float(camera_result.match_ms or 0.0)
+            infer_ms = float(camera_result.infer_ms or 0.0)
+            payload[f"{camera_key}_capture_ms"] = capture_ms
+            payload[f"{camera_key}_match_ms"] = match_ms
+            payload[f"{camera_key}_infer_ms"] = infer_ms
+            payload[f"{camera_key}_total_ms"] = capture_ms + match_ms + infer_ms
+        return payload
 
     def summary_text(self) -> str:
         parts: List[str] = []

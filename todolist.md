@@ -2760,6 +2760,21 @@ cam2 一拿到图，立刻关 cam2 光源
 最终结果做 AND
 也就是 cam1=OK 且 cam2=OK 才是总 OK
 
+
+不会影响原来的“触发相机1 / 触发相机2”单独检测逻辑。
+
+现在有两条入口，还是分开的：
+
+模拟脚踏
+走 triggerRequested -> runtime_ctrl.trigger()
+最终到 inspection_runtime.py#L62 的 on_foot_trigger()
+会按正式运行链路跑 cam1 -> cam2 -> 最终 AND
+触发相机1 / 触发相机2
+走 triggerCameraRequested -> runtime_ctrl.trigger_camera(cam_index)
+最终到 inspection_runtime.py#L65 的 on_single_camera_debug_trigger(camera_index)
+只跑指定那一路相机，不会带另一台
+
+
 当前正式运行链路在 inspection_runtime.py#L166 里，逻辑是：
 
 cam1：

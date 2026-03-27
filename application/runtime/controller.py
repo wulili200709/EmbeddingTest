@@ -349,7 +349,8 @@ class RuntimeController(QtCore.QObject):
             settings_by_role[role] = HikCameraSettings(
                 **hik_settings_kwargs_from_mapping(
                     saved_settings,
-                    default_trigger_mode="continuous",
+                    default_trigger_mode="software",
+                    force_trigger_mode="software",
                 )
             )
         try:
@@ -396,7 +397,8 @@ class RuntimeController(QtCore.QObject):
             settings_by_role[role] = HikCameraSettings(
                 **hik_settings_kwargs_from_mapping(
                     saved_settings,
-                    default_trigger_mode="continuous",
+                    default_trigger_mode="software",
+                    force_trigger_mode="software",
                 )
             )
         try:

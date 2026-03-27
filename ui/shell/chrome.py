@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from algorithms.proxy import is_ready as is_qr_core_ready
@@ -220,8 +222,13 @@ def build_menu_bar(window) -> None:
 
 
 def build_status_bar(window) -> None:
-    label_style = "color:#888;font-size:11px;"
+    label_style = "color:#888;font-size:11px;padding:0 6px;"
     io_dot_style = "font-size:14px;font-weight:bold;"
+    def _make_separator() -> QtWidgets.QLabel:
+        separator = QtWidgets.QLabel("|")
+        separator.setStyleSheet("color:#555;font-size:11px;padding:0 2px;")
+        return separator
+
     window.lbl_status_workspace = QtWidgets.QLabel("工作区：调试界面")
     window.lbl_status_workspace.setStyleSheet(label_style)
     window.lbl_status_product = QtWidgets.QLabel(f"产品：{window.session.current_product}")
@@ -234,11 +241,16 @@ def build_status_bar(window) -> None:
     window.lbl_status_io_text.setStyleSheet(label_style)
     window.lbl_status_path = QtWidgets.QLabel(f"产品目录：{window.session.product_dir}")
     window.lbl_status_path.setStyleSheet(label_style)
+    window.lbl_status_path.setMinimumWidth(260)
     window._bottom_status_bar.addPermanentWidget(window.lbl_status_workspace)
+    window._bottom_status_bar.addPermanentWidget(_make_separator())
     window._bottom_status_bar.addPermanentWidget(window.lbl_status_product)
+    window._bottom_status_bar.addPermanentWidget(_make_separator())
     window._bottom_status_bar.addPermanentWidget(window.lbl_status_engine)
+    window._bottom_status_bar.addPermanentWidget(_make_separator())
     window._bottom_status_bar.addPermanentWidget(window.lbl_status_io_dot)
     window._bottom_status_bar.addPermanentWidget(window.lbl_status_io_text)
+    window._bottom_status_bar.addPermanentWidget(_make_separator())
     window._bottom_status_bar.addPermanentWidget(window.lbl_status_path, 1)
     sync_shell_status(window)
     window._set_algorithm_engine_status(
@@ -268,7 +280,19 @@ def switch_workspace(window, workspace: str) -> None:
 
 def sync_shell_status(window) -> None:
     window.lbl_status_product.setText(f"产品：{window.session.current_product}")
-    window.lbl_status_path.setText(f"产品目录：{window.session.product_dir}")
+    product_dir = str(window.session.product_dir or "").strip()
+    if product_dir:
+        path_obj = Path(product_dir)
+        parts = list(path_obj.parts)
+        if len(parts) > 4:
+            compact = "\\".join(parts[-4:])
+            display_text = f"产品目录：...\\{compact}"
+        else:
+            display_text = f"产品目录：{product_dir}"
+    else:
+        display_text = "产品目录：-"
+    window.lbl_status_path.setText(display_text)
+    window.lbl_status_path.setToolTip(product_dir)
 
 
 def update_brand_banner_pixmap(window) -> None:

@@ -355,6 +355,14 @@ class RuntimeModePage(QtWidgets.QWidget):
         timing_grid.addWidget(self.lbl_duration, 1, 1)
         total_layout.addLayout(timing_grid)
 
+        self.lbl_cam1_timing = QtWidgets.QLabel("Cam1: -")
+        self.lbl_cam1_timing.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
+        total_layout.addWidget(self.lbl_cam1_timing)
+
+        self.lbl_cam2_timing = QtWidgets.QLabel("Cam2: -")
+        self.lbl_cam2_timing.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
+        total_layout.addWidget(self.lbl_cam2_timing)
+
         self.lbl_final_result = QtWidgets.QLabel("-")
         self.lbl_final_result.setAlignment(QtCore.Qt.AlignCenter)
         self.lbl_final_result.setMinimumHeight(36)
@@ -624,11 +632,25 @@ class RuntimeModePage(QtWidgets.QWidget):
         match_ms = self._coerce_ms(timing_map.get("match_ms"))
         infer_ms = self._coerce_ms(timing_map.get("infer_ms"))
         duration_ms = self._coerce_ms(timing_map.get("duration_ms"))
+        cam1_capture_ms = self._coerce_ms(timing_map.get("cam1_capture_ms"))
+        cam1_match_ms = self._coerce_ms(timing_map.get("cam1_match_ms"))
+        cam1_infer_ms = self._coerce_ms(timing_map.get("cam1_infer_ms"))
+        cam1_total_ms = self._coerce_ms(timing_map.get("cam1_total_ms"))
+        cam2_capture_ms = self._coerce_ms(timing_map.get("cam2_capture_ms"))
+        cam2_match_ms = self._coerce_ms(timing_map.get("cam2_match_ms"))
+        cam2_infer_ms = self._coerce_ms(timing_map.get("cam2_infer_ms"))
+        cam2_total_ms = self._coerce_ms(timing_map.get("cam2_total_ms"))
 
         self.lbl_capture_time.setText(self._format_timing_label("取图", capture_ms))
         self.lbl_match_time.setText(self._format_timing_label("匹配", match_ms))
         self.lbl_infer_time.setText(self._format_timing_label("推理", infer_ms))
         self._set_total_duration_labels(duration_ms)
+        self.lbl_cam1_timing.setText(
+            self._format_camera_timing_text("Cam1", cam1_capture_ms, cam1_match_ms, cam1_infer_ms, cam1_total_ms)
+        )
+        self.lbl_cam2_timing.setText(
+            self._format_camera_timing_text("Cam2", cam2_capture_ms, cam2_match_ms, cam2_infer_ms, cam2_total_ms)
+        )
 
     @staticmethod
     def _coerce_ms(value: object) -> float:
@@ -640,6 +662,21 @@ class RuntimeModePage(QtWidgets.QWidget):
     @staticmethod
     def _format_timing_label(title: str, value: float) -> str:
         return f"{title}: {value:.1f} ms" if value > 0.0 else f"{title}: -"
+
+    @staticmethod
+    def _format_camera_timing_text(
+        title: str,
+        capture_ms: float,
+        match_ms: float,
+        infer_ms: float,
+        total_ms: float,
+    ) -> str:
+        if capture_ms <= 0.0 and match_ms <= 0.0 and infer_ms <= 0.0 and total_ms <= 0.0:
+            return f"{title}: -"
+        return (
+            f"{title}: 取{capture_ms:.1f}  匹{match_ms:.1f}  推{infer_ms:.1f}"
+            f"  合{total_ms:.1f} ms"
+        )
 
     def _set_total_duration_labels(self, duration_ms: float) -> None:
         self.lbl_footer_time.setText(
