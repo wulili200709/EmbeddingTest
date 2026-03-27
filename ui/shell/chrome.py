@@ -308,6 +308,6 @@ def update_brand_banner_pixmap(window) -> None:
 def show_about_dialog(window) -> None:
     QtWidgets.QMessageBox.information(
         window,
-        f"About {APP_NAME}",
-        f"{APP_NAME}\n版本：{APP_VERSION}",
+        "About",
+        "Version:1.0.0",
     )

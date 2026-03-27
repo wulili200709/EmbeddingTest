@@ -148,7 +148,34 @@ def _emit_runtime_context(runtime) -> None:
     runtime.inspectionItemsChanged.emit(runtime._last_runtime_result.item_rows())
     runtime.cameraResultsChanged.emit(runtime._last_runtime_result.camera_result_map())
     runtime.durationChanged.emit(int(getattr(runtime._last_runtime_result, "duration_ms", 0) or 0))
-    runtime.timingBreakdownChanged.emit(runtime._last_runtime_result.timing_breakdown())
+    timing_payload = dict(runtime._last_runtime_result.timing_breakdown() or {})
+    if not timing_payload.get("capture_ms"):
+        timing_payload["capture_ms"] = sum(
+            float(getattr(camera_result, "capture_ms", 0.0) or 0.0)
+            for camera_result in runtime._last_runtime_result.camera_results.values()
+        )
+    if not timing_payload.get("match_ms"):
+        timing_payload["match_ms"] = sum(
+            float(getattr(camera_result, "match_ms", 0.0) or 0.0)
+            for camera_result in runtime._last_runtime_result.camera_results.values()
+        )
+    if not timing_payload.get("infer_ms"):
+        timing_payload["infer_ms"] = sum(
+            float(getattr(camera_result, "infer_ms", 0.0) or 0.0)
+            for camera_result in runtime._last_runtime_result.camera_results.values()
+        )
+    for camera_id, camera_result in sorted(runtime._last_runtime_result.camera_results.items()):
+        camera_key = str(camera_id or "").strip()
+        if not camera_key:
+            continue
+        capture_ms = float(getattr(camera_result, "capture_ms", 0.0) or 0.0)
+        match_ms = float(getattr(camera_result, "match_ms", 0.0) or 0.0)
+        infer_ms = float(getattr(camera_result, "infer_ms", 0.0) or 0.0)
+        timing_payload[f"{camera_key}_capture_ms"] = capture_ms
+        timing_payload[f"{camera_key}_match_ms"] = match_ms
+        timing_payload[f"{camera_key}_infer_ms"] = infer_ms
+        timing_payload[f"{camera_key}_total_ms"] = capture_ms + match_ms + infer_ms
+    runtime.timingBreakdownChanged.emit(timing_payload)
 
 
 def _build_pending_runtime_result(runtime, *, status: str):

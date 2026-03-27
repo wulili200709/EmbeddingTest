@@ -198,6 +198,9 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._busy = False
         self._inspection_rows: list[dict] = []
         self._camera_source_paths: dict[str, str] = {"cam1": "", "cam2": ""}
+        self._current_product_name = ""
+        self._ok_count_total = 0
+        self._ng_count_total = 0
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -355,6 +358,21 @@ class RuntimeModePage(QtWidgets.QWidget):
         timing_grid.addWidget(self.lbl_duration, 1, 1)
         total_layout.addLayout(timing_grid)
 
+        count_grid = QtWidgets.QGridLayout()
+        count_grid.setContentsMargins(0, 0, 0, 0)
+        count_grid.setHorizontalSpacing(10)
+        count_grid.setVerticalSpacing(4)
+
+        self.lbl_ok_count = QtWidgets.QLabel("OK: 0")
+        self.lbl_ok_count.setStyleSheet(f"color:{_OK_GREEN};font-size:12px;font-weight:bold;")
+        count_grid.addWidget(self.lbl_ok_count, 0, 0)
+
+        self.lbl_ng_count = QtWidgets.QLabel("NG: 0")
+        self.lbl_ng_count.setStyleSheet(f"color:{_NG_RED};font-size:12px;font-weight:bold;")
+        count_grid.addWidget(self.lbl_ng_count, 0, 1)
+
+        total_layout.addLayout(count_grid)
+
         self.lbl_cam1_timing = QtWidgets.QLabel("Cam1: -")
         self.lbl_cam1_timing.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
         total_layout.addWidget(self.lbl_cam1_timing)
@@ -436,6 +454,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.btn_disconnect_cameras.clicked.connect(self.disconnectCamerasRequested.emit)
         self.btn_trigger.clicked.connect(self.triggerRequested.emit)
         self.btn_release.clicked.connect(self._emit_release_requested)
+        self._refresh_count_labels()
 
     # ------------------------------------------------------------------
     # 公开接口（保持与旧版完全一致的方法签名）
@@ -459,6 +478,12 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.lbl_header_info.setText(f"可见相机: {n} 台" if n else "未发现相机")
 
     def set_current_product(self, product_name: str) -> None:
+        product_text = str(product_name or "").strip()
+        if product_text != self._current_product_name:
+            self._current_product_name = product_text
+            self._ok_count_total = 0
+            self._ng_count_total = 0
+            self._refresh_count_labels()
         self.lbl_current_product.setText(f"产品: {product_name}" if product_name else "-")
 
     def set_runtime_state(self, state_text: str) -> None:
@@ -510,6 +535,8 @@ class RuntimeModePage(QtWidgets.QWidget):
             f"background:{bg};color:white;font-size:16px;font-weight:bold;border-radius:4px;"
         )
         self.lbl_final_result.setToolTip(str(detail_text or ""))
+        if result_upper in {"OK", "NG"}:
+            self._increment_result_counter(result_upper)
 
     def set_record_path(self, record_path: str) -> None:
         self.lbl_footer_record.setText(record_path or "")
@@ -706,3 +733,17 @@ class RuntimeModePage(QtWidgets.QWidget):
 
     def _emit_release_requested(self) -> None:
         self.releaseRequested.emit(self.release_password())
+
+    def _refresh_count_labels(self) -> None:
+        self.lbl_ok_count.setText(f"OK: {int(self._ok_count_total)}")
+        self.lbl_ng_count.setText(f"NG: {int(self._ng_count_total)}")
+
+    def _increment_result_counter(self, result_text: str) -> None:
+        result_key = str(result_text or "").strip().upper()
+        if result_key not in {"OK", "NG"}:
+            return
+        if result_key == "OK":
+            self._ok_count_total += 1
+        else:
+            self._ng_count_total += 1
+        self._refresh_count_labels()

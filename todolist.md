@@ -2897,3 +2897,168 @@ predict_one_with_model
 match_ms / infer_ms：现在基本一致
 总时间：还不一致
 调试页偏“算法总耗时”，运行页偏“整条运行流程耗时”
+
+# embedding
+这 4 步其实就是 embedding 检测的核心主链：
+
+载入“训练好的注册模型”
+载入“特征提取网络”
+把当前 ROI 图裁出来并编码成特征向量
+用这个向量和 OK/NG 模型做相似度比较，得到 OK/NG
+按代码详细拆开是这样。
+
+1. load_embedding_model(...) 做了什么
+运行时这一步最终会走到 algorithm_controller.py。
+
+它做的不是“加载神经网络骨干”，而是加载训练好的注册模型 .npz，也就是：
+
+这个产品
+这个算法骨干
+这个检测项 model_key
+对应的 OK/NG 判定模型
+它会按优先级找文件路径：
+
+embedding_model_path(...)
+找不到再试 legacy 路径
+最后调用 qr_core.load_register_model_npz(model_file)
+这个 .npz 里装的核心数据在 embedding.py 的 RegisterModel：
+
+backbone
+score_mode
+margin
+topk
+label_name / label_names
+device
+ok_proto
+ng_proto
+ok_bank
+ng_bank
+可以把它理解成：
+
+ok_bank：训练时所有 OK 样本的特征库
+ng_bank：训练时所有 NG 样本的特征库
+ok_proto：OK 特征中心
+ng_proto：NG 特征中心
+也就是说，load_embedding_model(...) 加载的是判定模板/特征库，不是 backbone 本身。
+
+2. algo.get_feat_net(...) 做了什么
+这一步在 algorithm_controller.py#L282。
+
+它会：
+
+根据 backbone 名字，比如 efficientnet_b0、mobilenet_v3_small
+调 qr_core.load_backbone(...)
+拿到 feat_net
+按 (backbone, device) 做缓存，避免每次重新建网络
+真正加载 backbone 的代码在 embedding.py#L24：
+
+用 torchvision.models 加预训练模型
+只取 model.features
+eval().to(device)
+所以 feat_net 本质上是一个特征提取器，不是分类器。
+它输出的是 feature map，后面还要做 pooling 和归一化，才变成 embedding 向量。
+
+3. qr_core.embed_batch(...) 怎么把图变成特征向量
+这一步在 embedding.py#L160。
+
+它做了 4 件事：
+
+解析 ROI
+先根据当前图片路径找到对应的 labelme json
+按 label_names 找 ROI 区域
+支持 rectangle / polygon
+polygon 会先做 mask，只保留 ROI 内部像素
+相关代码：
+
+_build_image_roi_context(...)
+_resolve_roi_image(...)
+预处理
+ROI crop 出来以后
+用 TF 做：
+Resize((224,224))
+ToTensor()
+Normalize(mean/std)
+定义在 embedding.py#L43
+
+送进 backbone
+把多个 ROI 组成 batch
+feat = feat_net(batch)
+变成 embedding 向量
+adaptive_avg_pool2d(feat, 1)
+flatten
+F.normalize(feat, dim=1)
+最后返回的是 numpy.ndarray
+
+所以这里产出的 embedding 不是原图特征，而是：
+
+对每个 ROI 裁剪后
+送进 backbone
+池化
+L2 归一化后的向量
+如果一个检测项对应多个 ROI，运行时常会走 embed_batch(...)；
+如果多个 ROI 要合并成一个总向量，还会走 embed_many(...)，见 embedding.py#L201。
+
+4. qr_core.predict_one_with_model(...) 怎么判 OK/NG
+这一步在 embedding.py#L357。
+
+输入：
+
+当前样本的 embedding e
+已加载好的 RegisterModel
+它有两种打分模式。
+
+proto 模式：
+
+sim_ok = e @ ok_proto[0]
+sim_ng = e @ ng_proto[0]
+也就是：
+
+跟 OK 中心做相似度
+跟 NG 中心做相似度
+topk 模式：
+
+sim_ok = score_topk(e, ok_bank, k=...)
+sim_ng = score_topk(e, ng_bank, k=...)
+也就是：
+
+跟 OK 样本库里最相近的若干个算平均
+跟 NG 样本库里最相近的若干个算平均
+然后统一算：
+
+diff = sim_ok - sim_ng
+最后判定：
+
+pred = "OK" if diff >= model.margin else "NG"
+这 4 个输出含义就是：
+
+sim_ok
+当前样本更像 OK 的程度
+sim_ng
+当前样本更像 NG 的程度
+diff
+sim_ok - sim_ng
+越大越偏向 OK，越小越偏向 NG
+pred
+用 margin 阈值做完判定后的最终结果
+所以它不是单纯“和 OK 像不像”，而是：
+
+同时看它更接近 OK 还是更接近 NG
+然后用两者差值 diff 做最终判定
+放到整条运行链里看
+运行时在 runtime_context.py 里，大致是：
+
+先 line2dup 定位 ROI，得到 match_ms
+对 learning items：
+load_embedding_model(...)
+get_feat_net(...)
+embed_batch(...)
+predict_one_with_model(...)
+拿到每个 item 的 pred/diff/sim_ok/sim_ng
+汇总成单相机结果
+再汇总成双相机总结果
+一句话总结这 4 个函数：
+
+load_embedding_model(...)：加载训练好的 OK/NG 特征模型
+get_feat_net(...)：加载并缓存 backbone 特征提取网络
+embed_batch(...)：把 ROI 图编码成归一化特征向量
+predict_one_with_model(...)：比较当前向量和 OK/NG 模型的相似度差，输出 OK/NG
