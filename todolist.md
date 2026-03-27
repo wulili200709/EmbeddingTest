@@ -2760,6 +2760,35 @@ cam2 一拿到图，立刻关 cam2 光源
 最终结果做 AND
 也就是 cam1=OK 且 cam2=OK 才是总 OK
 
+当前正式运行链路在 inspection_runtime.py#L166 里，逻辑是：
+
+cam1：
+prepare_capture(camera_index) 开光源
+capture_once(...) 拍照
+finish_capture(camera_index) 关光源
+然后 executor.submit(self.inspect_callback, role, frame) 把 cam1 图像丢进后台线程检测
+cam2：
+不等 cam1 检测结束
+继续开 cam2 光源、拍照、关光源
+再 executor.submit(...) 把 cam2 图像也丢进后台线程检测
+最后统一 future.result() 等两边结果回来
+线程池就是这里建的：
+
+inspection_runtime.py#L177
+with ThreadPoolExecutor(max_workers=max(1, len(roles))) as executor:
+所以对你这两句，答案都是“是”：
+
+cam1 拿到图后，已经是放进后台线程检测
+cam2 拿到图后，也同样放进后台线程检测
+补一句准确点的说法：
+
+采图本身不是并行的，是按 cam1 -> cam2 顺序采
+检测是并行/重叠的，因为 cam1 检测开始后，主线程继续去采 cam2
+最终结果是 all(outcome.result == "OK" ...)，见 inspection_runtime.py#L117
+
+
+
+
 ## 核心原则
 拍照链建议串行
 算法链建议并行
