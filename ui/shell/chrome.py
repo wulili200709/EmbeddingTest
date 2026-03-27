@@ -221,17 +221,24 @@ def build_menu_bar(window) -> None:
 
 def build_status_bar(window) -> None:
     label_style = "color:#888;font-size:11px;"
+    io_dot_style = "font-size:14px;font-weight:bold;"
     window.lbl_status_workspace = QtWidgets.QLabel("工作区：调试界面")
     window.lbl_status_workspace.setStyleSheet(label_style)
     window.lbl_status_product = QtWidgets.QLabel(f"产品：{window.session.current_product}")
     window.lbl_status_product.setStyleSheet(label_style)
     window.lbl_status_engine = QtWidgets.QLabel()
     window.lbl_status_engine.setStyleSheet(label_style)
+    window.lbl_status_io_dot = QtWidgets.QLabel("●")
+    window.lbl_status_io_dot.setStyleSheet(f"color:#c74e39;{io_dot_style}")
+    window.lbl_status_io_text = QtWidgets.QLabel("IO: 未初始化")
+    window.lbl_status_io_text.setStyleSheet(label_style)
     window.lbl_status_path = QtWidgets.QLabel(f"产品目录：{window.session.product_dir}")
     window.lbl_status_path.setStyleSheet(label_style)
     window._bottom_status_bar.addPermanentWidget(window.lbl_status_workspace)
     window._bottom_status_bar.addPermanentWidget(window.lbl_status_product)
     window._bottom_status_bar.addPermanentWidget(window.lbl_status_engine)
+    window._bottom_status_bar.addPermanentWidget(window.lbl_status_io_dot)
+    window._bottom_status_bar.addPermanentWidget(window.lbl_status_io_text)
     window._bottom_status_bar.addPermanentWidget(window.lbl_status_path, 1)
     sync_shell_status(window)
     window._set_algorithm_engine_status(

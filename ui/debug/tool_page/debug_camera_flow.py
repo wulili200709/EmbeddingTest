@@ -505,30 +505,28 @@ def _update_debug_io_panels(self, di_word: int, do_word: int) -> None:
 
 
 def _open_debug_io(self) -> None:
-    if IoController is None:
-        QtWidgets.QMessageBox.warning(self, "DI/DO Debug", "IO debug service is unavailable in the current environment")
+    runtime_ctrl = self.runtime_controller()
+    if runtime_ctrl is None:
+        QtWidgets.QMessageBox.warning(self, "DI/DO Debug", "Runtime IO service is unavailable in the current environment")
         return
-    mapping_path = self._default_io_mapping_path()
-    board_config = self._find_debug_nkio_config_path()
-    if not board_config:
-        QtWidgets.QMessageBox.warning(self, "DI/DO Debug", "Could not find nkio_config.ini")
+
+    if getattr(self, "_runtime_io_ready", False) and getattr(self, "_runtime_io_controller", None) is not None:
+        self._apply_runtime_io_debug_state()
+        self.lbl_status.setText("Status: DI/DO debug attached to runtime IO")
         return
-    try:
-        self._close_debug_io(silent=True)
-        self._debug_io_controller = IoController.from_config_file(board_config, mapping_path)
-        self._debug_io_controller.open()
-    except Exception as exc:
-        self._debug_io_controller = None
-        QtWidgets.QMessageBox.critical(self, "DI/DO Debug", f"Failed to open IO debug: {exc}")
+
+    if not runtime_ctrl.initialize_startup_io(force=True):
+        detail = getattr(self, "_runtime_io_status_detail", "") or "unknown error"
+        QtWidgets.QMessageBox.critical(self, "DI/DO Debug", f"Failed to open IO debug: {detail}")
         return
-    self._debug_io_timer.start()
-    self._refresh_debug_io_snapshot()
-    self.lbl_status.setText("Status: DI/DO debug opened")
+
+    self._apply_runtime_io_debug_state()
+    self.lbl_status.setText("Status: DI/DO debug reloaded from runtime IO")
 
 
 def _close_debug_io(self, *, silent: bool = False) -> None:
     self._debug_io_timer.stop()
-    if self._debug_io_controller is not None:
+    if self._debug_io_controller is not None and not getattr(self, "_debug_io_uses_runtime_controller", False):
         try:
             self._debug_io_controller.clear_outputs()
         except Exception:
@@ -537,10 +535,14 @@ def _close_debug_io(self, *, silent: bool = False) -> None:
             self._debug_io_controller.close()
         except Exception:
             pass
+    if getattr(self, "_debug_io_uses_runtime_controller", False):
+        self._debug_io_uses_runtime_controller = False
     self._debug_io_controller = None
     self.lbl_debug_di_snapshot.setText("DI: disconnected")
     self.lbl_debug_do_snapshot.setText("DO: disconnected")
     _reset_debug_io_panels(self)
+    if getattr(self, "_runtime_io_ready", False) and getattr(self, "_runtime_io_controller", None) is not None:
+        self._apply_runtime_io_debug_state()
     if not silent:
         self.lbl_status.setText("Status: DI/DO debug closed")
 

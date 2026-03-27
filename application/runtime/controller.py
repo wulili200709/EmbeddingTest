@@ -206,6 +206,7 @@ class RuntimeController(QtCore.QObject):
     towerLightStatusChanged = QtCore.Signal(str)   # → runtime_page.set_tower_light_status
     statusMessageChanged    = QtCore.Signal(str)   # → runtime_page.set_runtime_status
     recordPathChanged       = QtCore.Signal(str)   # → runtime_page.set_record_path
+    ioStatusChanged         = QtCore.Signal(bool, str, object)  # (ready, detail, io_controller)
 
     # ── 动作类 Signal ─────────────────────────────────────────────────────
     camerasEnumerated = QtCore.Signal(list)        # → runtime_page.set_available_cameras
@@ -259,6 +260,8 @@ class RuntimeController(QtCore.QObject):
         self._release_log_service = None
         self._runner = None
         self._io_controller = None
+        self._io_ready = False
+        self._io_status_detail = "IO not initialized"
         self._di_poller = None
         self._inspection_executor = InspectionExecutor(self._runtime_context)
         self._last_item_results_by_camera: Dict[str, list] = {}
@@ -272,6 +275,9 @@ class RuntimeController(QtCore.QObject):
 
     def capture_retention_policy(self) -> str:
         return self._capture_retention_policy
+
+    def initialize_startup_io(self, *, force: bool = False) -> bool:
+        return self._initialize_startup_io(force=force)
 
     def _sync_camera_settings_store_path(self) -> None:
         self._camera_settings_store.set_path(self._session.camera_settings_path)
@@ -349,7 +355,7 @@ class RuntimeController(QtCore.QObject):
         try:
             self._frame_grab_service.open_bound_cameras(bindings, settings_by_role=settings_by_role)
         except Exception as exc:
-            self.disconnect(silent=True)
+            self.disconnect(silent=True, close_io=False)
             self.errorOccurred.emit(f"连接相机失败：{exc}")
             self._update_status(f"连接相机失败：{exc}")
             return
@@ -396,7 +402,7 @@ class RuntimeController(QtCore.QObject):
         try:
             self._frame_grab_service.open_bound_cameras(bindings, settings_by_role=settings_by_role)
         except Exception as exc:
-            self.disconnect(silent=True)
+            self.disconnect(silent=True, close_io=False)
             self.logAppended.emit(f"[camera] startup auto-connect failed: {exc}")
             self._update_status(f"startup auto-connect failed: {exc}")
             return False
@@ -410,10 +416,11 @@ class RuntimeController(QtCore.QObject):
         self._update_status("startup auto-connect success")
         return True
 
-    def disconnect(self, *, silent: bool = False) -> None:
+    def disconnect(self, *, silent: bool = False, close_io: bool = True) -> None:
         """断开所有相机并释放运行链路资源。"""
         self._stop_di_poller()
-        self._close_io_controller()
+        if close_io:
+            self._close_io_controller()
         if self._frame_grab_service is not None:
             try:
                 self._frame_grab_service.close_all()
@@ -432,14 +439,15 @@ class RuntimeController(QtCore.QObject):
         self._record_service = None
         self._release_log_service = None
         self._runner = None
-        self._io_controller = None
         self._di_poller = None
         self._last_capture_paths = {}
         self._last_record_path = None
         self._last_item_results_by_camera = {}
         self._last_runtime_result = self._build_pending_runtime_result(status="PENDING")
-        self._light_controller = _UiOnlyLightController()
-        self._tower_light_controller = _UiOnlyTowerLightController()
+        if close_io or self._io_controller is None:
+            self._io_controller = None
+            self._light_controller = _UiOnlyLightController()
+            self._tower_light_controller = _UiOnlyTowerLightController()
         self._busy = False
         self._pending_camera_settings_by_serial = {}
 

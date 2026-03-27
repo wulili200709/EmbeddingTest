@@ -1,4 +1,6 @@
 {
+  "nkio_config_path": "",
+  "nkio_dll_path": "",
   "di": {
     "foot_switch": {
       "channel": 0,

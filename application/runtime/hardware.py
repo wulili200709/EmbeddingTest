@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import configparser
+import json
 import os
 from pathlib import Path
 from typing import Optional
@@ -11,6 +13,30 @@ from PySide6 import QtCore
 from .capture_policy import DEFAULT_LIGHT_STABLE_MS
 
 
+def _load_nkio_runtime_options(mapping_path: Path) -> dict[str, str]:
+    try:
+        payload = json.loads(mapping_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    result: dict[str, str] = {}
+    for key in ("nkio_config_path", "nkio_dll_path"):
+        value = payload.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            result[key] = text
+    return result
+
+
+def _emit_io_status(runtime, ready: bool, detail: str, controller=None) -> None:
+    runtime._io_ready = bool(ready)
+    runtime._io_status_detail = str(detail or "")
+    runtime.ioStatusChanged.emit(runtime._io_ready, runtime._io_status_detail, controller)
+
+
 def _rebuild_runner(runtime) -> bool:
     from . import controller as runtime_controller_module
 
@@ -18,12 +44,19 @@ def _rebuild_runner(runtime) -> bool:
         runtime._update_status(f"运行服务不可用: {runtime._import_error}")
         return False
 
-    runtime._close_io_controller()
+    runtime._stop_di_poller()
     runtime._last_record_path = None
     runtime._last_capture_paths = {}
     runtime._light_controller = runtime_controller_module._UiOnlyLightController()
     runtime._tower_light_controller = runtime_controller_module._UiOnlyTowerLightController()
-    runtime._io_controller = runtime._try_create_io_controller()
+    if runtime._io_controller is None or not getattr(runtime._io_controller, "is_open", False):
+        runtime._io_controller = runtime._try_create_io_controller()
+    else:
+        runtime._emit_io_status(
+            True,
+            runtime._io_status_detail or "real IO ready",
+            runtime._io_controller,
+        )
     if runtime._io_controller is not None:
         runtime._light_controller = runtime_controller_module.LightController(runtime._io_controller)
         runtime._tower_light_controller = runtime_controller_module.TowerLightController(runtime._io_controller)
@@ -70,27 +103,57 @@ def _try_create_io_controller(runtime):
         or runtime_controller_module.TowerLightController is None
     ):
         runtime.logAppended.emit("[IO] real IO controller unavailable, fallback to UI-only mode")
+        runtime._emit_io_status(False, "real IO controller unavailable")
         return None
 
     mapping_path = Path(__file__).resolve().parents[2] / "config" / "defaults" / "io_mapping.json"
     if not mapping_path.exists():
         runtime.logAppended.emit(f"[IO] missing IO mapping config: {mapping_path}")
+        runtime._emit_io_status(False, f"missing IO mapping config: {mapping_path}")
         return None
 
-    board_config_path = runtime._find_nkio_config_path()
+    runtime_options = _load_nkio_runtime_options(mapping_path)
+    configured_board_config = runtime_options.get("nkio_config_path")
+    board_config_path = Path(configured_board_config) if configured_board_config else runtime._find_nkio_config_path()
     if board_config_path is None:
         runtime.logAppended.emit("[IO] missing nkio_config.ini, fallback to UI-only mode")
+        runtime._emit_io_status(False, "missing nkio_config.ini")
+        return None
+    if not Path(board_config_path).exists():
+        runtime.logAppended.emit(f"[IO] configured nkio_config.ini missing: {board_config_path}")
+        runtime._emit_io_status(False, f"configured nkio_config.ini missing: {board_config_path}")
         return None
 
+    dll_path = runtime_options.get("nkio_dll_path")
+
     try:
-        controller = runtime_controller_module.IoManager.from_config_file(board_config_path, mapping_path)
+        controller = runtime_controller_module.IoManager.from_config_file(
+            board_config_path,
+            mapping_path,
+            dll_path=dll_path,
+        )
         controller.open()
     except Exception as exc:
         runtime.logAppended.emit(f"[IO] failed to initialize real IO: {exc}")
+        runtime._emit_io_status(False, f"failed to initialize real IO: {exc}")
         return None
 
     runtime.logAppended.emit(f"[IO] using real IO: {board_config_path}")
+    runtime._emit_io_status(True, f"real IO ready: {board_config_path}", controller)
     return controller
+
+
+def _initialize_startup_io(runtime, force: bool = False) -> bool:
+    if runtime._import_error is not None:
+        runtime._emit_io_status(False, f"runtime import error: {runtime._import_error}")
+        return False
+    if runtime._io_controller is not None and getattr(runtime._io_controller, "is_open", False) and not force:
+        runtime._emit_io_status(True, runtime._io_status_detail or "real IO ready", runtime._io_controller)
+        return True
+    if runtime._io_controller is not None:
+        runtime._close_io_controller()
+    runtime._io_controller = runtime._try_create_io_controller()
+    return runtime._io_controller is not None
 
 
 def _close_io_controller(runtime) -> None:
@@ -114,6 +177,7 @@ def _close_io_controller(runtime) -> None:
             runtime._io_controller.close()
         except Exception:
             pass
+    runtime._emit_io_status(False, runtime._io_status_detail or "IO closed")
 
 
 def _start_di_poller_if_available(runtime) -> None:
@@ -160,9 +224,27 @@ def _trigger_from_di(runtime) -> None:
 
 def _find_nkio_config_path(runtime) -> Optional[Path]:
     repo_root = Path(__file__).resolve().parents[3]
+    select_ini = repo_root / "NKDIOLC_SDK" / "Bin" / "select.ini"
+    if select_ini.exists():
+        parser = configparser.ConfigParser()
+        parser.optionxform = str
+        try:
+            parser.read(select_ini, encoding="utf-8")
+        except Exception:
+            parser = None
+        if parser is not None and parser.has_section("SELECTED"):
+            config_path = str(parser.get("SELECTED", "ConfigPath", fallback="") or "").strip()
+            if config_path:
+                relative_path = config_path.lstrip("/\\").replace("/", "\\")
+                candidate = repo_root / "NKDIOLC_SDK" / "Bin" / Path(relative_path)
+                if candidate.exists():
+                    return candidate
+
     candidates = [
-        repo_root / "NKDIOLC_SDK" / "ConfigFile" / "J1900" / "NP-6133-16I16O" / "nkio_config.ini",
+        repo_root / "NKDIOLC_SDK" / "Sample" / "C#" / "NK_IO_LC_TEST_CSharp" / "bin" / "x64" / "Debug" / "NP-6133-16I16O" / "nkio_config.ini",
+        repo_root / "NKDIOLC_SDK" / "Bin" / "NP-6133-16I16O" / "nkio_config.ini",
         repo_root / "NKDIOLC_SDK" / "ConfigFile" / "NP-6133-16I16O" / "nkio_config.ini",
+        repo_root / "NKDIOLC_SDK" / "ConfigFile" / "J1900" / "NP-6133-16I16O" / "nkio_config.ini",
         repo_root / "NKDIOLC_SDK" / "Bin" / "NP-61x0-16I16O" / "nkio_config.ini",
     ]
     for path in candidates:

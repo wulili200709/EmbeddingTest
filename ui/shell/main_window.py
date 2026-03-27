@@ -169,6 +169,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._switch_workspace("debug")
         self._switch_workspace("debug")
         QtCore.QTimer.singleShot(0, self.runtime_ctrl.reset_all_camera_triggers_off)
+        QtCore.QTimer.singleShot(0, self.runtime_ctrl.initialize_startup_io)
         QtCore.QTimer.singleShot(0, self._start_algorithm_engine_warmup)
         QtCore.QTimer.singleShot(150, self._startup_auto_connect_runtime_cameras)
 
@@ -292,6 +293,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.runtime_ctrl.productNameChanged.connect(lambda *_: self._sync_shell_status())
         self.runtime_ctrl.activeCameraRolesChanged.connect(self._on_runtime_active_roles_changed)
         self.runtime_ctrl.triggerResultReady.connect(self._on_runtime_trigger_result)
+        self.runtime_ctrl.ioStatusChanged.connect(self._on_runtime_io_status_changed)
 
         connect_runtime_dialogs(self, self.runtime_ctrl)
 
@@ -332,6 +334,15 @@ class MainWindow(QtWidgets.QMainWindow):
     def _set_algorithm_engine_status(self, text: str, *, tooltip: str = "") -> None:
         self.lbl_status_engine.setText(text)
         self.lbl_status_engine.setToolTip(tooltip or text)
+
+    @QtCore.Slot(bool, str, object)
+    def _on_runtime_io_status_changed(self, ready: bool, detail: str, controller: object) -> None:
+        self.lbl_status_io_dot.setStyleSheet(
+            "color:#2ea043;font-size:14px;font-weight:bold;" if ready else "color:#c74e39;font-size:14px;font-weight:bold;"
+        )
+        self.lbl_status_io_text.setText("IO: 已就绪" if ready else "IO: 初始化失败")
+        self.lbl_status_io_text.setToolTip(detail or self.lbl_status_io_text.text())
+        self.tool_page.set_runtime_io_state(ready, detail, controller)
 
     def _start_algorithm_engine_warmup(self) -> None:
         _start_algorithm_engine_warmup_impl(self)

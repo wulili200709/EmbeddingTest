@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import configparser
+import json
 from pathlib import Path
 
 from PySide6 import QtGui
@@ -145,16 +147,85 @@ def _default_io_mapping_path(tool_page) -> str:
     return str(tool_page._embedding_test_root() / "config" / "defaults" / "io_mapping.json")
 
 
+def _load_nkio_runtime_options(mapping_path: str | Path) -> dict[str, str]:
+    try:
+        payload = json.loads(Path(mapping_path).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    result: dict[str, str] = {}
+    for key in ("nkio_config_path", "nkio_dll_path"):
+        value = payload.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            result[key] = text
+    return result
+
+
+def _selected_nkio_config_from_sdk_bin(root: Path):
+    select_ini = root / "NKDIOLC_SDK" / "Bin" / "select.ini"
+    if not select_ini.exists():
+        return None
+
+    parser = configparser.ConfigParser()
+    parser.optionxform = str
+    try:
+        parser.read(select_ini, encoding="utf-8")
+    except Exception:
+        return None
+
+    if not parser.has_section("SELECTED"):
+        return None
+
+    config_path = str(parser.get("SELECTED", "ConfigPath", fallback="") or "").strip()
+    if not config_path:
+        return None
+
+    relative_path = config_path.lstrip("/\\").replace("/", "\\")
+    candidate = root / "NKDIOLC_SDK" / "Bin" / Path(relative_path)
+    if candidate.exists():
+        return str(candidate)
+    return None
+
+
 def _find_debug_nkio_config_path(tool_page):
+    mapping_path = tool_page._default_io_mapping_path()
+    runtime_options = _load_nkio_runtime_options(mapping_path)
+    configured_path = runtime_options.get("nkio_config_path")
+    if configured_path:
+        configured = Path(configured_path)
+        if configured.exists():
+            return str(configured)
+
     root = tool_page._embedding_test_root().parent
+    selected_path = _selected_nkio_config_from_sdk_bin(root)
+    if selected_path:
+        return selected_path
     candidates = [
-        root / "NKDIOLC_SDK" / "ConfigFile" / "J1900" / "NP-6133-16I16O" / "nkio_config.ini",
+        root / "NKDIOLC_SDK" / "Sample" / "C#" / "NK_IO_LC_TEST_CSharp" / "bin" / "x64" / "Debug" / "NP-6133-16I16O" / "nkio_config.ini",
+        root / "NKDIOLC_SDK" / "Bin" / "NP-6133-16I16O" / "nkio_config.ini",
         root / "NKDIOLC_SDK" / "ConfigFile" / "NP-6133-16I16O" / "nkio_config.ini",
+        root / "NKDIOLC_SDK" / "ConfigFile" / "J1900" / "NP-6133-16I16O" / "nkio_config.ini",
         root / "NKDIOLC_SDK" / "Bin" / "NP-61x0-16I16O" / "nkio_config.ini",
     ]
     for path in candidates:
         if path.exists():
             return str(path)
+    return None
+
+
+def _find_debug_nkio_dll_path(tool_page):
+    mapping_path = tool_page._default_io_mapping_path()
+    runtime_options = _load_nkio_runtime_options(mapping_path)
+    configured_path = runtime_options.get("nkio_dll_path")
+    if not configured_path:
+        return None
+    configured = Path(configured_path)
+    if configured.exists():
+        return str(configured)
     return None
 
 

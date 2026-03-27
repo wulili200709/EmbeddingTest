@@ -316,6 +316,10 @@ class ToolPage(QtWidgets.QWidget):
         self._debug_camera_infos: List[object] = []
         self._debug_preview_thread: Optional[_DebugCameraPreviewThread] = None
         self._debug_io_controller = None
+        self._runtime_io_controller = None
+        self._runtime_io_ready = False
+        self._runtime_io_status_detail = "IO not initialized"
+        self._debug_io_uses_runtime_controller = False
         self._debug_output_buttons: Dict[str, QtWidgets.QPushButton] = {}
         self._debug_di_cards: Dict[int, QtWidgets.QFrame] = {}
         self._debug_di_indicators: Dict[int, QtWidgets.QLabel] = {}
@@ -726,9 +730,56 @@ class ToolPage(QtWidgets.QWidget):
             self.io_debug_page,
             size=(900, 480),
         )
+        self._apply_runtime_io_debug_state()
 
     def open_template_editor_dialog(self) -> None:
         self._open_line2dup_template_page()
+
+    def runtime_controller(self):
+        parent = self.parent()
+        while parent is not None:
+            runtime_ctrl = getattr(parent, "runtime_ctrl", None)
+            if runtime_ctrl is not None:
+                return runtime_ctrl
+            parent = parent.parent() if hasattr(parent, "parent") else None
+        return None
+
+    def set_runtime_io_state(self, ready: bool, detail: str, controller: object = None) -> None:
+        self._runtime_io_ready = bool(ready)
+        self._runtime_io_status_detail = str(detail or "")
+        self._runtime_io_controller = controller if bool(ready) else None
+        self._apply_runtime_io_debug_state()
+
+    def _apply_runtime_io_debug_state(self) -> None:
+        if self._runtime_io_ready and self._runtime_io_controller is not None:
+            if (
+                self._debug_io_controller is not None
+                and self._debug_io_controller is not self._runtime_io_controller
+                and not self._debug_io_uses_runtime_controller
+            ):
+                self._close_debug_io(silent=True)
+            self._debug_io_controller = self._runtime_io_controller
+            self._debug_io_uses_runtime_controller = True
+            self._debug_io_timer.start()
+            self.btn_debug_open_io.setEnabled(False)
+            self.btn_debug_close_io.setEnabled(False)
+            self.btn_debug_refresh_io.setEnabled(True)
+            self.lbl_debug_io_mapping_summary.setToolTip(self._runtime_io_status_detail)
+            self._refresh_debug_io_snapshot()
+            return
+
+        if self._debug_io_uses_runtime_controller:
+            self._debug_io_timer.stop()
+            self._debug_io_controller = None
+            self._debug_io_uses_runtime_controller = False
+            self.lbl_debug_di_snapshot.setText("DI：未连接")
+            self.lbl_debug_do_snapshot.setText("DO：未连接")
+            self.lbl_debug_io_mapping_summary.setText("映射：未加载")
+
+        self.btn_debug_open_io.setEnabled(True)
+        self.btn_debug_close_io.setEnabled(self._debug_io_controller is not None and not self._debug_io_uses_runtime_controller)
+        self.btn_debug_refresh_io.setEnabled(self._debug_io_controller is not None)
+        self.lbl_debug_io_mapping_summary.setToolTip(self._runtime_io_status_detail)
 
     def open_template_match_dialog(self) -> None:
         self._show_tool_dialog(

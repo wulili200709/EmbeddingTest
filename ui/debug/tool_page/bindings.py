@@ -101,6 +101,7 @@ _TOOL_PAGE_BINDINGS = (
             "_selected_debug_camera_info",
             "_debug_camera_device",
             "_default_io_mapping_path",
+            "_find_debug_nkio_dll_path",
             "_find_debug_nkio_config_path",
             "_cleanup_debug_hardware",
         ),

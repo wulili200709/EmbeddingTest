@@ -9,7 +9,9 @@ _RUNTIME_CONTROLLER_BINDINGS = (
         hardware,
         (
             "_rebuild_runner",
+            "_emit_io_status",
             "_try_create_io_controller",
+            "_initialize_startup_io",
             "_close_io_controller",
             "_start_di_poller_if_available",
             "_stop_di_poller",
