@@ -12,11 +12,13 @@ class TowerLightController:
         self,
         io: IoController,
         *,
-        flash_ms: int = 200,
+        ok_flash_ms: int = 200,
+        ng_flash_ms: int = 200,
         idle_blue_delay_s: float = 30.0,
     ) -> None:
         self.io = io
-        self.flash_s = max(0.01, float(flash_ms) / 1000.0)
+        self.ok_flash_s = max(0.01, float(ok_flash_ms) / 1000.0)
+        self.ng_flash_s = max(0.01, float(ng_flash_ms) / 1000.0)
         self.idle_blue_delay_s = max(0.0, float(idle_blue_delay_s))
         self._lock = threading.Lock()
         self._flash_timer: threading.Timer | None = None
@@ -54,10 +56,10 @@ class TowerLightController:
             self._state = "inspecting"
 
     def show_ok(self) -> None:
-        self._flash_result(color="green", state_name="ok")
+        self._flash_result(color="green", state_name="ok", flash_s=self.ok_flash_s)
 
     def show_ng(self) -> None:
-        self._flash_result(color="red", state_name="ng")
+        self._flash_result(color="red", state_name="ng", flash_s=self.ng_flash_s)
 
     def schedule_idle_waiting(self) -> None:
         with self._lock:
@@ -71,7 +73,7 @@ class TowerLightController:
             self._idle_timer = timer
             timer.start()
 
-    def _flash_result(self, *, color: str, state_name: str) -> None:
+    def _flash_result(self, *, color: str, state_name: str, flash_s: float) -> None:
         with self._lock:
             self._cancel_flash_timer_locked()
             self._cancel_idle_timer_locked()
@@ -84,7 +86,7 @@ class TowerLightController:
                 raise ValueError(f"unsupported tower light color: {color}")
             self._state = state_name
 
-            timer = threading.Timer(self.flash_s, self._finish_flash_and_schedule_idle)
+            timer = threading.Timer(max(0.01, float(flash_s)), self._finish_flash_and_schedule_idle)
             timer.daemon = True
             self._flash_timer = timer
             timer.start()

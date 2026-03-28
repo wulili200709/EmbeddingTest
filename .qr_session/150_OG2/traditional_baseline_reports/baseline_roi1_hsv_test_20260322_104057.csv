@@ -1,7 +1,0 @@
-﻿file,roi_label,bbox_xywh,mean_intensity,hsv_h_mean,hsv_h_std,hsv_s_mean,hsv_s_std,hsv_v_mean,hsv_v_std,roi_area,error
-10.bmp,,,,,,,,,,,缺少 labelme json: C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/5/test/10.json
-16.bmp,roi1,"[1020, 772, 268, 252]",95.939697265625,12.135117530822754,1.732966423034668,198.4652557373047,19.92181968688965,149.50254821777344,10.439943313598633,50445,
-17.bmp,,,,,,,,,,,17.bmp 缺少 roi1/roi 标注
-18.bmp,,,,,,,,,,,18.bmp 缺少 roi1/roi 标注
-4.bmp,,,,,,,,,,,4.bmp 缺少 roi1/roi 标注
-6.bmp,,,,,,,,,,,6.bmp 缺少 roi1/roi 标注

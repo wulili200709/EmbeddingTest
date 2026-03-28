@@ -1,2 +1,0 @@
-﻿file,roi_label,bbox_xywh,mean_intensity,hsv_h_mean,hsv_h_std,hsv_s_mean,hsv_s_std,hsv_v_mean,hsv_v_std,roi_area,error
-9.bmp,roi1,"[913, 638, 371, 577]",91.3936767578125,19.898496627807617,34.33925247192383,170.6732177734375,66.50696563720703,132.68319702148438,17.969783782958984,41181,

@@ -26,8 +26,8 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from application import (
     DEFAULT_RELEASE_PASSWORD,
+    ProductRuntimeContext,
     RuntimeController,
-    ToolPageRuntimeContext,
 )
 from ui.shell.chrome import (
     build_menu_bar as _build_shell_menu_bar,
@@ -96,7 +96,7 @@ _RUNTIME_IMPORT_ERROR = detect_runtime_import_error()
 # Test-stage switch:
 # False = 测试模式：NG时不自动弹出放行密码框，且不进入NG锁定，可直接继续下一次测试
 # True  = 产线模式：NG时自动弹出放行密码框，并进入NG锁定
-AUTO_SHOW_RELEASE_DIALOG_ON_NG = False
+AUTO_SHOW_RELEASE_DIALOG_ON_NG = True
 
 
 def _normalize_application_font(app: QtWidgets.QApplication) -> None:
@@ -150,7 +150,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.runtime_ctrl = RuntimeController(
             session=self.session,
             algo=self.algo,
-            runtime_context=ToolPageRuntimeContext(self.tool_page),
+            runtime_context=ProductRuntimeContext(self.session, self.algo),
             import_error=_RUNTIME_IMPORT_ERROR,
             release_password=self._release_password,
             lock_on_ng=AUTO_SHOW_RELEASE_DIALOG_ON_NG,
@@ -461,8 +461,16 @@ def main() -> None:
     if not app_icon.isNull():
         app.setWindowIcon(app_icon)
     w = MainWindow()
-    w.resize(1200, 800)
-    w.show()
+    screen = app.primaryScreen()
+    available = screen.availableGeometry() if screen is not None else QtCore.QRect(0, 0, 1366, 768)
+    small_screen = available.width() <= 1366 or available.height() <= 800
+    if small_screen:
+        w.showMaximized()
+    else:
+        target_width = min(1400, max(1200, available.width() - 80))
+        target_height = min(900, max(800, available.height() - 80))
+        w.resize(target_width, target_height)
+        w.show()
     app.exec()
 
 

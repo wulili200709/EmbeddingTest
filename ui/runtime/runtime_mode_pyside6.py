@@ -356,6 +356,10 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.lbl_duration = QtWidgets.QLabel("总流程: -")
         self.lbl_duration.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
         timing_grid.addWidget(self.lbl_duration, 1, 1)
+        self.lbl_capture_time.hide()
+        self.lbl_match_time.hide()
+        self.lbl_infer_time.hide()
+        self.lbl_duration.hide()
         total_layout.addLayout(timing_grid)
 
         count_grid = QtWidgets.QGridLayout()

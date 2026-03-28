@@ -51,6 +51,14 @@ class RuntimeModeTriggerButtonsTest(unittest.TestCase):
         self.assertTrue(page.btn_trigger_cam1.isEnabled())
         self.assertFalse(page.btn_trigger_cam2.isEnabled())
 
+    def test_top_timing_labels_hidden_by_default(self) -> None:
+        page = RuntimeModePage()
+
+        self.assertFalse(page.lbl_capture_time.isVisible())
+        self.assertFalse(page.lbl_match_time.isVisible())
+        self.assertFalse(page.lbl_infer_time.isVisible())
+        self.assertFalse(page.lbl_duration.isVisible())
+
 
 if __name__ == "__main__":
     unittest.main()

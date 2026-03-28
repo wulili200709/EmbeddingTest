@@ -2350,7 +2350,10 @@ tradition
   当前管理员密码是 admin123。
 
 默认值写在 qr_gui_pyside6.py，程序实际读取的是 system_passwords.json，你这份本地配置里当前也是 admin123。放行密码目前是同一个文件里的 run_password，现在是 1234
- 
+ AUTO_SHOW_RELEASE_DIALOG_ON_NG = False    main_window.py：
+
+
+
 虽然调试页里保留了 _build_shape_model 和 shape_model 分支，但按钮显示条件是 method == "shape_model"，而当前可选定位方式只有 line2dup，见 tool_page_pyside6.py。也就是说它现在更像“留着的备用链路”，不是正常 UI 主入口。
 
 如果你确定以后只保留 line2dup，我下一步可以把整套 shape_model 相关代码移到 legacy。
@@ -2844,6 +2847,7 @@ opencv-python
 PySide6
 torch
 torchvision
+matplotlib
 
 pip install opencv-python
 ## vs code安装python
@@ -3062,3 +3066,100 @@ load_embedding_model(...)：加载训练好的 OK/NG 特征模型
 get_feat_net(...)：加载并缓存 backbone 特征提取网络
 embed_batch(...)：把 ROI 图编码成归一化特征向量
 predict_one_with_model(...)：比较当前向量和 OK/NG 模型的相似度差，输出 OK/NG
+
+用 TF 做：
+Resize((224,224))
+ToTensor()
+Normalize(mean/std)
+这一步是把每个 ROI 图变成 backbone 能吃的标准输入，定义在 embedding.py#L52。
+
+Resize((224, 224))：把 ROI 缩放到固定大小 224x224
+ToTensor()：把 PIL.Image 变成 PyTorch tensor，形状从 HWC 变成 CHW，数值从 0~255 变成 0~1
+Normalize(mean/std)：按 ImageNet 的均值方差做标准化，这是因为你这里用的是 torchvision 预训练 backbone，见 embedding.py#L31
+向量维度取决于 backbone，不是固定一个值。单个 ROI 经过：
+
+feat_net(batch)
+adaptive_avg_pool2d(..., 1)
+flatten(1)
+F.normalize(...)
+之后，单个 ROI 的 embedding 维度是 backbone 的输出通道数，见 embedding.py#L27 和 embedding.py#L188：
+
+efficientnet_b0：1280
+mobilenet_v3_small：576
+mobilenet_v3_large：960
+所以：
+
+embed_batch(...) 返回形状是 N x D
+其中 N 是 ROI 数量，D 是上面的维度
+如果走 embed_many，多个 ROI 会先各自出向量，再拼接，所以总维度是：
+
+ROI个数 × D
+例如：
+
+efficientnet_b0 + 2 个 ROI => 2560 维
+mobilenet_v3_small + 2 个 ROI => 1152 维
+
+一张普通彩色图像，通常你直觉里是：
+
+高 H
+宽 W
+通道 C
+所以数组形状常见是：
+
+H x W x C
+比如一张 224x224 RGB 图，就是：
+
+224 x 224 x 3
+这叫 HWC。
+最后那个 3 表示 R/G/B 三个通道。
+
+但 PyTorch 里的卷积网络默认要的是：
+
+C x H x W
+也就是把通道放到最前面。
+同样这张图会变成：
+
+3 x 224 x 224
+这叫 CHW。
+
+ToTensor() 做的第一件事，就是把：
+
+HWC -> CHW
+再说数值。
+
+原始图片像素通常是 uint8：
+
+黑色接近 0
+白色接近 255
+也就是每个像素值在：
+
+0 ~ 255
+而神经网络一般不直接吃这个范围，通常先缩放到：
+
+0.0 ~ 1.0
+做法就是每个值除以 255。
+
+比如：
+
+0 -> 0.0
+128 -> 128/255 ≈ 0.502
+255 -> 1.0
+所以 ToTensor() 做的第二件事，就是把：
+
+0~255 的整数像素
+变成
+0~1 的浮点数
+举个例子，一张 RGB 图片里某个像素原来可能是：
+
+[64, 128, 255]
+经过 ToTensor() 后，会近似变成：
+
+[0.251, 0.502, 1.0]
+只是此时这个值已经放到 CHW 张量对应的位置里了。
+
+所以一句话总结：
+
+ToTensor() = 把图片从“图像格式”转成“神经网络输入格式”
+既改维度顺序：HWC -> CHW
+也改数值范围：0~255 -> 0~1
+后面的 Normalize(mean/std) 则是在这个 0~1 的基础上再做标准化，不是直接对 0~255 做。

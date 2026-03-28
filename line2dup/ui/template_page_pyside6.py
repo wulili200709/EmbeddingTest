@@ -269,7 +269,12 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"模板页 - {product_name}")
-        self.resize(1450, 920)
+        available = QtGui.QGuiApplication.primaryScreen().availableGeometry()
+        self.resize(
+            min(1450, max(1180, available.width() - 40)),
+            min(920, max(680, available.height() - 60)),
+        )
+        self.setMinimumSize(980, 620)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(_DIALOG_STYLESHEET)
 
@@ -332,11 +337,46 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._build_reference_tab()
         self._build_find_tab()
 
+    def _make_left_scroll_column(self) -> Tuple[QtWidgets.QScrollArea, QtWidgets.QVBoxLayout]:
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setMinimumWidth(360)
+        scroll.setMaximumWidth(430)
+        scroll.setStyleSheet(
+            "QScrollArea{background:#2f2f2f;border:none;}"
+            "QScrollArea > QWidget > QWidget{background:#2f2f2f;}"
+            "QScrollBar:vertical{background:#2f2f2f;width:10px;margin:0;}"
+            "QScrollBar::handle:vertical{background:#5a5a5a;min-height:28px;border-radius:5px;}"
+            "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}"
+        )
+        host = QtWidgets.QWidget()
+        host.setObjectName("leftScrollHost")
+        host.setStyleSheet("#leftScrollHost{background:#2f2f2f;}")
+        host.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred,
+            QtWidgets.QSizePolicy.Policy.Maximum,
+        )
+        layout = QtWidgets.QVBoxLayout(host)
+        layout.setContentsMargins(0, 0, 18, 0)
+        layout.setSpacing(8)
+        scroll.setWidget(host)
+        return scroll, layout
+
     def _build_create_tab(self) -> None:
         layout = QtWidgets.QHBoxLayout(self.tab_create)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(8)
 
-        left = QtWidgets.QVBoxLayout()
-        layout.addLayout(left, 0)
+        left_container = QtWidgets.QWidget()
+        left_container.setFixedWidth(430)
+        left_container_layout = QtWidgets.QVBoxLayout(left_container)
+        left_container_layout.setContentsMargins(0, 0, 0, 0)
+        left_container_layout.setSpacing(8)
+        left_scroll, left = self._make_left_scroll_column()
+        left_container_layout.addWidget(left_scroll, 1)
+        layout.addWidget(left_container, 0)
 
         file_box = QtWidgets.QGroupBox("参考图")
         file_l = QtWidgets.QGridLayout(file_box)
@@ -359,6 +399,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         select_l = QtWidgets.QGridLayout(select_box)
         self.cmb_role = QtWidgets.QComboBox()
         self.cmb_role.addItems(["template_roi", "exclude_mask"])
+        self.cmb_role.setMinimumWidth(200)
         self.cmb_role.currentTextChanged.connect(self._on_role_changed)
         self.btn_apply_selection = QtWidgets.QPushButton("应用当前框")
         self.btn_apply_selection.clicked.connect(self._apply_current_selection)
@@ -366,6 +407,8 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.btn_clear_roi.clicked.connect(self._clear_template_roi)
         self.btn_clear_masks = QtWidgets.QPushButton("清空Mask")
         self.btn_clear_masks.clicked.connect(self._clear_masks)
+        select_l.setColumnStretch(0, 0)
+        select_l.setColumnStretch(1, 1)
         select_l.addWidget(QtWidgets.QLabel("当前用途"), 0, 0)
         select_l.addWidget(self.cmb_role, 0, 1)
         select_l.addWidget(self.btn_apply_selection, 1, 0, 1, 2)
@@ -385,6 +428,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.chk_edit_points.setText("Edit Points")
         self.spin_point_label = QtWidgets.QSpinBox()
         self.spin_point_label.setRange(0, 7)
+        self.spin_point_label.setMinimumWidth(160)
         self.btn_extract_points = QtWidgets.QPushButton("Extract Points From ROI")
         self.btn_extract_points.clicked.connect(self._extract_points_from_roi)
         self.btn_extract_points.setEnabled(False)
@@ -392,6 +436,8 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.btn_reset_points.clicked.connect(self._reset_editor_levels_from_detector)
         self.lbl_point_help = QtWidgets.QLabel("左击添加点，短拖可设置方向；右击删除最近特征点。")
         self.lbl_point_help.setWordWrap(True)
+        point_l.setColumnStretch(0, 0)
+        point_l.setColumnStretch(1, 1)
         self.lbl_point_help.setText("宸﹀嚮娣诲姞鐐癸紝鐭嫋鍙缃柟鍚戯紱鍙冲嚮鍒犻櫎閫変腑/闄勮繎鐗瑰緛鐐广€?")
         point_l.addWidget(self.chk_edit_points, 0, 0, 1, 2)
         point_l.addWidget(QtWidgets.QLabel("默认方向label"), 1, 0)
@@ -409,8 +455,11 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
 
         param_box = QtWidgets.QGroupBox("模板参数")
         form = QtWidgets.QFormLayout(param_box)
+        form.setFieldGrowthPolicy(QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.edit_class_id = QtWidgets.QLineEdit(self.product_name or "object")
+        self.edit_class_id.setMinimumWidth(220)
         self.edit_levels = QtWidgets.QLineEdit("4,8")
+        self.edit_levels.setMinimumWidth(220)
         self.spin_num_features = QtWidgets.QSpinBox()
         self.spin_num_features.setRange(16, 4096)
         self.spin_num_features.setValue(128)
@@ -491,6 +540,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.btn_build.clicked.connect(self._build_and_save)
         action_row.addWidget(self.btn_build)
         self.btn_build.setText("保存")
+        self.btn_build.hide()
         left.addLayout(action_row)
 
         self.lbl_status = QtWidgets.QLabel("状态：先选参考图并设置 template_roi。")
@@ -498,12 +548,25 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.lbl_status.setText("状态：先选参考图并设置 template_roi。")
         left.addWidget(self.lbl_status)
         left.addStretch(1)
+        footer_box = QtWidgets.QFrame()
+        footer_box.setStyleSheet("QFrame{background:#2f2f2f;border-top:1px solid #505050;}")
+        footer_layout = QtWidgets.QVBoxLayout(footer_box)
+        footer_layout.setContentsMargins(0, 0, 0, 0)
+        footer_layout.setSpacing(0)
+        self.btn_build_pinned = QtWidgets.QPushButton("淇濆瓨")
+        self.btn_build_pinned.clicked.connect(self._build_and_save)
+        self.btn_build_pinned.setText("保存")
+        self.btn_build_pinned.setToolTip("保存模板")
+        self.btn_build_pinned.setText("保存")
+        self.btn_build_pinned.setToolTip("保存模板")
+        footer_layout.addWidget(self.btn_build_pinned)
+        left_container_layout.addWidget(footer_box, 0)
 
         right = QtWidgets.QVBoxLayout()
         layout.addLayout(right, 1)
         self.create_canvas = RoiCanvas()
         self.canvas = self.create_canvas
-        self.create_canvas.setMinimumSize(840, 720)
+        self.create_canvas.setMinimumSize(640, 480)
         self.create_canvas.draw_shape = "rect"
         self.create_canvas.shapesChanged.connect(self._on_create_canvas_shape_changed)
         self.create_canvas.imagePressed.connect(self._on_create_canvas_pressed)
@@ -544,9 +607,11 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
 
     def _build_reference_tab(self) -> None:
         layout = QtWidgets.QHBoxLayout(self.tab_reference)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(8)
 
-        left = QtWidgets.QVBoxLayout()
-        layout.addLayout(left, 0)
+        left_scroll, left = self._make_left_scroll_column()
+        layout.addWidget(left_scroll, 0)
 
         info_box = QtWidgets.QGroupBox("选中 ROI 属性")
         info_form = QtWidgets.QFormLayout(info_box)
@@ -610,7 +675,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self.btn_clear_reference_rois,
             self.btn_save_reference_roi,
         ]:
-            button.setMinimumWidth(150)
+            button.setMinimumWidth(120)
             region_btn_col.addWidget(button)
         region_btn_col.addStretch(1)
         region_body.addLayout(region_btn_col)
@@ -625,7 +690,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         right = QtWidgets.QVBoxLayout()
         layout.addLayout(right, 1)
         self.ref_canvas = RoiCanvas()
-        self.ref_canvas.setMinimumSize(840, 720)
+        self.ref_canvas.setMinimumSize(640, 480)
         self.ref_canvas.set_roi_style(
             roi_color=QtGui.QColor(0, 0, 255),
             roi_width=3.5,
@@ -638,9 +703,17 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
 
     def _build_find_tab(self) -> None:
         layout = QtWidgets.QHBoxLayout(self.tab_find)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(8)
 
-        left = QtWidgets.QVBoxLayout()
-        layout.addLayout(left, 0)
+        left_container = QtWidgets.QWidget()
+        left_container.setFixedWidth(430)
+        left_container_layout = QtWidgets.QVBoxLayout(left_container)
+        left_container_layout.setContentsMargins(0, 0, 0, 0)
+        left_container_layout.setSpacing(8)
+        left_scroll, left = self._make_left_scroll_column()
+        left_container_layout.addWidget(left_scroll, 1)
+        layout.addWidget(left_container, 0)
 
         model_box = QtWidgets.QGroupBox("模型")
         model_l = QtWidgets.QGridLayout(model_box)
@@ -668,6 +741,12 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.btn_remove_find_image.clicked.connect(self._remove_selected_find_images)
         self.btn_clear_find_images = QtWidgets.QPushButton("Clear")
         self.btn_clear_find_images.clicked.connect(self._clear_find_images)
+        for button in [self.btn_add_find_images, self.btn_remove_find_image, self.btn_clear_find_images]:
+            button.setMinimumWidth(0)
+            button.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Expanding,
+                QtWidgets.QSizePolicy.Policy.Fixed,
+            )
         list_btn_row.addWidget(self.btn_add_find_images)
         list_btn_row.addWidget(self.btn_remove_find_image)
         list_btn_row.addWidget(self.btn_clear_find_images)
@@ -727,6 +806,12 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.btn_run_find_selected.clicked.connect(self._run_selected_find)
         self.btn_run_find_all = QtWidgets.QPushButton("Run All")
         self.btn_run_find_all.clicked.connect(self._run_all_find)
+        for button in [self.btn_run_find_selected, self.btn_run_find_all]:
+            button.setMinimumWidth(0)
+            button.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Expanding,
+                QtWidgets.QSizePolicy.Policy.Fixed,
+            )
         run_row.addWidget(self.btn_run_find_selected)
         run_row.addWidget(self.btn_run_find_all)
         left.addLayout(run_row)
@@ -738,7 +823,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         right = QtWidgets.QVBoxLayout()
         layout.addLayout(right, 1)
         self.find_canvas = RoiCanvas()
-        self.find_canvas.setMinimumSize(840, 720)
+        self.find_canvas.setMinimumSize(640, 480)
         right.addWidget(self.find_canvas, 1)
 
     def _pick_image(self) -> None:

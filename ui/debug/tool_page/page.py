@@ -334,9 +334,13 @@ class ToolPage(QtWidgets.QWidget):
         self._current_camera_role = "cam1"
         # ?? setValue/????????????????????
         self._debug_camera_block_spin_apply = False
+        self._main_right_panel: Optional[QtWidgets.QFrame] = None
+        self._algorithm_picker_style_default = ""
+        self._algorithm_picker_style_compact = ""
 
         self._build_ui()
         self._set_current_camera_role(self._current_camera_role)
+        QtCore.QTimer.singleShot(0, self._update_responsive_layout)
         self.destroyed.connect(lambda *_: self._cleanup_debug_hardware())
 
     # ------------------------------------------------------------------
@@ -707,7 +711,9 @@ class ToolPage(QtWidgets.QWidget):
     def _sync_algorithm_picker(self) -> None:
         button = getattr(self, "btn_algorithm_picker", None)
         if button is not None:
-            button.setText(self.current_algorithm_display_name() or "请选择工具")
+            text = self.current_algorithm_display_name() or "请选择工具"
+            button.setText(text)
+            button.setToolTip(text)
         actions = getattr(self, "_algorithm_actions", {})
         current_algorithm = self.current_algorithm()
         for code, action in actions.items():
@@ -1087,7 +1093,7 @@ class ToolPage(QtWidgets.QWidget):
 
         # 右侧面板
         right_panel = QtWidgets.QFrame()
-        right_panel.setFixedWidth(400)
+        self._main_right_panel = right_panel
         right_panel.setStyleSheet(f"background:{_PANEL_BG};border-left:1px solid #505050;")
         right_vbox = QtWidgets.QVBoxLayout(right_panel)
         right_vbox.setContentsMargins(0, 0, 0, 0)
@@ -1180,16 +1186,29 @@ class ToolPage(QtWidgets.QWidget):
         right_vbox.addWidget(self.tabs, 1)
 
         # --- 算法参数 ---
-        sec_algo = QtWidgets.QLabel("  \u7b97\u6cd5\u53c2\u6570")
-        sec_algo.setFixedHeight(28)
-        sec_algo.setStyleSheet(_section_style)
-        right_vbox.addWidget(sec_algo)
+        self.btn_toggle_algo = QtWidgets.QToolButton()
+        self.btn_toggle_algo.setText("  算法参数")
+        self.btn_toggle_algo.setCheckable(True)
+        self.btn_toggle_algo.setChecked(True)
+        self.btn_toggle_algo.setArrowType(QtCore.Qt.ArrowType.DownArrow)
+        self.btn_toggle_algo.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.btn_toggle_algo.setStyleSheet(
+            (
+                f"QToolButton{{background:#404040;color:{_TEXT_LIGHT};font-size:12px;"
+                f"font-weight:bold;border:none;border-bottom:1px solid #505050;padding:6px 10px;}}"
+                "QToolButton:hover{background:#474747;}"
+            )
+        )
+        self.btn_toggle_algo.toggled.connect(self._toggle_algorithm_section)
+        right_vbox.addWidget(self.btn_toggle_algo)
 
         algo_frame = QtWidgets.QWidget()
         algo_form = QtWidgets.QFormLayout(algo_frame)
         algo_form.setContentsMargins(10, 6, 10, 6)
         algo_form.setSpacing(4)
+        algo_form.setHorizontalSpacing(6)
         algo_form.setLabelAlignment(QtCore.Qt.AlignRight)
+        algo_form.setFieldGrowthPolicy(QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
         self.cmb_algorithm = QtWidgets.QComboBox()
         self._populate_algorithm_combo()
@@ -1200,15 +1219,22 @@ class ToolPage(QtWidgets.QWidget):
         self.btn_algorithm_picker.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
         self.btn_algorithm_picker.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.btn_algorithm_picker.setMenu(self._build_algorithm_picker_menu())
-        self.btn_algorithm_picker.setStyleSheet(
+        self._algorithm_picker_style_default = (
             "QToolButton{background:#2f2f2f;color:#e0e0e0;border:1px solid #555;"
             "padding:5px 28px 5px 8px;border-radius:3px;font-size:12px;}"
             "QToolButton:hover{background:#3a3a3a;}"
         )
+        self._algorithm_picker_style_compact = (
+            "QToolButton{background:#2f2f2f;color:#e0e0e0;border:1px solid #555;"
+            "padding:4px 22px 4px 6px;border-radius:3px;font-size:11px;}"
+            "QToolButton:hover{background:#3a3a3a;}"
+        )
+        self.btn_algorithm_picker.setStyleSheet(self._algorithm_picker_style_default)
         self.btn_algorithm_picker.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Expanding,
             QtWidgets.QSizePolicy.Policy.Fixed,
         )
+        self.btn_algorithm_picker.setMinimumWidth(240)
         self.cmb_mode = QtWidgets.QComboBox()
         self.cmb_mode.addItems(SUPPORTED_SCORE_MODES)
         self.cmb_mode.currentTextChanged.connect(self._on_runtime_params_changed)
@@ -1239,6 +1265,7 @@ class ToolPage(QtWidgets.QWidget):
         algo_form.addRow(lbl_m, self.cmb_mode)
         algo_form.addRow(lbl_mg, self.spin_margin)
         algo_form.addRow(self.lbl_topk, self.spin_topk)
+        self.algorithm_params_frame = algo_frame
         right_vbox.addWidget(algo_frame)
         self._sync_algorithm_picker()
 
@@ -1265,6 +1292,7 @@ class ToolPage(QtWidgets.QWidget):
         tool_frame = QtWidgets.QWidget()
         tool_vbox = QtWidgets.QVBoxLayout(tool_frame)
         lbl_mg = QtWidgets.QLabel("Threshold") ; lbl_mg.setStyleSheet(_lbl_s)
+        tool_vbox.setContentsMargins(0, 0, 0, 0)
         tool_vbox.setSpacing(4)
 
         self.lbl_tool_config_hint = QtWidgets.QLabel("")
@@ -1290,12 +1318,24 @@ class ToolPage(QtWidgets.QWidget):
             "QHeaderView::section{background:#3a3a3a;color:#d0d0d0;border:1px solid #404040;padding:4px;}"
         )
         self.inspection_items_table.setMinimumHeight(170)
-        self.inspection_items_table.setMaximumHeight(210)
         self.inspection_items_table.setColumnWidth(0, 52)
         self.inspection_items_table.itemChanged.connect(self._on_inspection_items_table_item_changed)
         self.inspection_items_table.itemSelectionChanged.connect(self._on_inspection_items_selection_changed)
         tool_vbox.addWidget(self.inspection_items_table)
-        right_vbox.addWidget(tool_frame)
+        self.tool_config_scroll = QtWidgets.QScrollArea()
+        self.tool_config_scroll.setWidgetResizable(True)
+        self.tool_config_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.tool_config_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.tool_config_scroll.setStyleSheet(
+            "QScrollArea{background:#2f2f2f;border:none;}"
+            "QScrollArea > QWidget > QWidget{background:#2f2f2f;}"
+            "QScrollBar:vertical{background:#2f2f2f;width:10px;margin:0;}"
+            "QScrollBar::handle:vertical{background:#5a5a5a;min-height:28px;border-radius:5px;}"
+            "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}"
+        )
+        self.tool_config_scroll.setWidget(tool_frame)
+        self.tool_config_scroll.setMinimumHeight(220)
+        right_vbox.addWidget(self.tool_config_scroll, 1)
         self._update_learning_backbone_hint()
 
         # --- 操作按钮 ---
@@ -1859,12 +1899,31 @@ class ToolPage(QtWidgets.QWidget):
         self.lbl_template_tool_hint = QtWidgets.QLabel("")
         self.lbl_template_tool_hint.hide()
         self._normalize_stylesheet_font_units()
+        self._update_responsive_layout()
+
+    def showEvent(self, event: QtGui.QShowEvent) -> None:
+        super().showEvent(event)
+        self._update_responsive_layout()
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._update_responsive_layout()
 
     def _toggle_tool_config_section(self, checked: bool) -> None:
-        frame = getattr(self, "tool_config_frame", None)
+        frame = getattr(self, "tool_config_scroll", None) or getattr(self, "tool_config_frame", None)
         if frame is not None:
             frame.setVisible(bool(checked))
         toggle = getattr(self, "btn_toggle_tools", None)
+        if toggle is not None:
+            toggle.setArrowType(
+                QtCore.Qt.ArrowType.DownArrow if checked else QtCore.Qt.ArrowType.RightArrow
+            )
+
+    def _toggle_algorithm_section(self, checked: bool) -> None:
+        frame = getattr(self, "algorithm_params_frame", None)
+        if frame is not None:
+            frame.setVisible(bool(checked))
+        toggle = getattr(self, "btn_toggle_algo", None)
         if toggle is not None:
             toggle.setArrowType(
                 QtCore.Qt.ArrowType.DownArrow if checked else QtCore.Qt.ArrowType.RightArrow
@@ -1887,6 +1946,26 @@ class ToolPage(QtWidgets.QWidget):
             normalized = self._normalize_font_size_units(style_sheet)
             if normalized != style_sheet:
                 widget.setStyleSheet(normalized)
+
+    def _update_responsive_layout(self) -> None:
+        width = max(self.width(), 1)
+        compact = width <= 1366
+        right_panel = getattr(self, "_main_right_panel", None)
+        if right_panel is not None:
+            panel_width = 660 if compact else 500
+            if width >= 1700:
+                panel_width = 540
+            right_panel.setFixedWidth(panel_width)
+        if hasattr(self, "cmb_product"):
+            self.cmb_product.setFixedWidth(160 if compact else 180)
+        if hasattr(self, "btn_new_product"):
+            self.btn_new_product.setFixedWidth(56 if compact else 60)
+        if hasattr(self, "cmb_current_camera_role"):
+            self.cmb_current_camera_role.setFixedWidth(72 if compact else 84)
+        if hasattr(self, "btn_algorithm_picker"):
+            style = self._algorithm_picker_style_compact if compact else self._algorithm_picker_style_default
+            if style and self.btn_algorithm_picker.styleSheet() != style:
+                self.btn_algorithm_picker.setStyleSheet(style)
 
 
     # ------------------------------------------------------------------

@@ -1,7 +1,0 @@
-{
-  "algorithm": "efficientnet_b0",
-  "score_mode": "proto",
-  "margin": 0.02,
-  "topk": 3,
-  "traditional_models": {}
-}

@@ -12,6 +12,9 @@ import algorithms.proxy as qr_core
 from ui.roi_overlay_colors import overlay_style_for_label, search_region_style
 
 
+_RUNTIME_OVERLAY_WIDTH_MULTIPLIER = 3.0
+
+
 def embedding_test_root(anchor_file: str) -> Path:
     current = Path(anchor_file).resolve()
     for parent in [current.parent, *current.parents]:
@@ -191,10 +194,11 @@ def _draw_runtime_roi_shapes(
     }
 
     def draw_shape(label: str, color: QtGui.QColor, *, width: float = 2.0, dash: bool = False) -> bool:
+        runtime_width = max(1.0, float(width) * _RUNTIME_OVERLAY_WIDTH_MULTIPLIER)
         polygon = qr_core.try_read_polygon_points_from_labelme(jpath, label)
         if polygon and len(polygon) >= 3:
             pen = QtGui.QPen(color)
-            pen.setWidthF(width)
+            pen.setWidthF(runtime_width)
             pen.setStyle(QtCore.Qt.DashLine if dash else QtCore.Qt.SolidLine)
             painter.setPen(pen)
             painter.setBrush(QtCore.Qt.NoBrush)
@@ -205,7 +209,7 @@ def _draw_runtime_roi_shapes(
         if xywh:
             x, y, w, h = xywh
             pen = QtGui.QPen(color)
-            pen.setWidthF(width)
+            pen.setWidthF(runtime_width)
             pen.setStyle(QtCore.Qt.DashLine if dash else QtCore.Qt.SolidLine)
             painter.setPen(pen)
             painter.setBrush(QtCore.Qt.NoBrush)
