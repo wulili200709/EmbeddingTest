@@ -12,6 +12,12 @@ import re
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+from path_utils import (
+    product_relative_path,
+    resolve_existing_product_path,
+    resolve_existing_product_paths,
+)
+
 
 @dataclass(frozen=True)
 class ProductPaths:
@@ -163,10 +169,10 @@ class ProductSession:
             except Exception:
                 existing_payload = {}
         payload = {
-            "ok_files": data.ok_files,
-            "ng_files": data.ng_files,
-            "test_files": data.test_files,
-            "ref_image": data.ref_image or "",
+            "ok_files": [product_relative_path(path, base_dir=self.product_dir) for path in data.ok_files],
+            "ng_files": [product_relative_path(path, base_dir=self.product_dir) for path in data.ng_files],
+            "test_files": [product_relative_path(path, base_dir=self.product_dir) for path in data.test_files],
+            "ref_image": product_relative_path(data.ref_image or "", base_dir=self.product_dir),
             "loc_method": data.loc_method,
             "runtime_cam1_serial": (
                 str(data.runtime_cam1_serial).strip()
@@ -197,10 +203,10 @@ class ProductSession:
                 raw = {}
 
         def _filter(xs) -> List[str]:
-            return [p for p in xs if isinstance(p, str) and os.path.exists(p)]
+            return resolve_existing_product_paths(xs, base_dir=self.product_dir, anchor_dir=self.product_dir)
 
         ref = raw.get("ref_image", "")
-        ref_image = ref if isinstance(ref, str) and os.path.exists(ref) else None
+        ref_image = resolve_existing_product_path(ref, base_dir=self.product_dir, anchor_dir=self.product_dir)
 
         loc_method = str(raw.get("loc_method", "line2dup")).strip() or "line2dup"
         if loc_method != "line2dup":

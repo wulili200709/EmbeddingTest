@@ -100,6 +100,9 @@ except Exception:
 
 DEFAULT_RELEASE_PASSWORD = "1234"
 DEFAULT_LIGHT_STABLE_MS = 20
+DEFAULT_TOWER_LIGHT_OK_FLASH_MS = 200
+DEFAULT_TOWER_LIGHT_NG_FLASH_MS = 200
+DEFAULT_TOWER_LIGHT_IDLE_BLUE_DELAY_MS = 30000
 RUNTIME_CAPTURE_POLICY_ALL = "all"
 RUNTIME_CAPTURE_POLICY_NG_ONLY = "ng_only"
 
@@ -249,7 +252,7 @@ class RuntimeController(QtCore.QObject):
         self._last_capture_paths: Dict[str, str] = {}
         self._last_record_path: Optional[str] = None
         self._last_runtime_result: Optional[RuntimeInspectionResult] = None
-        self._capture_retention_policy = RUNTIME_CAPTURE_POLICY_NG_ONLY
+        self._capture_retention_policy = RUNTIME_CAPTURE_POLICY_ALL
         self._camera_settings_store = CameraSettingsStore(self._session.camera_settings_path)
 
         self._camera_manager = None
@@ -269,6 +272,11 @@ class RuntimeController(QtCore.QObject):
         self._tower_light_controller: _UiOnlyTowerLightController = _UiOnlyTowerLightController()
         self._busy = False
         self._pending_camera_settings_by_serial: Dict[str, dict] = {}
+        self._tower_light_settings = {
+            "ok_flash_ms": DEFAULT_TOWER_LIGHT_OK_FLASH_MS,
+            "ng_flash_ms": DEFAULT_TOWER_LIGHT_NG_FLASH_MS,
+            "idle_blue_delay_ms": DEFAULT_TOWER_LIGHT_IDLE_BLUE_DELAY_MS,
+        }
 
     def set_capture_retention_policy(self, policy: object) -> None:
         self._capture_retention_policy = normalize_capture_retention_policy(policy)
@@ -278,6 +286,47 @@ class RuntimeController(QtCore.QObject):
 
     def initialize_startup_io(self, *, force: bool = False) -> bool:
         return self._initialize_startup_io(force=force)
+
+    def tower_light_settings(self) -> dict[str, int]:
+        return dict(self._tower_light_settings)
+
+    def update_tower_light_settings(self, settings: dict[str, object]) -> None:
+        normalized = {
+            "ok_flash_ms": max(10, int(settings.get("ok_flash_ms", DEFAULT_TOWER_LIGHT_OK_FLASH_MS))),
+            "ng_flash_ms": max(10, int(settings.get("ng_flash_ms", DEFAULT_TOWER_LIGHT_NG_FLASH_MS))),
+            "idle_blue_delay_ms": max(0, int(settings.get("idle_blue_delay_ms", DEFAULT_TOWER_LIGHT_IDLE_BLUE_DELAY_MS))),
+        }
+        self._tower_light_settings = normalized
+
+        if self._io_controller is None or not getattr(self._io_controller, "is_open", False):
+            self._update_status("\u5854\u706f\u65f6\u5e8f\u53c2\u6570\u5df2\u66f4\u65b0")
+            return
+
+        previous_state = str(getattr(self._tower_light_controller, "state", "waiting") or "waiting")
+        try:
+            if hasattr(self._tower_light_controller, "close"):
+                self._tower_light_controller.close()
+        except Exception:
+            pass
+
+        if TowerLightController is None:
+            self._tower_light_controller = _UiOnlyTowerLightController()
+        else:
+            self._tower_light_controller = TowerLightController(
+                self._io_controller,
+                ok_flash_ms=normalized["ok_flash_ms"],
+                ng_flash_ms=normalized["ng_flash_ms"],
+                idle_blue_delay_s=float(normalized["idle_blue_delay_ms"]) / 1000.0,
+            )
+
+        if previous_state == "inspecting":
+            self._tower_light_controller.enter_inspecting()
+        elif previous_state == "off" and hasattr(self._tower_light_controller, "all_off"):
+            self._tower_light_controller.all_off()
+        else:
+            self._tower_light_controller.enter_waiting()
+
+        self._update_status("\u5854\u706f\u65f6\u5e8f\u53c2\u6570\u5df2\u66f4\u65b0")
 
     def _sync_camera_settings_store_path(self) -> None:
         self._camera_settings_store.set_path(self._session.camera_settings_path)

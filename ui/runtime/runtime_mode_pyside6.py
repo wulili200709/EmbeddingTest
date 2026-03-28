@@ -23,6 +23,8 @@ runtime_mode_pyside6.py
 
 from __future__ import annotations
 
+import re
+
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ui.roi_overlay_colors import merge_roi_statuses
@@ -58,7 +60,11 @@ class RuntimeImageView(QtWidgets.QLabel):
         super().__init__(title)
         self._pixmap: QtGui.QPixmap | None = None
         self.setAlignment(QtCore.Qt.AlignCenter)
-        self.setMinimumSize(320, 240)
+        self.setMinimumSize(160, 120)
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Expanding,
+        )
         self.setStyleSheet(f"background:{_DARK_BG};color:{_TEXT_DIM};font-size:14px;")
 
     def set_runtime_pixmap(self, pixmap: QtGui.QPixmap | None, *, placeholder: str | None = None) -> None:
@@ -86,6 +92,28 @@ class RuntimeImageView(QtWidgets.QLabel):
         self.setPixmap(scaled)
 
 
+class _ElidedLabel(QtWidgets.QLabel):
+    def __init__(self, text: str, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__("", parent)
+        self._full_text = ""
+        self.setText(text)
+
+    def setText(self, text: str) -> None:  # type: ignore[override]
+        self._full_text = str(text or "")
+        super().setText(self._elided_text())
+        self.setToolTip(self._full_text)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        super().setText(self._elided_text())
+
+    def _elided_text(self) -> str:
+        width = max(0, self.contentsRect().width())
+        if width <= 0:
+            return self._full_text
+        return self.fontMetrics().elidedText(self._full_text, QtCore.Qt.ElideRight, width)
+
+
 class _ItemIndicator(QtWidgets.QFrame):
     def __init__(self, index: int, name: str, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
@@ -97,17 +125,23 @@ class _ItemIndicator(QtWidgets.QFrame):
         layout.setSpacing(8)
 
         self.lbl_index = QtWidgets.QLabel(f"{index:02d}")
-        self.lbl_index.setStyleSheet(f"color:{_TEXT_DIM};font-size:13px;font-weight:bold;min-width:24px;")
+        self.lbl_index.setFixedWidth(24)
+        self.lbl_index.setStyleSheet(f"color:{_TEXT_DIM};font-size:13px;font-weight:bold;")
         self.lbl_index.setAlignment(QtCore.Qt.AlignCenter)
         layout.addWidget(self.lbl_index)
 
-        self.lbl_name = QtWidgets.QLabel(name)
+        self.lbl_name = _ElidedLabel(name)
+        self.lbl_name.setMinimumWidth(0)
+        self.lbl_name.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
         self.lbl_name.setStyleSheet(f"color:{_TEXT_LIGHT};font-size:14px;")
         layout.addWidget(self.lbl_name, 1)
 
         self.lbl_result = QtWidgets.QLabel("")
         self.lbl_result.setAlignment(QtCore.Qt.AlignCenter)
-        self.lbl_result.setFixedSize(64, 32)
+        self.lbl_result.setFixedSize(56, 32)
         self.lbl_result.setStyleSheet(
             f"background:{_PENDING_GRAY};color:white;font-size:14px;font-weight:bold;"
             "border-radius:4px;"
@@ -151,7 +185,7 @@ class _CameraSectionHeader(QtWidgets.QFrame):
 
         self.lbl_result = QtWidgets.QLabel("未检测")
         self.lbl_result.setAlignment(QtCore.Qt.AlignCenter)
-        self.lbl_result.setFixedSize(64, 28)
+        self.lbl_result.setFixedSize(56, 28)
         self.lbl_result.setStyleSheet(
             f"background:{_PENDING_GRAY};color:white;font-size:12px;font-weight:bold;border-radius:4px;"
         )
@@ -211,7 +245,8 @@ class RuntimeModePage(QtWidgets.QWidget):
 
         # ── 顶栏 ──
         header = QtWidgets.QFrame()
-        header.setFixedHeight(44)
+        header.setMinimumHeight(40)
+        header.setMaximumHeight(52)
         header.setStyleSheet(
             f"background:{_HEADER_BG};border-bottom:1px solid #505050;"
         )
@@ -273,24 +308,41 @@ class RuntimeModePage(QtWidgets.QWidget):
         root.addWidget(header)
 
         # ── 主体：画面 + 右侧面板 ──
-        body = QtWidgets.QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(0)
+        body = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        body.setChildrenCollapsible(False)
+        body.setHandleWidth(4)
+        body.setStyleSheet(
+            "QSplitter::handle{background:#404040;}"
+            "QSplitter::handle:hover{background:#505050;}"
+        )
 
         camera_frame = QtWidgets.QFrame()
         camera_frame.setStyleSheet(f"background:{_DARK_BG};")
-        camera_layout = QtWidgets.QHBoxLayout(camera_frame)
+        camera_layout = QtWidgets.QVBoxLayout(camera_frame)
         camera_layout.setContentsMargins(2, 2, 2, 2)
         camera_layout.setSpacing(2)
 
+        camera_splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        camera_splitter.setChildrenCollapsible(False)
+        camera_splitter.setHandleWidth(2)
+        camera_splitter.setStyleSheet("QSplitter::handle{background:#383838;}")
+
         self.view_cam1 = RuntimeImageView("Cam1")
         self.view_cam2 = RuntimeImageView("Cam2")
-        camera_layout.addWidget(self.view_cam1, 1)
-        camera_layout.addWidget(self.view_cam2, 1)
-        body.addWidget(camera_frame, 3)
+        camera_splitter.addWidget(self.view_cam1)
+        camera_splitter.addWidget(self.view_cam2)
+        camera_splitter.setStretchFactor(0, 1)
+        camera_splitter.setStretchFactor(1, 1)
+        camera_layout.addWidget(camera_splitter, 1)
+        self._camera_splitter = camera_splitter
 
         right_panel = QtWidgets.QFrame()
-        right_panel.setFixedWidth(280)
+        right_panel.setMinimumWidth(240)
+        right_panel.setMaximumWidth(380)
+        right_panel.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred,
+            QtWidgets.QSizePolicy.Policy.Expanding,
+        )
         right_panel.setStyleSheet(
             f"background:{_PANEL_BG};border-left:1px solid #505050;"
         )
@@ -299,7 +351,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         right_layout.setSpacing(0)
 
         panel_title = QtWidgets.QLabel("  检测项")
-        panel_title.setFixedHeight(32)
+        panel_title.setMinimumHeight(30)
         panel_title.setStyleSheet(
             f"background:#404040;color:{_TEXT_LIGHT};font-size:13px;font-weight:bold;"
             "border-bottom:1px solid #505050;padding-left:10px;"
@@ -321,6 +373,10 @@ class RuntimeModePage(QtWidgets.QWidget):
         right_layout.addWidget(self._items_scroll, 1)
 
         total_frame = QtWidgets.QFrame()
+        total_frame.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred,
+            QtWidgets.QSizePolicy.Policy.Minimum,
+        )
         total_frame.setStyleSheet(f"background:#404040;border-top:1px solid #5a5a5a;")
         total_layout = QtWidgets.QVBoxLayout(total_frame)
         total_layout.setContentsMargins(12, 8, 12, 8)
@@ -380,10 +436,12 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.lbl_cam1_timing = QtWidgets.QLabel("Cam1: -")
         self.lbl_cam1_timing.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
         total_layout.addWidget(self.lbl_cam1_timing)
+        self.lbl_cam1_timing.hide()
 
         self.lbl_cam2_timing = QtWidgets.QLabel("Cam2: -")
         self.lbl_cam2_timing.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
         total_layout.addWidget(self.lbl_cam2_timing)
+        self.lbl_cam2_timing.hide()
 
         self.lbl_final_result = QtWidgets.QLabel("-")
         self.lbl_final_result.setAlignment(QtCore.Qt.AlignCenter)
@@ -395,23 +453,29 @@ class RuntimeModePage(QtWidgets.QWidget):
         total_layout.addWidget(self.lbl_final_result, 1)
 
         right_layout.addWidget(total_frame)
-        body.addWidget(right_panel, 0)
+        body.addWidget(camera_frame)
+        body.addWidget(right_panel)
+        body.setStretchFactor(0, 1)
+        body.setStretchFactor(1, 0)
+        body.setSizes([1100, 280])
+        self._body_splitter = body
 
-        root.addLayout(body, 1)
+        root.addWidget(body, 1)
 
         # ── 底栏 ──
         footer = QtWidgets.QFrame()
-        footer.setFixedHeight(32)
+        footer.setMinimumHeight(28)
         footer.setStyleSheet(
             f"background:{_HEADER_BG};border-top:1px solid #505050;"
         )
         footer_layout = QtWidgets.QHBoxLayout(footer)
-        footer_layout.setContentsMargins(16, 0, 16, 0)
-        footer_layout.setSpacing(20)
+        footer_layout.setContentsMargins(12, 4, 12, 4)
+        footer_layout.setSpacing(12)
 
         self.lbl_footer_time = QtWidgets.QLabel("处理: -")
         self.lbl_footer_time.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
         footer_layout.addWidget(self.lbl_footer_time)
+        self.lbl_footer_time.hide()
 
         self.lbl_footer_state = QtWidgets.QLabel("状态: 等待触发")
         self.lbl_footer_state.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
@@ -425,11 +489,14 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.lbl_footer_permission.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
         footer_layout.addWidget(self.lbl_footer_permission)
 
-        footer_layout.addStretch(1)
-
-        self.lbl_footer_record = QtWidgets.QLabel("")
+        self.lbl_footer_record = _ElidedLabel("")
         self.lbl_footer_record.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
-        footer_layout.addWidget(self.lbl_footer_record)
+        self.lbl_footer_record.setMinimumWidth(0)
+        self.lbl_footer_record.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
+        footer_layout.addWidget(self.lbl_footer_record, 1)
 
         root.addWidget(footer)
 
@@ -518,7 +585,8 @@ class RuntimeModePage(QtWidgets.QWidget):
         pass
 
     def set_runtime_status(self, status_text: str) -> None:
-        self.lbl_footer_state.setText(f"状态: {status_text}")
+        clean_text = self._sanitize_runtime_status_text(status_text)
+        self.lbl_footer_state.setText(f"状态: {clean_text}" if clean_text else "状态: -")
 
     def set_final_result(self, result_text: str, detail_text: str) -> None:
         result_upper = str(result_text).strip().upper()
@@ -550,6 +618,8 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._active_role_set = role_set
         show_cam2 = "cam2" in role_set
         self.view_cam2.setVisible(show_cam2)
+        if hasattr(self, "_camera_splitter"):
+            self._camera_splitter.setSizes([1, 1] if show_cam2 else [1, 0])
         if not role_set:
             self.view_cam1.set_runtime_pixmap(None, placeholder="未连接相机")
             self.view_cam2.set_runtime_pixmap(None, placeholder="Cam2")
@@ -708,6 +778,21 @@ class RuntimeModePage(QtWidgets.QWidget):
             f"{title}: 取{capture_ms:.1f}  匹{match_ms:.1f}  推{infer_ms:.1f}"
             f"  合{total_ms:.1f} ms"
         )
+
+    @staticmethod
+    def _sanitize_runtime_status_text(status_text: str) -> str:
+        text = " ".join(str(status_text or "").split())
+        patterns = [
+            r"(?:^|[;, ]+)capture\s+\d+(?:\.\d+)?\s*ms",
+            r"(?:^|[;, ]+)match\s+\d+(?:\.\d+)?\s*ms",
+            r"(?:^|[;, ]+)infer\s+\d+(?:\.\d+)?\s*ms",
+            r"(?:^|[;, ]+)耗时[:：]?\s*\d+(?:\.\d+)?\s*ms",
+            r"(?:^|[;, ]+)处理[:：]?\s*\d+(?:\.\d+)?\s*ms",
+        ]
+        for pattern in patterns:
+            text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s{2,}", " ", text).strip(" ;,")
+        return text
 
     def _set_total_duration_labels(self, duration_ms: float) -> None:
         self.lbl_footer_time.setText(

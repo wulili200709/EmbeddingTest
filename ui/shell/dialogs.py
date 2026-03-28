@@ -10,6 +10,7 @@ from ui.window_common import embedding_test_root
 
 DEFAULT_ADMIN_PASSWORD = "admin123"
 SYSTEM_PASSWORDS_FILENAME = "system_passwords.json"
+TOWER_LIGHT_SETTINGS_FILENAME = "tower_light_settings.json"
 
 
 def _dialog_style_sheet() -> str:
@@ -18,6 +19,8 @@ def _dialog_style_sheet() -> str:
         "QLabel{color:#e0e0e0;}"
         "QLineEdit{background:#404040;color:#e0e0e0;border:1px solid #5a5a5a;"
         "padding:5px 6px;border-radius:3px;selection-background-color:#3794ff;}"
+        "QSpinBox,QDoubleSpinBox{background:#404040;color:#e0e0e0;border:1px solid #5a5a5a;"
+        "padding:4px 6px;border-radius:3px;selection-background-color:#3794ff;}"
         "QPushButton{background:#444444;color:#d0d0d0;border:1px solid #5a5a5a;"
         "padding:5px 18px;border-radius:4px;min-width:72px;}"
         "QPushButton:hover{background:#505050;}"
@@ -80,6 +83,57 @@ class PasswordSettingsStore:
             "engineer_password": str(settings.get("engineer_password", self._default_admin_password)).strip()
             or self._default_admin_password,
         }
+        self.path().write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+
+class TowerLightSettingsStore:
+    def path(self) -> Path:
+        config_dir = embedding_test_root(__file__) / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        return config_dir / TOWER_LIGHT_SETTINGS_FILENAME
+
+    def default_settings(self) -> dict[str, int]:
+        return {
+            "ok_flash_ms": 200,
+            "ng_flash_ms": 200,
+            "idle_blue_delay_ms": 30000,
+        }
+
+    def load(self) -> dict[str, int]:
+        settings = self.default_settings()
+        path = self.path()
+        raw: dict = {}
+        if path.exists():
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                raw = {}
+
+        if isinstance(raw, dict):
+            for key in tuple(settings.keys()):
+                try:
+                    value = int(raw.get(key, settings[key]))
+                except Exception:
+                    value = settings[key]
+                settings[key] = max(0, value)
+
+        try:
+            self.save(settings)
+        except Exception:
+            pass
+        return settings
+
+    def save(self, settings: dict[str, int]) -> None:
+        defaults = self.default_settings()
+        payload = {}
+        for key, default_value in defaults.items():
+            try:
+                payload[key] = max(0, int(settings.get(key, default_value)))
+            except Exception:
+                payload[key] = default_value
         self.path().write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -215,3 +269,55 @@ def prompt_connect_camera_bindings(
     if dialog.exec() != QtWidgets.QDialog.Accepted:
         return None
     return edit_cam1.text().strip(), edit_cam2.text().strip()
+
+
+def prompt_tower_light_settings(
+    parent: QtWidgets.QWidget,
+    *,
+    current_settings: dict[str, int],
+) -> dict[str, int] | None:
+    dialog = QtWidgets.QDialog(parent)
+    dialog.setWindowTitle("\u4e09\u8272\u706f\u5e8f\u8bbe\u7f6e")
+    dialog.setMinimumWidth(380)
+    _apply_dialog_theme(dialog)
+
+    layout = QtWidgets.QFormLayout(dialog)
+    layout.setContentsMargins(16, 14, 16, 14)
+    layout.setSpacing(10)
+
+    ok_spin = QtWidgets.QSpinBox()
+    ok_spin.setRange(10, 10000)
+    ok_spin.setSingleStep(10)
+    ok_spin.setSuffix(" ms")
+    ok_spin.setValue(max(10, int(current_settings.get("ok_flash_ms", 200))))
+    layout.addRow("\u7eff\u706f\u65f6\u957f", ok_spin)
+
+    ng_spin = QtWidgets.QSpinBox()
+    ng_spin.setRange(10, 10000)
+    ng_spin.setSingleStep(10)
+    ng_spin.setSuffix(" ms")
+    ng_spin.setValue(max(10, int(current_settings.get("ng_flash_ms", 200))))
+    layout.addRow("\u7ea2\u706f\u65f6\u957f", ng_spin)
+
+    idle_spin = QtWidgets.QSpinBox()
+    idle_spin.setRange(0, 600000)
+    idle_spin.setSingleStep(100)
+    idle_spin.setSuffix(" ms")
+    idle_spin.setValue(max(0, int(current_settings.get("idle_blue_delay_ms", 30000))))
+    layout.addRow("\u56de\u84dd\u7b49\u5f85", idle_spin)
+
+    button_box = QtWidgets.QDialogButtonBox(
+        QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+    )
+    button_box.accepted.connect(dialog.accept)
+    button_box.rejected.connect(dialog.reject)
+    layout.addRow(button_box)
+
+    if dialog.exec() != QtWidgets.QDialog.Accepted:
+        return None
+
+    return {
+        "ok_flash_ms": int(ok_spin.value()),
+        "ng_flash_ms": int(ng_spin.value()),
+        "idle_blue_delay_ms": int(idle_spin.value()),
+    }

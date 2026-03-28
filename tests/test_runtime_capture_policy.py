@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -36,6 +37,31 @@ class RuntimeCapturePolicyTest(unittest.TestCase):
 
             loaded = session.load_session()
             self.assertEqual(loaded.runtime_capture_policy, RUNTIME_CAPTURE_POLICY_ALL)
+
+    def test_session_stores_relative_image_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            session = ProductSession(tmpdir)
+            session.load()
+            session.switch_product("Default")
+            product_dir = Path(session.product_dir)
+            image_path = product_dir / "debug_capture" / "cam1.png"
+            image_path.parent.mkdir(parents=True, exist_ok=True)
+            image_path.write_bytes(b"png")
+
+            session.save_session(
+                SessionData(
+                    ok_files=[str(image_path)],
+                    ref_image=str(image_path),
+                )
+            )
+
+            raw = json.loads(Path(session.session_json).read_text(encoding="utf-8"))
+            self.assertEqual(raw["ok_files"], ["debug_capture/cam1.png"])
+            self.assertEqual(raw["ref_image"], "debug_capture/cam1.png")
+
+            loaded = session.load_session()
+            self.assertEqual(loaded.ok_files, [str(image_path)])
+            self.assertEqual(loaded.ref_image, str(image_path))
 
     def test_ng_only_policy_keeps_paths_only_for_ng(self) -> None:
         capture_paths = {

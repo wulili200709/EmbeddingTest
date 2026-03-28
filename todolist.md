@@ -2855,6 +2855,29 @@ pip install opencv-python
 Python
 
 
+方法一：用 PowerShell 以管理员身份重命名
+
+先以管理员身份打开 PowerShell，再执行：
+
+Get-NetAdapter
+
+先看当前网卡名字，比如现在叫：
+
+Ethernet
+
+然后重命名成你想要的名字：
+
+Rename-NetAdapter -Name "Ethernet" -NewName "PLC网络"
+
+如果原名里有空格，照样加引号就行。
+
+改完再查看：
+
+Get-NetAdapter
+
+
+# 默认保存
+
 # 运行界面的总时间
 match_ms
 不再只记 locate_and_follow 的 locate_ms，而是直接用 line2dup 整段 run.total_ms。

@@ -157,6 +157,9 @@ def build_menu_bar(window) -> None:
         )
     )
     window._sync_runtime_capture_policy_actions()
+    runtime_menu.addAction(
+        shell_icon(SP.SP_FileDialogInfoView), "\u4e09\u8272\u706f\u5e8f\u8bbe\u7f6e..."
+    ).triggered.connect(window._show_tower_light_settings_dialog)
     runtime_menu.addSeparator()
     runtime_menu.addAction(
         shell_icon(SP.SP_MediaPlay), "脚踏触发"

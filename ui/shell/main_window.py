@@ -40,10 +40,12 @@ from ui.shell.chrome import (
 from ui.shell.dialogs import (
     DEFAULT_ADMIN_PASSWORD,
     PasswordSettingsStore,
+    TowerLightSettingsStore,
     confirm_admin_password,
     prompt_change_release_password,
     prompt_connect_camera_bindings,
     prompt_password_dialog,
+    prompt_tower_light_settings,
 )
 from ui.shell.engine import (
     on_algorithm_engine_warmup_finished as _on_algorithm_engine_warmup_finished_impl,
@@ -135,7 +137,9 @@ class MainWindow(QtWidgets.QMainWindow):
             default_release_password=DEFAULT_RELEASE_PASSWORD,
             default_admin_password=DEFAULT_ADMIN_PASSWORD,
         )
+        self._tower_light_store = TowerLightSettingsStore()
         self._password_settings = self._password_store.load()
+        self._tower_light_settings = self._tower_light_store.load()
         self._release_password = self._password_settings["run_password"]
         self._admin_password = self._password_settings["engineer_password"]
         self._engine_warmup_thread: Optional[QtCore.QThread] = None
@@ -157,6 +161,7 @@ class MainWindow(QtWidgets.QMainWindow):
             parent=self,
         )
         self.runtime_ctrl.set_capture_retention_policy(self._runtime_capture_policy)
+        self.runtime_ctrl.update_tower_light_settings(self._tower_light_settings)
 
         # ── 信号连接 ───────────────────────────────────────────────────
         self._connect_signals()
@@ -272,6 +277,31 @@ class MainWindow(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------
     # 信号连接
     # ------------------------------------------------------------------
+
+    def _show_tower_light_settings_dialog(self) -> None:
+        if not confirm_admin_password(self, admin_password=self._admin_password):
+            return
+
+        new_settings = prompt_tower_light_settings(
+            self,
+            current_settings=self._tower_light_settings,
+        )
+        if new_settings is None:
+            return
+
+        try:
+            self._tower_light_store.save(new_settings)
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "\u5854\u706f\u65f6\u5e8f\u8bbe\u7f6e",
+                f"\u4fdd\u5b58\u5854\u706f\u53c2\u6570\u5931\u8d25\uff1a\n{exc}",
+            )
+            return
+
+        self._tower_light_settings = dict(new_settings)
+        self.runtime_ctrl.update_tower_light_settings(self._tower_light_settings)
+        self._bottom_status_bar.showMessage("\u5854\u706f\u65f6\u5e8f\u53c2\u6570\u5df2\u66f4\u65b0", 3000)
 
     def _connect_signals(self) -> None:
         # ToolPage → MainWindow（跨组件协调）

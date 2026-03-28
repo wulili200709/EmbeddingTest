@@ -343,7 +343,6 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setMinimumWidth(360)
-        scroll.setMaximumWidth(430)
         scroll.setStyleSheet(
             "QScrollArea{background:#2f2f2f;border:none;}"
             "QScrollArea > QWidget > QWidget{background:#2f2f2f;}"
@@ -364,19 +363,32 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         scroll.setWidget(host)
         return scroll, layout
 
+    def _make_horizontal_splitter(self) -> QtWidgets.QSplitter:
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(10)
+        splitter.setStyleSheet(
+            "QSplitter::handle{background:#343434;}"
+            "QSplitter::handle:hover{background:#4f4f4f;}"
+        )
+        return splitter
+
     def _build_create_tab(self) -> None:
         layout = QtWidgets.QHBoxLayout(self.tab_create)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(8)
 
+        splitter = self._make_horizontal_splitter()
+        layout.addWidget(splitter, 1)
+
         left_container = QtWidgets.QWidget()
-        left_container.setFixedWidth(430)
+        left_container.setMinimumWidth(360)
         left_container_layout = QtWidgets.QVBoxLayout(left_container)
         left_container_layout.setContentsMargins(0, 0, 0, 0)
         left_container_layout.setSpacing(8)
         left_scroll, left = self._make_left_scroll_column()
         left_container_layout.addWidget(left_scroll, 1)
-        layout.addWidget(left_container, 0)
+        splitter.addWidget(left_container)
 
         file_box = QtWidgets.QGroupBox("参考图")
         file_l = QtWidgets.QGridLayout(file_box)
@@ -562,8 +574,13 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         footer_layout.addWidget(self.btn_build_pinned)
         left_container_layout.addWidget(footer_box, 0)
 
-        right = QtWidgets.QVBoxLayout()
-        layout.addLayout(right, 1)
+        right_container = QtWidgets.QWidget()
+        right = QtWidgets.QVBoxLayout(right_container)
+        right.setContentsMargins(0, 0, 0, 0)
+        splitter.addWidget(right_container)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([430, 1000])
         self.create_canvas = RoiCanvas()
         self.canvas = self.create_canvas
         self.create_canvas.setMinimumSize(640, 480)

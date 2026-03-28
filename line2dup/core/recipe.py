@@ -5,6 +5,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List
 
+from path_utils import product_relative_path, resolve_product_path
+
 
 @dataclass
 class Line2DupRecipe:
@@ -87,6 +89,12 @@ class Line2DupRecipe:
         return asdict(self)
 
 
+def _product_dir_for_recipe_file(path: Path) -> str:
+    if path.parent.parent.name.lower() == "line2dup":
+        return str(path.parent.parent.parent)
+    return str(path.parent)
+
+
 def load_recipe(path: str) -> Line2DupRecipe:
     p = Path(path)
     if not p.exists():
@@ -95,6 +103,15 @@ def load_recipe(path: str) -> Line2DupRecipe:
     if not isinstance(data, dict):
         raise ValueError(f"Invalid line2dup recipe: {p}")
     recipe = Line2DupRecipe.from_dict(data)
+    base_dir = str(p.parent)
+    anchor_dir = _product_dir_for_recipe_file(p)
+    recipe.model_path = resolve_product_path(recipe.model_path, base_dir=base_dir, anchor_dir=anchor_dir, prefer_existing=False)
+    recipe.reference_image = resolve_product_path(
+        recipe.reference_image,
+        base_dir=base_dir,
+        anchor_dir=anchor_dir,
+        prefer_existing=True,
+    )
     if not recipe.model_path:
         recipe.model_path = str(p.with_name("line2dup_model.json"))
     return recipe
@@ -103,7 +120,11 @@ def load_recipe(path: str) -> Line2DupRecipe:
 def save_recipe(recipe: Line2DupRecipe, path: str) -> None:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(recipe.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+    payload = recipe.to_dict()
+    base_dir = str(p.parent)
+    payload["model_path"] = product_relative_path(payload.get("model_path", ""), base_dir=base_dir)
+    payload["reference_image"] = product_relative_path(payload.get("reference_image", ""), base_dir=base_dir)
+    p.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 __all__ = ["Line2DupRecipe", "load_recipe", "save_recipe"]

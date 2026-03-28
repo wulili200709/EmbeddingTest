@@ -59,7 +59,13 @@ def _rebuild_runner(runtime) -> bool:
         )
     if runtime._io_controller is not None:
         runtime._light_controller = runtime_controller_module.LightController(runtime._io_controller)
-        runtime._tower_light_controller = runtime_controller_module.TowerLightController(runtime._io_controller)
+        tower_settings = dict(getattr(runtime, "_tower_light_settings", {}) or {})
+        runtime._tower_light_controller = runtime_controller_module.TowerLightController(
+            runtime._io_controller,
+            ok_flash_ms=int(tower_settings.get("ok_flash_ms", 200) or 200),
+            ng_flash_ms=int(tower_settings.get("ng_flash_ms", 200) or 200),
+            idle_blue_delay_s=float(int(tower_settings.get("idle_blue_delay_ms", 30000) or 30000)) / 1000.0,
+        )
     runtime._camera_manager = runtime_controller_module.HikCameraManager()
     runtime._frame_grab_service = runtime_controller_module.FrameGrabService(runtime._camera_manager)
     runtime._permission_manager = runtime_controller_module.PermissionManager(runtime._release_password)

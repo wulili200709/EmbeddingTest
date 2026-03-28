@@ -25,6 +25,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 
+from path_utils import product_relative_path, resolve_product_path
+
 
 @dataclass
 class Feature:
@@ -1683,10 +1685,42 @@ def detector_from_dict(data: Dict[str, Any]) -> Line2DupLikeDetector:
     return detector
 
 
+def _product_dir_for_model_file(path: Path) -> str:
+    if path.parent.parent.name.lower() == "line2dup":
+        return str(path.parent.parent.parent)
+    return str(path.parent)
+
+
+def _rewrite_model_source_paths(data: Dict[str, Any], model_path: str, *, save_mode: bool) -> Dict[str, Any]:
+    classes = data.get("classes", {})
+    if not isinstance(classes, dict):
+        return data
+    base_dir = str(Path(model_path).parent)
+    anchor_dir = _product_dir_for_model_file(Path(model_path))
+    for class_entry in classes.values():
+        if not isinstance(class_entry, dict):
+            continue
+        source_block = class_entry.get("source", {})
+        if not isinstance(source_block, dict):
+            continue
+        image_path = source_block.get("image_path", "")
+        if save_mode:
+            source_block["image_path"] = product_relative_path(image_path, base_dir=base_dir)
+        else:
+            source_block["image_path"] = resolve_product_path(
+                image_path,
+                base_dir=base_dir,
+                anchor_dir=anchor_dir,
+                prefer_existing=True,
+            )
+    return data
+
+
 def save_detector_model(detector: Line2DupLikeDetector, model_path: str) -> None:
     path = Path(model_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     data = detector_to_dict(detector)
+    data = _rewrite_model_source_paths(data, str(path), save_mode=True)
     text = json.dumps(data, indent=2, ensure_ascii=True)
     path.write_text(text, encoding="utf-8")
 
@@ -1698,6 +1732,7 @@ def load_detector_model(model_path: str) -> Line2DupLikeDetector:
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError("Invalid model content.")
+    data = _rewrite_model_source_paths(data, str(path), save_mode=False)
     return detector_from_dict(data)
 
 
