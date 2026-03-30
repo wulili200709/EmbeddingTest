@@ -8,10 +8,12 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from app_paths import packaged_embedding_test_root
+
 
 SDK_OK = 0
 
-_EMBEDDING_ROOT = Path(__file__).resolve().parents[1]
+_EMBEDDING_ROOT = packaged_embedding_test_root(__file__)
 _MVIMPORT_CANDIDATES = [
     _EMBEDDING_ROOT / "third_party" / "MvImport",
     _EMBEDDING_ROOT.parent / "Python" / "MvImport",

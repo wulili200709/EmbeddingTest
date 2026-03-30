@@ -21,9 +21,9 @@ _SYMBOL_TO_MODULE = {
     "ProductPaths": ".product_session",
     "ProductSession": ".product_session",
     "SessionData": ".product_session",
-    "DEFAULT_LIGHT_STABLE_MS": ".runtime_controller",
-    "DEFAULT_RELEASE_PASSWORD": ".runtime_controller",
-    "RuntimeController": ".runtime_controller",
+    "DEFAULT_LIGHT_STABLE_MS": ".runtime.controller",
+    "DEFAULT_RELEASE_PASSWORD": ".runtime.controller",
+    "RuntimeController": ".runtime.controller",
 }
 
 __all__ = sorted(_SYMBOL_TO_MODULE.keys())

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PySide6 import QtWidgets
 
-from ui.window_common import embedding_test_root
+from app_paths import writable_embedding_test_root
 
 
 DEFAULT_ADMIN_PASSWORD = "admin123"
@@ -42,7 +42,7 @@ class PasswordSettingsStore:
         self._default_admin_password = str(default_admin_password).strip() or DEFAULT_ADMIN_PASSWORD
 
     def path(self) -> Path:
-        config_dir = embedding_test_root(__file__) / "config"
+        config_dir = writable_embedding_test_root(__file__) / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
         return config_dir / SYSTEM_PASSWORDS_FILENAME
 
@@ -91,7 +91,7 @@ class PasswordSettingsStore:
 
 class TowerLightSettingsStore:
     def path(self) -> Path:
-        config_dir = embedding_test_root(__file__) / "config"
+        config_dir = writable_embedding_test_root(__file__) / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
         return config_dir / TOWER_LIGHT_SETTINGS_FILENAME
 

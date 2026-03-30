@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+from app_paths import writable_embedding_test_root
+
 
 _CAMERA_SETTINGS_FILENAME = "camera_settings.json"
 _KNOWN_SETTING_KEYS = (
@@ -16,7 +18,7 @@ _KNOWN_SETTING_KEYS = (
 
 
 def default_camera_settings_path() -> Path:
-    return Path(__file__).resolve().parent.parent / "config" / _CAMERA_SETTINGS_FILENAME
+    return writable_embedding_test_root(__file__) / "config" / _CAMERA_SETTINGS_FILENAME
 
 
 def hik_settings_kwargs_from_mapping(

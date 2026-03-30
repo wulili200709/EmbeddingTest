@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
+from app_paths import packaged_embedding_test_root, packaged_repo_root
 
-EMBEDDING_TEST_DIR = Path(__file__).resolve().parents[2]
-REPO_ROOT = EMBEDDING_TEST_DIR.parent
+EMBEDDING_TEST_DIR = packaged_embedding_test_root(__file__)
+REPO_ROOT = packaged_repo_root(__file__)
 
 
 def ensure_repo_root_on_path() -> Path:

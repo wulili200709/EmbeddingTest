@@ -8,9 +8,11 @@ from pathlib import Path
 
 from PySide6 import QtGui
 
+from app_paths import packaged_embedding_test_root, packaged_repo_root
+
 
 def _embedding_test_root(tool_page) -> Path:
-    return Path(__file__).resolve().parents[3]
+    return packaged_embedding_test_root(__file__)
 
 
 def _selected_debug_camera_serial(tool_page) -> str:
@@ -200,7 +202,7 @@ def _find_debug_nkio_config_path(tool_page):
         if configured.exists():
             return str(configured)
 
-    root = tool_page._embedding_test_root().parent
+    root = packaged_repo_root(__file__)
     selected_path = _selected_nkio_config_from_sdk_bin(root)
     if selected_path:
         return selected_path

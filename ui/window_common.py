@@ -6,6 +6,7 @@ import re
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from app_paths import packaged_embedding_test_root, writable_embedding_test_root
 from application import AlgorithmController, ProductSession
 from line2dup.core import locator as line2dup_locator
 import algorithms.proxy as qr_core
@@ -16,11 +17,7 @@ _RUNTIME_OVERLAY_WIDTH_MULTIPLIER = 3.0
 
 
 def embedding_test_root(anchor_file: str) -> Path:
-    current = Path(anchor_file).resolve()
-    for parent in [current.parent, *current.parents]:
-        if parent.name == "EmbeddingTest":
-            return parent
-    return current.parent
+    return packaged_embedding_test_root(anchor_file)
 
 
 _CAMERA_ROLE_RE = re.compile(r"(?:^|[_-])(cam[12])(?=[_.-]|$)", re.IGNORECASE)
@@ -34,7 +31,7 @@ def _camera_role_from_path(path: str) -> str:
 
 
 def default_session_dir(anchor_file: str) -> str:
-    return str(embedding_test_root(anchor_file) / ".qr_session")
+    return str(writable_embedding_test_root(anchor_file) / ".qr_session")
 
 
 def build_default_session_and_algo(anchor_file: str) -> tuple[ProductSession, AlgorithmController]:

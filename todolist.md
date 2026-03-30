@@ -3186,3 +3186,8 @@ ToTensor() = 把图片从“图像格式”转成“神经网络输入格式”
 既改维度顺序：HWC -> CHW
 也改数值范围：0~255 -> 0~1
 后面的 Normalize(mean/std) 则是在这个 0~1 的基础上再做标准化，不是直接对 0~255 做。
+
+
+
+# 生成exe文件
+pyinstaller --noconfirm --clean --distpath "C:\Users\goney\Desktop\MatchTemplate2\EmbeddingTest\dist" --workpath "C:\Users\goney\Desktop\MatchTemplate2\EmbeddingTest\dist-build" "C:\Users\goney\Desktop\MatchTemplate2\EmbeddingTest\LC_System.spec"

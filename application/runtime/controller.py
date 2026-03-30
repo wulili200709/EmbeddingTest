@@ -319,10 +319,22 @@ class RuntimeController(QtCore.QObject):
                 idle_blue_delay_s=float(normalized["idle_blue_delay_ms"]) / 1000.0,
             )
 
+        if self._runner is not None:
+            try:
+                self._runner.tower_light_controller = self._tower_light_controller
+            except Exception:
+                pass
+
         if previous_state == "inspecting":
             self._tower_light_controller.enter_inspecting()
         elif previous_state == "off" and hasattr(self._tower_light_controller, "all_off"):
             self._tower_light_controller.all_off()
+        elif previous_state == "ok":
+            self._tower_light_controller.show_ok()
+        elif previous_state == "ng":
+            self._tower_light_controller.show_ng()
+        elif previous_state == "post_result" and hasattr(self._tower_light_controller, "schedule_idle_waiting"):
+            self._tower_light_controller.schedule_idle_waiting()
         else:
             self._tower_light_controller.enter_waiting()
 

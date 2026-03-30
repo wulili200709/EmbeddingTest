@@ -10,6 +10,7 @@ from typing import Optional
 
 from PySide6 import QtCore
 
+from app_paths import packaged_embedding_test_root, packaged_repo_root
 from .capture_policy import DEFAULT_LIGHT_STABLE_MS
 
 
@@ -112,7 +113,7 @@ def _try_create_io_controller(runtime):
         runtime._emit_io_status(False, "real IO controller unavailable")
         return None
 
-    mapping_path = Path(__file__).resolve().parents[2] / "config" / "defaults" / "io_mapping.json"
+    mapping_path = packaged_embedding_test_root(__file__) / "config" / "defaults" / "io_mapping.json"
     if not mapping_path.exists():
         runtime.logAppended.emit(f"[IO] missing IO mapping config: {mapping_path}")
         runtime._emit_io_status(False, f"missing IO mapping config: {mapping_path}")
@@ -229,7 +230,7 @@ def _trigger_from_di(runtime) -> None:
 
 
 def _find_nkio_config_path(runtime) -> Optional[Path]:
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = packaged_repo_root(__file__)
     select_ini = repo_root / "NKDIOLC_SDK" / "Bin" / "select.ini"
     if select_ini.exists():
         parser = configparser.ConfigParser()

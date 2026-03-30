@@ -7,13 +7,16 @@ from ctypes import POINTER, byref, c_char_p, c_int, c_ubyte, c_ushort
 from pathlib import Path
 from typing import Iterable
 
+from app_paths import packaged_embedding_test_root, packaged_repo_root
+
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return packaged_repo_root(__file__)
 
 
 def _iter_candidate_dll_paths(dll_name: str) -> Iterable[Path]:
     repo_root = _repo_root()
+    embedding_root = packaged_embedding_test_root(__file__)
     yield repo_root / "NKDIOLC_SDK" / "Bin" / dll_name
     yield repo_root / "NKDIOLC_SDK" / "Lib" / "x64" / dll_name
     yield repo_root / "NKDIOLC_SDK" / "Sample" / "C#" / "NK_IO_LC_TEST_CSharp" / "bin" / "x64" / "Debug" / dll_name
@@ -21,12 +24,14 @@ def _iter_candidate_dll_paths(dll_name: str) -> Iterable[Path]:
     yield repo_root / "NKDIOLC_SDK" / "Sample" / "C#" / "NK_IO_LC_TEST_CSharp" / "bin" / "Release" / dll_name
     yield repo_root / "NKDIOLC_SDK" / "Sample" / "C#" / "NK_IO_LC_TEST_CSharp" / "bin" / "Debug" / dll_name
     yield repo_root / "NKDIOLC_SDK" / "Sample" / "C#" / "NK_IO_LC_TEST_CSharp" / "Lib" / "x64" / dll_name
+    yield embedding_root / "third_party" / "nkio" / dll_name
     yield repo_root / "EmbeddingTest" / "third_party" / "nkio" / dll_name
     yield Path(dll_name)
 
 
 def _iter_candidate_search_dirs(dll_path: Path, extra_dirs: Iterable[Path] | None = None) -> Iterable[Path]:
     repo_root = _repo_root()
+    embedding_root = packaged_embedding_test_root(__file__)
     seen: set[Path] = set()
     candidates = [
         dll_path.parent,
@@ -36,6 +41,7 @@ def _iter_candidate_search_dirs(dll_path: Path, extra_dirs: Iterable[Path] | Non
         repo_root / "NKDIOLC_SDK" / "Sample" / "C#" / "NK_IO_LC_TEST_CSharp" / "bin" / "x64" / "Release",
         repo_root / "NKDIOLC_SDK" / "Sample" / "C#" / "NK_IO_LC_TEST_CSharp" / "bin" / "Release",
         repo_root / "NKDIOLC_SDK" / "Sample" / "C#" / "NK_IO_LC_TEST_CSharp" / "bin" / "Debug",
+        embedding_root / "third_party" / "nkio",
         repo_root / "EmbeddingTest" / "third_party" / "nkio",
     ]
     if extra_dirs is not None:
