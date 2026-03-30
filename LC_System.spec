@@ -16,6 +16,14 @@ MVIMPORT_ROOT = APP_ROOT / "third_party" / "MvImport"
 NKIO_ROOT = APP_ROOT / "third_party" / "nkio"
 NKIO_DLL = NKIO_ROOT / "NKIOLIBx64.dll"
 ICON_PATH = RES_ROOT / "logo.ico"
+CONFIG_DATA_FILES = [
+    CONFIG_ROOT / "camera_settings.json",
+    CONFIG_ROOT / "system_passwords.json",
+    CONFIG_ROOT / "tower_light_settings.json",
+]
+CONFIG_DATA_DIRS = [
+    (CONFIG_ROOT / "defaults", "EmbeddingTest/config/defaults"),
+]
 ROOT_LEVEL_BINARY_FILES = [
     SDK_ROOT / "Lib" / "x64" / "WinRing0.dll",
     SDK_ROOT / "Lib" / "x64" / "WinRing0x64.dll",
@@ -35,16 +43,18 @@ def _pair(src: Path, dest: str = "."):
 datas = []
 for src, dest in (
     (RES_ROOT, "EmbeddingTest/res"),
-    (CONFIG_ROOT, "EmbeddingTest/config"),
     (SESSION_ROOT, "EmbeddingTest/.qr_session"),
-    (MVIMPORT_ROOT, "EmbeddingTest/third_party/MvImport"),
 ):
     if src.exists():
         datas.append(_pair(src, dest))
 
-if (APP_ROOT / "setup.py").exists():
-    datas.append(_pair(APP_ROOT / "setup.py", "EmbeddingTest"))
+for src, dest in CONFIG_DATA_DIRS:
+    if src.exists():
+        datas.append(_pair(src, dest))
 
+for path in CONFIG_DATA_FILES:
+    if path.exists():
+        datas.append(_pair(path, "EmbeddingTest/config"))
 
 binaries = []
 for pattern in ("*.pyd", "*.dll"):

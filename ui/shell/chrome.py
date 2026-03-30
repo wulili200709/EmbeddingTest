@@ -194,6 +194,9 @@ def build_menu_bar(window) -> None:
     path_menu.addAction(
         shell_icon(SP.SP_DirLinkIcon), "打开运行记录目录"
     ).triggered.connect(window._open_runtime_records_dir)
+    path_menu.addAction(
+        shell_icon(SP.SP_DialogSaveButton), "保存运行记录..."
+    ).triggered.connect(window._show_runtime_records_directory_dialog)
 
     top_layout.addWidget(
         _make_popup_button("文件", shell_icon(SP.SP_DirOpenIcon), file_menu),

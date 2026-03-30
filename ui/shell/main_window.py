@@ -40,6 +40,7 @@ from ui.shell.chrome import (
 from ui.shell.dialogs import (
     DEFAULT_ADMIN_PASSWORD,
     PasswordSettingsStore,
+    RuntimeRecordSettingsStore,
     TowerLightSettingsStore,
     confirm_admin_password,
     prompt_change_release_password,
@@ -137,8 +138,10 @@ class MainWindow(QtWidgets.QMainWindow):
             default_release_password=DEFAULT_RELEASE_PASSWORD,
             default_admin_password=DEFAULT_ADMIN_PASSWORD,
         )
+        self._runtime_record_store = RuntimeRecordSettingsStore()
         self._tower_light_store = TowerLightSettingsStore()
         self._password_settings = self._password_store.load()
+        self._runtime_record_settings = self._runtime_record_store.load()
         self._tower_light_settings = self._tower_light_store.load()
         self._release_password = self._password_settings["run_password"]
         self._admin_password = self._password_settings["engineer_password"]
@@ -161,6 +164,7 @@ class MainWindow(QtWidgets.QMainWindow):
             parent=self,
         )
         self.runtime_ctrl.set_capture_retention_policy(self._runtime_capture_policy)
+        self._apply_runtime_records_directory_setting()
         self.runtime_ctrl.update_tower_light_settings(self._tower_light_settings)
 
         # ── 信号连接 ───────────────────────────────────────────────────
@@ -354,6 +358,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _sync_shell_status(self) -> None:
         _sync_shell_status_impl(self)
+        if hasattr(self, "runtime_ctrl"):
+            self._apply_runtime_records_directory_setting()
 
     def _update_brand_banner_pixmap(self) -> None:
         _update_brand_banner_pixmap_impl(self)
@@ -405,7 +411,42 @@ class MainWindow(QtWidgets.QMainWindow):
         self._open_in_explorer(str(embedding_test_root(__file__)))
 
     def _open_runtime_records_dir(self) -> None:
-        self._open_in_explorer(str(Path(self.session.product_dir) / "runtime_records"))
+        self._open_in_explorer(self.runtime_ctrl.runtime_records_directory())
+
+    def _apply_runtime_records_directory_setting(self) -> None:
+        configured_dir = str(self._runtime_record_settings.get("runtime_records_dir", "")).strip()
+        self.runtime_ctrl.update_runtime_records_directory(
+            configured_dir or (Path(self.session.product_dir) / "runtime_records")
+        )
+
+    def _show_runtime_records_directory_dialog(self) -> None:
+        current_dir = str(self._runtime_record_settings.get("runtime_records_dir", "")).strip()
+        if not current_dir:
+            current_dir = str(Path(self.session.product_dir) / "runtime_records")
+        selected_dir = QtWidgets.QFileDialog.getExistingDirectory(
+            self,
+            "保存运行记录",
+            current_dir,
+        )
+        if not selected_dir:
+            return
+
+        settings = {
+            "runtime_records_dir": str(selected_dir).strip(),
+        }
+        try:
+            self._runtime_record_store.save(settings)
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "保存运行记录",
+                f"保存运行记录目录失败：\n{exc}",
+            )
+            return
+
+        self._runtime_record_settings = settings
+        self._apply_runtime_records_directory_setting()
+        self._bottom_status_bar.showMessage("运行记录保存目录已更新", 3000)
 
     def _reload_debug_session(self) -> None:
         _reload_debug_session_impl(self)

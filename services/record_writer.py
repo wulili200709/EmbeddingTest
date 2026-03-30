@@ -104,18 +104,10 @@ class CsvRecordWriter:
     DEFAULT_COLUMNS = [
         "record_time",
         "product_name",
-        "recipe_name",
-        "serial_no",
         "final_result",
         "camera1_result",
         "camera2_result",
-        "duration_ms",
-        "is_error",
-        "error_code",
         "error_message",
-        "lock_required",
-        "release_required",
-        "release_result",
     ]
 
     def __init__(self, base_directory: str | Path) -> None:
@@ -140,14 +132,17 @@ class CsvRecordWriter:
         return file_path
 
     def _record_to_row(self, record: TestRecord) -> dict[str, Any]:
-        base = asdict(record)
-        extra_fields = base.pop("extra_fields", {})
-        base.update(extra_fields)
-        return base
+        return {
+            "record_time": record.record_time,
+            "product_name": record.product_name,
+            "final_result": record.final_result,
+            "camera1_result": record.camera1_result,
+            "camera2_result": record.camera2_result,
+            "error_message": record.error_message,
+        }
 
     def _fieldnames_for_row(self, row: dict[str, Any]) -> list[str]:
-        extra_keys = [key for key in row.keys() if key not in self.DEFAULT_COLUMNS]
-        return [*self.DEFAULT_COLUMNS, *sorted(extra_keys)]
+        return list(self.DEFAULT_COLUMNS)
 
 
 class CsvReleaseLogWriter:

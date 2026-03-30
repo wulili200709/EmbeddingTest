@@ -11,6 +11,7 @@ from app_paths import writable_embedding_test_root
 DEFAULT_ADMIN_PASSWORD = "admin123"
 SYSTEM_PASSWORDS_FILENAME = "system_passwords.json"
 TOWER_LIGHT_SETTINGS_FILENAME = "tower_light_settings.json"
+RUNTIME_RECORD_SETTINGS_FILENAME = "runtime_record_settings.json"
 
 
 def _dialog_style_sheet() -> str:
@@ -134,6 +135,46 @@ class TowerLightSettingsStore:
                 payload[key] = max(0, int(settings.get(key, default_value)))
             except Exception:
                 payload[key] = default_value
+        self.path().write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+
+class RuntimeRecordSettingsStore:
+    def path(self) -> Path:
+        config_dir = writable_embedding_test_root(__file__) / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        return config_dir / RUNTIME_RECORD_SETTINGS_FILENAME
+
+    def default_settings(self) -> dict[str, str]:
+        return {
+            "runtime_records_dir": "",
+        }
+
+    def load(self) -> dict[str, str]:
+        settings = self.default_settings()
+        path = self.path()
+        raw: dict = {}
+        if path.exists():
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                raw = {}
+
+        if isinstance(raw, dict):
+            settings["runtime_records_dir"] = str(raw.get("runtime_records_dir", "")).strip()
+
+        try:
+            self.save(settings)
+        except Exception:
+            pass
+        return settings
+
+    def save(self, settings: dict[str, str]) -> None:
+        payload = {
+            "runtime_records_dir": str(settings.get("runtime_records_dir", "")).strip(),
+        }
         self.path().write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",

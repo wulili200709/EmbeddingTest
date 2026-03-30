@@ -75,7 +75,7 @@ def _rebuild_runner(runtime) -> bool:
         permission_manager=runtime._permission_manager,
         lock_on_ng=runtime._lock_on_ng,
     )
-    records_dir = os.path.join(runtime._session.product_dir, "runtime_records")
+    records_dir = str(getattr(runtime, "_runtime_records_dir", Path(runtime._session.product_dir) / "runtime_records"))
     release_logs_dir = os.path.join(runtime._session.product_dir, "release_logs")
     os.makedirs(records_dir, exist_ok=True)
     os.makedirs(release_logs_dir, exist_ok=True)

@@ -254,6 +254,7 @@ class RuntimeController(QtCore.QObject):
         self._last_runtime_result: Optional[RuntimeInspectionResult] = None
         self._capture_retention_policy = RUNTIME_CAPTURE_POLICY_ALL
         self._camera_settings_store = CameraSettingsStore(self._session.camera_settings_path)
+        self._runtime_records_dir = Path(self._session.product_dir) / "runtime_records"
 
         self._camera_manager = None
         self._frame_grab_service = None
@@ -289,6 +290,21 @@ class RuntimeController(QtCore.QObject):
 
     def tower_light_settings(self) -> dict[str, int]:
         return dict(self._tower_light_settings)
+
+    def runtime_records_directory(self) -> str:
+        return str(self._runtime_records_dir)
+
+    def update_runtime_records_directory(self, directory: str | Path) -> None:
+        target_text = str(directory or "").strip()
+        target_dir = Path(target_text) if target_text else Path(self._session.product_dir) / "runtime_records"
+        self._runtime_records_dir = target_dir
+        self._runtime_records_dir.mkdir(parents=True, exist_ok=True)
+        if self._record_service is not None:
+            self._record_service.writer.base_directory = self._runtime_records_dir
+        self._last_record_path = str(
+            self._runtime_records_dir / f"{datetime.now().strftime('%Y-%m-%d')}.csv"
+        )
+        self.recordPathChanged.emit(self._last_record_path or "-")
 
     def update_tower_light_settings(self, settings: dict[str, object]) -> None:
         normalized = {
