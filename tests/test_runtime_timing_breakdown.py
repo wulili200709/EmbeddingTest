@@ -114,12 +114,12 @@ class AggregateRuntimeTimingBreakdownTest(unittest.TestCase):
         self.assertAlmostEqual(result.camera_results["cam1"].capture_ms, 20.0)
         self.assertAlmostEqual(result.camera_results["cam2"].infer_ms, 35.0)
 
-        extra = result.to_record_extra_fields()
-        self.assertEqual(extra["capture_ms"], 42.0)
-        self.assertEqual(extra["match_ms"], 25.0)
-        self.assertEqual(extra["infer_ms"], 66.0)
-        self.assertEqual(extra["cam1_capture_ms"], 20.0)
-        self.assertEqual(extra["cam2_infer_ms"], 35.0)
+        timing = result.timing_breakdown()
+        self.assertEqual(timing["capture_ms"], 42.0)
+        self.assertEqual(timing["match_ms"], 25.0)
+        self.assertEqual(timing["infer_ms"], 66.0)
+        self.assertEqual(timing["cam1_capture_ms"], 20.0)
+        self.assertEqual(timing["cam2_infer_ms"], 35.0)
 
 
 if __name__ == "__main__":

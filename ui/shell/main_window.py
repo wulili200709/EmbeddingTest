@@ -165,6 +165,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.runtime_ctrl.set_capture_retention_policy(self._runtime_capture_policy)
         self._apply_runtime_records_directory_setting()
+        self._apply_runtime_capture_directory_setting()
         self.runtime_ctrl.update_tower_light_settings(self._tower_light_settings)
 
         # ── 信号连接 ───────────────────────────────────────────────────
@@ -360,6 +361,7 @@ class MainWindow(QtWidgets.QMainWindow):
         _sync_shell_status_impl(self)
         if hasattr(self, "runtime_ctrl"):
             self._apply_runtime_records_directory_setting()
+            self._apply_runtime_capture_directory_setting()
 
     def _update_brand_banner_pixmap(self) -> None:
         _update_brand_banner_pixmap_impl(self)
@@ -413,10 +415,19 @@ class MainWindow(QtWidgets.QMainWindow):
     def _open_runtime_records_dir(self) -> None:
         self._open_in_explorer(self.runtime_ctrl.runtime_records_directory())
 
+    def _open_runtime_capture_dir(self) -> None:
+        self._open_in_explorer(self.runtime_ctrl.runtime_capture_directory())
+
     def _apply_runtime_records_directory_setting(self) -> None:
         configured_dir = str(self._runtime_record_settings.get("runtime_records_dir", "")).strip()
         self.runtime_ctrl.update_runtime_records_directory(
             configured_dir or (Path(self.session.product_dir) / "runtime_records")
+        )
+
+    def _apply_runtime_capture_directory_setting(self) -> None:
+        configured_dir = str(self._runtime_record_settings.get("runtime_images_dir", "")).strip()
+        self.runtime_ctrl.update_runtime_capture_directory(
+            configured_dir or (Path(self.session.product_dir) / "runtime_capture")
         )
 
     def _show_runtime_records_directory_dialog(self) -> None:
@@ -431,9 +442,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if not selected_dir:
             return
 
-        settings = {
-            "runtime_records_dir": str(selected_dir).strip(),
-        }
+        settings = dict(self._runtime_record_settings)
+        settings["runtime_records_dir"] = str(selected_dir).strip()
         try:
             self._runtime_record_store.save(settings)
         except Exception as exc:
@@ -447,6 +457,34 @@ class MainWindow(QtWidgets.QMainWindow):
         self._runtime_record_settings = settings
         self._apply_runtime_records_directory_setting()
         self._bottom_status_bar.showMessage("运行记录保存目录已更新", 3000)
+
+    def _show_runtime_capture_directory_dialog(self) -> None:
+        current_dir = str(self._runtime_record_settings.get("runtime_images_dir", "")).strip()
+        if not current_dir:
+            current_dir = str(Path(self.session.product_dir) / "runtime_capture")
+        selected_dir = QtWidgets.QFileDialog.getExistingDirectory(
+            self,
+            "保存图片路径",
+            current_dir,
+        )
+        if not selected_dir:
+            return
+
+        settings = dict(self._runtime_record_settings)
+        settings["runtime_images_dir"] = str(selected_dir).strip()
+        try:
+            self._runtime_record_store.save(settings)
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "保存图片路径",
+                f"保存运行图片目录失败：\n{exc}",
+            )
+            return
+
+        self._runtime_record_settings = settings
+        self._apply_runtime_capture_directory_setting()
+        self._bottom_status_bar.showMessage("运行图片保存目录已更新", 3000)
 
     def _reload_debug_session(self) -> None:
         _reload_debug_session_impl(self)
@@ -497,8 +535,8 @@ class MainWindow(QtWidgets.QMainWindow):
     # 预览图更新（RuntimeController Signal → RuntimeModePage）
     # ------------------------------------------------------------------
 
-    def _on_runtime_preview_updated(self, role: str, path: str) -> None:
-        _on_runtime_preview_updated_impl(self, role, path)
+    def _on_runtime_preview_updated(self, role: str, source: object) -> None:
+        _on_runtime_preview_updated_impl(self, role, source)
 
     # ------------------------------------------------------------------
     # 窗口生命周期

@@ -2172,13 +2172,13 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
                     used_threshold = float(threshold)
                     break
                 except RuntimeError as exc:
-                    if "line2dup did not find any match" in str(exc):
+                    if "match failure" in str(exc) or "line2dup did not find any match" in str(exc):
                         last_exc = exc
                         continue
                     raise
             elapsed_ms = (time.perf_counter() - started) * 1000.0
             if result is None:
-                raise last_exc or RuntimeError("line2dup did not find any match")
+                raise last_exc or RuntimeError("match failure")
             overlay = _draw_match_overlay(detector, scene_bgr, result.match)
             overlay = _overlay_follow_result(overlay, result, recipe.output_label, elapsed_ms=elapsed_ms)
         except Exception as exc:

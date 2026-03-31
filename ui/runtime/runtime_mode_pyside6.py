@@ -231,7 +231,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._active_role_set: set[str] = set()
         self._busy = False
         self._inspection_rows: list[dict] = []
-        self._camera_source_paths: dict[str, str] = {"cam1": "", "cam2": ""}
+        self._camera_preview_sources: dict[str, object | None] = {"cam1": None, "cam2": None}
         self._current_product_name = ""
         self._ok_count_total = 0
         self._ng_count_total = 0
@@ -688,14 +688,18 @@ class RuntimeModePage(QtWidgets.QWidget):
             self.view_cam2.set_runtime_pixmap(pixmap, placeholder=placeholder)
 
     def set_camera_source_path(self, role: str, path: str) -> None:
-        self._camera_source_paths[str(role).strip() or "cam1"] = str(path or "").strip()
+        source = str(path or "").strip()
+        self._camera_preview_sources[str(role).strip() or "cam1"] = source if source else None
+
+    def set_camera_preview_source(self, role: str, source: object) -> None:
+        self._camera_preview_sources[str(role).strip() or "cam1"] = source
 
     def roi_statuses_for_camera(self, camera_id: str) -> dict[str, str]:
         return merge_roi_statuses(self._inspection_rows, camera_id=camera_id)
 
     def clear_camera_views(self) -> None:
         self._active_role_set = set()
-        self._camera_source_paths = {"cam1": "", "cam2": ""}
+        self._camera_preview_sources = {"cam1": None, "cam2": None}
         self.view_cam1.set_runtime_pixmap(None, placeholder="Cam1")
         self.view_cam2.set_runtime_pixmap(None, placeholder="Cam2")
         self.lbl_cam1_timing.setText("Cam1: -")
@@ -716,9 +720,10 @@ class RuntimeModePage(QtWidgets.QWidget):
     def _refresh_camera_previews(self) -> None:
         from ui.window_common import update_runtime_preview
 
-        for role, path in self._camera_source_paths.items():
-            if path:
-                update_runtime_preview(self, role, path)
+        for role in ("cam1", "cam2"):
+            source = self._camera_preview_sources.get(role)
+            if source is not None:
+                update_runtime_preview(self, role, source)
 
     def append_log(self, message: str) -> None:
         self.log_output.appendPlainText(message)

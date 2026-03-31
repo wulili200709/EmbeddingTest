@@ -106,6 +106,39 @@ def _build_image_roi_context(img_path: str, *, require_shapes: bool) -> _ImageRo
     )
 
 
+def _image_from_bgr_array(image_bgr: np.ndarray) -> Image.Image:
+    image = np.asarray(image_bgr)
+    if image.ndim == 2:
+        return Image.fromarray(np.ascontiguousarray(image)).convert("RGB")
+    if image.ndim != 3:
+        raise ValueError(f"unsupported image shape: {image.shape!r}")
+    image = np.ascontiguousarray(image[:, :, :3])
+    rgb = np.ascontiguousarray(image[:, :, ::-1])
+    return Image.fromarray(rgb).convert("RGB")
+
+
+def _build_array_roi_context(
+    image_bgr: np.ndarray,
+    *,
+    shape_by_label: dict[str, dict],
+) -> _ImageRoiContext:
+    image = _image_from_bgr_array(image_bgr)
+    width, height = image.size
+    normalized_shapes = {
+        str(label or ""): dict(shape)
+        for label, shape in dict(shape_by_label or {}).items()
+        if str(label or "").strip()
+    }
+    return _ImageRoiContext(
+        img_path="",
+        image=image,
+        width=width,
+        height=height,
+        image_np=None,
+        shape_by_label=normalized_shapes,
+    )
+
+
 def _shape_bbox_xywh(shape: dict, *, width: int, height: int) -> Tuple[int, int, int, int]:
     points = np.asarray(shape.get("points", []), dtype=np.float32)
     if points.size == 0:
@@ -145,7 +178,9 @@ def _resolve_roi_image(
                 x, y, w, h = _shape_bbox_xywh(shape, width=context.width, height=context.height)
         else:
             if shape is None:
-                raise RuntimeError(f"Label '{label_name}' not found in {labelme_json_of_image(context.img_path)}")
+                if context.img_path:
+                    raise RuntimeError(f"Label '{label_name}' not found in {labelme_json_of_image(context.img_path)}")
+                raise RuntimeError(f"Label '{label_name}' not found in runtime ROI shapes")
             x, y, w, h = _shape_bbox_xywh(shape, width=context.width, height=context.height)
     else:
         x, y, w, h = roi_xywh
@@ -225,6 +260,62 @@ def embed_many(
     if norm > 0:
         vector = vector / norm
     return vector
+
+
+@torch.no_grad()
+def embed_batch_from_array(
+    image_bgr: np.ndarray,
+    feat_net,
+    label_names: Sequence[str],
+    *,
+    shape_by_label: dict[str, dict],
+    device: Optional[str] = None,
+    roi_xywhs: Optional[Sequence[Optional[Tuple[int, int, int, int]]]] = None,
+) -> np.ndarray:
+    labels = [str(name or "roi").strip() or "roi" for name in label_names]
+    if not labels:
+        raise ValueError("label_names cannot be empty")
+    if roi_xywhs is not None and len(roi_xywhs) != len(labels):
+        raise ValueError("roi_xywhs must have the same length as label_names")
+
+    device = device or get_device()
+    context = _build_array_roi_context(image_bgr, shape_by_label=shape_by_label)
+    tensors = []
+    for index, label_name in enumerate(labels):
+        roi_xywh = roi_xywhs[index] if roi_xywhs is not None else None
+        roi_img = _resolve_roi_image(
+            context,
+            label_name=label_name,
+            roi_xywh=roi_xywh,
+        )
+        tensors.append(TF(roi_img))
+
+    batch = torch.stack(tensors, dim=0).to(device)
+    feat = feat_net(batch)
+    feat = F.adaptive_avg_pool2d(feat, 1).flatten(1)
+    feat = F.normalize(feat, dim=1)
+    return feat.detach().cpu().numpy()
+
+
+@torch.no_grad()
+def embed_one_from_array(
+    image_bgr: np.ndarray,
+    feat_net,
+    *,
+    shape_by_label: dict[str, dict],
+    label_name: str = "roi",
+    device: Optional[str] = None,
+    roi_xywh: Optional[Tuple[int, int, int, int]] = None,
+) -> np.ndarray:
+    embeddings = embed_batch_from_array(
+        image_bgr,
+        feat_net,
+        [label_name],
+        shape_by_label=shape_by_label,
+        device=device,
+        roi_xywhs=[roi_xywh],
+    )
+    return embeddings[0]
 
 
 def score_topk(e: np.ndarray, bank: np.ndarray, k: int = 3) -> float:
@@ -407,8 +498,10 @@ def predict_one(
 __all__ = [
     "RegisterModel",
     "embed_batch",
+    "embed_batch_from_array",
     "embed_many",
     "embed_one",
+    "embed_one_from_array",
     "get_device",
     "load_backbone",
     "load_images",

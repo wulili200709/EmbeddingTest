@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import os
+import re
+import shutil
 from datetime import datetime
-
-import cv2
+from pathlib import Path
 
 from domain import aggregate_runtime_outcome, recipe_name_from_path
 
-from .capture_policy import delete_capture_artifacts, retained_capture_paths_for_policy
+from .capture_policy import normalize_capture_retention_policy
+from .preview_frame import RuntimePreviewFrame, build_runtime_preview_frame, export_runtime_preview_frame
+
+_MIN_RUNTIME_CAPTURE_FREE_BYTES = 1 * 1024 * 1024 * 1024
+_DATE_DIRECTORY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_INVALID_PATH_SEGMENT_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
 
 
 def _recipe_path_for_role(runtime, role: str) -> str:
@@ -31,22 +37,121 @@ def _recipe_name_for_roles(runtime, roles) -> str:
     return recipe_name_from_path(str(getattr(runtime._session, "line2dup_recipe_path", "") or ""))
 
 
+def _outcome_roles(outcome) -> tuple[str, ...]:
+    camera_outcomes = getattr(outcome, "camera_outcomes", None)
+    if not isinstance(camera_outcomes, dict):
+        return ()
+    roles = [
+        str(role).strip()
+        for role in camera_outcomes.keys()
+        if str(role).strip()
+    ]
+    return tuple(sorted(set(roles)))
+
+
+def _should_export_captures(runtime, final_result: str) -> bool:
+    policy = normalize_capture_retention_policy(runtime._capture_retention_policy)
+    return policy == "all" or str(final_result or "").strip().upper() == "NG"
+
+
+def _capture_root_directory(runtime) -> Path:
+    configured_dir = str(getattr(runtime, "_runtime_capture_dir", "") or "").strip()
+    if configured_dir:
+        return Path(configured_dir)
+    product_dir = str(getattr(runtime._session, "product_dir", "") or "").strip()
+    if product_dir:
+        return Path(product_dir) / "runtime_capture"
+    return Path(os.path.abspath(".")) / "runtime_capture"
+
+
+def _sanitize_path_segment(text: str, *, default: str) -> str:
+    sanitized = _INVALID_PATH_SEGMENT_CHARS_RE.sub("_", str(text or "").strip())
+    sanitized = sanitized.strip(" .")
+    return sanitized or default
+
+
+def _capture_directory(runtime, target_dt: datetime | None = None) -> str:
+    timestamp = target_dt or datetime.now()
+    root_dir = _capture_root_directory(runtime)
+    product_name = _sanitize_path_segment(
+        str(getattr(runtime._session, "current_product", "") or ""),
+        default="Default",
+    )
+    return str(root_dir / timestamp.strftime("%Y-%m-%d") / product_name)
+
+
+def _disk_usage_anchor(path: Path) -> Path:
+    current = Path(path)
+    while not current.exists():
+        parent = current.parent
+        if parent == current:
+            return Path(os.path.abspath("."))
+        current = parent
+    return current
+
+
+def _log_capture_storage_event(runtime, message: str) -> None:
+    try:
+        runtime.logAppended.emit(f"[runtime-capture] {message}")
+    except Exception:
+        pass
+
+
+def _ensure_capture_free_space(runtime, target_dir: str | Path) -> None:
+    root_dir = _capture_root_directory(runtime)
+    root_dir.mkdir(parents=True, exist_ok=True)
+    target_date_dir_name = Path(target_dir).parent.name
+    while shutil.disk_usage(str(_disk_usage_anchor(root_dir))).free < _MIN_RUNTIME_CAPTURE_FREE_BYTES:
+        candidates = sorted(
+            (
+                path
+                for path in root_dir.iterdir()
+                if path.is_dir()
+                and _DATE_DIRECTORY_RE.match(path.name)
+                and path.name != target_date_dir_name
+            ),
+            key=lambda path: path.name,
+        )
+        if not candidates:
+            free_bytes = shutil.disk_usage(str(_disk_usage_anchor(root_dir))).free
+            raise RuntimeError(
+                "runtime capture disk space below 1 GB and no older date folders can be removed "
+                f"(root={root_dir}, free={free_bytes})"
+            )
+        oldest_dir = candidates[0]
+        shutil.rmtree(oldest_dir)
+        _log_capture_storage_event(runtime, f"deleted old capture folder: {oldest_dir}")
+
+
 def _finalize_trigger_outcome(runtime, outcome, release_status_before) -> None:
     runtime._last_record_path = ""
     if runtime._record_service is not None:
         runtime._last_record_path = str(runtime._record_service.writer.file_path_for_date())
-    current_capture_paths = dict(runtime._last_capture_paths)
+    current_preview_frames = dict(runtime._last_preview_frames)
+    current_roles = _outcome_roles(outcome)
+    retained_capture_paths: dict[str, str] = {}
+    if _should_export_captures(runtime, outcome.final_result):
+        capture_dt = datetime.now()
+        capture_dir = _capture_directory(runtime, capture_dt)
+        stamp = capture_dt.strftime("%Y%m%d_%H%M%S_%f")
+        for role in current_roles:
+            source = current_preview_frames.get(role)
+            if not isinstance(source, RuntimePreviewFrame):
+                continue
+            _ensure_capture_free_space(runtime, capture_dir)
+            exported_frame = export_runtime_preview_frame(source, capture_dir, stamp=stamp)
+            current_preview_frames[role] = exported_frame
+            retained_capture_paths[role] = exported_frame.source_path
+            with runtime._frame_lock:
+                runtime._last_preview_frames[role] = exported_frame
 
     for role in ("cam1", "cam2"):
-        path = current_capture_paths.get(role, "")
-        runtime.previewUpdated.emit(role, path)
+        source = current_preview_frames.get(role)
+        if source is None:
+            source = ""
+        runtime.previewUpdated.emit(role, source)
 
     runtime.recordPathChanged.emit(runtime._last_record_path or "-")
-    retained_capture_paths = retained_capture_paths_for_policy(
-        runtime._capture_retention_policy,
-        outcome.final_result,
-        current_capture_paths,
-    )
 
     runtime._last_runtime_result = aggregate_runtime_outcome(
         product_name=runtime._session.current_product,
@@ -61,12 +166,6 @@ def _finalize_trigger_outcome(runtime, outcome, release_status_before) -> None:
         item_results_by_camera=runtime._last_item_results_by_camera,
     )
     runtime._write_runtime_record(runtime._last_runtime_result)
-    transient_capture_paths = {
-        role: path
-        for role, path in current_capture_paths.items()
-        if path and retained_capture_paths.get(role) != path
-    }
-    delete_capture_artifacts(transient_capture_paths)
     runtime._last_capture_paths = dict(retained_capture_paths)
     if runtime._record_service is not None:
         runtime._last_record_path = str(runtime._record_service.writer.file_path_for_date())
@@ -195,37 +294,63 @@ def _precheck_for_roles(runtime, roles) -> tuple[bool, str]:
     return True, ""
 
 
-def _save_frame(runtime, role: str, frame) -> str:
-    from . import controller as runtime_controller_module
-
-    capture_dir = os.path.join(runtime._session.product_dir, "runtime_capture")
-    os.makedirs(capture_dir, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    path = os.path.join(capture_dir, f"{stamp}_{role}.png")
-    image = runtime_controller_module.frame_to_bgr_image(frame)
-    if image.ndim == 3 and image.shape[2] > 3:
-        image = image[:, :, :3]
-    if not cv2.imwrite(path, image):
-        raise RuntimeError(f"failed to save runtime capture: {path}")
+def _save_frame(runtime, role: str, image) -> str:
+    product_dir = str(getattr(runtime._session, "product_dir", "") or "").strip()
+    preview_frame = build_runtime_preview_frame(
+        role=role,
+        image_bgr=image,
+        source_path="",
+        product_dir=product_dir,
+        camera_role=role,
+    )
+    capture_dt = datetime.now()
+    capture_dir = _capture_directory(runtime, capture_dt)
+    _ensure_capture_free_space(runtime, capture_dir)
+    exported_frame = export_runtime_preview_frame(preview_frame, capture_dir)
     with runtime._frame_lock:
-        runtime._last_capture_paths[role] = path
-    return path
+        runtime._last_capture_paths[role] = exported_frame.source_path
+        runtime._last_preview_frames[role] = exported_frame
+    return exported_frame.source_path
 
 
 def _inspect_frame(runtime, role: str, frame):
     from . import controller as runtime_controller_module
 
-    path = runtime._save_frame(role, frame)
+    product_dir = str(getattr(runtime._session, "product_dir", "") or "")
+    image = runtime_controller_module.frame_to_bgr_image(frame)
+    if image.ndim == 3 and image.shape[2] > 3:
+        image = image[:, :, :3]
+    preview_frame = build_runtime_preview_frame(
+        role=role,
+        image_bgr=image,
+        source_path="",
+        product_dir=product_dir,
+        camera_role=role,
+    )
+    with runtime._frame_lock:
+        runtime._last_preview_frames[role] = preview_frame
     with runtime._inspect_lock:
         response = runtime._inspection_executor.execute(
             runtime_controller_module.InspectionExecutionRequest(
                 camera_id=role,
-                image_path=path,
+                image_path="",
+                image_bgr=image,
                 items=[item for item in runtime._runtime_context.inspection_items if item.camera_id == role],
             )
         )
         runtime._last_item_results_by_camera[role] = list(response.item_results)
-    message = f"{os.path.basename(path)} pred={response.result}"
+    roi_shapes = tuple(getattr(response, "roi_shapes", ()) or ())
+    preview_frame = build_runtime_preview_frame(
+        role=role,
+        image_bgr=image,
+        source_path="",
+        product_dir=product_dir,
+        camera_role=role,
+        roi_shapes=roi_shapes,
+    )
+    with runtime._frame_lock:
+        runtime._last_preview_frames[role] = preview_frame
+    message = f"{role} pred={response.result}"
     if response.detail:
         message += f" {response.detail}"
     return runtime_controller_module.CameraInspectionOutcome(

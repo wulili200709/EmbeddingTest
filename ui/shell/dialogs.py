@@ -150,6 +150,7 @@ class RuntimeRecordSettingsStore:
     def default_settings(self) -> dict[str, str]:
         return {
             "runtime_records_dir": "",
+            "runtime_images_dir": "",
         }
 
     def load(self) -> dict[str, str]:
@@ -164,6 +165,7 @@ class RuntimeRecordSettingsStore:
 
         if isinstance(raw, dict):
             settings["runtime_records_dir"] = str(raw.get("runtime_records_dir", "")).strip()
+            settings["runtime_images_dir"] = str(raw.get("runtime_images_dir", "")).strip()
 
         try:
             self.save(settings)
@@ -174,6 +176,7 @@ class RuntimeRecordSettingsStore:
     def save(self, settings: dict[str, str]) -> None:
         payload = {
             "runtime_records_dir": str(settings.get("runtime_records_dir", "")).strip(),
+            "runtime_images_dir": str(settings.get("runtime_images_dir", "")).strip(),
         }
         self.path().write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),

@@ -32,7 +32,8 @@ class PredictorProtocol(Protocol):
 @dataclass
 class InspectionExecutionRequest:
     camera_id: str
-    image_path: str
+    image_path: str = ""
+    image_bgr: object | None = None
     items: List[InspectionItem] = field(default_factory=list)
 
 
@@ -46,6 +47,7 @@ class InspectionExecutionResponse:
     infer_ms: float = 0.0
     total_ms: float = 0.0
     item_results: List[InspectionItemResult] = field(default_factory=list)
+    roi_shapes: tuple[object, ...] = field(default_factory=tuple)
 
 
 class InspectionExecutor:
@@ -82,8 +84,19 @@ class InspectionExecutor:
         enabled_item_results: List[InspectionItemResult] = []
         enabled_items = [item for item in request.items if item.enabled]
         batch_rows: List[dict] | None = None
+        roi_shapes: tuple[object, ...] = ()
+        batch_predict_from_frame = getattr(self._predictor, "predict_items_batch_from_frame", None)
         batch_predict = getattr(self._predictor, "predict_items_batch", None)
-        if callable(batch_predict) and enabled_items:
+        if request.image_bgr is not None and callable(batch_predict_from_frame) and enabled_items:
+            batch_prediction = batch_predict_from_frame(
+                request.image_bgr,
+                camera_role=request.camera_id,
+                items=enabled_items,
+            )
+            if batch_prediction is not None:
+                batch_rows = [dict(row) for row in list(getattr(batch_prediction, "rows", []) or [])]
+                roi_shapes = tuple(getattr(batch_prediction, "roi_shapes", ()) or ())
+        elif callable(batch_predict) and enabled_items:
             batch_rows = [dict(row) for row in batch_predict(request.image_path, items=enabled_items)]
         enabled_index = 0
 
@@ -138,6 +151,7 @@ class InspectionExecutor:
                 raw_row=None,
                 total_ms=0.0,
                 item_results=item_results,
+                roi_shapes=roi_shapes,
             )
 
         final_result = "OK" if all(item.result == "OK" for item in enabled_item_results) else "NG"
@@ -168,6 +182,7 @@ class InspectionExecutor:
             infer_ms=infer_ms,
             total_ms=total_ms,
             item_results=item_results,
+            roi_shapes=roi_shapes,
         )
 
     @staticmethod

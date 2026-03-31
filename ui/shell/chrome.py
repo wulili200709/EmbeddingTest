@@ -192,6 +192,13 @@ def build_menu_bar(window) -> None:
         shell_icon(SP.SP_DirIcon), "打开会话目录"
     ).triggered.connect(window._open_session_dir)
     path_menu.addAction(
+        shell_icon(SP.SP_DirLinkIcon), "打开运行图片目录"
+    ).triggered.connect(window._open_runtime_capture_dir)
+    path_menu.addAction(
+        shell_icon(SP.SP_DialogSaveButton), "保存图片路径..."
+    ).triggered.connect(window._show_runtime_capture_directory_dialog)
+    path_menu.addSeparator()
+    path_menu.addAction(
         shell_icon(SP.SP_DirLinkIcon), "打开运行记录目录"
     ).triggered.connect(window._open_runtime_records_dir)
     path_menu.addAction(

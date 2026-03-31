@@ -5,6 +5,7 @@ import sys
 import unittest
 from pathlib import Path
 
+import numpy as np
 from PySide6 import QtWidgets
 
 
@@ -17,6 +18,8 @@ if root_str not in sys.path:
 
 
 from ui.runtime.runtime_mode_pyside6 import RuntimeModePage
+from ui.window_common import update_runtime_preview
+from application.runtime.preview_frame import build_runtime_preview_frame
 
 
 class RuntimeModeTriggerButtonsTest(unittest.TestCase):
@@ -58,6 +61,40 @@ class RuntimeModeTriggerButtonsTest(unittest.TestCase):
         self.assertFalse(page.lbl_match_time.isVisible())
         self.assertFalse(page.lbl_infer_time.isVisible())
         self.assertFalse(page.lbl_duration.isVisible())
+
+    def test_runtime_preview_refresh_keeps_in_memory_frame_when_source_path_is_missing(self) -> None:
+        page = RuntimeModePage()
+        preview = build_runtime_preview_frame(
+            role="cam1",
+            image_bgr=np.zeros((24, 32, 3), dtype=np.uint8),
+            source_path=str(ROOT / "missing_runtime_capture.png"),
+            camera_role="cam1",
+        )
+
+        update_runtime_preview(page, "cam1", preview)
+        page.set_inspection_items(
+            [
+                {
+                    "item_id": "roi1",
+                    "display_name": "ROI1",
+                    "camera_id": "cam1",
+                    "enabled": True,
+                    "status_kind": "ok",
+                    "status_text": "OK",
+                }
+            ]
+        )
+
+        self.assertIsNotNone(page.view_cam1.pixmap())
+        self.assertFalse(page.view_cam1.pixmap().isNull())
+        self.assertEqual(page.view_cam1.text(), "")
+
+    def test_legacy_source_path_aliases_to_preview_source_cache(self) -> None:
+        page = RuntimeModePage()
+
+        page.set_camera_source_path("cam1", "demo.png")
+
+        self.assertEqual(page._camera_preview_sources["cam1"], "demo.png")
 
 
 if __name__ == "__main__":

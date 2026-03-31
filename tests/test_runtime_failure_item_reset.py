@@ -45,7 +45,7 @@ class _FakeRunner:
             final_result="NG",
             camera_outcomes={},
             duration_ms=7,
-            error_message="line2dup did not find any match",
+            error_message="match failure",
         )
 
 

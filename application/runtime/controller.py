@@ -22,11 +22,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, Optional, Tuple
 
-import cv2
-
 from PySide6 import QtCore
 
 from . import bindings
+from .capture_policy import (
+    DEFAULT_LIGHT_STABLE_MS,
+    DEFAULT_RELEASE_PASSWORD,
+    RUNTIME_CAPTURE_POLICY_ALL,
+    RUNTIME_CAPTURE_POLICY_NG_ONLY,
+    delete_capture_artifacts,
+    normalize_capture_retention_policy,
+    retained_capture_paths_for_policy,
+)
 
 _RUN_STATE_ZH_FOR_STATUS = {
     "WaitingTrigger": "等待触发",
@@ -98,54 +105,9 @@ except Exception:
     TowerLightController = None     # type: ignore[assignment,misc]
 
 
-DEFAULT_RELEASE_PASSWORD = "1234"
-DEFAULT_LIGHT_STABLE_MS = 20
 DEFAULT_TOWER_LIGHT_OK_FLASH_MS = 200
 DEFAULT_TOWER_LIGHT_NG_FLASH_MS = 200
 DEFAULT_TOWER_LIGHT_IDLE_BLUE_DELAY_MS = 30000
-RUNTIME_CAPTURE_POLICY_ALL = "all"
-RUNTIME_CAPTURE_POLICY_NG_ONLY = "ng_only"
-
-
-def normalize_capture_retention_policy(policy: object) -> str:
-    return (
-        RUNTIME_CAPTURE_POLICY_ALL
-        if str(policy or "").strip().lower() == RUNTIME_CAPTURE_POLICY_ALL
-        else RUNTIME_CAPTURE_POLICY_NG_ONLY
-    )
-
-
-def retained_capture_paths_for_policy(
-    policy: object,
-    final_result: object,
-    capture_paths: Dict[str, str] | None,
-) -> Dict[str, str]:
-    normalized = normalize_capture_retention_policy(policy)
-    sanitized = {
-        str(role): str(path).strip()
-        for role, path in dict(capture_paths or {}).items()
-        if str(path or "").strip()
-    }
-    if normalized == RUNTIME_CAPTURE_POLICY_ALL:
-        return sanitized
-    if str(final_result or "").strip().upper() == "NG":
-        return sanitized
-    return {}
-
-
-def delete_capture_artifacts(capture_paths: Dict[str, str] | None) -> None:
-    for raw_path in dict(capture_paths or {}).values():
-        image_text = str(raw_path or "").strip()
-        if not image_text:
-            continue
-        image_path = Path(image_text)
-        json_path = image_path.with_suffix(".json")
-        for path in (image_path, json_path):
-            try:
-                if path.exists():
-                    path.unlink()
-            except Exception:
-                pass
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +178,7 @@ class RuntimeController(QtCore.QObject):
     logAppended       = QtCore.Signal(str)         # → runtime_page.append_log
     busyChanged       = QtCore.Signal(bool)        # → runtime_page.set_busy
     triggerResultReady = QtCore.Signal(str, str)   # (result, detail) → runtime_page.set_final_result
-    previewUpdated    = QtCore.Signal(str, str)    # (role, image_path) → MainWindow 转发
+    previewUpdated    = QtCore.Signal(str, object)    # (role, preview source) → MainWindow 转发
     cameraViewsCleared = QtCore.Signal()           # → runtime_page.clear_camera_views
     activeCameraRolesChanged = QtCore.Signal(list) # → runtime_page.set_active_camera_roles
     inspectionItemsChanged = QtCore.Signal(list)   # → runtime_page.set_inspection_items
@@ -250,11 +212,17 @@ class RuntimeController(QtCore.QObject):
         self._frame_lock = threading.RLock()
         self._inspect_lock = threading.RLock()
         self._last_capture_paths: Dict[str, str] = {}
+        self._last_preview_frames: Dict[str, object] = {}
         self._last_record_path: Optional[str] = None
         self._last_runtime_result: Optional[RuntimeInspectionResult] = None
         self._capture_retention_policy = RUNTIME_CAPTURE_POLICY_ALL
-        self._camera_settings_store = CameraSettingsStore(self._session.camera_settings_path)
-        self._runtime_records_dir = Path(self._session.product_dir) / "runtime_records"
+        session_product_dir = Path(str(getattr(self._session, "product_dir", ".") or "."))
+        camera_settings_path = str(
+            getattr(self._session, "camera_settings_path", session_product_dir / "camera_settings.json")
+        )
+        self._camera_settings_store = CameraSettingsStore(camera_settings_path)
+        self._runtime_records_dir = session_product_dir / "runtime_records"
+        self._runtime_capture_dir = session_product_dir / "runtime_capture"
 
         self._camera_manager = None
         self._frame_grab_service = None
@@ -305,6 +273,15 @@ class RuntimeController(QtCore.QObject):
             self._runtime_records_dir / f"{datetime.now().strftime('%Y-%m-%d')}.csv"
         )
         self.recordPathChanged.emit(self._last_record_path or "-")
+
+    def runtime_capture_directory(self) -> str:
+        return str(self._runtime_capture_dir)
+
+    def update_runtime_capture_directory(self, directory: str | Path) -> None:
+        target_text = str(directory or "").strip()
+        target_dir = Path(target_text) if target_text else Path(self._session.product_dir) / "runtime_capture"
+        self._runtime_capture_dir = target_dir
+        self._runtime_capture_dir.mkdir(parents=True, exist_ok=True)
 
     def update_tower_light_settings(self, settings: dict[str, object]) -> None:
         normalized = {
@@ -520,6 +497,7 @@ class RuntimeController(QtCore.QObject):
         self._runner = None
         self._di_poller = None
         self._last_capture_paths = {}
+        self._last_preview_frames = {}
         self._last_record_path = None
         self._last_item_results_by_camera = {}
         self._last_runtime_result = self._build_pending_runtime_result(status="PENDING")

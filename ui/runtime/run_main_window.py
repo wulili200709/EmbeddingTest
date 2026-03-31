@@ -57,8 +57,8 @@ class RunMainWindow(QtWidgets.QMainWindow):
 
         connect_runtime_dialogs(self, self.runtime_ctrl)
 
-    def _on_runtime_preview_updated(self, role: str, path: str) -> None:
-        update_runtime_preview(self.runtime_page, role, path)
+    def _on_runtime_preview_updated(self, role: str, source: object) -> None:
+        update_runtime_preview(self.runtime_page, role, source)
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self.runtime_ctrl.disconnect(silent=True)

@@ -106,6 +106,62 @@ def _load_roi_mask_crop(img_path: str, preferred_label: str = "roi1") -> Dict[st
     }
 
 
+def _load_roi_mask_crop_from_array(
+    image_bgr: np.ndarray,
+    *,
+    shape_by_label: Dict[str, dict],
+    preferred_label: str = "roi1",
+) -> Dict[str, Any]:
+    label_name = preferred_label
+    shape = dict(shape_by_label or {}).get(preferred_label)
+    if shape is None:
+        label_name = "roi"
+        shape = dict(shape_by_label or {}).get(label_name)
+    if shape is None:
+        raise RuntimeError(f"memory image missing {preferred_label}/roi")
+
+    img_bgr = np.ascontiguousarray(np.asarray(image_bgr))
+    if img_bgr.ndim != 3 or img_bgr.shape[2] < 3:
+        raise ValueError(f"unsupported image shape: {img_bgr.shape!r}")
+    img_bgr = img_bgr[:, :, :3]
+    h_img, w_img = img_bgr.shape[:2]
+
+    pts = np.asarray(shape.get("points", []), dtype=np.float32)
+    if pts.size == 0:
+        raise RuntimeError("memory ROI points empty")
+    x_min, y_min = pts.min(axis=0)
+    x_max, y_max = pts.max(axis=0)
+    x = max(0, int(np.floor(float(x_min))))
+    y = max(0, int(np.floor(float(y_min))))
+    x2 = min(w_img, int(np.ceil(float(x_max))))
+    y2 = min(h_img, int(np.ceil(float(y_max))))
+    if x2 <= x or y2 <= y:
+        raise RuntimeError("memory ROI bbox invalid")
+
+    crop_bgr = img_bgr[y:y2, x:x2].copy()
+    crop_gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
+    mask = np.zeros((y2 - y, x2 - x), dtype=np.uint8)
+    rel_pts = pts - np.array([[x, y]], dtype=np.float32)
+    if str(shape.get("shape_type", "rectangle")) == "polygon" and len(rel_pts) >= 3:
+        cv2.fillPoly(mask, [np.round(rel_pts).astype(np.int32)], 255)
+    else:
+        p0 = rel_pts.min(axis=0)
+        p1 = rel_pts.max(axis=0)
+        rx = max(0, int(np.floor(float(p0[0]))))
+        ry = max(0, int(np.floor(float(p0[1]))))
+        rx2 = min(mask.shape[1], int(np.ceil(float(p1[0]))))
+        ry2 = min(mask.shape[0], int(np.ceil(float(p1[1]))))
+        mask[ry:ry2, rx:rx2] = 255
+
+    return {
+        "label_name": label_name,
+        "crop_bgr": crop_bgr,
+        "crop_gray": crop_gray,
+        "mask": mask,
+        "bbox_xywh": (x, y, x2 - x, y2 - y),
+    }
+
+
 def compute_roi_metrics(img_path: str, preferred_label: str = "roi1") -> Dict[str, Any]:
     roi = _load_roi_mask_crop(img_path, preferred_label=preferred_label)
     crop_gray = np.asarray(roi["crop_gray"], dtype=np.float32)
@@ -123,6 +179,43 @@ def compute_roi_metrics(img_path: str, preferred_label: str = "roi1") -> Dict[st
     return {
         "file_path": img_path,
         "file_name": os.path.basename(img_path),
+        "roi_label": str(roi["label_name"]),
+        "bbox_xywh": list(roi["bbox_xywh"]),
+        "meanintensity": float(np.mean(valid_gray)),
+        "mean_intensity": float(np.mean(valid_gray)),
+        "meanstd": float(np.std(valid_gray)),
+        "mean_std": float(np.std(valid_gray)),
+        "meanhsv_h": float(np.mean(valid_hsv[:, 0])),
+        "meanhsv_s": float(np.mean(valid_hsv[:, 1])),
+        "meanhsv_v": float(np.mean(valid_hsv[:, 2])),
+        "roi_area": int(valid_gray.size),
+    }
+
+
+def compute_roi_metrics_from_array(
+    image_bgr: np.ndarray,
+    *,
+    shape_by_label: Dict[str, dict],
+    preferred_label: str = "roi1",
+) -> Dict[str, Any]:
+    roi = _load_roi_mask_crop_from_array(
+        image_bgr,
+        shape_by_label=shape_by_label,
+        preferred_label=preferred_label,
+    )
+    crop_gray = np.asarray(roi["crop_gray"], dtype=np.float32)
+    crop_bgr = np.asarray(roi["crop_bgr"], dtype=np.uint8)
+    mask = np.asarray(roi["mask"], dtype=np.uint8)
+    valid_gray = crop_gray[mask > 0]
+    if valid_gray.size == 0:
+        raise RuntimeError("memory ROI valid pixels empty")
+
+    hsv = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2HSV)
+    valid_hsv = np.asarray(hsv[mask > 0], dtype=np.float32)
+    if valid_hsv.size == 0:
+        raise RuntimeError("memory ROI HSV pixels empty")
+
+    return {
         "roi_label": str(roi["label_name"]),
         "bbox_xywh": list(roi["bbox_xywh"]),
         "meanintensity": float(np.mean(valid_gray)),
@@ -249,6 +342,7 @@ __all__ = [
     "TRADITIONAL_ALGORITHMS",
     "TraditionalThresholdModel",
     "compute_roi_metrics",
+    "compute_roi_metrics_from_array",
     "is_traditional_algorithm",
     "metric_value",
     "train_threshold_model",

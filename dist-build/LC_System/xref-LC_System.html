@@ -5633,6 +5633,7 @@ imported by:
  &#8226;   <a href="#application.runtime.controller">application.runtime.controller</a>
  &#8226;   <a href="#application.runtime.execution">application.runtime.execution</a>
  &#8226;   <a href="#application.runtime.hardware">application.runtime.hardware</a>
+ &#8226;   <a href="#application.runtime.preview_frame">application.runtime.preview_frame</a>
  &#8226;   <a href="#application.runtime.status_bus">application.runtime.status_bus</a>
  &#8226;   <a href="#application.runtime_context">application.runtime_context</a>
  &#8226;   <a href="#attr._make">attr._make</a>
@@ -10613,6 +10614,7 @@ imports:
 imported by:
     <a href="#Main.py">Main.py</a>
  &#8226;   <a href="#algorithms.api">algorithms.api</a>
+ &#8226;   <a href="#application.runtime_context">application.runtime_context</a>
 
   </div>
 
@@ -10639,6 +10641,7 @@ imported by:
  &#8226;   <a href="#algorithms.embedding">algorithms.embedding</a>
  &#8226;   <a href="#algorithms.localization">algorithms.localization</a>
  &#8226;   <a href="#algorithms.traditional">algorithms.traditional</a>
+ &#8226;   <a href="#application.runtime.preview_frame">application.runtime.preview_frame</a>
 
   </div>
 
@@ -10742,6 +10745,7 @@ imported by:
     <a href="#Main.py">Main.py</a>
  &#8226;   <a href="#algorithms.registry">algorithms.registry</a>
  &#8226;   <a href="#application.algorithm_controller">application.algorithm_controller</a>
+ &#8226;   <a href="#application.runtime_context">application.runtime_context</a>
 
   </div>
 
@@ -12182,6 +12186,7 @@ imported by:
  &#8226;   <a href="#application.runtime.controller">application.runtime.controller</a>
  &#8226;   <a href="#application.runtime.execution">application.runtime.execution</a>
  &#8226;   <a href="#application.runtime.hardware">application.runtime.hardware</a>
+ &#8226;   <a href="#application.runtime.preview_frame">application.runtime.preview_frame</a>
  &#8226;   <a href="#application.runtime.status_bus">application.runtime.status_bus</a>
  &#8226;   <a href="#application.runtime_controller">application.runtime_controller</a>
 
@@ -12224,6 +12229,7 @@ imports:
   <div class="import">
 imported by:
     <a href="#application.runtime">application.runtime</a>
+ &#8226;   <a href="#application.runtime.controller">application.runtime.controller</a>
  &#8226;   <a href="#application.runtime.execution">application.runtime.execution</a>
  &#8226;   <a href="#application.runtime.hardware">application.runtime.hardware</a>
 
@@ -12244,8 +12250,8 @@ imports:
  &#8226;   <a href="#application.product_session">application.product_session</a>
  &#8226;   <a href="#application.runtime">application.runtime</a>
  &#8226;   <a href="#application.runtime.bindings">application.runtime.bindings</a>
+ &#8226;   <a href="#application.runtime.capture_policy">application.runtime.capture_policy</a>
  &#8226;   <a href="#application.runtime_context">application.runtime_context</a>
- &#8226;   <a href="#cv2">cv2</a>
  &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#devices">devices</a>
  &#8226;   <a href="#domain">domain</a>
@@ -12282,12 +12288,15 @@ imports:
  &#8226;   <a href="#application.runtime">application.runtime</a>
  &#8226;   <a href="#application.runtime.capture_policy">application.runtime.capture_policy</a>
  &#8226;   <a href="#application.runtime.controller">application.runtime.controller</a>
- &#8226;   <a href="#cv2">cv2</a>
+ &#8226;   <a href="#application.runtime.preview_frame">application.runtime.preview_frame</a>
  &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#domain">domain</a>
  &#8226;   <a href="#domain.aggregate_runtime_outcome">domain.aggregate_runtime_outcome</a>
  &#8226;   <a href="#domain.recipe_name_from_path">domain.recipe_name_from_path</a>
  &#8226;   <a href="#os">os</a>
+ &#8226;   <a href="#pathlib">pathlib</a>
+ &#8226;   <a href="#re">re</a>
+ &#8226;   <a href="#shutil">shutil</a>
 
   </div>
   <div class="import">
@@ -12328,6 +12337,32 @@ imported by:
 </div>
 
 <div class="node">
+  <a name="application.runtime.preview_frame"></a>
+  <a target="code" href="///C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/application/runtime/preview_frame.py" type="text/plain"><tt>application.runtime.preview_frame</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#__future__">__future__</a>
+ &#8226;   <a href="#algorithms.labelme">algorithms.labelme</a>
+ &#8226;   <a href="#application.runtime">application.runtime</a>
+ &#8226;   <a href="#cv2">cv2</a>
+ &#8226;   <a href="#dataclasses">dataclasses</a>
+ &#8226;   <a href="#datetime">datetime</a>
+ &#8226;   <a href="#json">json</a>
+ &#8226;   <a href="#numpy">numpy</a>
+ &#8226;   <a href="#pathlib">pathlib</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#application.runtime.execution">application.runtime.execution</a>
+ &#8226;   <a href="#application.runtime_context">application.runtime_context</a>
+ &#8226;   <a href="#ui.window_common">ui.window_common</a>
+
+  </div>
+
+</div>
+
+<div class="node">
   <a name="application.runtime.status_bus"></a>
   <a target="code" href="///C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/application/runtime/status_bus.py" type="text/plain"><tt>application.runtime.status_bus</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
@@ -12355,10 +12390,13 @@ imported by:
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#__future__">__future__</a>
+ &#8226;   <a href="#algorithms.embedding">algorithms.embedding</a>
  &#8226;   <a href="#algorithms.proxy">algorithms.proxy</a>
+ &#8226;   <a href="#algorithms.traditional">algorithms.traditional</a>
  &#8226;   <a href="#application">application</a>
  &#8226;   <a href="#application.AlgorithmController">application.AlgorithmController</a>
  &#8226;   <a href="#application.ProductSession">application.ProductSession</a>
+ &#8226;   <a href="#application.runtime.preview_frame">application.runtime.preview_frame</a>
  &#8226;   <a href="#dataclasses">dataclasses</a>
  &#8226;   <a href="#domain">domain</a>
  &#8226;   <a href="#domain.InspectionItem">domain.InspectionItem</a>
@@ -12369,6 +12407,7 @@ imports:
  &#8226;   <a href="#domain.sync_items_with_labels">domain.sync_items_with_labels</a>
  &#8226;   <a href="#line2dup.core">line2dup.core</a>
  &#8226;   <a href="#line2dup.core.locator">line2dup.core.locator</a>
+ &#8226;   <a href="#numpy">numpy</a>
  &#8226;   <a href="#os">os</a>
  &#8226;   <a href="#re">re</a>
  &#8226;   <a href="#time">time</a>
@@ -20712,8 +20751,7 @@ imported by:
     <a href="#algorithms.embedding">algorithms.embedding</a>
  &#8226;   <a href="#algorithms.localization">algorithms.localization</a>
  &#8226;   <a href="#algorithms.traditional">algorithms.traditional</a>
- &#8226;   <a href="#application.runtime.controller">application.runtime.controller</a>
- &#8226;   <a href="#application.runtime.execution">application.runtime.execution</a>
+ &#8226;   <a href="#application.runtime.preview_frame">application.runtime.preview_frame</a>
  &#8226;   <a href="#cv2">cv2</a>
  &#8226;   <a href="#cv2.config">cv2.config</a>
  &#8226;   <a href="#cv2.config-3">cv2.config-3</a>
@@ -21075,6 +21113,7 @@ imported by:
  &#8226;   <a href="#application.algorithm_controller">application.algorithm_controller</a>
  &#8226;   <a href="#application.inspection_executor">application.inspection_executor</a>
  &#8226;   <a href="#application.product_session">application.product_session</a>
+ &#8226;   <a href="#application.runtime.preview_frame">application.runtime.preview_frame</a>
  &#8226;   <a href="#application.runtime_context">application.runtime_context</a>
  &#8226;   <a href="#devices.di_poller">devices.di_poller</a>
  &#8226;   <a href="#devices.io_mapping">devices.io_mapping</a>
@@ -21469,6 +21508,7 @@ imported by:
  &#8226;   <a href="#aiohttp.web_response">aiohttp.web_response</a>
  &#8226;   <a href="#application.runtime.controller">application.runtime.controller</a>
  &#8226;   <a href="#application.runtime.execution">application.runtime.execution</a>
+ &#8226;   <a href="#application.runtime.preview_frame">application.runtime.preview_frame</a>
  &#8226;   <a href="#calendar">calendar</a>
  &#8226;   <a href="#click.types">click.types</a>
  &#8226;   <a href="#dateutil.easter">dateutil.easter</a>
@@ -33560,6 +33600,7 @@ imports:
  &#8226;   <a href="#importlib">importlib</a>
  &#8226;   <a href="#importlib._bootstrap">importlib._bootstrap</a>
  &#8226;   <a href="#importlib._bootstrap_external">importlib._bootstrap_external</a>
+ &#8226;   <a href="#importlib.machinery">importlib.machinery</a>
  &#8226;   <a href="#sys">sys</a>
  &#8226;   <a href="#warnings">warnings</a>
 
@@ -33791,6 +33832,7 @@ imports:
 imported by:
     <a href="#cProfile">cProfile</a>
  &#8226;   <a href="#ctypes.util">ctypes.util</a>
+ &#8226;   <a href="#importlib">importlib</a>
  &#8226;   <a href="#importlib.abc">importlib.abc</a>
  &#8226;   <a href="#inspect">inspect</a>
  &#8226;   <a href="#modulefinder">modulefinder</a>
@@ -35672,6 +35714,7 @@ imported by:
  &#8226;   <a href="#algorithms.labelme">algorithms.labelme</a>
  &#8226;   <a href="#application.product_session">application.product_session</a>
  &#8226;   <a href="#application.runtime.hardware">application.runtime.hardware</a>
+ &#8226;   <a href="#application.runtime.preview_frame">application.runtime.preview_frame</a>
  &#8226;   <a href="#application.runtime.status_bus">application.runtime.status_bus</a>
  &#8226;   <a href="#charset_normalizer.models">charset_normalizer.models</a>
  &#8226;   <a href="#dateutil.zoneinfo">dateutil.zoneinfo</a>
@@ -35960,7 +36003,6 @@ imported by:
 <span class="moduletype">Package</span>  <div class="import">
 imports:
     <a href="#line2dup">line2dup</a>
- &#8226;   <a href="#line2dup.core.locator">line2dup.core.locator</a>
 
   </div>
   <div class="import">
@@ -36025,7 +36067,6 @@ imports:
 imported by:
     <a href="#application.product_session">application.product_session</a>
  &#8226;   <a href="#application.runtime_context">application.runtime_context</a>
- &#8226;   <a href="#line2dup.core">line2dup.core</a>
  &#8226;   <a href="#line2dup.ui.template_page_pyside6">line2dup.ui.template_page_pyside6</a>
  &#8226;   <a href="#ui.debug.tool_page.page">ui.debug.tool_page.page</a>
  &#8226;   <a href="#ui.debug.tool_page.roi_ops">ui.debug.tool_page.roi_ops</a>
@@ -47841,6 +47882,8 @@ imported by:
  &#8226;   <a href="#algorithms.labelme">algorithms.labelme</a>
  &#8226;   <a href="#algorithms.localization">algorithms.localization</a>
  &#8226;   <a href="#algorithms.traditional">algorithms.traditional</a>
+ &#8226;   <a href="#application.runtime.preview_frame">application.runtime.preview_frame</a>
+ &#8226;   <a href="#application.runtime_context">application.runtime_context</a>
  &#8226;   <a href="#cv2">cv2</a>
  &#8226;   <a href="#cv2.mat_wrapper">cv2.mat_wrapper</a>
  &#8226;   <a href="#cv2.typing">cv2.typing</a>
@@ -48785,6 +48828,7 @@ imported by:
  &#8226;   <a href="#torchvision.utils">torchvision.utils</a>
  &#8226;   <a href="#ui.debug.tool_page.analysis_tools">ui.debug.tool_page.analysis_tools</a>
  &#8226;   <a href="#ui.debug.tool_page.page">ui.debug.tool_page.page</a>
+ &#8226;   <a href="#ui.window_common">ui.window_common</a>
 
   </div>
 
@@ -104727,7 +104771,9 @@ imported by:
  &#8226;   <a href="#app_paths">app_paths</a>
  &#8226;   <a href="#application.runtime.capture_policy">application.runtime.capture_policy</a>
  &#8226;   <a href="#application.runtime.controller">application.runtime.controller</a>
+ &#8226;   <a href="#application.runtime.execution">application.runtime.execution</a>
  &#8226;   <a href="#application.runtime.hardware">application.runtime.hardware</a>
+ &#8226;   <a href="#application.runtime.preview_frame">application.runtime.preview_frame</a>
  &#8226;   <a href="#click._termui_impl">click._termui_impl</a>
  &#8226;   <a href="#devices.io_controller">devices.io_controller</a>
  &#8226;   <a href="#devices.io_mapping">devices.io_mapping</a>
@@ -106818,6 +106864,7 @@ imported by:
  &#8226;   <a href="#anyio.streams.tls">anyio.streams.tls</a>
  &#8226;   <a href="#application.algorithm_controller">application.algorithm_controller</a>
  &#8226;   <a href="#application.product_session">application.product_session</a>
+ &#8226;   <a href="#application.runtime.execution">application.runtime.execution</a>
  &#8226;   <a href="#application.runtime_context">application.runtime_context</a>
  &#8226;   <a href="#argparse">argparse</a>
  &#8226;   <a href="#ast">ast</a>
@@ -127452,6 +127499,7 @@ imports:
 imported by:
     <a href="#PIL.EpsImagePlugin">PIL.EpsImagePlugin</a>
  &#8226;   <a href="#PIL.ImageShow">PIL.ImageShow</a>
+ &#8226;   <a href="#application.runtime.execution">application.runtime.execution</a>
  &#8226;   <a href="#argparse">argparse</a>
  &#8226;   <a href="#click._termui_impl">click._termui_impl</a>
  &#8226;   <a href="#click.formatting">click.formatting</a>
@@ -240502,8 +240550,10 @@ imports:
  &#8226;   <a href="#application">application</a>
  &#8226;   <a href="#application.AlgorithmController">application.AlgorithmController</a>
  &#8226;   <a href="#application.ProductSession">application.ProductSession</a>
+ &#8226;   <a href="#application.runtime.preview_frame">application.runtime.preview_frame</a>
  &#8226;   <a href="#line2dup.core">line2dup.core</a>
  &#8226;   <a href="#line2dup.core.locator">line2dup.core.locator</a>
+ &#8226;   <a href="#numpy">numpy</a>
  &#8226;   <a href="#pathlib">pathlib</a>
  &#8226;   <a href="#re">re</a>
  &#8226;   <a href="#services">services</a>

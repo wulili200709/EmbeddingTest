@@ -198,5 +198,5 @@ def on_session_clear_request(window) -> None:
     window.runtime_ctrl.refresh_all_status("会话已清空，请重新准备运行链路")
 
 
-def on_runtime_preview_updated(window, role: str, path: str) -> None:
-    update_runtime_preview(window.runtime_page, role, path)
+def on_runtime_preview_updated(window, role: str, source: object) -> None:
+    update_runtime_preview(window.runtime_page, role, source)

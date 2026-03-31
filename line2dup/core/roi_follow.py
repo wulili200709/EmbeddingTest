@@ -167,7 +167,7 @@ def _best_match(
     matches = nms_matches(detector, matches, iou_threshold=float(recipe.nms_iou))
     matches.sort(key=lambda item: float(item.similarity), reverse=True)
     if not matches:
-        raise RuntimeError("line2dup did not find any match")
+        raise RuntimeError("match failure")
     return matches[0]
 
 

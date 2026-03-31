@@ -33,6 +33,22 @@ class Line2DupAutogenRun:
     total_ms: float
 
 
+@dataclass(frozen=True)
+class RuntimeDetectedShape:
+    label_name: str
+    shape_type: str
+    points: tuple[Tuple[float, float], ...]
+    bbox: Tuple[int, int, int, int]
+
+
+@dataclass(frozen=True)
+class RuntimeRoiAutogenRun:
+    result: FollowResult
+    roi_shapes: tuple[RuntimeDetectedShape, ...]
+    locate_ms: float
+    total_ms: float
+
+
 def _delete_stale_line2dup_roi_shapes(tgt_img_path: str, recipe: Line2DupRecipe) -> list[str]:
     jpath = qr_core.labelme_json_of_image(tgt_img_path)
     if not os.path.exists(jpath):
@@ -120,6 +136,28 @@ def recipe_is_ready(product_dir: str, camera_role: str = "cam1") -> bool:
     return os.path.exists(model_path) and os.path.exists(recipe_path)
 
 
+def _runtime_shapes_from_follow_result(result: FollowResult) -> tuple[RuntimeDetectedShape, ...]:
+    shapes: list[RuntimeDetectedShape] = []
+    for region in result.regions:
+        points = tuple((float(x), float(y)) for x, y in region.points)
+        if not points:
+            continue
+        shape_type = str(region.source_shape_type or "rectangle")
+        if shape_type == "rectangle" and len(points) == 4:
+            shape_points = (points[0], points[2])
+        else:
+            shape_points = points
+        shapes.append(
+            RuntimeDetectedShape(
+                label_name=str(region.label_name or "").strip() or "roi",
+                shape_type=shape_type,
+                points=shape_points,
+                bbox=tuple(int(value) for value in region.bbox),
+            )
+        )
+    return tuple(shapes)
+
+
 def autogen_roi_json_from_line2dup_timed(
     tgt_img_path: str,
     ref_img_path: str,
@@ -167,6 +205,39 @@ def autogen_roi_json_from_line2dup_timed(
     return Line2DupAutogenRun(jpath=jpath, result=result, locate_ms=locate_ms, total_ms=total_ms)
 
 
+def autogen_runtime_roi_shapes_timed(
+    scene_bgr: np.ndarray,
+    ref_img_path: str,
+    product_dir: str,
+    *,
+    camera_role: str = "cam1",
+    scene_mask: Optional[np.ndarray] = None,
+) -> RuntimeRoiAutogenRun:
+    total_t0 = time.perf_counter()
+    paths = product_paths(product_dir, camera_role)
+    model_path = _resolve_model_file(paths)
+    recipe_path = _resolve_recipe_file(paths)
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"Missing line2dup model: {model_path}")
+    recipe = load_recipe(recipe_path)
+    recipe.model_path = model_path
+    if (not ref_img_path) and recipe.reference_image:
+        ref_img_path = recipe.reference_image
+    if scene_bgr is None:
+        raise ValueError("scene_bgr is required")
+
+    locate_t0 = time.perf_counter()
+    result = locate_and_follow(scene_bgr, ref_img_path, recipe, scene_mask=scene_mask)
+    locate_ms = (time.perf_counter() - locate_t0) * 1000.0
+    total_ms = (time.perf_counter() - total_t0) * 1000.0
+    return RuntimeRoiAutogenRun(
+        result=result,
+        roi_shapes=_runtime_shapes_from_follow_result(result),
+        locate_ms=locate_ms,
+        total_ms=total_ms,
+    )
+
+
 def autogen_roi_json_from_line2dup(
     tgt_img_path: str,
     ref_img_path: str,
@@ -188,8 +259,11 @@ def autogen_roi_json_from_line2dup(
 __all__ = [
     "ProductLine2DupPaths",
     "Line2DupAutogenRun",
+    "RuntimeDetectedShape",
+    "RuntimeRoiAutogenRun",
     "autogen_roi_json_from_line2dup",
     "autogen_roi_json_from_line2dup_timed",
+    "autogen_runtime_roi_shapes_timed",
     "load_recipe_for_product",
     "product_paths",
     "recipe_is_ready",
