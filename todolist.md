@@ -3195,6 +3195,23 @@ py -3.12 -m PyInstaller --noconfirm --clean --distpath "C:\Users\goney\Desktop\M
 如果你当前目录是项目根目录 C:\Users\goney\Desktop\MatchTemplate2，直接执行：
 powershell -ExecutionPolicy Bypass -File .\EmbeddingTest\build_py312.ps1
 
+build_py312.ps1 只是调用 PyInstaller；而 LC_System.spec 里把 algorithms、application、devices、domain、services、ui 这些纯 Python 模块收进去，再在 LC_System.spec 到 LC_System.spec 打进 LC System.exe。
+所以结论是：
+
+改普通 .py 源码后，不能直接把几个 .py 丢进现有 dist 里生效。
+你还是要先跑一次 powershell -ExecutionPolicy Bypass -File .\EmbeddingTest\build_py312.ps1 生成新的打包产物。
+但是复制到别的机台时，通常不需要每次整包拷 dist。
+实操上可以这样分：
+
+只改业务源码 .py：通常只替换 dist\LC System\LC System.exe
+改了根目录原生库：再替换对应的 .dll / .pyd
+例如 line2dup_*.pyd、opencv_world*.dll
+改了资源或静态配置：替换对应文件
+例如 dist\LC System\EmbeddingTest\res\...
+例如 dist\LC System\EmbeddingTest\config\camera_settings.json
+改了 spec、依赖版本、Python 版本、新增 import 导致依赖变化：这种建议整包同步，别只换 exe
+还有一个重点：app_paths.py 说明冻结运行时的可写目录就是 dist\LC System\EmbeddingTest。这意味着别的机台里的 EmbeddingTest\.qr_session 和部分 config 可能是现场数据；而 dialogs.py 里还有 runtime_record_settings.json 这种运行时设置文件。
+所以不要随手整目录覆盖 EmbeddingTest，否则容易把对方机台的配置和运行数据覆盖掉。默认最稳的是只换 LC System.exe，只有这次确实改到配置或原生库时，再补换对应文件。
 
 
 # 改善点

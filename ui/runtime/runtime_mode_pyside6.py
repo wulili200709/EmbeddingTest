@@ -436,12 +436,11 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.lbl_cam1_timing = QtWidgets.QLabel("Cam1: -")
         self.lbl_cam1_timing.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
         total_layout.addWidget(self.lbl_cam1_timing)
-        self.lbl_cam1_timing.hide()
 
         self.lbl_cam2_timing = QtWidgets.QLabel("Cam2: -")
         self.lbl_cam2_timing.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
         total_layout.addWidget(self.lbl_cam2_timing)
-        self.lbl_cam2_timing.hide()
+        self._refresh_camera_timing_visibility()
 
         self.lbl_final_result = QtWidgets.QLabel("-")
         self.lbl_final_result.setAlignment(QtCore.Qt.AlignCenter)
@@ -585,7 +584,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         pass
 
     def set_runtime_status(self, status_text: str) -> None:
-        clean_text = self._sanitize_runtime_status_text(status_text)
+        clean_text = self._sanitize_runtime_status_text_v3(status_text)
         self.lbl_footer_state.setText(f"状态: {clean_text}" if clean_text else "状态: -")
 
     def set_final_result(self, result_text: str, detail_text: str) -> None:
@@ -626,6 +625,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.lbl_footer_connection.setText(
             "相机: " + (", ".join(sorted(role_set)) if role_set else "未连接")
         )
+        self._refresh_camera_timing_visibility()
         self._refresh_trigger_buttons()
 
     def set_inspection_items(self, rows: list[dict]) -> None:
@@ -698,6 +698,9 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._camera_source_paths = {"cam1": "", "cam2": ""}
         self.view_cam1.set_runtime_pixmap(None, placeholder="Cam1")
         self.view_cam2.set_runtime_pixmap(None, placeholder="Cam2")
+        self.lbl_cam1_timing.setText("Cam1: -")
+        self.lbl_cam2_timing.setText("Cam2: -")
+        self._refresh_camera_timing_visibility()
         self.set_camera_results({})
         self._refresh_trigger_buttons()
 
@@ -752,6 +755,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.lbl_cam2_timing.setText(
             self._format_camera_timing_text("Cam2", cam2_capture_ms, cam2_match_ms, cam2_infer_ms, cam2_total_ms)
         )
+        self._refresh_camera_timing_visibility()
 
     @staticmethod
     def _coerce_ms(value: object) -> float:
@@ -783,9 +787,10 @@ class RuntimeModePage(QtWidgets.QWidget):
     def _sanitize_runtime_status_text(status_text: str) -> str:
         text = " ".join(str(status_text or "").split())
         patterns = [
-            r"(?:^|[;, ]+)capture\s+\d+(?:\.\d+)?\s*ms",
-            r"(?:^|[;, ]+)match\s+\d+(?:\.\d+)?\s*ms",
-            r"(?:^|[;, ]+)infer\s+\d+(?:\.\d+)?\s*ms",
+            r"(?:^|[\s,;，；]+)capture\s*[:=]?\s*\d+(?:\.\d+)?\s*ms",
+            r"(?:^|[\s,;，；]+)match\s*[:=]?\s*\d+(?:\.\d+)?\s*ms",
+            r"(?:^|[\s,;，；]+)infer\s*[:=]?\s*\d+(?:\.\d+)?\s*ms",
+            r"(?:^|[\s,;，；]+)total\s*[:=]?\s*\d+(?:\.\d+)?\s*ms",
             r"(?:^|[;, ]+)耗时[:：]?\s*\d+(?:\.\d+)?\s*ms",
             r"(?:^|[;, ]+)处理[:：]?\s*\d+(?:\.\d+)?\s*ms",
         ]
@@ -799,6 +804,44 @@ class RuntimeModePage(QtWidgets.QWidget):
             f"处理: {duration_ms:.1f}ms" if duration_ms > 0.0 else "处理: -"
         )
         self.lbl_duration.setText(self._format_timing_label("总流程", duration_ms))
+
+    @staticmethod
+    def _sanitize_runtime_status_text_v2(status_text: str) -> str:
+        text = " ".join(str(status_text or "").split())
+        patterns = [
+            r"(?:^|[\s,;，；]+)capture\s*[:=]?\s*\d+(?:\.\d+)?\s*ms",
+            r"(?:^|[\s,;，；]+)match\s*[:=]?\s*\d+(?:\.\d+)?\s*ms",
+            r"(?:^|[\s,;，；]+)infer\s*[:=]?\s*\d+(?:\.\d+)?\s*ms",
+            r"(?:^|[\s,;，；]+)total\s*[:=]?\s*\d+(?:\.\d+)?\s*ms",
+            r"(?:^|[\s,;，；]+)耗时\s*[:：=]?\s*\d+(?:\.\d+)?\s*ms",
+            r"(?:^|[\s,;，；]+)处理\s*[:：=]?\s*\d+(?:\.\d+)?\s*ms",
+        ]
+        for pattern in patterns:
+            text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*[;；,，]\s*[;；,，]+\s*", "; ", text)
+        text = re.sub(r"\s{2,}", " ", text).strip(" ;,，；")
+        return text
+
+    def _refresh_camera_timing_visibility(self) -> None:
+        self.lbl_cam1_timing.setVisible("cam1" in self._active_role_set)
+        self.lbl_cam2_timing.setVisible("cam2" in self._active_role_set)
+
+    @staticmethod
+    def _sanitize_runtime_status_text_v3(status_text: str) -> str:
+        text = " ".join(str(status_text or "").split())
+        patterns = [
+            r"(?:^|[\s,;\uFF0C\uFF1B]+)capture\s*[:=]?\s*\d+(?:\.\d+)?\s*ms",
+            r"(?:^|[\s,;\uFF0C\uFF1B]+)match\s*[:=]?\s*\d+(?:\.\d+)?\s*ms",
+            r"(?:^|[\s,;\uFF0C\uFF1B]+)infer\s*[:=]?\s*\d+(?:\.\d+)?\s*ms",
+            r"(?:^|[\s,;\uFF0C\uFF1B]+)total\s*[:=]?\s*\d+(?:\.\d+)?\s*ms",
+            r"(?:^|[\s,;\uFF0C\uFF1B]+)\u8017\u65F6\s*[:\uFF1A=]?\s*\d+(?:\.\d+)?\s*ms",
+            r"(?:^|[\s,;\uFF0C\uFF1B]+)\u5904\u7406\s*[:\uFF1A=]?\s*\d+(?:\.\d+)?\s*ms",
+        ]
+        for pattern in patterns:
+            text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*[;,\uFF0C\uFF1B]\s*[;,\uFF0C\uFF1B]+\s*", "; ", text)
+        text = re.sub(r"\s{2,}", " ", text).strip(" ;,\uFF0C\uFF1B")
+        return text
 
     def _refresh_trigger_buttons(self) -> None:
         allow_cam1 = (not self._busy) and ("cam1" in self._active_role_set) and self._has_enabled_items("cam1")
