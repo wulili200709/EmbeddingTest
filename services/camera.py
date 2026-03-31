@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import os
 import sys
 import threading
 import time
@@ -19,6 +20,99 @@ _MVIMPORT_CANDIDATES = [
     _EMBEDDING_ROOT.parent / "Python" / "MvImport",
 ]
 _MVIMPORT_DIR = next((path for path in _MVIMPORT_CANDIDATES if path.exists()), _MVIMPORT_CANDIDATES[0])
+_MVS_RUNTIME_ENV = "HIK_MVS_RUNTIME_DIR"
+_MVS_RUNTIME_ENV_VALUE = str(os.environ.get(_MVS_RUNTIME_ENV, "")).strip()
+_MVS_RUNTIME_CANDIDATES = (
+    ([Path(_MVS_RUNTIME_ENV_VALUE)] if _MVS_RUNTIME_ENV_VALUE else [])
+    + [
+        _EMBEDDING_ROOT / "third_party" / "MVS" / "Runtime" / "Win64_x64",
+        _EMBEDDING_ROOT / "third_party" / "MVS" / "Runtime",
+        Path(r"C:\Program Files (x86)\Common Files\MVS\Runtime\Win64_x64"),
+        Path(r"C:\Program Files\Common Files\MVS\Runtime\Win64_x64"),
+    ]
+)
+_DLL_SEARCH_HANDLES: list[object] = []
+
+
+def _existing_mvs_runtime_dirs() -> list[Path]:
+    result: list[Path] = []
+    seen: set[str] = set()
+    for path in _MVS_RUNTIME_CANDIDATES:
+        text = str(path or "").strip()
+        if not text:
+            continue
+        candidate = Path(text)
+        try:
+            resolved = str(candidate.resolve())
+        except Exception:
+            resolved = str(candidate)
+        if resolved in seen or not candidate.exists():
+            continue
+        seen.add(resolved)
+        result.append(candidate)
+    return result
+
+
+def _unique_existing_paths(paths: list[Path]) -> list[Path]:
+    result: list[Path] = []
+    seen: set[str] = set()
+    for path in paths:
+        text = str(path or "").strip()
+        if not text:
+            continue
+        candidate = Path(text)
+        try:
+            resolved = str(candidate.resolve())
+        except Exception:
+            resolved = str(candidate)
+        if resolved in seen or not candidate.exists():
+            continue
+        seen.add(resolved)
+        result.append(candidate)
+    return result
+
+
+def _configure_dll_search_paths() -> list[Path]:
+    runtime_dirs = _existing_mvs_runtime_dirs()
+    search_dirs = _unique_existing_paths(
+        [
+            _MVIMPORT_DIR,
+            *runtime_dirs,
+            *(path / "ThirdParty" for path in runtime_dirs),
+        ]
+    )
+    path_entries = [str(path) for path in search_dirs if path.exists()]
+    if path_entries:
+        current_path = str(os.environ.get("PATH", ""))
+        os.environ["PATH"] = os.pathsep.join(path_entries + ([current_path] if current_path else []))
+
+    gentl_key = "GENICAM_GENTL64_PATH"
+    gentl_entries: list[str] = []
+    for runtime_dir in runtime_dirs:
+        candidate = str(runtime_dir)
+        if candidate and candidate not in gentl_entries:
+            gentl_entries.append(candidate)
+    if gentl_entries:
+        existing_gentl = str(os.environ.get(gentl_key, ""))
+        for entry in existing_gentl.split(os.pathsep):
+            value = entry.strip()
+            if value and value not in gentl_entries:
+                gentl_entries.append(value)
+        os.environ[gentl_key] = os.pathsep.join(gentl_entries)
+
+    add_dll_directory = getattr(os, "add_dll_directory", None)
+    if callable(add_dll_directory):
+        for path in search_dirs:
+            if not path.exists():
+                continue
+            try:
+                _DLL_SEARCH_HANDLES.append(add_dll_directory(str(path)))
+            except OSError:
+                continue
+    return search_dirs
+
+
+_CONFIGURED_DLL_DIRS = _configure_dll_search_paths()
 if str(_MVIMPORT_DIR) not in sys.path:
     sys.path.insert(0, str(_MVIMPORT_DIR))
 
@@ -46,9 +140,11 @@ try:
         PixelType_Gvsp_RGB8_Packed,
     )
 except Exception as exc:  # pragma: no cover - depends on local Hikvision SDK runtime
+    searched_dirs = ", ".join(str(path) for path in _CONFIGURED_DLL_DIRS if path.exists()) or "<none>"
     raise RuntimeError(
         "Failed to import Hikvision Python SDK modules from 'EmbeddingTest/third_party/MvImport'. "
-        "Please confirm the Hikvision SDK runtime is installed and the SDK Python files are present."
+        "Please confirm the Hikvision SDK runtime is installed or bundled, and the SDK Python files are present. "
+        f"Searched DLL directories: {searched_dirs}"
     ) from exc
 
 

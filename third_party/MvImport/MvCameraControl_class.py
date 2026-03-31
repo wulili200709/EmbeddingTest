@@ -1,8 +1,10 @@
 # -- coding: utf-8 --
 
+import os
 import sys
 import copy
 import ctypes
+from pathlib import Path
 
 from ctypes import *
 
@@ -13,10 +15,86 @@ from MvErrorDefine_const import *
 
 # Python3.8版本修改Dll加载策略, 默认不再搜索Path环境变量, 同时增加winmode参数以兼容旧版本
 dllname = "MvCameraControl.dll"
+_DLL_SEARCH_HANDLES = []
+
+
+def _unique_existing_paths(paths):
+    result = []
+    seen = set()
+    for path in paths:
+        candidate = Path(path)
+        try:
+            resolved = str(candidate.resolve())
+        except Exception:
+            resolved = str(candidate)
+        if resolved in seen or not candidate.exists():
+            continue
+        seen.add(resolved)
+        result.append(candidate)
+    return result
+
+
+def _candidate_runtime_dirs():
+    mvimport_dir = Path(__file__).resolve().parent
+    third_party_dir = mvimport_dir.parent
+    env_path = str(os.environ.get("HIK_MVS_RUNTIME_DIR", "")).strip()
+    candidates = []
+    if env_path:
+        candidates.append(Path(env_path))
+    candidates.extend(
+        [
+            third_party_dir / "MVS" / "Runtime" / "Win64_x64",
+            third_party_dir / "MVS" / "Runtime",
+            Path(r"C:\Program Files (x86)\Common Files\MVS\Runtime\Win64_x64"),
+            Path(r"C:\Program Files\Common Files\MVS\Runtime\Win64_x64"),
+        ]
+    )
+    return _unique_existing_paths(candidates)
+
+
+def _configure_runtime_environment():
+    runtime_dirs = _candidate_runtime_dirs()
+    search_dirs = _unique_existing_paths(runtime_dirs + [path / "ThirdParty" for path in runtime_dirs])
+
+    path_entries = [str(path) for path in search_dirs]
+    if path_entries:
+        current_path = str(os.environ.get("PATH", ""))
+        os.environ["PATH"] = os.pathsep.join(path_entries + ([current_path] if current_path else []))
+
+    if runtime_dirs:
+        gentl_key = "GENICAM_GENTL64_PATH"
+        gentl_entries = [str(path) for path in runtime_dirs]
+        existing_gentl = str(os.environ.get(gentl_key, ""))
+        for entry in existing_gentl.split(os.pathsep):
+            value = entry.strip()
+            if value and value not in gentl_entries:
+                gentl_entries.append(value)
+        os.environ[gentl_key] = os.pathsep.join(gentl_entries)
+
+    add_dir = getattr(os, "add_dll_directory", None)
+    if callable(add_dir):
+        for path in search_dirs:
+            try:
+                _DLL_SEARCH_HANDLES.append(add_dir(str(path)))
+            except OSError:
+                pass
+    return runtime_dirs
+
+
+def _resolve_camera_dll_path():
+    runtime_dirs = _configure_runtime_environment()
+    for runtime_dir in runtime_dirs:
+        candidate = runtime_dir / dllname
+        if candidate.exists():
+            return candidate
+    return Path(dllname)
+
+
+_MV_CAMERA_DLL_PATH = _resolve_camera_dll_path()
 if "winmode" in ctypes.WinDLL.__init__.__code__.co_varnames:
-    MvCamCtrldll = WinDLL(dllname, winmode=0)
+    MvCamCtrldll = WinDLL(str(_MV_CAMERA_DLL_PATH), winmode=0)
 else:
-    MvCamCtrldll = WinDLL(dllname)
+    MvCamCtrldll = WinDLL(str(_MV_CAMERA_DLL_PATH))
 
 
 # 用于回调函数传入相机实例
