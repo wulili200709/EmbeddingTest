@@ -124,6 +124,13 @@ class CsvRecordWriter:
         fieldnames = self._fieldnames_for_row(row)
         file_exists = file_path.exists()
 
+        if file_exists:
+            existing_fieldnames = self._existing_fieldnames(file_path)
+            if existing_fieldnames and existing_fieldnames != fieldnames:
+                existing_rows = self._read_existing_rows(file_path)
+                self._rewrite_file(file_path, fieldnames, existing_rows)
+                file_exists = True
+
         with file_path.open("a", newline="", encoding="utf-8-sig") as csv_file:
             writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
             if not file_exists:
@@ -132,7 +139,7 @@ class CsvRecordWriter:
         return file_path
 
     def _record_to_row(self, record: TestRecord) -> dict[str, Any]:
-        return {
+        row = {
             "record_time": record.record_time,
             "product_name": record.product_name,
             "final_result": record.final_result,
@@ -140,9 +147,37 @@ class CsvRecordWriter:
             "camera2_result": record.camera2_result,
             "error_message": record.error_message,
         }
+        row.update(dict(record.extra_fields or {}))
+        return row
 
     def _fieldnames_for_row(self, row: dict[str, Any]) -> list[str]:
-        return list(self.DEFAULT_COLUMNS)
+        extra_keys = [key for key in row.keys() if key not in self.DEFAULT_COLUMNS]
+        return [*self.DEFAULT_COLUMNS, *sorted(extra_keys)]
+
+    @staticmethod
+    def _existing_fieldnames(file_path: Path) -> list[str]:
+        try:
+            with file_path.open("r", newline="", encoding="utf-8-sig") as csv_file:
+                reader = csv.reader(csv_file)
+                return next(reader, [])
+        except Exception:
+            return []
+
+    @staticmethod
+    def _read_existing_rows(file_path: Path) -> list[dict[str, Any]]:
+        try:
+            with file_path.open("r", newline="", encoding="utf-8-sig") as csv_file:
+                return list(csv.DictReader(csv_file))
+        except Exception:
+            return []
+
+    @staticmethod
+    def _rewrite_file(file_path: Path, fieldnames: list[str], rows: list[dict[str, Any]]) -> None:
+        with file_path.open("w", newline="", encoding="utf-8-sig") as csv_file:
+            writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({key: row.get(key, "") for key in fieldnames})
 
 
 class CsvReleaseLogWriter:

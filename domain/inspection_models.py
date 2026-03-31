@@ -6,7 +6,6 @@ inspection_models.py
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -129,58 +128,13 @@ class RuntimeInspectionResult:
         return "；".join(parts) if parts else "本次没有检测结果"
 
     def to_record_extra_fields(self) -> Dict[str, object]:
-        row: Dict[str, object] = {
-            "task_id": self.task_id,
-            "created_at": self.created_at,
-            "camera_count": len(self.camera_results),
-            "item_count": len(self.item_results),
-            "capture_ms": self.capture_ms,
-            "match_ms": self.match_ms,
-            "infer_ms": self.infer_ms,
-            "camera_results_summary": "; ".join(
-                f"{camera_id}:{camera_result.result or '-'}"
-                for camera_id, camera_result in sorted(self.camera_results.items())
-            ),
-            "item_results_summary": "; ".join(
-                f"{item.display_name or item.item_id}:{item.result}"
-                for item in self.item_results
-            ),
-            "item_results_json": json.dumps(
-                [
-                    {
-                        "item_id": item.item_id,
-                        "display_name": item.display_name,
-                        "camera_id": item.camera_id,
-                        "roi_label": item.roi_label,
-                        "algorithm_code": item.algorithm_code,
-                        "enabled": item.enabled,
-                        "params": dict(item.params or {}),
-                        "result": item.result,
-                        "detail": item.detail,
-                    }
-                    for item in self.item_results
-                ],
-                ensure_ascii=False,
-            ),
-        }
-        for camera_id, camera_result in sorted(self.camera_results.items()):
-            row[f"{camera_id}_result"] = camera_result.result or ""
-            row[f"{camera_id}_detail"] = camera_result.detail or ""
-            row[f"{camera_id}_image_path"] = camera_result.image_path or ""
-            row[f"{camera_id}_capture_ms"] = camera_result.capture_ms
-            row[f"{camera_id}_match_ms"] = camera_result.match_ms
-            row[f"{camera_id}_infer_ms"] = camera_result.infer_ms
+        row: Dict[str, object] = {}
         for index, item in enumerate(self.item_results, start=1):
             prefix = f"item_{index:02d}"
-            row[f"{prefix}_id"] = item.item_id
-            row[f"{prefix}_name"] = item.display_name
-            row[f"{prefix}_camera"] = item.camera_id
-            row[f"{prefix}_roi_label"] = item.roi_label
-            row[f"{prefix}_algorithm_code"] = item.algorithm_code
             row[f"{prefix}_enabled"] = item.enabled
-            row[f"{prefix}_params_json"] = json.dumps(dict(item.params or {}), ensure_ascii=False)
+            row[f"{prefix}_name"] = item.display_name
             row[f"{prefix}_result"] = item.result
-            row[f"{prefix}_detail"] = item.detail
+            row[f"{prefix}_roi_label"] = item.roi_label
         return row
 
 

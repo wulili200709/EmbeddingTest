@@ -4,6 +4,7 @@ import csv
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 
@@ -21,7 +22,7 @@ from services.record_writer import CsvRecordWriter, TestRecordService
 
 
 class RuntimeRecordWriterTest(unittest.TestCase):
-    def test_write_product_result_includes_item_level_columns(self) -> None:
+    def test_write_product_result_includes_only_expected_item_level_columns(self) -> None:
         runtime_result = RuntimeInspectionResult(
             task_id="runtime_001",
             product_name="demo_product",
@@ -64,12 +65,82 @@ class RuntimeRecordWriterTest(unittest.TestCase):
 
             self.assertEqual(len(rows), 1)
             row = rows[0]
-            self.assertEqual(row["task_id"], "runtime_001")
-            self.assertEqual(row["item_count"], "1")
-            self.assertEqual(row["cam1_result"], "NG")
-            self.assertEqual(row["item_01_id"], "roi1")
+            self.assertEqual(
+                list(row.keys()),
+                [
+                    "record_time",
+                    "product_name",
+                    "final_result",
+                    "camera1_result",
+                    "camera2_result",
+                    "error_message",
+                    "item_01_enabled",
+                    "item_01_name",
+                    "item_01_result",
+                    "item_01_roi_label",
+                ],
+            )
+            self.assertEqual(row["camera1_result"], "NG")
+            self.assertEqual(row["item_01_enabled"], "True")
+            self.assertEqual(row["item_01_name"], "ROI 1")
             self.assertEqual(row["item_01_result"], "NG")
-            self.assertEqual(row["item_01_detail"], "diff=0.12")
+            self.assertEqual(row["item_01_roi_label"], "roi1")
+
+    def test_append_record_rewrites_legacy_header_to_current_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_dir = Path(tmpdir)
+            file_path = base_dir / f"{datetime.now().strftime('%Y-%m-%d')}.csv"
+            with file_path.open("w", encoding="utf-8-sig", newline="") as csv_file:
+                writer = csv.DictWriter(
+                    csv_file,
+                    fieldnames=[
+                        "record_time",
+                        "product_name",
+                        "final_result",
+                        "camera1_result",
+                        "camera2_result",
+                        "error_message",
+                        "task_id",
+                        "item_01_id",
+                    ],
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "record_time": f"{datetime.now().strftime('%Y-%m-%d')} 10:00:00",
+                        "product_name": "legacy_product",
+                        "final_result": "OK",
+                        "camera1_result": "OK",
+                        "camera2_result": "",
+                        "error_message": "",
+                        "task_id": "old_task",
+                        "item_01_id": "old_roi",
+                    }
+                )
+
+            writer = CsvRecordWriter(base_dir)
+            record = TestRecordService(writer).write_product_result(
+                product_name="demo_product",
+                final_result="NG",
+                camera1_result="NG",
+                extra_fields={
+                    "item_01_enabled": True,
+                    "item_01_name": "ROI 1",
+                    "item_01_result": "NG",
+                    "item_01_roi_label": "roi1",
+                },
+            )
+
+            self.assertEqual(record, file_path)
+            with file_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+                rows = list(csv.DictReader(csv_file))
+
+            self.assertEqual(len(rows), 2)
+            self.assertNotIn("task_id", rows[0])
+            self.assertNotIn("item_01_id", rows[0])
+            self.assertEqual(rows[0]["product_name"], "legacy_product")
+            self.assertEqual(rows[1]["item_01_name"], "ROI 1")
+            self.assertEqual(rows[1]["item_01_result"], "NG")
 
 
 if __name__ == "__main__":
