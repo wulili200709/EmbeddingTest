@@ -26,6 +26,7 @@ import json
 import os
 import re
 import time
+import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -2994,7 +2995,17 @@ class ToolPage(QtWidgets.QWidget):
         )
 
     def _open_embedding_analysis_dialog(self) -> None:
-        from ui.debug import EmbeddingAnalysisDialog
+        try:
+            from ui.debug import EmbeddingAnalysisDialog
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "打开特征分析失败",
+                "无法加载特征分析窗口。\n\n"
+                f"{exc}\n\n"
+                f"{traceback.format_exc()}",
+            )
+            return
 
         inspection_item = self._selected_inspection_item()
         if inspection_item is None:
@@ -3006,14 +3017,23 @@ class ToolPage(QtWidgets.QWidget):
         if not self.algo.is_learning_tool(inspection_item.algorithm_code):
             QtWidgets.QMessageBox.information(self, "Info", "Current selection is not a learning tool.")
             return
-        dialog = EmbeddingAnalysisDialog(
-            session_root=self.session.session_dir,
-            initial_product=self.session.current_product,
-            initial_backbone=self.algo.current_learning_backbone(),
-            initial_model_key=inspection_item.model_key,
-            parent=self,
-        )
-        dialog.exec()
+        try:
+            dialog = EmbeddingAnalysisDialog(
+                session_root=self.session.session_dir,
+                initial_product=self.session.current_product,
+                initial_backbone=self.algo.current_learning_backbone(),
+                initial_model_key=inspection_item.model_key,
+                parent=self,
+            )
+            dialog.exec()
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "打开特征分析失败",
+                "特征分析窗口初始化失败。\n\n"
+                f"{exc}\n\n"
+                f"{traceback.format_exc()}",
+            )
 
     # ------------------------------------------------------------------
     # 传统基线调试
