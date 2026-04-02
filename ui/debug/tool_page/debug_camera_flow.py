@@ -367,10 +367,10 @@ def _grab_debug_camera_once(self) -> None:
         self.test_files.append(image_path)
         self._refresh_lists()
         self._save_session()
-    self.tabs.setCurrentIndex(2)
+    self.tabs.setCurrentIndex(1)
     self._load_canvas_image(image_path)
     self._set_debug_camera_status(f"{role} 拍照成功：{os.path.basename(image_path)}")
-    self.lbl_status.setText(f"状态：{role} 调试拍照已保存到 TEST -> {os.path.basename(image_path)}")
+    self.lbl_status.setText(f"状态：{role} 调试拍照已保存到测试样本 -> {os.path.basename(image_path)}")
 
 
 def _debug_io_display_name(name: str) -> str:

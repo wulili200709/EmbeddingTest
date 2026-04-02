@@ -186,10 +186,8 @@ def _suggest_margin_from_rows(tool_page, rows: List[Dict[str, object]]) -> Dict[
 def _current_tab_paths_and_name(tool_page) -> Tuple[List[str], str]:
     tab = tool_page.tabs.currentIndex()
     if tab == 0:
-        return list(tool_page.ok_files), "OK"
-    if tab == 1:
-        return list(tool_page.ng_files), "NG"
-    return list(tool_page.test_files), "TEST"
+        return tool_page._sample_paths_for_kind("train", tool_page.current_camera_role()), "TRAIN"
+    return tool_page._sample_paths_for_kind("test", tool_page.current_camera_role()), "TEST"
 
 
 def _load_roi_mask_crop(tool_page, img_path: str, preferred_label: str = "roi1") -> Dict[str, object]:

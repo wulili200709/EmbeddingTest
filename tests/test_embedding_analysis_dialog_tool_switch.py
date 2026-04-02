@@ -55,6 +55,9 @@ class EmbeddingAnalysisDialogToolSwitchTest(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
+    def setUp(self) -> None:
+        EmbeddingAnalysisDialog._analysis_cache.clear()
+
     def test_switching_learning_tool_refreshes_analysis_result(self) -> None:
         entries = [
             EmbeddingModelEntry(
@@ -103,6 +106,80 @@ class EmbeddingAnalysisDialogToolSwitchTest(unittest.TestCase):
                 self.assertIn("密封圈2", dialog.txt_summary.toPlainText())
                 self.assertEqual(dialog.lbl_model_path.text(), entries[1].model_path)
                 self.assertIn(("demo_product", "cam1__roi2", "tsne"), load_calls)
+            finally:
+                dialog.close()
+
+    def test_dialog_filters_models_to_allowed_learning_tools_and_backbone(self) -> None:
+        entries = [
+            EmbeddingModelEntry(
+                model_key="cam1__roi1",
+                backbone="efficientnet_b0",
+                model_path="cam1__roi1_register_model_lt01.npz",
+                display_name="roi1 / efficientnet",
+                tool_name="roi1",
+            ),
+            EmbeddingModelEntry(
+                model_key="cam1__roi2",
+                backbone="efficientnet_b0",
+                model_path="cam1__roi2_register_model_lt01.npz",
+                display_name="roi2 / efficientnet",
+                tool_name="roi2",
+            ),
+            EmbeddingModelEntry(
+                model_key="cam1__roi3",
+                backbone="efficientnet_b0",
+                model_path="cam1__roi3_register_model_lt01.npz",
+                display_name="roi3 / efficientnet",
+                tool_name="roi3",
+            ),
+            EmbeddingModelEntry(
+                model_key="cam1__legacy",
+                backbone="efficientnet_b0",
+                model_path="cam1__legacy_register_model_lt01.npz",
+                display_name="legacy / efficientnet",
+                tool_name="legacy",
+            ),
+            EmbeddingModelEntry(
+                model_key="cam1__roi1",
+                backbone="mobilenet_v3_small",
+                model_path="cam1__roi1_register_model_lt02.npz",
+                display_name="roi1 / mobilenet",
+                tool_name="roi1",
+            ),
+        ]
+
+        def _fake_load(*, session_root: str, product_name: str, backbone: str, model_key: str, projection_method: str):
+            return _analysis_result(f"{model_key}:{backbone}", f"{model_key}_{backbone}.npz", model_key)
+
+        with mock.patch("ui.debug.embedding_analysis_dialog.list_product_names", return_value=["demo_product"]), \
+            mock.patch("ui.debug.embedding_analysis_dialog.list_available_embedding_models", return_value=entries), \
+            mock.patch("ui.debug.embedding_analysis_dialog.load_product_analysis", side_effect=_fake_load), \
+            mock.patch("ui.debug.embedding_analysis_dialog.os.path.getmtime", return_value=1.0), \
+            mock.patch("ui.debug.embedding_analysis_dialog.os.path.exists", return_value=True):
+            dialog = EmbeddingAnalysisDialog(
+                session_root="dummy_root",
+                initial_product="demo_product",
+                initial_backbone="efficientnet_b0",
+                initial_model_key="cam1__roi2",
+                allowed_model_keys=["cam1__roi1", "cam1__roi2", "cam1__roi3"],
+                allowed_backbones=["efficientnet_b0"],
+            )
+            try:
+                QtTest.QTest.qWait(120)
+                self.app.processEvents()
+
+                self.assertEqual(dialog.cmb_model.count(), 3)
+                visible_keys = [
+                    dialog.cmb_model.itemData(index).model_key
+                    for index in range(dialog.cmb_model.count())
+                ]
+                visible_backbones = [
+                    dialog.cmb_model.itemData(index).backbone
+                    for index in range(dialog.cmb_model.count())
+                ]
+                self.assertEqual(visible_keys, ["cam1__roi1", "cam1__roi2", "cam1__roi3"])
+                self.assertEqual(visible_backbones, ["efficientnet_b0", "efficientnet_b0", "efficientnet_b0"])
+                self.assertEqual(dialog._current_model_entry().model_key, "cam1__roi2")
             finally:
                 dialog.close()
 

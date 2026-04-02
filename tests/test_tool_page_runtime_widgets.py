@@ -32,6 +32,19 @@ class _ToolPageRuntimeWidgetsHarness:
         self.lbl_topk = QtWidgets.QLabel("TopK")
         self._algo_param_label_style = "color:#9a9a9a;"
         self._algo_param_label_disabled_style = "color:#6a6a6a;"
+        self.inspection_items = []
+
+    def current_camera_role(self) -> str:
+        return "cam1"
+
+    def _selected_inspection_item(self):
+        return None
+
+    def _sync_training_action_buttons(self) -> None:
+        return None
+
+    def _update_sample_panel_widgets(self) -> None:
+        return None
 
     def current_algorithm(self) -> str:
         return "efficientnet_b0"

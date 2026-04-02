@@ -47,6 +47,7 @@ class ProductPaths:
 
 @dataclass
 class SessionData:
+    train_files: List[str] = field(default_factory=list)
     ok_files: List[str] = field(default_factory=list)
     ng_files: List[str] = field(default_factory=list)
     test_files: List[str] = field(default_factory=list)
@@ -169,6 +170,7 @@ class ProductSession:
             except Exception:
                 existing_payload = {}
         payload = {
+            "train_files": [product_relative_path(path, base_dir=self.product_dir) for path in data.train_files],
             "ok_files": [product_relative_path(path, base_dir=self.product_dir) for path in data.ok_files],
             "ng_files": [product_relative_path(path, base_dir=self.product_dir) for path in data.ng_files],
             "test_files": [product_relative_path(path, base_dir=self.product_dir) for path in data.test_files],
@@ -212,9 +214,16 @@ class ProductSession:
         if loc_method != "line2dup":
             loc_method = "line2dup"
 
+        legacy_ok_files = _filter(raw.get("ok_files", []))
+        legacy_ng_files = _filter(raw.get("ng_files", []))
+        train_files = _filter(raw.get("train_files", []))
+        if not train_files:
+            train_files = list(dict.fromkeys(legacy_ok_files + legacy_ng_files))
+
         return SessionData(
-            ok_files=_filter(raw.get("ok_files", [])),
-            ng_files=_filter(raw.get("ng_files", [])),
+            train_files=train_files,
+            ok_files=legacy_ok_files,
+            ng_files=legacy_ng_files,
             test_files=_filter(raw.get("test_files", [])),
             ref_image=ref_image,
             loc_method=loc_method,

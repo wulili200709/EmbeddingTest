@@ -62,6 +62,9 @@ def _set_status_for_current_image(tool_page, path: str) -> None:
     match_ms = tool_page._line2dup_match_ms_by_image.get(path)
     total_ms = tool_page._line2dup_autogen_ms_by_image.get(path)
     if match_ms is None and total_ms is None:
+        updater = getattr(tool_page, "_update_sample_panel_widgets", None)
+        if callable(updater):
+            updater()
         return
     parts = [f"当前图像: {os.path.basename(path)}"]
     if match_ms is not None:

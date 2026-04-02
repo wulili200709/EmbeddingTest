@@ -79,8 +79,9 @@ class _RoleFilterHarness:
         self.ok_list = QtWidgets.QListWidget()
         self.ng_list = QtWidgets.QListWidget()
         self.test_list = QtWidgets.QListWidget()
-        self.ok_files = ["cam1_ok_a.png", "cam2_ok_b.png"]
-        self.ng_files = ["cam1_ng_a.png", "cam2_ng_b.png"]
+        self.train_files = ["cam1_ok_a.png", "cam1_ng_a.png", "cam2_ok_b.png", "cam2_ng_b.png"]
+        self.ok_files = []
+        self.ng_files = []
         self.test_files = ["cam1_test_a.png", "cam2_test_b.png"]
         self.inspection_items = [
             InspectionItem(
@@ -109,6 +110,7 @@ class _RoleFilterHarness:
         self.spin_topk.setValue(3)
         self.loc_method = "line2dup"
         self.session = SimpleNamespace(product_dir="demo_product")
+        self.canvas = SimpleNamespace(image_path=lambda: None)
 
     def _selected_inspection_item(self):
         return self._selected_item
@@ -118,6 +120,26 @@ class _RoleFilterHarness:
 
     def current_camera_role(self) -> str:
         return self._debug_role
+
+    def _training_sample_groups_for_role(self, camera_role=None, *, roi_label=None):
+        role = str(camera_role or self._debug_role)
+        train_files = [path for path in self.train_files if role in path]
+        ok_files = [path for path in train_files if "_ok" in path]
+        ng_files = [path for path in train_files if "_ng" in path]
+        return ok_files, ng_files, list(train_files)
+
+    def _sample_paths_for_kind(self, kind: str, camera_role=None):
+        role = str(camera_role or self._debug_role)
+        if str(kind) == "train":
+            _ok_files, _ng_files, train_files = self._training_sample_groups_for_role(role)
+            return train_files
+        return [path for path in self.test_files if role in path]
+
+    def _sample_item_display_text(self, path: str, _sample_kind: str, _camera_role=None) -> str:
+        return os.path.basename(path)
+
+    def _update_sample_panel_widgets(self) -> None:
+        return None
 
     def _missing_training_roi_paths(self, roi_label: str, candidate_paths: list[str]):
         return []
@@ -134,17 +156,19 @@ class ToolPageCameraRoleFilterTest(unittest.TestCase):
         harness._debug_role = "cam1"
         harness._refresh_lists()
         self.assertEqual(harness.lbl_images_section.text(), "  图片列表（cam1）")
-        self.assertEqual(harness.ok_list.count(), 1)
+        self.assertEqual(harness.ok_list.count(), 2)
         self.assertEqual(harness.ok_list.item(0).text(), "cam1_ok_a.png")
+        self.assertEqual(harness.ok_list.item(1).text(), "cam1_ng_a.png")
         self.assertEqual(harness.test_list.count(), 1)
         self.assertEqual(harness.test_list.item(0).text(), "cam1_test_a.png")
 
         harness._debug_role = "cam2"
         harness._refresh_lists()
         self.assertEqual(harness.lbl_images_section.text(), "  图片列表（cam2）")
-        self.assertEqual(harness.ok_list.count(), 1)
+        self.assertEqual(harness.ok_list.count(), 2)
         self.assertEqual(harness.ok_list.item(0).text(), "cam2_ok_b.png")
-        self.assertEqual(harness.ng_list.item(0).text(), "cam2_ng_b.png")
+        self.assertEqual(harness.ok_list.item(1).text(), "cam2_ng_b.png")
+        self.assertEqual(harness.ng_list.count(), 0)
 
     def test_refresh_lists_ignore_selected_tool_camera_role(self) -> None:
         harness = _RoleFilterHarness()
@@ -155,6 +179,7 @@ class ToolPageCameraRoleFilterTest(unittest.TestCase):
 
         self.assertEqual(harness.lbl_images_section.text(), "  图片列表（cam1）")
         self.assertEqual(harness.ok_list.item(0).text(), "cam1_ok_a.png")
+        self.assertEqual(harness.ok_list.item(1).text(), "cam1_ng_a.png")
 
     def test_train_inspection_item_uses_only_matching_camera_samples(self) -> None:
         harness = _RoleFilterHarness()
@@ -179,15 +204,14 @@ class ToolPageCameraRoleFilterTest(unittest.TestCase):
     def test_single_camera_product_still_follows_current_role(self) -> None:
         harness = _RoleFilterHarness()
         harness.inspection_items = [harness.inspection_items[0]]
-        harness.ok_files = ["cam1_ok.png", "cam2_ok.png"]
-        harness.ng_files = ["cam1_ng.png"]
+        harness.train_files = ["cam1_ok.png", "cam1_ng.png", "cam2_ok.png"]
         harness.test_files = ["cam1_test.png", "cam2_test.png"]
 
         harness._refresh_lists()
 
         self.assertEqual(harness.lbl_images_section.text(), "  图片列表（cam1）")
-        self.assertEqual(harness.ok_list.count(), 1)
-        self.assertEqual(harness.ng_list.count(), 1)
+        self.assertEqual(harness.ok_list.count(), 2)
+        self.assertEqual(harness.ng_list.count(), 0)
         self.assertEqual(harness.test_list.count(), 1)
 
 

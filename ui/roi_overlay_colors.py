@@ -7,6 +7,7 @@ from PySide6 import QtGui
 
 ROI_DEFAULT_COLOR = QtGui.QColor(55, 155, 55)
 ROI_NG_COLOR = QtGui.QColor(220, 30, 30)
+ROI_UNLABELED_COLOR = QtGui.QColor(55, 132, 255)
 ROI_STROKE_WIDTH = 2.0
 SEARCH_REGION_COLOR = QtGui.QColor(0, 0, 255)
 SEARCH_REGION_WIDTH = 0.5
@@ -23,8 +24,16 @@ def is_ng_status(status: object) -> bool:
     return str(status or "").strip().lower() == "ng"
 
 
+def is_ok_status(status: object) -> bool:
+    return str(status or "").strip().lower() == "ok"
+
+
 def color_for_roi_status(status: object) -> QtGui.QColor:
-    return QtGui.QColor(ROI_NG_COLOR if is_ng_status(status) else ROI_DEFAULT_COLOR)
+    if is_ng_status(status):
+        return QtGui.QColor(ROI_NG_COLOR)
+    if is_ok_status(status):
+        return QtGui.QColor(ROI_DEFAULT_COLOR)
+    return QtGui.QColor(ROI_UNLABELED_COLOR)
 
 
 def overlay_style_for_label(
@@ -75,6 +84,7 @@ def merge_roi_statuses(
 __all__ = [
     "ROI_DEFAULT_COLOR",
     "ROI_NG_COLOR",
+    "ROI_UNLABELED_COLOR",
     "ROI_STROKE_WIDTH",
     "SEARCH_REGION_COLOR",
     "SEARCH_REGION_WIDTH",
@@ -83,6 +93,7 @@ __all__ = [
     "REFERENCE_ROI_COLOR",
     "color_for_roi_status",
     "is_ng_status",
+    "is_ok_status",
     "is_roi_label",
     "merge_roi_statuses",
     "overlay_style_for_label",

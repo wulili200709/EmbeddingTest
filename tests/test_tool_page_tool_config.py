@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from PySide6 import QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -155,6 +155,13 @@ class ToolPageToolConfigTest(unittest.TestCase):
         try:
             harness._refresh_inspection_items_table()
             harness.inspection_items_table.setCurrentCell(0, 1)
+            selection_model = harness.inspection_items_table.selectionModel()
+            self.assertIsNotNone(selection_model)
+            selection_model.select(
+                harness.inspection_items_table.model().index(0, 1),
+                QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect
+                | QtCore.QItemSelectionModel.SelectionFlag.Rows,
+            )
             harness._on_inspection_items_selection_changed()
 
             color, width, dash = roi_ops._overlay_style_for_tool_label(harness, "img.png", "roi1")
@@ -195,6 +202,43 @@ class ToolPageToolConfigTest(unittest.TestCase):
             item = harness.inspection_items_table.item(0, 1)
             self.assertIsNotNone(item)
             self.assertEqual(item.text(), "roi2")
+        finally:
+            harness.cleanup()
+
+    def test_row_highlight_and_selected_tool_follow_selected_row_not_current_row(self) -> None:
+        harness = _ToolConfigHarness()
+        try:
+            harness.inspection_items.append(
+                InspectionItem(
+                    item_id="roi3",
+                    display_name="roi3",
+                    camera_id="cam1",
+                    roi_label="roi3",
+                    algorithm_code=SHARED_BACKBONE_ALGORITHM_CODE,
+                )
+            )
+            harness._refresh_inspection_items_table()
+            table = harness.inspection_items_table
+
+            table.setCurrentCell(0, 1)
+            selection_model = table.selectionModel()
+            self.assertIsNotNone(selection_model)
+            selection_model.select(
+                table.model().index(0, 1),
+                QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect
+                | QtCore.QItemSelectionModel.SelectionFlag.Rows,
+            )
+            table.setCurrentCell(1, 1, QtCore.QItemSelectionModel.SelectionFlag.NoUpdate)
+
+            tool_config._sync_inspection_items_row_highlight(harness)
+
+            row0_camera = table.cellWidget(0, 2)
+            row1_camera = table.cellWidget(1, 2)
+            self.assertIsNotNone(row0_camera)
+            self.assertIsNotNone(row1_camera)
+            self.assertIn("background:#6ec0ff", row0_camera.styleSheet())
+            self.assertIn("background:#3a3a3a", row1_camera.styleSheet())
+            self.assertEqual(harness._selected_inspection_item().item_id, "roi1")
         finally:
             harness.cleanup()
 

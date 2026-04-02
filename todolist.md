@@ -2868,7 +2868,7 @@ Ethernet
 然后重命名成你想要的名字：
 
 Rename-NetAdapter -Name "Ethernet" -NewName "PLC网络"
-
+Rename-NetAdapter -Name "以太网 3" -NewName "Cam1"
 如果原名里有空格，照样加引号就行。
 
 改完再查看：
@@ -3289,3 +3289,18 @@ CPU/GPU 自适应推理技术
 会落到“日期/产品名”子目录：test_runtime_capture_directory.py (line 48)
 空间不足时会删最旧日期目录：test_runtime_capture_directory.py (line 63)
 新的包已经重新打好了，直接用这个：
+
+
+
+# 相机序列号
+DA9521001
+DA9521010
+DA9520986
+
+
+
+# 相机线触发
+NPN的接法：
+line1 gpio +  接频闪控制器的输入1
+24v+          接频闪控制器的COM端
+![alt text](image-2.png)

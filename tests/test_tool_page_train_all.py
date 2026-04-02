@@ -74,6 +74,7 @@ class _FakeAlgo:
 
 class _TrainAllHarness:
     _resolve_training_algorithm = ToolPage._resolve_training_algorithm
+    _train_sample_paths_for_role = ToolPage._train_sample_paths_for_role
     _training_camera_roles_in_lists = ToolPage._training_camera_roles_in_lists
     _warn_mixed_training_camera_samples = ToolPage._warn_mixed_training_camera_samples
     _missing_training_roi_paths = ToolPage._missing_training_roi_paths
@@ -83,8 +84,9 @@ class _TrainAllHarness:
 
     def __init__(self, product_dir: str, ok_files: list[str], ng_files: list[str]) -> None:
         self.algo = _FakeAlgo()
-        self.ok_files = ok_files
-        self.ng_files = ng_files
+        self.train_files = list(ok_files) + list(ng_files)
+        self.ok_files: list[str] = []
+        self.ng_files: list[str] = []
         self.loc_method = "line2dup"
         self.session = type("Session", (), {"product_dir": product_dir})()
         self.inspection_items = [
@@ -126,6 +128,13 @@ class _TrainAllHarness:
 
     def current_camera_role(self) -> str:
         return self.current_camera
+
+    def _training_sample_groups_for_role(self, camera_role=None, *, roi_label=None):
+        role = str(camera_role or self.current_camera)
+        train_files = [path for path in self.train_files if role in os.path.basename(path) or "cam" not in os.path.basename(path)]
+        ok_files = [path for path in train_files if "ok" in os.path.basename(path).lower()]
+        ng_files = [path for path in train_files if "ng" in os.path.basename(path).lower()]
+        return ok_files, ng_files, train_files
 
     def _autogen_roi_for_images(self, paths, only_missing=False, silent=False):
         return None

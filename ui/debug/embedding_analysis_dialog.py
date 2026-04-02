@@ -35,12 +35,24 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
         initial_product: str = "",
         initial_backbone: str = "",
         initial_model_key: str = "",
+        allowed_model_keys: Optional[list[str]] = None,
+        allowed_backbones: Optional[list[str]] = None,
         parent: Optional[QtWidgets.QWidget] = None,
     ):
         super().__init__(parent)
         self.setWindowTitle("特征分析")
         self.resize(1200, 760)
         self.session_root = session_root
+        self._allowed_model_keys = {
+            str(model_key or "").strip()
+            for model_key in list(allowed_model_keys or [])
+            if str(model_key or "").strip()
+        }
+        self._allowed_backbones = {
+            str(backbone or "").strip()
+            for backbone in list(allowed_backbones or [])
+            if str(backbone or "").strip()
+        }
         self._result: Optional[EmbeddingAnalysisResult] = None
         self._refresh_timer = QtCore.QTimer(self)
         self._refresh_timer.setSingleShot(True)
@@ -139,6 +151,10 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
         product_name = self.cmb_product.currentText().strip()
         product_dir = os.path.join(self.session_root, product_name)
         entries = list_available_embedding_models(product_dir)
+        if self._allowed_model_keys:
+            entries = [entry for entry in entries if entry.model_key in self._allowed_model_keys]
+        if self._allowed_backbones:
+            entries = [entry for entry in entries if entry.backbone in self._allowed_backbones]
         self.cmb_model.blockSignals(True)
         self.cmb_model.clear()
         for entry in entries:

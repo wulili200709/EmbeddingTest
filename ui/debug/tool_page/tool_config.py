@@ -61,10 +61,11 @@ def _sync_inspection_items_row_highlight(tool_page) -> None:
     if table is None:
         return
     selection_model = table.selectionModel()
+    selected_row = -1
     if selection_model is not None and selection_model.hasSelection():
-        selected_row = int(table.currentRow())
-    else:
-        selected_row = -1
+        selected_rows = selection_model.selectedRows()
+        if selected_rows:
+            selected_row = int(selected_rows[0].row())
     for row in range(table.rowCount()):
         is_selected = row == selected_row
         for column in (2, 3):
@@ -274,9 +275,13 @@ def _selected_inspection_item_row(tool_page) -> int:
     if table is None:
         return -1
     selection_model = table.selectionModel()
-    if selection_model is None or not selection_model.hasSelection():
+    visible_row = -1
+    if selection_model is not None and selection_model.hasSelection():
+        selected_rows = selection_model.selectedRows()
+        if selected_rows:
+            visible_row = int(selected_rows[0].row())
+    if visible_row < 0:
         return -1
-    visible_row = int(table.currentRow())
     row = _actual_inspection_item_index(tool_page, visible_row)
     if row < 0 or row >= len(tool_page.inspection_items):
         return -1

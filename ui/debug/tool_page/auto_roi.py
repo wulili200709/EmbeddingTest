@@ -17,8 +17,8 @@ from domain import (
 )
 
 
-def _line2dup_output_labels(tool_page) -> List[str]:
-    recipe = tool_page.line2dup_recipe
+def _line2dup_output_labels(tool_page, camera_role=None) -> List[str]:
+    recipe = tool_page.line2dup_recipe_for_role(camera_role)
     return [str(label).strip() for label in output_labels_from_line2dup_recipe(recipe) if str(label).strip()]
 
 
@@ -63,9 +63,9 @@ def _reload_inspection_items(tool_page) -> None:
     tool_page.inspectionItemsChanged.emit()
 
 
-def _missing_roi_files(tool_page, paths: List[str]) -> List[str]:
+def _missing_roi_files(tool_page, paths: List[str], camera_role=None) -> List[str]:
     missing: List[str] = []
-    labels = tool_page._line2dup_output_labels() if tool_page.loc_method == "line2dup" else ["roi"]
+    labels = tool_page._line2dup_output_labels(camera_role) if tool_page.loc_method == "line2dup" else ["roi"]
     for p in paths:
         j = qr_core.labelme_json_of_image(p)
         if not os.path.exists(j):
@@ -98,8 +98,8 @@ def _existing_roi_like_labels(tool_page, paths: List[str]) -> List[str]:
     return labels
 
 
-def _clear_roi_labels_for_paths(tool_page, paths: List[str]) -> Tuple[List[str], str]:
-    current_labels = tool_page._line2dup_output_labels() if tool_page.loc_method == "line2dup" else ["roi"]
+def _clear_roi_labels_for_paths(tool_page, paths: List[str], camera_role=None) -> Tuple[List[str], str]:
+    current_labels = tool_page._line2dup_output_labels(camera_role) if tool_page.loc_method == "line2dup" else ["roi"]
     prefer_stale_only = bool(
         tool_page.loc_method == "line2dup"
         and getattr(tool_page, "chk_only_missing", None) is not None

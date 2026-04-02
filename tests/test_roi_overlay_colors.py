@@ -15,6 +15,7 @@ if root_str not in sys.path:
 from ui.roi_overlay_colors import (
     ROI_DEFAULT_COLOR,
     ROI_NG_COLOR,
+    ROI_UNLABELED_COLOR,
     color_for_roi_status,
     is_roi_label,
     merge_roi_statuses,
@@ -22,10 +23,12 @@ from ui.roi_overlay_colors import (
 
 
 class RoiOverlayColorTests(unittest.TestCase):
-    def test_color_for_roi_status_uses_green_by_default(self) -> None:
-        self.assertEqual(color_for_roi_status("").name(), ROI_DEFAULT_COLOR.name())
+    def test_color_for_roi_status_uses_blue_for_unlabeled(self) -> None:
+        self.assertEqual(color_for_roi_status("").name(), ROI_UNLABELED_COLOR.name())
+        self.assertEqual(color_for_roi_status("pending").name(), ROI_UNLABELED_COLOR.name())
+
+    def test_color_for_roi_status_uses_green_for_ok(self) -> None:
         self.assertEqual(color_for_roi_status("ok").name(), ROI_DEFAULT_COLOR.name())
-        self.assertEqual(color_for_roi_status("pending").name(), ROI_DEFAULT_COLOR.name())
 
     def test_color_for_roi_status_uses_red_for_ng(self) -> None:
         self.assertEqual(color_for_roi_status("ng").name(), ROI_NG_COLOR.name())

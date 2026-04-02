@@ -11,6 +11,7 @@ QtCore = page_module.QtCore
 QtWidgets = page_module.QtWidgets
 qr_core = page_module.qr_core
 line2dup_locator = page_module.line2dup_locator
+_filter_paths_for_camera = page_module._filter_paths_for_camera
 
 
 def _set_reference(self, path: str) -> None:
@@ -119,11 +120,12 @@ def _resolve_autogen_targets(
     *,
     only_missing: bool,
     silent: bool,
+    camera_role=None,
 ) -> List[str]:
     self._skip_empty_autogen_message = False
     if not paths:
         return []
-    missing = self._missing_roi_files(paths)
+    missing = self._missing_roi_files(paths, camera_role=camera_role)
     if not missing:
         if not silent:
             QtWidgets.QMessageBox.information(self, "提示", "这些图片已经存在 ROI。")
@@ -159,29 +161,43 @@ def _resolve_autogen_targets(
         return list(missing)
     return list(paths)
 
-def _autogen_roi_for_images(self, paths: List[str], only_missing: bool, silent: bool = False) -> None:
+def _autogen_roi_for_images(
+    self,
+    paths: List[str],
+    only_missing: bool,
+    silent: bool = False,
+    *,
+    camera_role=None,
+) -> None:
     if not paths:
         if not silent:
             QtWidgets.QMessageBox.information(self, "提示", "没有可处理的图片")
         return
     ref_image = self.ref_image
     method = self.loc_method
+    role = self.current_camera_role() if camera_role is None else str(camera_role)
     if method == "line2dup":
-        camera_role = self.current_camera_role()
         try:
-            recipe = self.line2dup_recipe_for_role(camera_role, force_reload=True)
-            self.line2dup_recipe = recipe
+            recipe = self.line2dup_recipe_for_role(role, force_reload=True)
+            if role == self.current_camera_role():
+                self.line2dup_recipe = recipe
         except Exception as exc:
             QtWidgets.QMessageBox.warning(self, "提示", f"无法加载模板 recipe：{exc}")
             return
         if recipe.reference_image and os.path.exists(recipe.reference_image):
             ref_image = recipe.reference_image
             if self.ref_image != ref_image:
-                self._set_reference(ref_image)
-        if not os.path.exists(self.line2dup_model_path_for_role(camera_role)):
+                if role == self.current_camera_role():
+                    self._set_reference(ref_image)
+                else:
+                    self.ref_image = ref_image
+                    if getattr(self, "lbl_ref", None) is not None:
+                        self.lbl_ref.setText(f"参考图: {os.path.basename(ref_image)}")
+                        self.lbl_ref.setToolTip(ref_image)
+        if not os.path.exists(self.line2dup_model_path_for_role(role)):
             QtWidgets.QMessageBox.warning(self, "提示", "当前产品还没有模板模型，请先创建模板。")
             return
-        labels = self._line2dup_output_labels()
+        labels = self._line2dup_output_labels(role)
         recipe_region_labels = {
             str(region.get("output_label") or region.get("reference_label") or "").strip()
             for region in (recipe.reference_regions or [])
@@ -226,7 +242,7 @@ def _autogen_roi_for_images(self, paths: List[str], only_missing: bool, silent: 
             QtWidgets.QMessageBox.warning(self, "提示", "参考图缺少 roi 标注")
             return
 
-    todo = self._resolve_autogen_targets(paths, only_missing=only_missing, silent=silent)
+    todo = self._resolve_autogen_targets(paths, only_missing=only_missing, silent=silent, camera_role=role)
     if not todo:
         if getattr(self, "_skip_empty_autogen_message", False):
             self._skip_empty_autogen_message = False
@@ -243,7 +259,7 @@ def _autogen_roi_for_images(self, paths: List[str], only_missing: bool, silent: 
                 run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
                     tgt_img_path=p, ref_img_path=ref_image,
                     product_dir=self.session.product_dir,
-                    camera_role=self.current_camera_role(),
+                    camera_role=role,
                 )
                 self._line2dup_match_ms_by_image[p] = float(run.total_ms)
                 self._line2dup_autogen_ms_by_image[p] = float(run.total_ms)
@@ -266,6 +282,7 @@ def _autogen_roi_for_images(self, paths: List[str], only_missing: bool, silent: 
 
     if ok:
         self._reload_inspection_items()
+        self.roiGeometryChanged.emit()
 
     cur = self.canvas.image_path()
     if cur and cur in todo:
@@ -275,15 +292,16 @@ def _autogen_roi_for_images(self, paths: List[str], only_missing: bool, silent: 
 def _autogen_roi_current_tab(self) -> None:
     tab = self.tabs.currentIndex()
     if tab == 0:
-        paths = list(self.ok_files)
-    elif tab == 1:
-        paths = list(self.ng_files)
+        paths = self._sample_paths_for_kind("train", self.current_camera_role())
     else:
-        paths = list(self.test_files)
+        paths = _filter_paths_for_camera(self, self.test_files, self.current_camera_role())
     self._autogen_roi_for_images(paths, only_missing=self.chk_only_missing.isChecked())
 
 def _autogen_roi_all(self) -> None:
-    paths = list(self.ok_files) + list(self.ng_files) + list(self.test_files)
+    train_files = list(getattr(self, "train_files", []) or [])
+    if not train_files:
+        train_files = list(getattr(self, "ok_files", []) or []) + list(getattr(self, "ng_files", []) or [])
+    paths = list(dict.fromkeys(train_files + list(self.test_files)))
     self._autogen_roi_for_images(paths, only_missing=self.chk_only_missing.isChecked())
 
 def _clear_roi_for_images(
@@ -292,14 +310,16 @@ def _clear_roi_for_images(
     *,
     labels: Optional[List[str]] = None,
     silent: bool = False,
+    camera_role=None,
 ) -> None:
     if not paths:
         if not silent:
             QtWidgets.QMessageBox.information(self, "提示", "没有可处理的图片")
         return
-    self._clear_training_roi_review_state(self.current_camera_role())
+    role = self.current_camera_role() if camera_role is None else str(camera_role)
+    self._clear_training_roi_review_state(role)
     if labels is None:
-        labels, _clear_mode = self._clear_roi_labels_for_paths(paths)
+        labels, _clear_mode = self._clear_roi_labels_for_paths(paths, camera_role=role)
     labels = [str(label).strip() for label in (labels or []) if str(label).strip()] or ["roi"]
 
     removed = 0
@@ -323,6 +343,9 @@ def _clear_roi_for_images(
         self._load_canvas_image(cur)
         self._set_status_for_current_image(cur)
 
+    if touched:
+        self.roiGeometryChanged.emit()
+
     if not silent:
         QtWidgets.QMessageBox.information(
             self, "完成",
@@ -333,11 +356,11 @@ def _clear_roi_for_images(
 def _clear_roi_current_tab(self) -> None:
     tab = self.tabs.currentIndex()
     if tab == 0:
-        paths, tab_name = list(self.ok_files), "OK"
-    elif tab == 1:
-        paths, tab_name = list(self.ng_files), "NG"
+        paths = self._sample_paths_for_kind("train", self.current_camera_role())
+        tab_name = "训练样本"
     else:
-        paths, tab_name = list(self.test_files), "TEST"
+        paths = _filter_paths_for_camera(self, self.test_files, self.current_camera_role())
+        tab_name = "测试样本"
 
     if not paths:
         QtWidgets.QMessageBox.information(self, "提示", "当前列表没有图片")

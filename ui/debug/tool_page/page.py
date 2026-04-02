@@ -68,8 +68,9 @@ from ui.debug import (
     OverlayShape,
     RoiCanvas,
 )
-from ui.roi_overlay_colors import is_roi_label
+from ui.roi_overlay_colors import is_roi_label, overlay_style_for_label
 from ui.runtime import RuntimeImageView
+from path_utils import product_relative_path, resolve_product_path
 
 
 try:
@@ -145,6 +146,806 @@ def _filter_paths_for_camera(tool_page, paths: List[str], camera_id: object) -> 
     if not any(_camera_role_from_path(path) for path in paths):
         return list(paths)
     return [path for path in paths if _camera_role_from_path(path) == role]
+
+class _SampleAnnotationCanvas(QtWidgets.QWidget):
+    imagePressed = QtCore.Signal(int, int, int)
+
+    def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setMouseTracking(True)
+        self.setMinimumSize(480, 360)
+        self.setFocusPolicy(QtCore.Qt.StrongFocus)
+        self._pixmap = QtGui.QPixmap()
+        self._scaled_pixmap = QtGui.QPixmap()
+        self._overlays: list[OverlayShape] = []
+        self._scale = 1.0
+        self._zoom = 1.0
+        self._zoom_min = 0.2
+        self._zoom_max = 12.0
+        self._pan_offset = QtCore.QPointF(0.0, 0.0)
+        self._image_offset = QtCore.QPointF(0.0, 0.0)
+        self._pressed_button = 0
+        self._press_pos = QtCore.QPointF()
+        self._pan_anchor = QtCore.QPointF()
+        self._is_panning = False
+
+    def clear_image(self) -> None:
+        self._pixmap = QtGui.QPixmap()
+        self._scaled_pixmap = QtGui.QPixmap()
+        self._pan_offset = QtCore.QPointF(0.0, 0.0)
+        self._zoom = 1.0
+        self.update()
+
+    def set_image(self, pixmap: QtGui.QPixmap) -> None:
+        self._pixmap = QtGui.QPixmap(pixmap)
+        self._pan_offset = QtCore.QPointF(0.0, 0.0)
+        self._zoom = 1.0
+        self._update_scaled_pixmap()
+        self.update()
+
+    def set_overlays(self, overlays: Optional[List[OverlayShape]]) -> None:
+        self._overlays = list(overlays or [])
+        self.update()
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._update_scaled_pixmap()
+
+    def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
+        if self._pixmap.isNull():
+            super().wheelEvent(event)
+            return
+        delta = event.angleDelta().y()
+        if delta == 0:
+            event.ignore()
+            return
+        old_scale = self._scale
+        anchor_widget = event.position()
+        anchor_image = self._widget_to_image(anchor_widget)
+        factor = 1.15 if delta > 0 else (1.0 / 1.15)
+        self._zoom = max(self._zoom_min, min(self._zoom_max, self._zoom * factor))
+        self._update_scaled_pixmap()
+        if anchor_image is not None and old_scale > 0.0:
+            new_scale = self._scale
+            new_offset_x = float(anchor_widget.x()) - (anchor_image[0] * new_scale)
+            new_offset_y = float(anchor_widget.y()) - (anchor_image[1] * new_scale)
+            self._pan_offset = QtCore.QPointF(
+                new_offset_x - self._base_image_offset().x(),
+                new_offset_y - self._base_image_offset().y(),
+            )
+            self._pan_offset = self._clamp_pan_offset(self._pan_offset)
+            self._image_offset = QtCore.QPointF(
+                self._base_image_offset().x() + self._pan_offset.x(),
+                self._base_image_offset().y() + self._pan_offset.y(),
+            )
+        self.update()
+        event.accept()
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        if self._pixmap.isNull():
+            return
+        self._pressed_button = int(getattr(event.button(), "value", event.button()))
+        self._press_pos = event.position()
+        self._pan_anchor = QtCore.QPointF(self._pan_offset)
+        self._is_panning = False
+
+    def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
+        if self._pixmap.isNull() or self._pressed_button == 0:
+            return
+        if not self._can_pan():
+            return
+        if not self._is_panning:
+            if (event.position() - self._press_pos).manhattanLength() < 6:
+                return
+            self._is_panning = True
+        delta = event.position() - self._press_pos
+        self._pan_offset = self._clamp_pan_offset(
+            QtCore.QPointF(
+                self._pan_anchor.x() + delta.x(),
+                self._pan_anchor.y() + delta.y(),
+            )
+        )
+        self._image_offset = QtCore.QPointF(
+            self._base_image_offset().x() + self._pan_offset.x(),
+            self._base_image_offset().y() + self._pan_offset.y(),
+        )
+        self.update()
+
+    def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
+        if self._pixmap.isNull():
+            return
+        released_button = int(getattr(event.button(), "value", event.button()))
+        image_xy = self._widget_to_image(event.position())
+        if released_button == self._pressed_button and not self._is_panning and image_xy is not None:
+            self.imagePressed.emit(released_button, int(round(image_xy[0])), int(round(image_xy[1])))
+        self._pressed_button = 0
+        self._is_panning = False
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:
+        painter = QtGui.QPainter(self)
+        painter.fillRect(self.rect(), QtGui.QColor("#111111"))
+        if self._pixmap.isNull() or self._scaled_pixmap.isNull():
+            painter.setPen(QtGui.QColor("#8a8a8a"))
+            painter.drawText(self.rect(), QtCore.Qt.AlignCenter, "请选择图片")
+            return
+        top_left = self._image_offset
+        painter.drawPixmap(int(round(top_left.x())), int(round(top_left.y())), self._scaled_pixmap)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        for overlay in self._overlays:
+            pen = QtGui.QPen(QtGui.QColor(overlay.color))
+            pen.setWidthF(float(overlay.width))
+            pen.setStyle(QtCore.Qt.DashLine if overlay.dash else QtCore.Qt.SolidLine)
+            painter.setPen(pen)
+            painter.setBrush(QtCore.Qt.NoBrush)
+            if overlay.shape_type == "rect" and overlay.xywh is not None:
+                x, y, w, h = overlay.xywh
+                painter.drawRect(
+                    QtCore.QRectF(
+                        top_left.x() + float(x) * self._scale,
+                        top_left.y() + float(y) * self._scale,
+                        float(w) * self._scale,
+                        float(h) * self._scale,
+                    )
+                )
+            elif overlay.shape_type == "polygon" and overlay.points:
+                polygon = QtGui.QPolygonF(
+                    [
+                        QtCore.QPointF(
+                            top_left.x() + float(x) * self._scale,
+                            top_left.y() + float(y) * self._scale,
+                        )
+                        for x, y in overlay.points
+                    ]
+                )
+                painter.drawPolygon(polygon)
+
+    def _update_scaled_pixmap(self) -> None:
+        if self._pixmap.isNull():
+            self._scaled_pixmap = QtGui.QPixmap()
+            self._scale = 1.0
+            self._image_offset = QtCore.QPointF(0.0, 0.0)
+            return
+        base_scale = min(
+            max(1, self.width()) / max(1, self._pixmap.width()),
+            max(1, self.height()) / max(1, self._pixmap.height()),
+        )
+        self._scale = max(0.01, float(base_scale) * float(self._zoom))
+        target_size = QtCore.QSize(
+            max(1, int(round(self._pixmap.width() * self._scale))),
+            max(1, int(round(self._pixmap.height() * self._scale))),
+        )
+        self._scaled_pixmap = self._pixmap.scaled(
+            target_size,
+            QtCore.Qt.KeepAspectRatio,
+            QtCore.Qt.SmoothTransformation,
+        )
+        base_offset = self._base_image_offset()
+        self._pan_offset = self._clamp_pan_offset(self._pan_offset)
+        self._image_offset = QtCore.QPointF(base_offset.x() + self._pan_offset.x(), base_offset.y() + self._pan_offset.y())
+
+    def _base_image_offset(self) -> QtCore.QPointF:
+        return QtCore.QPointF(
+            float(max(0, (self.width() - self._scaled_pixmap.width()) / 2.0)),
+            float(max(0, (self.height() - self._scaled_pixmap.height()) / 2.0)),
+        )
+
+    def _widget_to_image(self, widget_pos: QtCore.QPointF) -> tuple[float, float] | None:
+        if self._pixmap.isNull() or self._scale <= 0.0:
+            return None
+        image_x = (float(widget_pos.x()) - self._image_offset.x()) / self._scale
+        image_y = (float(widget_pos.y()) - self._image_offset.y()) / self._scale
+        if image_x < 0.0 or image_y < 0.0 or image_x > self._pixmap.width() or image_y > self._pixmap.height():
+            return None
+        return (image_x, image_y)
+
+    def _can_pan(self) -> bool:
+        return (
+            not self._scaled_pixmap.isNull()
+            and (self._scaled_pixmap.width() > self.width() or self._scaled_pixmap.height() > self.height())
+        )
+
+    def _clamp_pan_offset(self, pan_offset: QtCore.QPointF) -> QtCore.QPointF:
+        if self._scaled_pixmap.isNull():
+            return QtCore.QPointF(0.0, 0.0)
+        max_abs_x = max(0.0, (self._scaled_pixmap.width() - self.width()) / 2.0)
+        max_abs_y = max(0.0, (self._scaled_pixmap.height() - self.height()) / 2.0)
+        return QtCore.QPointF(
+            max(-max_abs_x, min(max_abs_x, float(pan_offset.x()))),
+            max(-max_abs_y, min(max_abs_y, float(pan_offset.y()))),
+        )
+
+
+class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
+    def __init__(self, preview_dialog: "_SampleAnnotationPreviewDialog") -> None:
+        super().__init__(preview_dialog)
+        self._preview_dialog = preview_dialog
+        self._tool_page = preview_dialog._tool_page
+        self.setWindowTitle("自动生成 ROI 工具")
+        self.setModal(False)
+        self.resize(760, 180)
+
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(8)
+
+        self.lbl_scope = QtWidgets.QLabel("")
+        self.lbl_scope.setStyleSheet("color:#d0d0d0;font-size:12px;")
+        root.addWidget(self.lbl_scope)
+
+        self.lbl_ref = QtWidgets.QLabel("")
+        self.lbl_ref.setStyleSheet("color:#d0d0d0;font-size:12px;")
+        root.addWidget(self.lbl_ref)
+
+        self.chk_only_missing = QtWidgets.QCheckBox("仅缺失ROI")
+        self.chk_only_missing.setChecked(True)
+        root.addWidget(self.chk_only_missing, 0, QtCore.Qt.AlignmentFlag.AlignRight)
+
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(8)
+        self.btn_autogen_current = QtWidgets.QPushButton("批量生成ROI(当前列表)")
+        self.btn_autogen_current.clicked.connect(self._run_autogen_current_list)
+        row.addWidget(self.btn_autogen_current)
+        self.btn_autogen_current_image = QtWidgets.QPushButton("补全当前图缺失ROI")
+        self.btn_autogen_current_image.clicked.connect(self._run_autogen_current_image)
+        row.addWidget(self.btn_autogen_current_image)
+        self.btn_clear_current = QtWidgets.QPushButton("清空ROI(当前列表)")
+        self.btn_clear_current.clicked.connect(self._run_clear_current_list)
+        row.addWidget(self.btn_clear_current)
+        root.addLayout(row)
+
+        self._tool_page.roiGeometryChanged.connect(self._refresh_scope)
+        self._tool_page.inspectionItemsChanged.connect(self._refresh_scope)
+        self._refresh_scope()
+
+    def showEvent(self, event: QtGui.QShowEvent) -> None:
+        super().showEvent(event)
+        self._refresh_scope()
+
+    def _camera_role(self) -> str:
+        return str(self._preview_dialog.cmb_camera.currentData() or "cam1")
+
+    def _sample_kind(self) -> str:
+        return str(self._preview_dialog.cmb_sample_kind.currentData() or "train")
+
+    def _scope_paths(self) -> List[str]:
+        return self._tool_page._sample_paths_for_kind(self._sample_kind(), self._camera_role())
+
+    def _current_path(self) -> str:
+        path, _role = self._preview_dialog._current_path_and_role()
+        return str(path or "").strip()
+
+    def _refresh_scope(self) -> None:
+        camera_role = self._camera_role()
+        sample_kind = self._sample_kind()
+        paths = self._scope_paths()
+        current_path = self._current_path()
+        sample_text = "训练样本" if sample_kind == "train" else "测试样本"
+        self.lbl_scope.setText(
+            f"当前范围：{camera_role} / {sample_text} / 共 {len(paths)} 张"
+            + (f" / 当前图：{os.path.basename(current_path)}" if current_path else "")
+        )
+        recipe = self._tool_page.line2dup_recipe_for_role(camera_role, force_reload=False)
+        ref_image = ""
+        if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
+            ref_image = str(recipe.reference_image)
+        self.lbl_ref.setText(f"参考图：{os.path.basename(ref_image) if ref_image else '未设置'}")
+        self.lbl_ref.setToolTip(ref_image)
+        has_scope = bool(paths)
+        self.btn_autogen_current.setEnabled(has_scope)
+        self.btn_clear_current.setEnabled(has_scope)
+        self.btn_autogen_current_image.setEnabled(bool(current_path))
+
+    def _sync_tool_page_role(self) -> None:
+        self._tool_page._set_current_camera_role(self._camera_role(), sync_debug_role=True)
+
+    def _run_autogen_current_list(self) -> None:
+        paths = self._scope_paths()
+        if not paths:
+            QtWidgets.QMessageBox.information(self, "提示", "当前列表没有可处理的图片")
+            return
+        self._sync_tool_page_role()
+        self._tool_page._autogen_roi_for_images(
+            paths,
+            only_missing=self.chk_only_missing.isChecked(),
+            silent=False,
+            camera_role=self._camera_role(),
+        )
+
+    def _run_autogen_current_image(self) -> None:
+        path = self._current_path()
+        if not path:
+            QtWidgets.QMessageBox.information(self, "提示", "当前没有选中图片")
+            return
+        self._sync_tool_page_role()
+        self._tool_page._autogen_roi_for_images(
+            [path],
+            only_missing=True,
+            silent=False,
+            camera_role=self._camera_role(),
+        )
+
+    def _run_clear_current_list(self) -> None:
+        paths = self._scope_paths()
+        if not paths:
+            QtWidgets.QMessageBox.information(self, "提示", "当前列表没有可处理的图片")
+            return
+        sample_text = "训练样本" if self._sample_kind() == "train" else "测试样本"
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            "清空ROI",
+            f"确定清空 {self._camera_role()} 的当前{sample_text}列表 ROI 吗？",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.Cancel,
+            QtWidgets.QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        self._sync_tool_page_role()
+        self._tool_page._clear_roi_for_images(paths, silent=False, camera_role=self._camera_role())
+
+
+class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
+    def __init__(self, tool_page: "ToolPage", parent: Optional[QtWidgets.QWidget] = None) -> None:
+        super().__init__(parent or tool_page)
+        self._tool_page = tool_page
+        self.setWindowTitle("样本标注")
+        self.resize(1100, 720)
+        self.setModal(False)
+
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(8)
+
+        top_row = QtWidgets.QHBoxLayout()
+        top_row.setSpacing(8)
+        top_row.addWidget(QtWidgets.QLabel("产品"))
+        self.cmb_product = QtWidgets.QComboBox()
+        self.cmb_product.addItem(tool_page.current_product_name())
+        self.cmb_product.setEnabled(False)
+        top_row.addWidget(self.cmb_product, 1)
+        top_row.addWidget(QtWidgets.QLabel("相机"))
+        self.cmb_camera = QtWidgets.QComboBox()
+        self.cmb_camera.addItem("cam1", "cam1")
+        self.cmb_camera.addItem("cam2", "cam2")
+        top_row.addWidget(self.cmb_camera)
+        top_row.addWidget(QtWidgets.QLabel("样本"))
+        self.cmb_sample_kind = QtWidgets.QComboBox()
+        self.cmb_sample_kind.addItem("训练样本", "train")
+        self.cmb_sample_kind.addItem("测试样本", "test")
+        top_row.addWidget(self.cmb_sample_kind)
+        root.addLayout(top_row)
+
+        body = QtWidgets.QHBoxLayout()
+        body.setSpacing(8)
+
+        left_panel = QtWidgets.QFrame()
+        left_panel.setStyleSheet("QFrame{background:#2f2f2f;border:1px solid #505050;}")
+        left_layout = QtWidgets.QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(8, 8, 8, 8)
+        left_layout.setSpacing(6)
+        left_layout.addWidget(QtWidgets.QLabel("图片列表"))
+        self.sample_list = QtWidgets.QListWidget()
+        self.sample_list.setStyleSheet(
+            "QListWidget{background:#333333;color:#e0e0e0;border:1px solid #404040;}"
+            "QListWidget::item:selected{background:#6ec0ff;color:#1a1a1a;}"
+        )
+        left_layout.addWidget(self.sample_list, 1)
+        body.addWidget(left_panel, 1)
+
+        center_panel = QtWidgets.QFrame()
+        center_panel.setStyleSheet("QFrame{background:#1f1f1f;border:1px solid #505050;}")
+        center_layout = QtWidgets.QVBoxLayout(center_panel)
+        center_layout.setContentsMargins(8, 8, 8, 8)
+        center_layout.setSpacing(6)
+        center_layout.addWidget(QtWidgets.QLabel("当前图片"))
+        self.lbl_canvas_hint = QtWidgets.QLabel("滚轮缩放，拖动画面平移，单击 ROI 直接设为 OK / NG / 清除标签")
+        self.lbl_canvas_hint.setStyleSheet("color:#a0a0a0;font-size:12px;")
+        center_layout.addWidget(self.lbl_canvas_hint)
+        self.preview_canvas = _SampleAnnotationCanvas()
+        self.preview_canvas.setStyleSheet("QWidget{background:#111111;border:1px solid #303030;}")
+        self.preview_canvas.imagePressed.connect(self._on_canvas_image_pressed)
+        center_layout.addWidget(self.preview_canvas, 1)
+        self.lbl_image_status = QtWidgets.QLabel("状态：未选择")
+        self.lbl_image_status.setStyleSheet("color:#bcbcbc;font-size:12px;")
+        center_layout.addWidget(self.lbl_image_status)
+        body.addWidget(center_panel, 2)
+        self._canvas_shapes: list[dict[str, object]] = []
+        self._active_roi_label = ""
+
+        right_panel = QtWidgets.QFrame()
+        right_panel.setStyleSheet("QFrame{background:#2f2f2f;border:1px solid #505050;}")
+        right_layout = QtWidgets.QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(8, 8, 8, 8)
+        right_layout.setSpacing(6)
+        right_layout.addWidget(QtWidgets.QLabel("当前图 ROI 标签"))
+        self.roi_table = QtWidgets.QTableWidget(0, 3)
+        self.roi_table.setHorizontalHeaderLabels(["ROI", "几何", "标签"])
+        self.roi_table.verticalHeader().setVisible(False)
+        self.roi_table.horizontalHeader().setStretchLastSection(True)
+        self.roi_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.roi_table.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
+        self.roi_table.setStyleSheet(
+            "QTableWidget{background:#333333;color:#d0d0d0;gridline-color:#404040;border:1px solid #404040;}"
+            "QHeaderView::section{background:#3a3a3a;color:#d0d0d0;border:1px solid #404040;padding:4px;}"
+        )
+        right_layout.addWidget(self.roi_table, 1)
+        self.lbl_dialog_hint = QtWidgets.QLabel(
+            "先点“本图全部设OK”，再把有缺陷的 ROI 改成 NG。\n"
+            "如果某个 ROI 还没生成几何框，对应标签会被禁用；可以点“自动ROI...”补齐当前列表。"
+        )
+        self.lbl_dialog_hint.setWordWrap(True)
+        self.lbl_dialog_hint.setStyleSheet("color:#a0a0a0;font-size:12px;")
+        right_layout.addWidget(self.lbl_dialog_hint)
+        body.addWidget(right_panel, 1)
+        root.addLayout(body, 1)
+
+        footer = QtWidgets.QHBoxLayout()
+        self.btn_mark_all_ok = QtWidgets.QPushButton("本图全部设OK")
+        self.btn_mark_all_ok.clicked.connect(self._mark_current_image_all_ok)
+        footer.addWidget(self.btn_mark_all_ok)
+        self.btn_clear_current = QtWidgets.QPushButton("清空当前图标签")
+        self.btn_clear_current.clicked.connect(self._clear_current_image_annotations)
+        footer.addWidget(self.btn_clear_current)
+        self.btn_open_autogen = QtWidgets.QPushButton("自动ROI...")
+        self.btn_open_autogen.clicked.connect(self._open_autogen_dialog)
+        footer.addWidget(self.btn_open_autogen)
+        footer.addStretch(1)
+        self.btn_prev = QtWidgets.QPushButton("上一张")
+        self.btn_prev.clicked.connect(lambda: self._step_selection(-1))
+        footer.addWidget(self.btn_prev)
+        self.btn_next = QtWidgets.QPushButton("下一张")
+        self.btn_next.clicked.connect(lambda: self._step_selection(1))
+        footer.addWidget(self.btn_next)
+        btn_close = QtWidgets.QPushButton("关闭")
+        btn_close.clicked.connect(self.close)
+        footer.addWidget(btn_close)
+        root.addLayout(footer)
+
+        camera_index = self.cmb_camera.findData(tool_page.current_camera_role())
+        if camera_index >= 0:
+            self.cmb_camera.setCurrentIndex(camera_index)
+        sample_kind = tool_page._current_sample_tab_kind()
+        sample_index = self.cmb_sample_kind.findData(sample_kind)
+        if sample_index >= 0:
+            self.cmb_sample_kind.setCurrentIndex(sample_index)
+
+        tool_page.roiGeometryChanged.connect(self._on_tool_page_roi_geometry_changed)
+        tool_page.inspectionItemsChanged.connect(self._on_tool_page_roi_geometry_changed)
+        self.cmb_camera.currentIndexChanged.connect(lambda *_: self._reload_samples())
+        self.cmb_sample_kind.currentIndexChanged.connect(lambda *_: self._reload_samples())
+        self.sample_list.itemSelectionChanged.connect(self._on_sample_selected)
+        self._reload_samples()
+
+    def _reload_samples(self, preferred_path: Optional[str] = None) -> None:
+        tool_page = self._tool_page
+        camera_role = str(self.cmb_camera.currentData() or "cam1")
+        sample_kind = str(self.cmb_sample_kind.currentData() or "train")
+        current_path = (
+            str(preferred_path or "").strip()
+            or self._current_dialog_selected_path()
+            or tool_page._current_selected_path()
+            or ""
+        )
+        paths = tool_page._sample_paths_for_kind(sample_kind, camera_role)
+        blocker = QtCore.QSignalBlocker(self.sample_list)
+        self.sample_list.clear()
+        selected_row = -1
+        for index, path in enumerate(paths):
+            item = QtWidgets.QListWidgetItem(tool_page._sample_item_display_text(path, sample_kind, camera_role))
+            item.setToolTip(path)
+            item.setData(QtCore.Qt.UserRole, path)
+            self.sample_list.addItem(item)
+            if current_path and path == current_path:
+                selected_row = index
+        del blocker
+        if self.sample_list.count() == 0:
+            self.preview_canvas.clear_image()
+            self.lbl_image_status.setText("状态：当前列表为空")
+            self.roi_table.setRowCount(0)
+            self._sync_navigation_buttons()
+            self._sync_tool_page_context("")
+            return
+        if selected_row < 0:
+            selected_row = 0
+        self.sample_list.setCurrentRow(selected_row)
+        self._on_sample_selected()
+
+    def _on_sample_selected(self) -> None:
+        tool_page = self._tool_page
+        item = self.sample_list.currentItem()
+        if item is None:
+            return
+        path = str(item.data(QtCore.Qt.UserRole) or item.toolTip() or "")
+        camera_role = str(self.cmb_camera.currentData() or "cam1")
+        if not path:
+            return
+        self._active_roi_label = ""
+        self._load_canvas_preview(path, camera_role)
+        usage_text = tool_page._sample_usage_text(path)
+        annotation_state = tool_page._sample_annotation_state_for_path(path, camera_role)
+        self.lbl_image_status.setText(f"状态：{usage_text} / {annotation_state}")
+        self._populate_roi_table(path, camera_role)
+        self._sync_navigation_buttons()
+        self._sync_tool_page_context(path)
+
+    def _populate_roi_table(self, path: str, camera_role: str) -> None:
+        tool_page = self._tool_page
+        labels = tool_page._inspection_label_names_for_role(camera_role)
+        self.roi_table.setRowCount(0)
+        for row_index, label in enumerate(labels):
+            self.roi_table.insertRow(row_index)
+            self.roi_table.setItem(row_index, 0, QtWidgets.QTableWidgetItem(label))
+            has_geometry = tool_page._path_has_roi_geometry(path, label)
+            geometry_item = QtWidgets.QTableWidgetItem("已生成" if has_geometry else "缺少ROI")
+            self.roi_table.setItem(row_index, 1, geometry_item)
+            combo = QtWidgets.QComboBox()
+            combo.addItem("未标注", "")
+            combo.addItem("OK", "OK")
+            combo.addItem("NG", "NG")
+            current_status = tool_page._sample_roi_status_for_path(path, camera_role, label)
+            combo_index = combo.findData(current_status)
+            if combo_index < 0:
+                combo_index = 0
+            combo.setCurrentIndex(combo_index)
+            combo.setEnabled(has_geometry)
+            combo.currentIndexChanged.connect(
+                lambda _index, image_path=path, role=camera_role, roi_label=label, widget=combo: self._on_roi_status_changed(
+                    image_path,
+                    role,
+                    roi_label,
+                    str(widget.currentData() or ""),
+                )
+            )
+            self.roi_table.setCellWidget(row_index, 2, combo)
+
+    def _on_roi_status_changed(self, path: str, camera_role: str, label: str, status: str) -> None:
+        self._tool_page._set_sample_roi_status_for_path(path, camera_role, label, status)
+        self._refresh_current_row_text(path, camera_role)
+        self._tool_page._refresh_lists()
+        self._tool_page._update_sample_panel_widgets()
+        self._active_roi_label = label
+        self._refresh_canvas_overlays(path, camera_role)
+        self.lbl_image_status.setText(
+            f"状态：{self._tool_page._sample_usage_text(path)} / "
+            f"{self._tool_page._sample_annotation_state_for_path(path, camera_role)}"
+        )
+
+    def _refresh_current_row_text(self, path: str, camera_role: str) -> None:
+        current_item = self.sample_list.currentItem()
+        if current_item is None:
+            return
+        item_path = str(current_item.data(QtCore.Qt.UserRole) or current_item.toolTip() or "")
+        if item_path != path:
+            return
+        sample_kind = str(self.cmb_sample_kind.currentData() or "train")
+        current_item.setText(self._tool_page._sample_item_display_text(path, sample_kind, camera_role))
+
+    def _current_path_and_role(self) -> tuple[str, str]:
+        item = self.sample_list.currentItem()
+        if item is None:
+            return "", str(self.cmb_camera.currentData() or "cam1")
+        path = str(item.data(QtCore.Qt.UserRole) or item.toolTip() or "")
+        role = str(self.cmb_camera.currentData() or "cam1")
+        return path, role
+
+    def _current_dialog_selected_path(self) -> str:
+        item = self.sample_list.currentItem()
+        if item is None:
+            return ""
+        return str(item.data(QtCore.Qt.UserRole) or item.toolTip() or "").strip()
+
+    def _sync_tool_page_context(self, preferred_path: str = "") -> None:
+        camera_role = str(self.cmb_camera.currentData() or "cam1")
+        sample_kind = str(self.cmb_sample_kind.currentData() or "train")
+        try:
+            self._tool_page._set_current_camera_role(camera_role, sync_debug_role=True)
+        except Exception:
+            pass
+        target_index = 0 if sample_kind == "train" else 1
+        tabs = getattr(self._tool_page, "tabs", None)
+        if tabs is not None and tabs.currentIndex() != target_index:
+            tabs.setCurrentIndex(target_index)
+        path = str(preferred_path or "").strip()
+        if not path:
+            return
+        try:
+            self._tool_page._select_path_in_current_tab(path)
+        except Exception:
+            pass
+
+    def _open_autogen_dialog(self) -> None:
+        dialog = getattr(self, "_sample_annotation_autogen_dialog", None)
+        if dialog is None:
+            dialog = _SampleAnnotationAutoRoiDialog(self)
+            self._sample_annotation_autogen_dialog = dialog
+            dialog.finished.connect(lambda *_: setattr(self, "_sample_annotation_autogen_dialog", None))
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _on_tool_page_roi_geometry_changed(self) -> None:
+        self._reload_samples(preferred_path=self._current_dialog_selected_path())
+
+    def _mark_current_image_all_ok(self) -> None:
+        path, camera_role = self._current_path_and_role()
+        if not path:
+            return
+        self._tool_page._mark_sample_path_all_ok(path, camera_role)
+        self._refresh_after_annotation_change(path, camera_role)
+
+    def _clear_current_image_annotations(self) -> None:
+        path, camera_role = self._current_path_and_role()
+        if not path:
+            return
+        self._tool_page._clear_sample_path_annotations(path, camera_role)
+        self._refresh_after_annotation_change(path, camera_role)
+
+    def _step_selection(self, direction: int) -> None:
+        count = self.sample_list.count()
+        if count <= 0:
+            return
+        current_row = self.sample_list.currentRow()
+        if current_row < 0:
+            current_row = 0
+        next_row = max(0, min(count - 1, current_row + int(direction)))
+        if next_row == current_row:
+            return
+        self.sample_list.setCurrentRow(next_row)
+
+    def _sync_navigation_buttons(self) -> None:
+        count = self.sample_list.count()
+        row = self.sample_list.currentRow()
+        has_selection = count > 0 and row >= 0
+        self.btn_mark_all_ok.setEnabled(has_selection)
+        self.btn_clear_current.setEnabled(has_selection)
+        self.btn_prev.setEnabled(has_selection and row > 0)
+        self.btn_next.setEnabled(has_selection and row >= 0 and row < count - 1)
+
+    def _refresh_after_annotation_change(self, path: str, camera_role: str) -> None:
+        self._refresh_current_row_text(path, camera_role)
+        self._tool_page._refresh_lists()
+        self._tool_page._update_sample_panel_widgets()
+        self._populate_roi_table(path, camera_role)
+        self._refresh_canvas_overlays(path, camera_role)
+        self.lbl_image_status.setText(
+            f"状态：{self._tool_page._sample_usage_text(path)} / "
+            f"{self._tool_page._sample_annotation_state_for_path(path, camera_role)}"
+        )
+
+    def _load_canvas_preview(self, path: str, camera_role: str) -> None:
+        pixmap = _pixmap_from_path(path)
+        if pixmap.isNull():
+            self.preview_canvas.clear_image()
+            return
+        self.preview_canvas.set_image(pixmap)
+        self._refresh_canvas_overlays(path, camera_role)
+
+    def _refresh_canvas_overlays(self, path: str, camera_role: str) -> None:
+        jpath = qr_core.labelme_json_of_image(path)
+        labels = self._tool_page._inspection_label_names_for_role(camera_role)
+        overlays: list[OverlayShape] = []
+        shape_entries: list[dict[str, object]] = []
+        if not os.path.exists(jpath):
+            self._canvas_shapes = []
+            self.preview_canvas.set_overlays([])
+            return
+        for label in labels:
+            poly_points = qr_core.try_read_polygon_points_from_labelme(jpath, label)
+            xywh = qr_core.try_read_xywh_from_labelme(jpath, label)
+            if poly_points and len(poly_points) >= 3:
+                status = self._tool_page._sample_roi_status_for_path(path, camera_role, label).lower()
+                color, width, dash = overlay_style_for_label(label, status=status)
+                if label == self._active_roi_label:
+                    width = max(float(width), 4.0)
+                overlays.append(
+                    OverlayShape(
+                        shape_type="polygon",
+                        points=[(float(x), float(y)) for x, y in poly_points],
+                        color=QtGui.QColor(color),
+                        width=float(width),
+                        dash=bool(dash),
+                    )
+                )
+                shape_entries.append(
+                    {
+                        "label": label,
+                        "shape_type": "polygon",
+                        "points": [(float(x), float(y)) for x, y in poly_points],
+                    }
+                )
+                continue
+            if xywh:
+                status = self._tool_page._sample_roi_status_for_path(path, camera_role, label).lower()
+                color, width, dash = overlay_style_for_label(label, status=status)
+                if label == self._active_roi_label:
+                    width = max(float(width), 4.0)
+                overlays.append(
+                    OverlayShape(
+                        shape_type="rect",
+                        xywh=tuple(int(v) for v in xywh),
+                        color=QtGui.QColor(color),
+                        width=float(width),
+                        dash=bool(dash),
+                    )
+                )
+                shape_entries.append(
+                    {
+                        "label": label,
+                        "shape_type": "rect",
+                        "xywh": tuple(int(v) for v in xywh),
+                    }
+                )
+        self._canvas_shapes = shape_entries
+        self.preview_canvas.set_overlays(overlays)
+
+    def _on_canvas_image_pressed(self, button: int, image_x: int, image_y: int) -> None:
+        button_value = int(getattr(QtCore.Qt.MouseButton.LeftButton, "value", QtCore.Qt.MouseButton.LeftButton))
+        right_value = int(getattr(QtCore.Qt.MouseButton.RightButton, "value", QtCore.Qt.MouseButton.RightButton))
+        if button not in {button_value, right_value}:
+            return
+        path, camera_role = self._current_path_and_role()
+        if not path:
+            return
+        label = self._find_roi_label_at_point(float(image_x), float(image_y))
+        if not label:
+            return
+        self._active_roi_label = label
+        self._refresh_canvas_overlays(path, camera_role)
+        self._focus_roi_row(label)
+        self._show_roi_label_menu(path, camera_role, label)
+
+    def _focus_roi_row(self, label: str) -> None:
+        for row in range(self.roi_table.rowCount()):
+            item = self.roi_table.item(row, 0)
+            if item is None:
+                continue
+            if str(item.text()).strip() != str(label).strip():
+                continue
+            self.roi_table.setCurrentCell(row, 0)
+            self.roi_table.scrollToItem(item)
+            break
+
+    def _show_roi_label_menu(self, path: str, camera_role: str, label: str) -> None:
+        menu = QtWidgets.QMenu(self)
+        action_ok = menu.addAction(f"{label} -> OK")
+        action_ng = menu.addAction(f"{label} -> NG")
+        action_clear = menu.addAction(f"{label} -> 清除标签")
+        chosen = menu.exec(QtGui.QCursor.pos())
+        if chosen is None:
+            return
+        if chosen == action_ok:
+            status = "OK"
+        elif chosen == action_ng:
+            status = "NG"
+        else:
+            status = ""
+        self._set_roi_status_from_canvas(path, camera_role, label, status)
+
+    def _set_roi_status_from_canvas(self, path: str, camera_role: str, label: str, status: str) -> None:
+        self._tool_page._set_sample_roi_status_for_path(path, camera_role, label, status)
+        self._refresh_after_annotation_change(path, camera_role)
+
+    def _find_roi_label_at_point(self, image_x: float, image_y: float) -> str:
+        for entry in reversed(self._canvas_shapes):
+            label = str(entry.get("label", "") or "").strip()
+            if not label:
+                continue
+            shape_type = str(entry.get("shape_type", "") or "")
+            if shape_type == "polygon":
+                points = entry.get("points") or []
+                polygon = QtGui.QPolygonF([QtCore.QPointF(float(x), float(y)) for x, y in points])
+                if len(polygon) >= 3 and polygon.containsPoint(
+                    QtCore.QPointF(float(image_x), float(image_y)),
+                    QtCore.Qt.FillRule.OddEvenFill,
+                ):
+                    return label
+                continue
+            xywh = entry.get("xywh")
+            if not xywh:
+                continue
+            x, y, w, h = [float(v) for v in xywh]
+            if x <= float(image_x) <= x + w and y <= float(image_y) <= y + h:
+                return label
+        return ""
 
 ALGORITHM_GROUPS = [
     (
@@ -277,6 +1078,7 @@ class ToolPage(QtWidgets.QWidget):
     sessionClearRequested = QtCore.Signal()
     sessionLoaded = QtCore.Signal()
     inspectionItemsChanged = QtCore.Signal()
+    roiGeometryChanged = QtCore.Signal()
     debugCameraConnectRequested = QtCore.Signal(str)
     debugCameraConnected = QtCore.Signal(str, str)
     cameraSettingsApplied = QtCore.Signal(str, object)
@@ -292,6 +1094,7 @@ class ToolPage(QtWidgets.QWidget):
         self.session = session
         self.algo = algo
 
+        self.train_files: List[str] = []
         self.ok_files: List[str] = []
         self.ng_files: List[str] = []
         self.test_files: List[str] = []
@@ -308,10 +1111,12 @@ class ToolPage(QtWidgets.QWidget):
         self._line2dup_autogen_ms_by_image: Dict[str, float] = {}
         self._current_result_rows: List[Dict[str, object]] = []
         self._roi_results_by_image: Dict[str, Dict[str, str]] = {}
+        self._sample_roi_annotations_by_path: Dict[str, Dict[str, str]] = {}
         self._updating_runtime_params = False
         self._skip_empty_autogen_message = False
         self._tool_dialogs: Dict[str, QtWidgets.QDialog] = {}
         self._template_editor_dialog: Optional[QtWidgets.QDialog] = None
+        self._sample_annotation_preview_dialog: Optional[QtWidgets.QDialog] = None
         self._debug_camera_manager = None
         self._debug_frame_grab_service = None
         self._debug_camera_infos: List[object] = []
@@ -418,15 +1223,39 @@ class ToolPage(QtWidgets.QWidget):
             self.lbl_ref.setText("参考图：未设置")
             self.lbl_ref.setToolTip("")
 
-    def _training_sample_groups_for_role(self, camera_role: object = None) -> tuple[List[str], List[str], List[str]]:
+    def _train_sample_paths_for_role(self, camera_role: object = None) -> List[str]:
         role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
-        training_ok_files = _filter_paths_for_camera(self, self.ok_files, role)
-        training_ng_files = _filter_paths_for_camera(self, self.ng_files, role)
-        return training_ok_files, training_ng_files, list(training_ok_files) + list(training_ng_files)
+        train_paths = list(getattr(self, "train_files", []) or [])
+        if not train_paths:
+            train_paths = list(getattr(self, "ok_files", []) or []) + list(getattr(self, "ng_files", []) or [])
+        return _filter_paths_for_camera(self, list(dict.fromkeys(train_paths)), role)
+
+    def _training_sample_groups_for_role(
+        self,
+        camera_role: object = None,
+        *,
+        roi_label: object = None,
+    ) -> tuple[List[str], List[str], List[str]]:
+        role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        candidate_paths = self._train_sample_paths_for_role(role)
+        label = str(roi_label or "").strip()
+        if not label:
+            return [], [], candidate_paths
+        training_ok_files: List[str] = []
+        training_ng_files: List[str] = []
+        for path in candidate_paths:
+            if not self._path_has_roi_geometry(path, label):
+                continue
+            status = self._sample_roi_status_for_path(path, role, label)
+            if status == "OK":
+                training_ok_files.append(path)
+            elif status == "NG":
+                training_ng_files.append(path)
+        return training_ok_files, training_ng_files, candidate_paths
 
     def _training_roi_ready_signature(self, camera_role: object = None) -> str:
         role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
-        _training_ok_files, _training_ng_files, candidate_paths = self._training_sample_groups_for_role(role)
+        candidate_paths = self._train_sample_paths_for_role(role)
         recipe_path = self.line2dup_recipe_path_for_role(role)
         model_path = self.line2dup_model_path_for_role(role)
         recipe_mtime = os.path.getmtime(recipe_path) if recipe_path and os.path.exists(recipe_path) else -1.0
@@ -513,8 +1342,8 @@ class ToolPage(QtWidgets.QWidget):
         role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
         if self.loc_method != "line2dup":
             return True
-        training_ok_files, training_ng_files, candidate_paths = self._training_sample_groups_for_role(role)
-        if not training_ok_files or not training_ng_files:
+        candidate_paths = self._train_sample_paths_for_role(role)
+        if not candidate_paths:
             return True
 
         signature = self._training_roi_ready_signature(role)
@@ -903,9 +1732,11 @@ class ToolPage(QtWidgets.QWidget):
         self._apply_runtime_params_to_ui()
 
         sd = self.session.load_session()
-        self.ok_files = sd.ok_files
-        self.ng_files = sd.ng_files
+        self.train_files = list(dict.fromkeys(sd.train_files or (sd.ok_files + sd.ng_files)))
+        self.ok_files = []
+        self.ng_files = []
         self.test_files = sd.test_files
+        self._load_sample_roi_annotations()
         self.loc_method = sd.loc_method
         self._line2dup_recipes_by_role = {}
         self._clear_training_roi_review_state()
@@ -938,9 +1769,11 @@ class ToolPage(QtWidgets.QWidget):
         self.ref_image = None
         self._line2dup_match_ms_by_image = {}
         self._line2dup_autogen_ms_by_image = {}
+        self.train_files = []
         self.ok_files = []
         self.ng_files = []
         self.test_files = []
+        self._sample_roi_annotations_by_path = {}
         self._current_result_rows = []
         self._roi_results_by_image = {}
         self.inspection_items = []
@@ -959,9 +1792,11 @@ class ToolPage(QtWidgets.QWidget):
         # Reset image lists, cached models, and related UI state.
 
 
+        self.train_files = []
         self.ok_files = []
         self.ng_files = []
         self.test_files = []
+        self._sample_roi_annotations_by_path = {}
         self.algo.model = None
         self.line2dup_recipe = None
         self._line2dup_recipes_by_role = {}
@@ -976,6 +1811,7 @@ class ToolPage(QtWidgets.QWidget):
         self._roi_results_by_image = {}
         self._refresh_lists()
         self.session.delete_session_file()
+        self._delete_sample_annotation_file()
         self._reload_inspection_items()
         self._sync_footer()
 
@@ -1114,77 +1950,85 @@ class ToolPage(QtWidgets.QWidget):
         )
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
-        self.ok_list = QtWidgets.QListWidget()
         _lw_css = (
             f"QListWidget{{background:#333333;color:{_TEXT_LIGHT};border:none;font-size:12px;outline:0;}}"
             "QListWidget::item:selected{background:#6ec0ff;color:#1a1a1a;}"
             "QListWidget::item:hover:!selected{background:#4a4a4a;}"
         )
+
+        self.ok_list = QtWidgets.QListWidget()
         self.ok_list.setStyleSheet(_lw_css)
         self.ok_list.setFocusPolicy(QtCore.Qt.NoFocus)
         self.ok_list.itemSelectionChanged.connect(self._on_select_ok)
-        ok_tab = QtWidgets.QWidget()
-        ok_l = QtWidgets.QVBoxLayout(ok_tab)
-        ok_l.setContentsMargins(4, 4, 4, 4)
-        ok_l.setSpacing(4)
-        ok_l.addWidget(self.ok_list, 1)
-        btns = QtWidgets.QHBoxLayout()
-        btns.setSpacing(4)
-        self.btn_add_ok = QtWidgets.QPushButton(_si(SP.SP_FileDialogStart), "\u6dfb\u52a0")
-        self.btn_add_ok.setStyleSheet(_compact_btn)
-        self.btn_add_ok.clicked.connect(lambda: self._add_images_to("OK"))
-        self.btn_del_ok = QtWidgets.QPushButton(_si(SP.SP_DialogDiscardButton), "\u79fb\u9664")
+        train_tab = QtWidgets.QWidget()
+        train_layout = QtWidgets.QVBoxLayout(train_tab)
+        train_layout.setContentsMargins(4, 4, 4, 4)
+        train_layout.setSpacing(4)
+        train_layout.addWidget(self.ok_list, 1)
+        train_actions = QtWidgets.QGridLayout()
+        train_actions.setHorizontalSpacing(4)
+        train_actions.setVerticalSpacing(4)
+        self.btn_import_train = QtWidgets.QPushButton("添加外部图片")
+        self.btn_import_train.setStyleSheet(_compact_btn)
+        self.btn_import_train.clicked.connect(lambda: self._add_images_to("TRAIN"))
+        self.btn_train_to_test = QtWidgets.QPushButton("转为测试")
+        self.btn_train_to_test.setStyleSheet(_compact_btn)
+        self.btn_train_to_test.clicked.connect(lambda: self._move_selected_sample_to("TEST"))
+        self.btn_sample_annotation = QtWidgets.QPushButton("样本标注...")
+        self.btn_sample_annotation.setStyleSheet(_compact_btn)
+        self.btn_sample_annotation.clicked.connect(self._open_sample_annotation_dialog)
+        self.btn_del_ok = QtWidgets.QPushButton(_si(SP.SP_DialogDiscardButton), "移除")
         self.btn_del_ok.setStyleSheet(_compact_btn)
-        self.btn_del_ok.clicked.connect(lambda: self._remove_selected_from("OK"))
-        btns.addWidget(self.btn_add_ok)
-        btns.addWidget(self.btn_del_ok)
-        ok_l.addLayout(btns)
-        self.tabs.addTab(ok_tab, "OK")
+        self.btn_del_ok.clicked.connect(lambda: self._remove_selected_from("TRAIN"))
+        train_actions.addWidget(self.btn_import_train, 0, 0)
+        train_actions.addWidget(self.btn_train_to_test, 0, 1)
+        train_actions.addWidget(self.btn_sample_annotation, 1, 0)
+        train_actions.addWidget(self.btn_del_ok, 1, 1)
+        train_layout.addLayout(train_actions)
+        self.tabs.addTab(train_tab, "训练样本")
 
-        self.ng_list = QtWidgets.QListWidget()
+        self.ng_list = QtWidgets.QListWidget(self)
         self.ng_list.setStyleSheet(_lw_css)
-        self.ng_list.setFocusPolicy(QtCore.Qt.NoFocus)
-        self.ng_list.itemSelectionChanged.connect(self._on_select_ng)
-        ng_tab = QtWidgets.QWidget()
-        ng_l = QtWidgets.QVBoxLayout(ng_tab)
-        ng_l.setContentsMargins(4, 4, 4, 4)
-        ng_l.setSpacing(4)
-        ng_l.addWidget(self.ng_list, 1)
-        btns2 = QtWidgets.QHBoxLayout()
-        btns2.setSpacing(4)
-        self.btn_add_ng = QtWidgets.QPushButton(_si(SP.SP_FileDialogStart), "\u6dfb\u52a0")
-        self.btn_add_ng.setStyleSheet(_compact_btn)
-        self.btn_add_ng.clicked.connect(lambda: self._add_images_to("NG"))
-        self.btn_del_ng = QtWidgets.QPushButton(_si(SP.SP_DialogDiscardButton), "\u79fb\u9664")
-        self.btn_del_ng.setStyleSheet(_compact_btn)
-        self.btn_del_ng.clicked.connect(lambda: self._remove_selected_from("NG"))
-        btns2.addWidget(self.btn_add_ng)
-        btns2.addWidget(self.btn_del_ng)
-        ng_l.addLayout(btns2)
-        self.tabs.addTab(ng_tab, "NG")
+        self.ng_list.hide()
 
         self.test_list = QtWidgets.QListWidget()
         self.test_list.setStyleSheet(_lw_css)
         self.test_list.setFocusPolicy(QtCore.Qt.NoFocus)
         self.test_list.itemSelectionChanged.connect(self._on_select_test)
         test_tab = QtWidgets.QWidget()
-        t_l = QtWidgets.QVBoxLayout(test_tab)
-        t_l.setContentsMargins(4, 4, 4, 4)
-        t_l.setSpacing(4)
-        t_l.addWidget(self.test_list, 1)
-        btns3 = QtWidgets.QHBoxLayout()
-        btns3.setSpacing(4)
-        self.btn_add_test = QtWidgets.QPushButton(_si(SP.SP_FileDialogStart), "\u6dfb\u52a0")
+        test_layout = QtWidgets.QVBoxLayout(test_tab)
+        test_layout.setContentsMargins(4, 4, 4, 4)
+        test_layout.setSpacing(4)
+        test_layout.addWidget(self.test_list, 1)
+        test_actions = QtWidgets.QGridLayout()
+        test_actions.setHorizontalSpacing(4)
+        test_actions.setVerticalSpacing(4)
+        self.btn_test_to_train = QtWidgets.QPushButton("转为训练")
+        self.btn_test_to_train.setStyleSheet(_compact_btn)
+        self.btn_test_to_train.clicked.connect(lambda: self._move_selected_sample_to("TRAIN"))
+        self.btn_add_test = QtWidgets.QPushButton(_si(SP.SP_FileDialogStart), "添加外部图片")
         self.btn_add_test.setStyleSheet(_compact_btn)
         self.btn_add_test.clicked.connect(lambda: self._add_images_to("TEST"))
-        self.btn_del_test = QtWidgets.QPushButton(_si(SP.SP_DialogDiscardButton), "\u79fb\u9664")
+        self.btn_del_test = QtWidgets.QPushButton(_si(SP.SP_DialogDiscardButton), "移除")
         self.btn_del_test.setStyleSheet(_compact_btn)
         self.btn_del_test.clicked.connect(lambda: self._remove_selected_from("TEST"))
-        btns3.addWidget(self.btn_add_test)
-        btns3.addWidget(self.btn_del_test)
-        t_l.addLayout(btns3)
-        self.tabs.addTab(test_tab, "TEST")
+        self.btn_sample_annotation_test = QtWidgets.QPushButton("样本标注...")
+        self.btn_sample_annotation_test.setStyleSheet(_compact_btn)
+        self.btn_sample_annotation_test.clicked.connect(self._open_sample_annotation_dialog)
+        test_actions.addWidget(self.btn_test_to_train, 0, 0)
+        test_actions.addWidget(self.btn_add_test, 0, 1)
+        test_actions.addWidget(self.btn_sample_annotation_test, 1, 0)
+        test_actions.addWidget(self.btn_del_test, 1, 1)
+        test_layout.addLayout(test_actions)
+        self.tabs.addTab(test_tab, "测试样本")
         right_vbox.addWidget(self.tabs, 1)
+
+        self.lbl_current_image_sample_state = QtWidgets.QLabel("  当前图片样本状态：未选择")
+        self.lbl_current_image_sample_state.setWordWrap(True)
+        self.lbl_current_image_sample_state.setStyleSheet(
+            f"color:{_TEXT_DIM};font-size:11px;padding:4px 10px 8px 10px;border-bottom:1px solid #505050;"
+        )
+        right_vbox.addWidget(self.lbl_current_image_sample_state)
 
         # --- 算法参数 ---
         self.btn_toggle_algo = QtWidgets.QToolButton()
@@ -1337,6 +2181,12 @@ class ToolPage(QtWidgets.QWidget):
         self.tool_config_scroll.setWidget(tool_frame)
         self.tool_config_scroll.setMinimumHeight(220)
         right_vbox.addWidget(self.tool_config_scroll, 1)
+        self.lbl_current_tool_sample_stats = QtWidgets.QLabel("  当前工具样本统计：请选择检测工具")
+        self.lbl_current_tool_sample_stats.setWordWrap(True)
+        self.lbl_current_tool_sample_stats.setStyleSheet(
+            f"color:{_TEXT_DIM};font-size:11px;padding:6px 10px;border-top:1px solid #505050;border-bottom:1px solid #505050;"
+        )
+        right_vbox.addWidget(self.lbl_current_tool_sample_stats)
         self._update_learning_backbone_hint()
 
         # --- 操作按钮 ---
@@ -1349,6 +2199,10 @@ class ToolPage(QtWidgets.QWidget):
         action_vbox = QtWidgets.QVBoxLayout(action_frame)
         action_vbox.setContentsMargins(8, 6, 8, 6)
         action_vbox.setSpacing(4)
+        self.lbl_training_validation = QtWidgets.QLabel("训练校验：请选择检测工具")
+        self.lbl_training_validation.setWordWrap(True)
+        self.lbl_training_validation.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;padding:0 2px 4px 2px;")
+        action_vbox.addWidget(self.lbl_training_validation)
 
         _action_btn = (
             "QPushButton{background:#2d5aa0;color:white;border:none;"
@@ -1992,22 +2846,21 @@ class ToolPage(QtWidgets.QWidget):
                 title = f"{title}（{current_role}）"
             self.lbl_images_section.setText(title)
 
-        def visible_files(files: List[str]) -> List[str]:
-            if not current_role:
-                return list(files)
-            return _filter_paths_for_camera(self, files, current_role)
-
-        def fill(listw: QtWidgets.QListWidget, files: List[str]) -> None:
+        def fill(
+            listw: QtWidgets.QListWidget,
+            files: List[str],
+            *,
+            sample_kind: str,
+        ) -> None:
             current_item = listw.currentItem()
             current_path = None
             if current_item is not None:
                 current_path = current_item.data(QtCore.Qt.UserRole) or current_item.toolTip()
-            filtered_files = visible_files(files)
             blocker = QtCore.QSignalBlocker(listw)
             listw.clear()
             selected_row = -1
-            for index, p in enumerate(filtered_files):
-                it = QtWidgets.QListWidgetItem(os.path.basename(p))
+            for index, p in enumerate(files):
+                it = QtWidgets.QListWidgetItem(self._sample_item_display_text(p, sample_kind, current_role))
                 it.setToolTip(p)
                 it.setData(QtCore.Qt.UserRole, p)
                 listw.addItem(it)
@@ -2017,12 +2870,14 @@ class ToolPage(QtWidgets.QWidget):
                 listw.setCurrentRow(selected_row)
             del blocker
 
-        fill(self.ok_list, self.ok_files)
-        fill(self.ng_list, self.ng_files)
-        fill(self.test_list, self.test_files)
+        fill(self.ok_list, self._sample_paths_for_kind("train", current_role), sample_kind="train")
+        fill(self.ng_list, [], sample_kind="ng")
+        fill(self.test_list, self._sample_paths_for_kind("test", current_role), sample_kind="test")
+        self._update_sample_panel_widgets()
 
     def _save_session(self) -> None:
         self.session.save_session(SessionData(
+            train_files=list(self.train_files),
             ok_files=list(self.ok_files),
             ng_files=list(self.ng_files),
             test_files=list(self.test_files),
@@ -2034,6 +2889,376 @@ class ToolPage(QtWidgets.QWidget):
         ref_name = os.path.basename(self.ref_image) if self.ref_image else "Not Set"
     # ------------------------------------------------------------------
 
+    def _current_sample_tab_kind(self) -> str:
+        return "train" if self.tabs.currentIndex() == 0 else "test"
+
+    def _sample_paths_for_kind(
+        self,
+        kind: str,
+        camera_role: object = None,
+    ) -> List[str]:
+        role = _normalize_camera_role(camera_role or _selected_image_list_camera_role(self)) or "cam1"
+        normalized_kind = str(kind or "").strip().lower()
+        if normalized_kind in {"train", "training"}:
+            return self._train_sample_paths_for_role(role)
+        return _filter_paths_for_camera(self, self.test_files, role)
+
+    def _sample_usage_text(self, path: str) -> str:
+        if path in self.train_files:
+            return "训练样本"
+        if path in self.test_files:
+            return "测试样本"
+        return "未归类样本"
+
+    def _inspection_label_names_for_role(self, camera_role: object = None) -> List[str]:
+        role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        labels: List[str] = []
+        seen: set[str] = set()
+        for item in self.inspection_items:
+            item_role = _normalize_camera_role(getattr(item, "camera_id", "")) or "cam1"
+            if item_role != role:
+                continue
+            label = str(getattr(item, "roi_label", "") or "").strip()
+            if not is_roi_label(label) or label in seen:
+                continue
+            labels.append(label)
+            seen.add(label)
+        if not labels:
+            labels_getter = getattr(self, "_line2dup_output_labels", None)
+            if callable(labels_getter):
+                for label in labels_getter():
+                    text = str(label or "").strip()
+                    if not is_roi_label(text) or text in seen:
+                        continue
+                    labels.append(text)
+                    seen.add(text)
+        return labels
+
+    def _sample_annotation_store_path(self) -> str:
+        return os.path.join(self.session.product_dir, "sample_annotations.json")
+
+    def _sample_annotation_path_key(self, path: object) -> str:
+        return product_relative_path(path, base_dir=self.session.product_dir)
+
+    def _sample_roi_annotation_key(self, camera_role: object, label_name: object) -> str:
+        role = _normalize_camera_role(camera_role) or "cam1"
+        label = str(label_name or "").strip()
+        return f"{role}::{label}" if label else role
+
+    def _load_sample_roi_annotations(self) -> None:
+        self._sample_roi_annotations_by_path = {}
+        store_path = self._sample_annotation_store_path()
+        if not store_path or not os.path.exists(store_path):
+            return
+        try:
+            with open(store_path, "r", encoding="utf-8") as handle:
+                raw_payload = json.load(handle)
+        except Exception:
+            return
+        image_payload = raw_payload.get("images", raw_payload) if isinstance(raw_payload, dict) else {}
+        if not isinstance(image_payload, dict):
+            return
+        for stored_path, payload in image_payload.items():
+            resolved_path = resolve_product_path(
+                stored_path,
+                base_dir=self.session.product_dir,
+                anchor_dir=self.session.product_dir,
+                prefer_existing=False,
+            )
+            if not resolved_path:
+                continue
+            if isinstance(payload, dict):
+                raw_labels = payload.get("roi_status", payload)
+            else:
+                raw_labels = {}
+            if not isinstance(raw_labels, dict):
+                continue
+            normalized_labels: Dict[str, str] = {}
+            for key, value in raw_labels.items():
+                annotation_key = str(key or "").strip()
+                annotation_value = str(value or "").strip().upper()
+                if not annotation_key or annotation_value not in {"OK", "NG"}:
+                    continue
+                normalized_labels[annotation_key] = annotation_value
+            if normalized_labels:
+                self._sample_roi_annotations_by_path[os.path.normpath(resolved_path)] = normalized_labels
+
+    def _save_sample_roi_annotations(self) -> None:
+        store_path = self._sample_annotation_store_path()
+        if not store_path:
+            return
+        images_payload: Dict[str, Dict[str, Dict[str, str]]] = {}
+        for path, labels in sorted(self._sample_roi_annotations_by_path.items()):
+            normalized_path = os.path.normpath(str(path or ""))
+            if not normalized_path or not labels:
+                continue
+            key = self._sample_annotation_path_key(normalized_path)
+            if not key:
+                continue
+            images_payload[key] = {"roi_status": dict(sorted(labels.items()))}
+        if not images_payload:
+            self._delete_sample_annotation_file()
+            return
+        os.makedirs(self.session.product_dir, exist_ok=True)
+        with open(store_path, "w", encoding="utf-8") as handle:
+            json.dump({"images": images_payload}, handle, ensure_ascii=False, indent=2)
+
+    def _delete_sample_annotation_file(self) -> None:
+        store_path = self._sample_annotation_store_path()
+        try:
+            if store_path and os.path.exists(store_path):
+                os.remove(store_path)
+        except Exception:
+            pass
+
+    def _path_has_roi_geometry(self, path: str, label_name: str) -> bool:
+        if not path or not label_name:
+            return False
+        json_path = qr_core.labelme_json_of_image(path)
+        if not os.path.exists(json_path):
+            return False
+        try:
+            return qr_core.read_shape_from_labelme(json_path, label_name) is not None
+        except Exception:
+            return False
+
+    def _path_has_roi_label(self, path: str, label_name: str) -> bool:
+        return self._path_has_roi_geometry(path, label_name)
+
+    def _sample_roi_status_for_path(
+        self,
+        path: str,
+        camera_role: object,
+        label_name: str,
+    ) -> str:
+        normalized_path = os.path.normpath(str(path or ""))
+        if not normalized_path:
+            return ""
+        annotation_key = self._sample_roi_annotation_key(camera_role, label_name)
+        return str(self._sample_roi_annotations_by_path.get(normalized_path, {}).get(annotation_key, "") or "").strip().upper()
+
+    def _set_sample_roi_status_for_path(
+        self,
+        path: str,
+        camera_role: object,
+        label_name: str,
+        status: object,
+    ) -> None:
+        normalized_path = os.path.normpath(str(path or ""))
+        if not normalized_path:
+            return
+        annotation_key = self._sample_roi_annotation_key(camera_role, label_name)
+        status_text = str(status or "").strip().upper()
+        annotations = dict(self._sample_roi_annotations_by_path.get(normalized_path, {}))
+        if status_text in {"OK", "NG"}:
+            annotations[annotation_key] = status_text
+        else:
+            annotations.pop(annotation_key, None)
+        if annotations:
+            self._sample_roi_annotations_by_path[normalized_path] = annotations
+        else:
+            self._sample_roi_annotations_by_path.pop(normalized_path, None)
+        self._save_sample_roi_annotations()
+
+    def _mark_sample_path_all_ok(self, path: str, camera_role: object = None) -> None:
+        role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        for label in self._inspection_label_names_for_role(role):
+            if not self._path_has_roi_geometry(path, label):
+                continue
+            self._set_sample_roi_status_for_path(path, role, label, "OK")
+
+    def _clear_sample_path_annotations(self, path: str, camera_role: object = None) -> None:
+        role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        for label in self._inspection_label_names_for_role(role):
+            self._set_sample_roi_status_for_path(path, role, label, "")
+
+    def _sample_annotation_counts_for_roi(
+        self,
+        roi_label: str,
+        camera_role: object = None,
+        *,
+        paths: Optional[List[str]] = None,
+    ) -> Tuple[int, int, int]:
+        role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        target_paths = list(paths or self._sample_paths_for_kind("train", role))
+        ok_count = 0
+        ng_count = 0
+        unset_count = 0
+        for path in target_paths:
+            if not self._path_has_roi_geometry(path, roi_label):
+                unset_count += 1
+                continue
+            status = self._sample_roi_status_for_path(path, role, roi_label)
+            if status == "OK":
+                ok_count += 1
+            elif status == "NG":
+                ng_count += 1
+            else:
+                unset_count += 1
+        return ok_count, ng_count, unset_count
+
+    def _sample_annotation_progress_for_path(
+        self,
+        path: str,
+        camera_role: object = None,
+    ) -> Tuple[int, int]:
+        labels = self._inspection_label_names_for_role(camera_role)
+        if not labels:
+            return 0, 0
+        role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        present_count = sum(
+            1
+            for label in labels
+            if self._path_has_roi_geometry(path, label)
+            and self._sample_roi_status_for_path(path, role, label) in {"OK", "NG"}
+        )
+        return present_count, len(labels)
+
+    def _sample_annotation_state_for_path(
+        self,
+        path: str,
+        camera_role: object = None,
+    ) -> str:
+        labels = self._inspection_label_names_for_role(camera_role)
+        if not labels:
+            return "未标注"
+        geometry_missing = sum(1 for label in labels if not self._path_has_roi_geometry(path, label))
+        if geometry_missing:
+            return "缺少ROI"
+        present_count, total_count = self._sample_annotation_progress_for_path(path, camera_role)
+        if total_count <= 0 or present_count <= 0:
+            return "未标注"
+        if present_count < total_count:
+            return "部分标注"
+        return "已完成"
+
+    def _sample_item_display_text(
+        self,
+        path: str,
+        sample_kind: str,
+        camera_role: object = None,
+    ) -> str:
+        status = self._sample_annotation_state_for_path(path, camera_role)
+        name = os.path.basename(path)
+        if str(sample_kind or "").strip().lower() in {"train", "training"}:
+            return f"{name}    [{status}]"
+        return f"{name}    [{status}]"
+
+    def _current_image_sample_state_text(self) -> str:
+        path = self.canvas.image_path()
+        if not path:
+            return "当前图片样本状态：未选择"
+        return (
+            f"当前图片样本状态：{self._sample_usage_text(path)} / "
+            f"{self._sample_annotation_state_for_path(path, self.current_camera_role())}"
+        )
+
+    def _current_tool_sample_stats_text(self) -> str:
+        inspection_item = self._selected_inspection_item()
+        if inspection_item is None:
+            return "当前工具样本统计：请选择检测工具"
+        camera_role = _normalize_camera_role(getattr(inspection_item, "camera_id", "")) or self.current_camera_role()
+        roi_label = str(getattr(inspection_item, "roi_label", "") or "").strip() or "roi"
+        ok_count, ng_count, unset_count = self._sample_annotation_counts_for_roi(roi_label, camera_role)
+        return f"当前工具样本统计：{roi_label} -> OK {ok_count} / NG {ng_count} / 未标注 {unset_count}"
+
+    def _training_validation_text(self) -> str:
+        inspection_item = self._selected_inspection_item()
+        if inspection_item is None:
+            return "训练校验：请选择检测工具"
+        camera_role = _normalize_camera_role(getattr(inspection_item, "camera_id", "")) or self.current_camera_role()
+        roi_label = str(getattr(inspection_item, "roi_label", "") or "").strip() or "roi"
+        ok_files, ng_files, candidate_paths = self._training_sample_groups_for_role(camera_role, roi_label=roi_label)
+        if not candidate_paths:
+            return f"训练校验：{camera_role} 还没有训练样本"
+        _ok_count, _ng_count, missing_count = self._sample_annotation_counts_for_roi(roi_label, camera_role, paths=candidate_paths)
+        if missing_count > 0:
+            return f"训练校验：{roi_label} 还有 {missing_count} 张未标注"
+        if not ok_files or not ng_files:
+            missing_groups: List[str] = []
+            if not ok_files:
+                missing_groups.append("OK")
+            if not ng_files:
+                missing_groups.append("NG")
+            return f"训练校验：{roi_label} 缺少 {'/'.join(missing_groups)} 标签样本"
+        return f"训练校验：{roi_label} 可开始训练"
+
+    def _update_sample_panel_widgets(self) -> None:
+        current_role = _selected_image_list_camera_role(self)
+        train_count = len(self._sample_paths_for_kind("train", current_role))
+        test_count = len(self._sample_paths_for_kind("test", current_role))
+        if hasattr(self, "tabs"):
+            self.tabs.setTabText(0, f"训练样本 ({train_count})")
+            self.tabs.setTabText(1, f"测试样本 ({test_count})")
+        current_image_label = getattr(self, "lbl_current_image_sample_state", None)
+        if current_image_label is not None:
+            current_image_label.setText(f"  {self._current_image_sample_state_text()}")
+        tool_stats_label = getattr(self, "lbl_current_tool_sample_stats", None)
+        if tool_stats_label is not None:
+            tool_stats_label.setText(f"  {self._current_tool_sample_stats_text()}")
+        validation_label = getattr(self, "lbl_training_validation", None)
+        if validation_label is not None:
+            validation_label.setText(self._training_validation_text())
+
+        selected_path = self._current_selected_path()
+        current_tab_kind = self._current_sample_tab_kind()
+        for attr_name, enabled in (
+            ("btn_train_to_test", current_tab_kind == "train" and bool(selected_path)),
+            ("btn_del_ok", current_tab_kind == "train" and bool(selected_path)),
+            ("btn_test_to_train", current_tab_kind == "test" and bool(selected_path)),
+            ("btn_del_test", current_tab_kind == "test" and bool(selected_path)),
+        ):
+            button = getattr(self, attr_name, None)
+            if button is not None:
+                button.setEnabled(enabled)
+
+    def _select_path_in_current_tab(self, path: str) -> None:
+        if not path:
+            return
+        list_widget = self.ok_list if self._current_sample_tab_kind() == "train" else self.test_list
+        for row in range(list_widget.count()):
+            item = list_widget.item(row)
+            if item is None:
+                continue
+            item_path = item.data(QtCore.Qt.UserRole) or item.toolTip()
+            if str(item_path or "") == str(path):
+                blocker = QtCore.QSignalBlocker(list_widget)
+                list_widget.setCurrentRow(row)
+                del blocker
+                self._show_selected_image_path(path)
+                return
+
+    def _move_selected_sample_to(self, target_kind: str) -> None:
+        path = self._current_selected_path()
+        if not path:
+            return
+        normalized_target = str(target_kind or "").strip().upper()
+        for collection in (self.train_files, self.test_files, self.ok_files, self.ng_files):
+            while path in collection:
+                collection.remove(path)
+        if normalized_target == "TRAIN":
+            self.train_files.append(path)
+            self.train_files = sorted(list(dict.fromkeys(self.train_files)))
+            self.tabs.setCurrentIndex(0)
+        else:
+            self.test_files.append(path)
+            self.test_files = sorted(list(dict.fromkeys(self.test_files)))
+            self.tabs.setCurrentIndex(1)
+        self._refresh_lists()
+        self._clear_training_roi_review_state()
+        self._save_session()
+        self._select_path_in_current_tab(path)
+
+    def _open_sample_annotation_dialog(self) -> None:
+        dialog = getattr(self, "_sample_annotation_preview_dialog", None)
+        if dialog is None:
+            dialog = _SampleAnnotationPreviewDialog(self, self)
+            self._sample_annotation_preview_dialog = dialog
+            dialog.finished.connect(lambda *_: setattr(self, "_sample_annotation_preview_dialog", None))
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
     def _current_selected_path(self) -> Optional[str]:
         tab = self.tabs.currentIndex()
         if tab == 0:
@@ -2043,18 +3268,8 @@ class ToolPage(QtWidgets.QWidget):
             path = items[0].data(QtCore.Qt.UserRole) or items[0].toolTip()
             if path:
                 return str(path)
-            visible = _filter_paths_for_camera(self, self.ok_files, _selected_image_list_camera_role(self))
+            visible = self._sample_paths_for_kind("train", _selected_image_list_camera_role(self))
             row = self.ok_list.row(items[0])
-            return visible[row] if row < len(visible) else None
-        if tab == 1:
-            items = self.ng_list.selectedItems()
-            if not items:
-                return None
-            path = items[0].data(QtCore.Qt.UserRole) or items[0].toolTip()
-            if path:
-                return str(path)
-            visible = _filter_paths_for_camera(self, self.ng_files, _selected_image_list_camera_role(self))
-            row = self.ng_list.row(items[0])
             return visible[row] if row < len(visible) else None
         items = self.test_list.selectedItems()
         if not items:
@@ -2068,11 +3283,13 @@ class ToolPage(QtWidgets.QWidget):
 
     def _show_selected_image_path(self, path: Optional[str]) -> None:
         if not path:
+            self._update_sample_panel_widgets()
             return
         self._clear_selected_inspection_item()
         if self.canvas.image_path() != path:
             self._load_canvas_image(path)
         self._set_status_for_current_image(path)
+        self._update_sample_panel_widgets()
 
     def _clear_image_view_for_role_switch(self) -> None:
         for listw in (self.ok_list, self.ng_list, self.test_list):
@@ -2085,6 +3302,7 @@ class ToolPage(QtWidgets.QWidget):
         self.table.setCurrentCell(-1, -1)
         self._current_result_rows = []
         self.lbl_status.setText(f"状态：已切换到 {self.current_camera_role()}，请重新选择图片。")
+        self._update_sample_panel_widgets()
 
     def _clear_selected_inspection_item(self) -> None:
         table = getattr(self, "inspection_items_table", None)
@@ -2111,12 +3329,10 @@ class ToolPage(QtWidgets.QWidget):
         )
         if not files:
             return
-        if kind == "OK":
-            self.ok_files.extend(files)
-            self.ok_files = sorted(list(dict.fromkeys(self.ok_files)))
-        elif kind == "NG":
-            self.ng_files.extend(files)
-            self.ng_files = sorted(list(dict.fromkeys(self.ng_files)))
+        normalized_kind = str(kind or "").strip().upper()
+        if normalized_kind in {"TRAIN", "OK", "NG", "TRAIN_OK", "TRAIN_NG"}:
+            self.train_files.extend(files)
+            self.train_files = sorted(list(dict.fromkeys(self.train_files)))
         else:
             self.test_files.extend(files)
             self.test_files = sorted(list(dict.fromkeys(self.test_files)))
@@ -2125,30 +3341,13 @@ class ToolPage(QtWidgets.QWidget):
         self._save_session()
 
     def _remove_selected_from(self, kind: str) -> None:
-        if kind == "OK":
-            items = self.ok_list.selectedItems()
-            if not items:
-                return
-            path = items[0].data(QtCore.Qt.UserRole) or items[0].toolTip()
+        normalized_kind = str(kind or "").strip().upper()
+        if normalized_kind == "TRAIN":
+            path = self._current_selected_path()
             if not path:
-                visible = _filter_paths_for_camera(self, self.ok_files, _selected_image_list_camera_role(self))
-                idx = self.ok_list.row(items[0])
-                path = visible[idx] if idx < len(visible) else None
-            if not path or path not in self.ok_files:
                 return
-            self.ok_files.remove(str(path))
-        elif kind == "NG":
-            items = self.ng_list.selectedItems()
-            if not items:
-                return
-            path = items[0].data(QtCore.Qt.UserRole) or items[0].toolTip()
-            if not path:
-                visible = _filter_paths_for_camera(self, self.ng_files, _selected_image_list_camera_role(self))
-                idx = self.ng_list.row(items[0])
-                path = visible[idx] if idx < len(visible) else None
-            if not path or path not in self.ng_files:
-                return
-            self.ng_files.remove(str(path))
+            if path in self.train_files:
+                self.train_files.remove(str(path))
         else:
             items = self.test_list.selectedItems()
             if not items:
@@ -2168,14 +3367,12 @@ class ToolPage(QtWidgets.QWidget):
     def _on_tab_changed(self, index: int) -> None:
         if index == 0:
             listw = self.ok_list
-            files = _filter_paths_for_camera(self, self.ok_files, _selected_image_list_camera_role(self))
-        elif index == 1:
-            listw = self.ng_list
-            files = _filter_paths_for_camera(self, self.ng_files, _selected_image_list_camera_role(self))
+            files = self._sample_paths_for_kind("train", _selected_image_list_camera_role(self))
         else:
             listw = self.test_list
-            files = _filter_paths_for_camera(self, self.test_files, _selected_image_list_camera_role(self))
+            files = self._sample_paths_for_kind("test", _selected_image_list_camera_role(self))
 
+        self._update_sample_panel_widgets()
         if not files:
             return
 
@@ -2369,6 +3566,7 @@ class ToolPage(QtWidgets.QWidget):
         if embedding_button is not None:
             embedding_button.setEnabled(embedding)
         self._sync_training_action_buttons()
+        self._update_sample_panel_widgets()
 
     def _on_runtime_params_changed(self, *args) -> None:
         if self._updating_runtime_params:
@@ -2432,13 +3630,11 @@ class ToolPage(QtWidgets.QWidget):
 
     def _training_camera_roles_in_lists(self, camera_id: object | None = None) -> List[str]:
         if camera_id is None:
-            candidate_paths = list(self.ok_files) + list(self.ng_files)
+            candidate_paths = list(getattr(self, "train_files", []) or [])
+            if not candidate_paths:
+                candidate_paths = list(getattr(self, "ok_files", []) or []) + list(getattr(self, "ng_files", []) or [])
         else:
-            candidate_paths = _filter_paths_for_camera(
-                self,
-                list(self.ok_files) + list(self.ng_files),
-                camera_id,
-            )
+            candidate_paths = self._train_sample_paths_for_role(camera_id)
         roles = {
             _camera_role_from_path(path)
             for path in candidate_paths
@@ -2455,7 +3651,7 @@ class ToolPage(QtWidgets.QWidget):
         QtWidgets.QMessageBox.warning(
             self,
             "训练样本提示",
-            f"当前 OK/NG 列表{suffix}同时包含 cam1 和 cam2 图片。\n"
+            f"当前训练样本列表{suffix}同时包含 cam1 和 cam2 图片。\n"
             "请先分开整理样本后，再执行训练/注册/标定。",
         )
         return True
@@ -2493,8 +3689,13 @@ class ToolPage(QtWidgets.QWidget):
             raise RuntimeError("please select an inspection tool")
 
         roi_label = str(inspection_item.roi_label or "").strip() or "roi"
-        training_ok_files = _filter_paths_for_camera(self, self.ok_files, inspection_item.camera_id)
-        training_ng_files = _filter_paths_for_camera(self, self.ng_files, inspection_item.camera_id)
+        training_ok_files, training_ng_files, candidate_paths = self._training_sample_groups_for_role(
+            inspection_item.camera_id,
+            roi_label=roi_label,
+        )
+        if not candidate_paths:
+            camera_id = _normalize_camera_role(inspection_item.camera_id) or "cam1"
+            raise RuntimeError(f"missing training images for {camera_id}")
         missing_groups: List[str] = []
         if not training_ok_files:
             missing_groups.append("OK")
@@ -2505,12 +3706,12 @@ class ToolPage(QtWidgets.QWidget):
             raise RuntimeError(f"missing {'/'.join(missing_groups)} images for {camera_id}")
         missing_paths = self._missing_training_roi_paths(
             roi_label,
-            list(training_ok_files) + list(training_ng_files),
+            candidate_paths,
         )
         if missing_paths:
             missing = [os.path.basename(path) for path in missing_paths[:50]]
             raise RuntimeError(
-                f"missing ROI label '{roi_label}' in some OK/NG jsons:\n" + "\n".join(missing)
+                f"missing ROI label '{roi_label}' in some training sample jsons:\n" + "\n".join(missing)
             )
 
         self.algo.product_params.algorithm = algorithm
@@ -2630,8 +3831,18 @@ class ToolPage(QtWidgets.QWidget):
             return
         roi_label = str(inspection_item.roi_label or "").strip() or "roi"
         label_names = [roi_label]
-        training_ok_files = _filter_paths_for_camera(self, self.ok_files, inspection_item.camera_id)
-        training_ng_files = _filter_paths_for_camera(self, self.ng_files, inspection_item.camera_id)
+        training_ok_files, training_ng_files, candidate_paths = self._training_sample_groups_for_role(
+            inspection_item.camera_id,
+            roi_label=roi_label,
+        )
+        if not candidate_paths:
+            camera_id = _normalize_camera_role(inspection_item.camera_id) or "cam1"
+            QtWidgets.QMessageBox.warning(
+                self,
+                "训练样本不足",
+                f"{camera_id} 还没有训练样本，请先把图片转入训练样本列表。",
+            )
+            return
         missing_groups: List[str] = []
         if not training_ok_files:
             missing_groups.append("OK")
@@ -2642,10 +3853,9 @@ class ToolPage(QtWidgets.QWidget):
             QtWidgets.QMessageBox.warning(
                 self,
                 "训练样本不足",
-                f"{camera_id} 缺少 {'/'.join(missing_groups)} 图片，请先补齐对应角色的样本。",
+                f"{camera_id} 缺少 {'/'.join(missing_groups)} 标签样本，请先在样本标注里补齐当前 ROI 的标签。",
             )
             return
-        candidate_paths = list(training_ok_files) + list(training_ng_files)
         missing_paths = []
         for path in candidate_paths:
             json_path = qr_core.labelme_json_of_image(path)
@@ -2670,7 +3880,7 @@ class ToolPage(QtWidgets.QWidget):
             QtWidgets.QMessageBox.warning(
                 self,
                 "缺少 ROI 标注",
-                f"每张 OK/NG 图片都需要包含 ROI: {roi_label}\n"
+                f"每张训练样本都需要包含 ROI: {roi_label}\n"
                 "请逐张打开图片并保存对应 ROI。\n缺少文件:\n" + "\n".join(missing[:50]),
             )
             return
@@ -2814,6 +4024,7 @@ class ToolPage(QtWidgets.QWidget):
             status_text += f"  log={log_names[-1]}"
         self.lbl_status.setText(status_text)
         self._load_canvas_image(p)
+        self._update_sample_panel_widgets()
 
 
     def _show_tool_dialog(
@@ -2870,6 +4081,7 @@ class ToolPage(QtWidgets.QWidget):
         if isinstance(p, str) and os.path.exists(p):
             self._load_canvas_image(p)
             self._set_status_for_current_image(p)
+            self._update_sample_panel_widgets()
 
     # ------------------------------------------------------------------
     # 分析 / 验证
@@ -2913,11 +4125,13 @@ class ToolPage(QtWidgets.QWidget):
             labels_override = [str(inspection_item.roi_label or "").strip() or "roi"]
             algorithm_override = inspection_item.algorithm_code
             model_key_override = inspection_item.model_key
+            validation_ok_files, validation_ng_files, _candidate_paths = self._training_sample_groups_for_role(
+                inspection_item.camera_id,
+                roi_label=labels_override[0],
+            )
         else:
-            algorithm = self.current_algorithm()
-            labels_override = self._line2dup_output_labels() if self.loc_method == "line2dup" else ["roi"]
-            algorithm_override = None
-            model_key_override = None
+            QtWidgets.QMessageBox.information(self, "Info", "Please select one inspection tool first.")
+            return
         if not self._is_embedding_algorithm(algorithm):
             QtWidgets.QMessageBox.information(self, "Info", "Traditional algorithms do not support margin validation.")
             return
@@ -2933,7 +4147,7 @@ class ToolPage(QtWidgets.QWidget):
         if self.algo.model is None:
             QtWidgets.QMessageBox.warning(self, "Info", "Please train/register first (OK + NG).")
             return
-        if not self.ok_files or not self.ng_files:
+        if not validation_ok_files or not validation_ng_files:
             QtWidgets.QMessageBox.warning(self, "Info", "Need at least one OK and one NG image for margin validation.")
             return
 
@@ -2943,7 +4157,7 @@ class ToolPage(QtWidgets.QWidget):
         )
         rows: List[Dict[str, object]] = []
         try:
-            for path in self.ok_files:
+            for path in validation_ok_files:
                 row = self._predict_image(
                     path,
                     feat_net=feat_net,
@@ -2954,7 +4168,7 @@ class ToolPage(QtWidgets.QWidget):
                 )
                 row["gt"] = "OK"
                 rows.append(row)
-            for path in self.ng_files:
+            for path in validation_ng_files:
                 row = self._predict_image(
                     path,
                     feat_net=feat_net,
@@ -3017,12 +4231,33 @@ class ToolPage(QtWidgets.QWidget):
         if not self.algo.is_learning_tool(inspection_item.algorithm_code):
             QtWidgets.QMessageBox.information(self, "Info", "Current selection is not a learning tool.")
             return
+        current_role = self.current_camera_role()
+        allowed_learning_items = [
+            item
+            for item in list(getattr(self, "inspection_items", []) or [])
+            if bool(getattr(item, "enabled", True))
+            and _normalize_camera_role(getattr(item, "camera_id", "")) == current_role
+            and self.algo.is_learning_tool(getattr(item, "algorithm_code", ""))
+        ]
+        allowed_model_keys = list(
+            dict.fromkeys(
+                str(getattr(item, "model_key", "") or "").strip()
+                for item in allowed_learning_items
+                if str(getattr(item, "model_key", "") or "").strip()
+            )
+        )
+        allowed_backbones = []
+        current_backbone = str(self.algo.current_learning_backbone() or "").strip()
+        if current_backbone:
+            allowed_backbones.append(current_backbone)
         try:
             dialog = EmbeddingAnalysisDialog(
                 session_root=self.session.session_dir,
                 initial_product=self.session.current_product,
-                initial_backbone=self.algo.current_learning_backbone(),
+                initial_backbone=current_backbone,
                 initial_model_key=inspection_item.model_key,
+                allowed_model_keys=allowed_model_keys,
+                allowed_backbones=allowed_backbones,
                 parent=self,
             )
             dialog.exec()
