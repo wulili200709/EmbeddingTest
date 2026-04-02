@@ -5,6 +5,7 @@ import threading
 import time
 import types
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -21,6 +22,8 @@ camera_stub.HikCameraInfo = object
 camera_stub.HikCameraManager = object
 camera_stub.HikCameraSettings = object
 camera_stub.HikFrame = object
+camera_stub.frame_to_bgr_image = lambda frame: frame
+camera_stub.frame_to_rgb_image = lambda frame: frame
 sys.modules.setdefault("services.camera", camera_stub)
 
 from services.inspection_runtime import CameraInspectionOutcome, InspectionRuntime
@@ -61,6 +64,11 @@ class _FakeLightController:
 
     def finish_capture(self, camera_index: int) -> None:
         self._events.append(f"light_off:{camera_index}")
+
+
+class _FakeCameraStrobeLightController(_FakeLightController):
+    def requires_stable_delay(self, camera_index: int) -> bool:
+        return int(camera_index) != 1
 
 
 class InspectionRuntimePipelineTest(unittest.TestCase):
@@ -108,6 +116,34 @@ class InspectionRuntimePipelineTest(unittest.TestCase):
                 "inspecting_started",
             ],
         )
+
+    def test_camera_line1_strobe_mode_skips_light_stable_sleep(self) -> None:
+        events: list[str] = []
+        scheduler = _FakeScheduler()
+
+        class _SingleRoleFrameGrabService:
+            def roles(self) -> list[str]:
+                return ["cam1"]
+
+            def capture_once(self, role: str, *, timeout_ms: int = 1000):
+                events.append(f"capture:{role}")
+                return {"role": role, "timeout_ms": timeout_ms}
+
+        runtime = InspectionRuntime(
+            scheduler=scheduler,
+            permission_manager=object(),
+            frame_grab_service=_SingleRoleFrameGrabService(),
+            light_controller=_FakeCameraStrobeLightController(events),
+            tower_light_controller=object(),
+            inspect_callback=lambda role, frame: CameraInspectionOutcome(role=role, result="OK"),
+            role_to_camera_index={"cam1": 1},
+            light_stable_ms=80,
+        )
+
+        with mock.patch("services.inspection_runtime.time.sleep") as sleep_mock:
+            runtime._capture_and_inspect_for_roles(["cam1"], timeout_ms=1000)
+
+        sleep_mock.assert_not_called()
 
 
 if __name__ == "__main__":

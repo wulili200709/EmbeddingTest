@@ -3218,7 +3218,7 @@ build_py312.ps1 只是调用 PyInstaller；而 LC_System.spec 里把 algorithms�
 1.灯带太亮，晃眼
 2.不同的用户有不同的密码，先放3-5个用户。后面增加用户收费，存储不同ID放行，记录在csv里
 3.硬件相机序列号绑定
-
+4.外罩改成C口
 
 
 
@@ -3304,3 +3304,62 @@ NPN的接法：
 line1 gpio +  接频闪控制器的输入1
 24v+          接频闪控制器的COM端
 ![alt text](image-2.png)
+相机触发用software触发（也可以用line0z做外部输入触发）；相机gpio line1 用来做输出
+
+
+# 皮带线IO配置
+~~~
+{
+  "nkio_config_path": "",
+  "nkio_dll_path": "",
+  "di": {
+    "foot_switch": {
+      "channel": 1,
+      "active_high": false
+    },
+    "reject_signal": {
+      "channel": 0,
+      "active_high": false
+    },
+    "reserved_in_1": {
+      "channel": 2,
+      "active_high": true
+    },
+    "reserved_in_2": {
+      "channel": 3,
+      "active_high": true
+    }
+  },
+  "do": {
+    "tower_red": {
+      "channel": 0,
+      "active_high": false
+    },
+    "tower_green": {
+      "channel": 1,
+      "active_high": false
+    },
+    "tower_blue": {
+      "channel": 2,
+      "active_high": false
+    },
+    "light_cam1": {
+      "channel": 4,
+      "active_high": true
+    },
+    "light_cam2": {
+      "channel": 3,
+      "active_high": false
+    },
+    "reserved_out_1": {
+      "channel": 5,
+      "active_high": false
+    },
+    "reserved_out_2": {
+      "channel": 6,
+      "active_high": false
+    }
+  }
+}
+
+~~~

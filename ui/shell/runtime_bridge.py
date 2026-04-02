@@ -24,6 +24,9 @@ def restore_runtime_camera_bindings_from_session(window) -> None:
     session_data = window.session.load_session()
     window.runtime_page.edit_cam1_serial.setText(session_data.runtime_cam1_serial or "")
     window.runtime_page.edit_cam2_serial.setText(session_data.runtime_cam2_serial or "")
+    sync_configured_roles = getattr(window, "_sync_configured_camera_roles", None)
+    if callable(sync_configured_roles):
+        sync_configured_roles()
 
 
 def persist_runtime_camera_bindings(
@@ -129,6 +132,9 @@ def activate_runtime_workspace_legacy(window) -> str:
 
     if debug_serial and not str(bindings.get("cam1", "")).strip():
         window.runtime_page.edit_cam1_serial.setText(debug_serial)
+        sync_configured_roles = getattr(window, "_sync_configured_camera_roles", None)
+        if callable(sync_configured_roles):
+            sync_configured_roles()
         bindings = window.runtime_page.camera_bindings()
 
     if not bindings:
@@ -168,6 +174,9 @@ def ensure_runtime_camera_connection(window, *, debug_role: str = "", debug_seri
             window.runtime_page.edit_cam2_serial.setText(debug_serial)
         else:
             window.runtime_page.edit_cam1_serial.setText(debug_serial)
+        sync_configured_roles = getattr(window, "_sync_configured_camera_roles", None)
+        if callable(sync_configured_roles):
+            sync_configured_roles()
         bindings = window.runtime_page.camera_bindings()
 
     if not bindings:

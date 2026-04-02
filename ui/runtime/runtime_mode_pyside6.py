@@ -228,6 +228,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._cam1_serial = ""
         self._cam2_serial = ""
         self._release_pwd = ""
+        self._configured_role_set: set[str] = {"cam1", "cam2"}
         self._active_role_set: set[str] = set()
         self._busy = False
         self._inspection_rows: list[dict] = []
@@ -612,19 +613,28 @@ class RuntimeModePage(QtWidgets.QWidget):
     def set_record_path(self, record_path: str) -> None:
         self.lbl_footer_record.setText(record_path or "")
 
+    def set_configured_camera_roles(self, roles: list[str]) -> None:
+        configured = {
+            str(role).strip()
+            for role in roles
+            if str(role).strip() in {"cam1", "cam2"}
+        }
+        if not configured:
+            configured = {"cam1"}
+        self._configured_role_set = configured
+        self._refresh_camera_role_layout()
+        self._refresh_trigger_buttons()
+
     def set_active_camera_roles(self, roles: list[str]) -> None:
         role_set = {str(role).strip() for role in roles if str(role).strip()}
         self._active_role_set = role_set
-        show_cam2 = "cam2" in role_set
-        self.view_cam2.setVisible(show_cam2)
-        if hasattr(self, "_camera_splitter"):
-            self._camera_splitter.setSizes([1, 1] if show_cam2 else [1, 0])
         if not role_set:
             self.view_cam1.set_runtime_pixmap(None, placeholder="未连接相机")
             self.view_cam2.set_runtime_pixmap(None, placeholder="Cam2")
         self.lbl_footer_connection.setText(
             "相机: " + (", ".join(sorted(role_set)) if role_set else "未连接")
         )
+        self._refresh_camera_role_layout()
         self._refresh_camera_timing_visibility()
         self._refresh_trigger_buttons()
 
@@ -704,6 +714,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.view_cam2.set_runtime_pixmap(None, placeholder="Cam2")
         self.lbl_cam1_timing.setText("Cam1: -")
         self.lbl_cam2_timing.setText("Cam2: -")
+        self._refresh_camera_role_layout()
         self._refresh_camera_timing_visibility()
         self.set_camera_results({})
         self._refresh_trigger_buttons()
@@ -831,6 +842,15 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.lbl_cam1_timing.setVisible("cam1" in self._active_role_set)
         self.lbl_cam2_timing.setVisible("cam2" in self._active_role_set)
 
+    def _display_role_set(self) -> set[str]:
+        return set(self._active_role_set or self._configured_role_set)
+
+    def _refresh_camera_role_layout(self) -> None:
+        show_cam2 = "cam2" in self._display_role_set()
+        self.view_cam2.setVisible(show_cam2)
+        if hasattr(self, "_camera_splitter"):
+            self._camera_splitter.setSizes([1, 1] if show_cam2 else [1, 0])
+
     @staticmethod
     def _sanitize_runtime_status_text_v3(status_text: str) -> str:
         text = " ".join(str(status_text or "").split())
@@ -850,7 +870,12 @@ class RuntimeModePage(QtWidgets.QWidget):
 
     def _refresh_trigger_buttons(self) -> None:
         allow_cam1 = (not self._busy) and ("cam1" in self._active_role_set) and self._has_enabled_items("cam1")
-        allow_cam2 = (not self._busy) and ("cam2" in self._active_role_set) and self._has_enabled_items("cam2")
+        allow_cam2 = (
+            (not self._busy)
+            and ("cam2" in self._configured_role_set)
+            and ("cam2" in self._active_role_set)
+            and self._has_enabled_items("cam2")
+        )
         allow_full_trigger = (not self._busy) and any(
             self._has_enabled_items(role) for role in self._active_role_set
         )

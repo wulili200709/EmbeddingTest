@@ -1,5 +1,5 @@
 build/_patched_backends/
 build/temp.win-amd64-cpython-312/Release/Git/
 .qr_session
-dist
-dist-build
+dist/
+dist-build/

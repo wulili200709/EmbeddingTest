@@ -504,8 +504,7 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         top_row.addWidget(self.cmb_product, 1)
         top_row.addWidget(QtWidgets.QLabel("相机"))
         self.cmb_camera = QtWidgets.QComboBox()
-        self.cmb_camera.addItem("cam1", "cam1")
-        self.cmb_camera.addItem("cam2", "cam2")
+        self.sync_camera_roles(tool_page.configured_camera_roles())
         top_row.addWidget(self.cmb_camera)
         top_row.addWidget(QtWidgets.QLabel("样本"))
         self.cmb_sample_kind = QtWidgets.QComboBox()
@@ -614,6 +613,26 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         self.cmb_sample_kind.currentIndexChanged.connect(lambda *_: self._reload_samples())
         self.sample_list.itemSelectionChanged.connect(self._on_sample_selected)
         self._reload_samples()
+
+    def sync_camera_roles(self, roles: List[str]) -> None:
+        normalized: List[str] = []
+        for role in roles:
+            role_text = _normalize_camera_role(role)
+            if role_text and role_text not in normalized:
+                normalized.append(role_text)
+        if not normalized:
+            normalized = ["cam1"]
+        current_role = str(self.cmb_camera.currentData() or "cam1")
+        blocker = QtCore.QSignalBlocker(self.cmb_camera)
+        self.cmb_camera.clear()
+        for role in normalized:
+            self.cmb_camera.addItem(role, role)
+        index = self.cmb_camera.findData(current_role if current_role in normalized else normalized[0])
+        self.cmb_camera.setCurrentIndex(index if index >= 0 else 0)
+        self.cmb_camera.setEnabled(len(normalized) > 1)
+        del blocker
+        if hasattr(self, "cmb_sample_kind"):
+            self._reload_samples()
 
     def _reload_samples(self, preferred_path: Optional[str] = None) -> None:
         tool_page = self._tool_page
@@ -1093,6 +1112,7 @@ class ToolPage(QtWidgets.QWidget):
         super().__init__(parent)
         self.session = session
         self.algo = algo
+        self._configured_camera_roles: List[str] = ["cam1", "cam2"]
 
         self.train_files: List[str] = []
         self.ok_files: List[str] = []
@@ -1146,6 +1166,7 @@ class ToolPage(QtWidgets.QWidget):
 
         self._build_ui()
         self._set_current_camera_role(self._current_camera_role)
+        self._apply_configured_camera_roles_to_ui()
         QtCore.QTimer.singleShot(0, self._update_responsive_layout)
         self.destroyed.connect(lambda *_: self._cleanup_debug_hardware())
 
@@ -1159,11 +1180,65 @@ class ToolPage(QtWidgets.QWidget):
             return ""
         return str(value).strip()
 
+    def configured_camera_roles(self) -> List[str]:
+        roles: List[str] = []
+        for role in list(getattr(self, "_configured_camera_roles", []) or []):
+            normalized = _normalize_camera_role(role)
+            if normalized and normalized not in roles:
+                roles.append(normalized)
+        if not roles:
+            roles = ["cam1"]
+        if "cam1" not in roles:
+            roles.insert(0, "cam1")
+        return roles
+
+    def set_configured_camera_roles(self, roles: List[str]) -> None:
+        normalized: List[str] = []
+        for role in roles:
+            role_text = _normalize_camera_role(role)
+            if role_text and role_text not in normalized:
+                normalized.append(role_text)
+        if not normalized:
+            normalized = ["cam1"]
+        if "cam1" not in normalized:
+            normalized.insert(0, "cam1")
+        self._configured_camera_roles = normalized
+        self._apply_configured_camera_roles_to_ui()
+
     def current_camera_role(self) -> str:
         combo = getattr(self, "cmb_current_camera_role", None)
         if combo is None:
             return _normalize_camera_role(getattr(self, "_current_camera_role", "cam1")) or "cam1"
         return _normalize_camera_role(combo.currentData() or combo.currentText() or self._current_camera_role) or "cam1"
+
+    def _apply_camera_role_options_to_combo(self, combo: object) -> None:
+        if combo is None:
+            return
+        allowed_roles = set(self.configured_camera_roles())
+        model = combo.model() if hasattr(combo, "model") else None
+        for role in ("cam1", "cam2"):
+            index = combo.findData(role) if hasattr(combo, "findData") else -1
+            if index < 0 or model is None or not hasattr(model, "item"):
+                continue
+            item = model.item(index)
+            if item is not None:
+                item.setEnabled(role in allowed_roles)
+        if hasattr(combo, "setEnabled"):
+            combo.setEnabled(len(allowed_roles) > 1)
+
+    def _apply_configured_camera_roles_to_ui(self) -> None:
+        allowed_roles = self.configured_camera_roles()
+        self._apply_camera_role_options_to_combo(getattr(self, "cmb_current_camera_role", None))
+        self._apply_camera_role_options_to_combo(getattr(self, "cmb_debug_camera_role", None))
+        if self.current_camera_role() not in set(allowed_roles):
+            self._set_current_camera_role(allowed_roles[0], sync_debug_role=True)
+        else:
+            refresh_role_status = getattr(self, "_refresh_debug_role_status", None)
+            if callable(refresh_role_status):
+                refresh_role_status()
+        dialog = getattr(self, "_sample_annotation_preview_dialog", None)
+        if dialog is not None and hasattr(dialog, "sync_camera_roles"):
+            dialog.sync_camera_roles(allowed_roles)
 
     def line2dup_paths_for_role(self, camera_role: object = None):
         role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
@@ -2526,11 +2601,31 @@ class ToolPage(QtWidgets.QWidget):
         self.spin_debug_gain.setValue(0.0)
         self.spin_debug_gain.setStyleSheet(_input_style)
         cam_params_form.addRow("增益", self.spin_debug_gain)
+
+        self.chk_debug_digital_shift_enable = QtWidgets.QCheckBox("启用")
+        self.chk_debug_digital_shift_enable.setStyleSheet(f"color:{_TEXT_LIGHT};")
+        cam_params_form.addRow("数字增益使能", self.chk_debug_digital_shift_enable)
+
+        self.spin_debug_digital_shift = QtWidgets.QDoubleSpinBox()
+        self.spin_debug_digital_shift.setDecimals(4)
+        self.spin_debug_digital_shift.setRange(0.0, 16.0)
+        self.spin_debug_digital_shift.setValue(0.0)
+        self.spin_debug_digital_shift.setStyleSheet(_input_style)
+        self.spin_debug_digital_shift.setEnabled(False)
+        self.spin_debug_digital_shift.setToolTip("对应海康 MVS 的 Digital Shift")
+        cam_params_form.addRow("数字增益", self.spin_debug_digital_shift)
+
         # ????????????????????? autoDefault ???Enter ??????????????
         self.spin_debug_exposure.setKeyboardTracking(False)
         self.spin_debug_gain.setKeyboardTracking(False)
+        self.spin_debug_digital_shift.setKeyboardTracking(False)
         self.spin_debug_exposure.editingFinished.connect(self._on_debug_camera_param_editing_finished)
         self.spin_debug_gain.editingFinished.connect(self._on_debug_camera_param_editing_finished)
+        self.spin_debug_digital_shift.editingFinished.connect(self._on_debug_camera_param_editing_finished)
+        self.chk_debug_digital_shift_enable.toggled.connect(self.spin_debug_digital_shift.setEnabled)
+        self.chk_debug_digital_shift_enable.toggled.connect(
+            lambda _checked: self._on_debug_camera_param_editing_finished()
+        )
 
         self.cmb_debug_trigger_mode = QtWidgets.QComboBox()
         self.cmb_debug_trigger_mode.addItems(["software", "continuous"])
@@ -2539,6 +2634,15 @@ class ToolPage(QtWidgets.QWidget):
         cam_params_form.addRow("触发模式", self.cmb_debug_trigger_mode)
         # activated?????????????? setCurrentIndex ???
         self.cmb_debug_trigger_mode.activated.connect(self._on_debug_camera_trigger_activated)
+
+        self.cmb_debug_light_source_mode = QtWidgets.QComboBox()
+        self.cmb_debug_light_source_mode.addItem("板卡DO亮灯", "board_io")
+        self.cmb_debug_light_source_mode.addItem("相机Line1频闪", "camera_line1_strobe")
+        self.cmb_debug_light_source_mode.setCurrentIndex(0)
+        self.cmb_debug_light_source_mode.setStyleSheet(_input_style)
+        self.cmb_debug_light_source_mode.setToolTip("相机Line1频闪模式依赖海康 MVS 里已配置好的 Line1 输出/频闪参数")
+        cam_params_form.addRow("光源触发", self.cmb_debug_light_source_mode)
+        self.cmb_debug_light_source_mode.activated.connect(self._on_debug_camera_trigger_activated)
 
         cam_right_vbox.addWidget(cam_params)
         cam_right_vbox.addSpacing(8)
@@ -3255,6 +3359,7 @@ class ToolPage(QtWidgets.QWidget):
             dialog = _SampleAnnotationPreviewDialog(self, self)
             self._sample_annotation_preview_dialog = dialog
             dialog.finished.connect(lambda *_: setattr(self, "_sample_annotation_preview_dialog", None))
+        dialog.sync_camera_roles(self.configured_camera_roles())
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()

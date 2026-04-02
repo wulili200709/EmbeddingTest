@@ -96,6 +96,15 @@ class RuntimeModeTriggerButtonsTest(unittest.TestCase):
 
         self.assertEqual(page._camera_preview_sources["cam1"], "demo.png")
 
+    def test_single_camera_configuration_hides_cam2_view(self) -> None:
+        page = RuntimeModePage()
+
+        page.set_configured_camera_roles(["cam1"])
+        page.clear_camera_views()
+
+        self.assertTrue(page.view_cam2.isHidden())
+        self.assertFalse(page.btn_trigger_cam2.isEnabled())
+
 
 if __name__ == "__main__":
     unittest.main()

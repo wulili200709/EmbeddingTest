@@ -295,6 +295,13 @@ def _apply_camera_settings_now(
             if settings_payload
             else (runtime._camera_settings_store.load_for_role(role, serial=serial) or {})
         )
+        if hasattr(runtime._light_controller, "set_camera_light_mode"):
+            camera_index = 1 if role == "cam1" else 2 if role == "cam2" else 0
+            if camera_index > 0:
+                runtime._light_controller.set_camera_light_mode(
+                    camera_index,
+                    runtime_controller_module.light_source_mode_from_mapping(effective_payload),
+                )
         settings = runtime_controller_module.HikCameraSettings(
             **runtime_controller_module.hik_settings_kwargs_from_mapping(
                 effective_payload,

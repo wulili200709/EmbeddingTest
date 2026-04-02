@@ -193,6 +193,8 @@ class HikCameraInfo:
 class HikCameraSettings:
     exposure_time_us: float | None = None
     gain: float | None = None
+    digital_shift_enable: bool | None = None
+    digital_shift: float | None = None
     trigger_mode: str = "software"  # "software" | "continuous"
     trigger_source: str = "Software"
     acquisition_frame_rate_enable: bool | None = None
@@ -363,6 +365,16 @@ class HikCameraDevice:
                     )
                 if settings.gain is not None:
                     _raise_for_code(camera.MV_CC_SetFloatValue("Gain", float(settings.gain)), "set Gain")
+                if settings.digital_shift_enable is not None:
+                    _raise_for_code(
+                        camera.MV_CC_SetBoolValue("DigitalShiftEnable", bool(settings.digital_shift_enable)),
+                        "set DigitalShiftEnable",
+                    )
+                if settings.digital_shift is not None and settings.digital_shift_enable is not False:
+                    _raise_for_code(
+                        camera.MV_CC_SetFloatValue("DigitalShift", float(settings.digital_shift)),
+                        "set DigitalShift",
+                    )
                 if settings.acquisition_frame_rate_enable is not None:
                     _raise_for_code(
                         camera.MV_CC_SetBoolValue(
@@ -473,6 +485,13 @@ class HikCameraDevice:
             ctypes.memset(ctypes.byref(value), 0, ctypes.sizeof(MVCC_INTVALUE_EX))
             _raise_for_code(camera.MV_CC_GetIntValueEx(key, value), f"get {key}")
             return int(value.nCurValue)
+
+    def get_bool_value(self, key: str) -> bool:
+        with self._lock:
+            camera = self._require_camera()
+            value = ctypes.c_bool()
+            _raise_for_code(camera.MV_CC_GetBoolValue(key, value), f"get {key}")
+            return bool(value.value)
 
     def get_string_value(self, key: str) -> str:
         with self._lock:

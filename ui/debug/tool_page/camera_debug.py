@@ -9,6 +9,10 @@ from pathlib import Path
 from PySide6 import QtGui
 
 from app_paths import packaged_embedding_test_root, packaged_repo_root
+from infrastructure.camera_settings_store import (
+    LIGHT_SOURCE_MODE_BOARD_IO,
+    light_source_mode_from_mapping,
+)
 
 
 def _embedding_test_root(tool_page) -> Path:
@@ -81,6 +85,11 @@ def _debug_camera_settings_payload_from_ui(tool_page) -> dict[str, object]:
         "trigger_mode": str(tool_page.cmb_debug_trigger_mode.currentText() or "continuous"),
         "exposure_time_us": float(tool_page.spin_debug_exposure.value()),
         "gain": float(tool_page.spin_debug_gain.value()),
+        "digital_shift_enable": bool(tool_page.chk_debug_digital_shift_enable.isChecked()),
+        "digital_shift": float(tool_page.spin_debug_digital_shift.value()),
+        "light_source_mode": str(
+            tool_page.cmb_debug_light_source_mode.currentData() or LIGHT_SOURCE_MODE_BOARD_IO
+        ),
     }
 
 
@@ -95,9 +104,17 @@ def _load_saved_debug_camera_settings_to_ui(tool_page, serial: str) -> bool:
             tool_page.spin_debug_exposure.setValue(float(payload["exposure_time_us"]))
         if payload.get("gain") is not None:
             tool_page.spin_debug_gain.setValue(float(payload["gain"]))
+        if payload.get("digital_shift_enable") is not None:
+            tool_page.chk_debug_digital_shift_enable.setChecked(bool(payload["digital_shift_enable"]))
+        if payload.get("digital_shift") is not None:
+            tool_page.spin_debug_digital_shift.setValue(float(payload["digital_shift"]))
         trigger_mode = str(payload.get("trigger_mode") or "").strip()
         if trigger_mode:
             tool_page.cmb_debug_trigger_mode.setCurrentText(trigger_mode)
+        light_source_mode = light_source_mode_from_mapping(payload)
+        index = tool_page.cmb_debug_light_source_mode.findData(light_source_mode)
+        if index >= 0:
+            tool_page.cmb_debug_light_source_mode.setCurrentIndex(index)
         return True
     finally:
         tool_page._debug_camera_block_spin_apply = False

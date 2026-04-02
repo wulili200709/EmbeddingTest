@@ -63,6 +63,7 @@ from domain import (
 from infrastructure.camera_settings_store import (
     CameraSettingsStore,
     hik_settings_kwargs_from_mapping,
+    light_source_mode_from_mapping,
 )
 
 try:
@@ -117,9 +118,21 @@ DEFAULT_TOWER_LIGHT_IDLE_BLUE_DELAY_MS = 30000
 class _UiOnlyLightController:
     def __init__(self) -> None:
         self.active_camera: Optional[int] = None
+        self._camera_light_modes: Dict[int, str] = {}
+
+    def set_camera_light_mode(self, camera_index: int, mode: str) -> None:
+        self._camera_light_modes[int(camera_index)] = str(mode or "board_io").strip() or "board_io"
+        if self._camera_light_modes.get(int(camera_index)) != "board_io" and self.active_camera == int(camera_index):
+            self.active_camera = None
+
+    def requires_stable_delay(self, camera_index: int) -> bool:
+        return self._camera_light_modes.get(int(camera_index), "board_io") == "board_io"
 
     def prepare_capture(self, camera_index: int) -> None:
-        self.active_camera = int(camera_index)
+        if self.requires_stable_delay(camera_index):
+            self.active_camera = int(camera_index)
+        else:
+            self.active_camera = None
 
     def finish_capture(self, camera_index: int) -> None:
         if self.active_camera == int(camera_index):
@@ -407,6 +420,12 @@ class RuntimeController(QtCore.QObject):
                     force_trigger_mode="software",
                 )
             )
+            camera_index = 1 if role == "cam1" else 2 if role == "cam2" else 0
+            if camera_index > 0 and hasattr(self._light_controller, "set_camera_light_mode"):
+                self._light_controller.set_camera_light_mode(
+                    camera_index,
+                    light_source_mode_from_mapping(saved_settings),
+                )
         try:
             self._frame_grab_service.open_bound_cameras(bindings, settings_by_role=settings_by_role)
         except Exception as exc:
@@ -455,6 +474,12 @@ class RuntimeController(QtCore.QObject):
                     force_trigger_mode="software",
                 )
             )
+            camera_index = 1 if role == "cam1" else 2 if role == "cam2" else 0
+            if camera_index > 0 and hasattr(self._light_controller, "set_camera_light_mode"):
+                self._light_controller.set_camera_light_mode(
+                    camera_index,
+                    light_source_mode_from_mapping(saved_settings),
+                )
         try:
             self._frame_grab_service.open_bound_cameras(bindings, settings_by_role=settings_by_role)
         except Exception as exc:
@@ -534,6 +559,16 @@ class RuntimeController(QtCore.QObject):
             self.logAppended.emit(f"[camera] queued runtime settings sync for {serial_text}")
             self._update_status(f"camera settings queued: {serial_text}")
             return
+
+        if hasattr(self._light_controller, "set_camera_light_mode"):
+            for role in matched_roles:
+                camera_index = 1 if role == "cam1" else 2 if role == "cam2" else 0
+                if camera_index <= 0:
+                    continue
+                self._light_controller.set_camera_light_mode(
+                    camera_index,
+                    light_source_mode_from_mapping(payload),
+                )
 
         try:
             self._apply_camera_settings_now(serial_text, payload, matched_roles=matched_roles)

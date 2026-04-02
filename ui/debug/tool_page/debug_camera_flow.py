@@ -285,8 +285,18 @@ def _refresh_debug_camera_settings(self) -> None:
             gain = float(device.get_float_value("Gain"))
         except Exception:
             gain = float(self.spin_debug_gain.value())
+        try:
+            digital_shift_enable = bool(device.get_bool_value("DigitalShiftEnable"))
+        except Exception:
+            digital_shift_enable = bool(self.chk_debug_digital_shift_enable.isChecked())
+        try:
+            digital_shift = float(device.get_float_value("DigitalShift"))
+        except Exception:
+            digital_shift = float(self.spin_debug_digital_shift.value())
         self.spin_debug_exposure.setValue(exposure)
         self.spin_debug_gain.setValue(gain)
+        self.chk_debug_digital_shift_enable.setChecked(digital_shift_enable)
+        self.spin_debug_digital_shift.setValue(digital_shift)
         try:
             trigger_mode_int = int(device.get_int_value("TriggerMode"))
             self.cmb_debug_trigger_mode.setCurrentText(
@@ -319,6 +329,8 @@ def _apply_debug_camera_settings(self, *, quiet: bool = False) -> None:
                 trigger_mode=str(self.cmb_debug_trigger_mode.currentText() or "continuous"),
                 exposure_time_us=float(self.spin_debug_exposure.value()),
                 gain=float(self.spin_debug_gain.value()),
+                digital_shift_enable=bool(self.chk_debug_digital_shift_enable.isChecked()),
+                digital_shift=float(self.spin_debug_digital_shift.value()),
             )
         )
     except Exception as exc:

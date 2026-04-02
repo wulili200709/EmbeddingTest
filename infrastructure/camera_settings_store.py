@@ -8,12 +8,17 @@ from app_paths import writable_embedding_test_root
 
 
 _CAMERA_SETTINGS_FILENAME = "camera_settings.json"
-_KNOWN_SETTING_KEYS = (
+LIGHT_SOURCE_MODE_BOARD_IO = "board_io"
+LIGHT_SOURCE_MODE_CAMERA_LINE1_STROBE = "camera_line1_strobe"
+
+_CAMERA_APPLY_SETTING_KEYS = (
     "exposure_time_us",
     "gain",
     "trigger_mode",
     "acquisition_frame_rate_enable",
     "acquisition_frame_rate",
+    "digital_shift_enable",
+    "digital_shift",
 )
 
 
@@ -32,12 +37,41 @@ def hik_settings_kwargs_from_mapping(
         normalized.get("trigger_mode") or default_trigger_mode
     )
     payload: dict[str, Any] = {"trigger_mode": trigger_mode}
-    for key in _KNOWN_SETTING_KEYS:
+    for key in _CAMERA_APPLY_SETTING_KEYS:
         if key == "trigger_mode":
             continue
         if key in normalized:
             payload[key] = normalized[key]
     return payload
+
+
+def normalize_light_source_mode(
+    value: object,
+    *,
+    default: str = LIGHT_SOURCE_MODE_BOARD_IO,
+) -> str:
+    text = str(value or "").strip().lower()
+    if text in {
+        LIGHT_SOURCE_MODE_CAMERA_LINE1_STROBE,
+        "camera_gpio_strobe",
+        "camera_strobe",
+        "camera_line1",
+        "line1",
+    }:
+        return LIGHT_SOURCE_MODE_CAMERA_LINE1_STROBE
+    if text in {LIGHT_SOURCE_MODE_BOARD_IO, "board_do", "io", "do"}:
+        return LIGHT_SOURCE_MODE_BOARD_IO
+    return normalize_light_source_mode(default, default=LIGHT_SOURCE_MODE_BOARD_IO) if text else default
+
+
+def light_source_mode_from_mapping(
+    settings: Mapping[str, Any] | None,
+    *,
+    default: str = LIGHT_SOURCE_MODE_BOARD_IO,
+) -> str:
+    if not isinstance(settings, Mapping):
+        return normalize_light_source_mode(default)
+    return normalize_light_source_mode(settings.get("light_source_mode"), default=default)
 
 
 class CameraSettingsStore:
@@ -156,10 +190,21 @@ def _normalize_settings_payload(settings: Mapping[str, Any] | None) -> dict[str,
         payload["exposure_time_us"] = float(settings["exposure_time_us"])
     if settings.get("gain") is not None:
         payload["gain"] = float(settings["gain"])
+    if settings.get("digital_shift_enable") is not None:
+        payload["digital_shift_enable"] = bool(settings["digital_shift_enable"])
+    if settings.get("digital_shift") is not None:
+        payload["digital_shift"] = float(settings["digital_shift"])
 
     trigger_mode = str(settings.get("trigger_mode") or "").strip()
     if trigger_mode:
         payload["trigger_mode"] = trigger_mode
+
+    light_source_mode = normalize_light_source_mode(
+        settings.get("light_source_mode"),
+        default="",
+    )
+    if light_source_mode:
+        payload["light_source_mode"] = light_source_mode
 
     if settings.get("acquisition_frame_rate_enable") is not None:
         payload["acquisition_frame_rate_enable"] = bool(

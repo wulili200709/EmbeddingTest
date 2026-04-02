@@ -73,12 +73,24 @@ class _RoleFilterHarness:
     _current_selected_path = ToolPage._current_selected_path
     _resolve_training_algorithm = ToolPage._resolve_training_algorithm
     _train_inspection_item = ToolPage._train_inspection_item
+    current_camera_role = ToolPage.current_camera_role
+    configured_camera_roles = ToolPage.configured_camera_roles
+    set_configured_camera_roles = ToolPage.set_configured_camera_roles
+    _apply_camera_role_options_to_combo = ToolPage._apply_camera_role_options_to_combo
+    _apply_configured_camera_roles_to_ui = ToolPage._apply_configured_camera_roles_to_ui
+    _set_current_camera_role = ToolPage._set_current_camera_role
 
     def __init__(self) -> None:
         self.lbl_images_section = QtWidgets.QLabel("")
         self.ok_list = QtWidgets.QListWidget()
         self.ng_list = QtWidgets.QListWidget()
         self.test_list = QtWidgets.QListWidget()
+        self.cmb_current_camera_role = QtWidgets.QComboBox()
+        self.cmb_current_camera_role.addItem("cam1", "cam1")
+        self.cmb_current_camera_role.addItem("cam2", "cam2")
+        self.cmb_debug_camera_role = QtWidgets.QComboBox()
+        self.cmb_debug_camera_role.addItem("cam1", "cam1")
+        self.cmb_debug_camera_role.addItem("cam2", "cam2")
         self.train_files = ["cam1_ok_a.png", "cam1_ng_a.png", "cam2_ok_b.png", "cam2_ng_b.png"]
         self.ok_files = []
         self.ng_files = []
@@ -101,6 +113,9 @@ class _RoleFilterHarness:
         ]
         self._selected_item = None
         self._debug_role = "cam1"
+        self._current_camera_role = "cam1"
+        self._configured_camera_roles = ["cam1", "cam2"]
+        self._sample_annotation_preview_dialog = None
         self.algo = _FakeAlgo()
         self.cmb_mode = QtWidgets.QComboBox()
         self.cmb_mode.addItems(["proto", "topk"])
@@ -119,7 +134,22 @@ class _RoleFilterHarness:
         return self._debug_role
 
     def current_camera_role(self) -> str:
-        return self._debug_role
+        return ToolPage.current_camera_role(self)
+
+    def _clear_image_view_for_role_switch(self) -> None:
+        return None
+
+    def _apply_current_role_recipe_state(self) -> None:
+        return None
+
+    def _refresh_inspection_items_table(self) -> None:
+        return None
+
+    def _update_runtime_widgets(self) -> None:
+        return None
+
+    def _refresh_debug_role_status(self) -> None:
+        self._debug_role = self.current_camera_role()
 
     def _training_sample_groups_for_role(self, camera_role=None, *, roi_label=None):
         role = str(camera_role or self._debug_role)
@@ -154,6 +184,8 @@ class ToolPageCameraRoleFilterTest(unittest.TestCase):
         harness = _RoleFilterHarness()
 
         harness._debug_role = "cam1"
+        harness._current_camera_role = "cam1"
+        harness.cmb_current_camera_role.setCurrentIndex(harness.cmb_current_camera_role.findData("cam1"))
         harness._refresh_lists()
         self.assertEqual(harness.lbl_images_section.text(), "  图片列表（cam1）")
         self.assertEqual(harness.ok_list.count(), 2)
@@ -163,6 +195,8 @@ class ToolPageCameraRoleFilterTest(unittest.TestCase):
         self.assertEqual(harness.test_list.item(0).text(), "cam1_test_a.png")
 
         harness._debug_role = "cam2"
+        harness._current_camera_role = "cam2"
+        harness.cmb_current_camera_role.setCurrentIndex(harness.cmb_current_camera_role.findData("cam2"))
         harness._refresh_lists()
         self.assertEqual(harness.lbl_images_section.text(), "  图片列表（cam2）")
         self.assertEqual(harness.ok_list.count(), 2)
@@ -173,6 +207,8 @@ class ToolPageCameraRoleFilterTest(unittest.TestCase):
     def test_refresh_lists_ignore_selected_tool_camera_role(self) -> None:
         harness = _RoleFilterHarness()
         harness._debug_role = "cam1"
+        harness._current_camera_role = "cam1"
+        harness.cmb_current_camera_role.setCurrentIndex(harness.cmb_current_camera_role.findData("cam1"))
         harness._selected_item = harness.inspection_items[1]
 
         harness._refresh_lists()
@@ -213,6 +249,22 @@ class ToolPageCameraRoleFilterTest(unittest.TestCase):
         self.assertEqual(harness.ok_list.count(), 2)
         self.assertEqual(harness.ng_list.count(), 0)
         self.assertEqual(harness.test_list.count(), 1)
+
+
+    def test_configured_camera_roles_disable_cam2_selection(self) -> None:
+        harness = _RoleFilterHarness()
+        harness._debug_role = "cam2"
+        harness._current_camera_role = "cam2"
+        harness.cmb_current_camera_role.setCurrentIndex(harness.cmb_current_camera_role.findData("cam2"))
+        harness.cmb_debug_camera_role.setCurrentIndex(harness.cmb_debug_camera_role.findData("cam2"))
+
+        harness.set_configured_camera_roles(["cam1"])
+
+        self.assertEqual(harness.current_camera_role(), "cam1")
+        self.assertFalse(harness.cmb_current_camera_role.isEnabled())
+        self.assertFalse(harness.cmb_debug_camera_role.isEnabled())
+        self.assertFalse(harness.cmb_current_camera_role.model().item(1).isEnabled())
+        self.assertFalse(harness.cmb_debug_camera_role.model().item(1).isEnabled())
 
 
 if __name__ == "__main__":

@@ -182,7 +182,17 @@ class InspectionRuntime:
 
                 capture_t0 = time.perf_counter()
                 self.light_controller.prepare_capture(camera_index)
-                if self.light_stable_ms > 0:
+                requires_stable_delay = True
+                requires_stable_delay_getter = getattr(
+                    self.light_controller,
+                    "requires_stable_delay",
+                    None,
+                )
+                if callable(requires_stable_delay_getter):
+                    requires_stable_delay = bool(
+                        requires_stable_delay_getter(camera_index)
+                    )
+                if self.light_stable_ms > 0 and requires_stable_delay:
                     time.sleep(self.light_stable_ms / 1000.0)
                 self.scheduler.on_capture_started(camera_index)
                 frame = self.frame_grab_service.capture_once(role, timeout_ms=timeout_ms)

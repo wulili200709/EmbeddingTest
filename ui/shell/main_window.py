@@ -152,6 +152,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # ── UI 组装 ────────────────────────────────────────────────────
         self._build_ui()
+        self._sync_configured_camera_roles()
 
         # ── 运行控制器（需要 tool_page 已创建） ─────────────────────────
         self.runtime_ctrl = RuntimeController(
@@ -369,6 +370,19 @@ class MainWindow(QtWidgets.QMainWindow):
     def _show_about_dialog(self) -> None:
         _show_shell_about_dialog(self)
 
+    def _configured_runtime_camera_roles(self) -> list[str]:
+        roles = ["cam1"]
+        if self.runtime_page.edit_cam2_serial.text().strip():
+            roles.append("cam2")
+        return roles
+
+    def _sync_configured_camera_roles(self) -> None:
+        roles = self._configured_runtime_camera_roles()
+        if hasattr(self, "runtime_page"):
+            self.runtime_page.set_configured_camera_roles(roles)
+        if hasattr(self, "tool_page"):
+            self.tool_page.set_configured_camera_roles(roles)
+
     def _set_algorithm_engine_status(self, text: str, *, tooltip: str = "") -> None:
         self.lbl_status_engine.setText(text)
         self.lbl_status_engine.setToolTip(tooltip or text)
@@ -500,6 +514,7 @@ class MainWindow(QtWidgets.QMainWindow):
         cam1_serial, cam2_serial = bindings
         self.runtime_page.edit_cam1_serial.setText(cam1_serial)
         self.runtime_page.edit_cam2_serial.setText(cam2_serial)
+        self._sync_configured_camera_roles()
         self.runtime_page.connectCamerasRequested.emit(
             self.runtime_page.camera_bindings()
         )
