@@ -50,7 +50,6 @@ from application import (
     SUPPORTED_SCORE_MODES,
     ProductSession,
     SessionData,
-    ToolPageRuntimeContext,
     TrainResult,
 )
 from domain import (
@@ -1163,6 +1162,8 @@ class ToolPage(QtWidgets.QWidget):
         self._main_right_panel: Optional[QtWidgets.QFrame] = None
         self._algorithm_picker_style_default = ""
         self._algorithm_picker_style_compact = ""
+        self._defer_initial_session_load = True
+        self._deferred_session_load_scheduled = False
 
         self._build_ui()
         self._set_current_camera_role(self._current_camera_role)
@@ -1798,6 +1799,20 @@ class ToolPage(QtWidgets.QWidget):
     def load_session(self) -> None:
         # Load algorithm params and session data, then refresh UI.
         # Emits sessionLoaded after the session is applied.
+        if self._defer_initial_session_load:
+            top_level = self.window()
+            load_allowed = True
+            if isinstance(top_level, QtWidgets.QWidget):
+                load_allowed = bool(
+                    getattr(top_level, "_allow_initial_tool_session_load", top_level.isVisible())
+                )
+            if not load_allowed:
+                if not self._deferred_session_load_scheduled:
+                    self._deferred_session_load_scheduled = True
+                    QtCore.QTimer.singleShot(80, self._run_deferred_initial_session_load)
+                return
+            self._defer_initial_session_load = False
+            self._deferred_session_load_scheduled = False
 
         self._sync_camera_settings_store_path()
 
@@ -1827,6 +1842,11 @@ class ToolPage(QtWidgets.QWidget):
         self._sync_footer()
 
         self.sessionLoaded.emit()
+
+    def _run_deferred_initial_session_load(self) -> None:
+        self._deferred_session_load_scheduled = False
+        if self._defer_initial_session_load:
+            self.load_session()
 
     def apply_product_switch(self, name: str) -> None:
         # Switch product after runtime cameras are disconnected.
@@ -4031,6 +4051,8 @@ class ToolPage(QtWidgets.QWidget):
         ]
 
     def _run_test(self) -> None:
+        from application import ToolPageRuntimeContext
+
         p = self.canvas.image_path()
         if p is None or not os.path.exists(p):
             QtWidgets.QMessageBox.warning(self, "Info", "Please open a test image first.")

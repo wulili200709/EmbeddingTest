@@ -123,54 +123,184 @@ def _ensure_capture_free_space(runtime, target_dir: str | Path) -> None:
         _log_capture_storage_event(runtime, f"deleted old capture folder: {oldest_dir}")
 
 
+def _ensure_capture_free_space_for_root(runtime, target_dir: str | Path, *, root_dir: str | Path) -> None:
+    target_root = Path(root_dir)
+    target_root.mkdir(parents=True, exist_ok=True)
+    target_date_dir_name = Path(target_dir).parent.name
+    while shutil.disk_usage(str(_disk_usage_anchor(target_root))).free < _MIN_RUNTIME_CAPTURE_FREE_BYTES:
+        candidates = sorted(
+            (
+                path
+                for path in target_root.iterdir()
+                if path.is_dir()
+                and _DATE_DIRECTORY_RE.match(path.name)
+                and path.name != target_date_dir_name
+            ),
+            key=lambda path: path.name,
+        )
+        if not candidates:
+            free_bytes = shutil.disk_usage(str(_disk_usage_anchor(target_root))).free
+            raise RuntimeError(
+                "runtime capture disk space below 1 GB and no older date folders can be removed "
+                f"(root={target_root}, free={free_bytes})"
+            )
+        oldest_dir = candidates[0]
+        shutil.rmtree(oldest_dir)
+        _log_capture_storage_event(runtime, f"deleted old capture folder: {oldest_dir}")
+
+
+def _record_path_for_service(record_service) -> str:
+    if record_service is None:
+        return ""
+    try:
+        return str(record_service.writer.file_path_for_date())
+    except Exception:
+        return ""
+
+
+def _write_release_log_sync(
+    runtime,
+    release_log_service,
+    *,
+    product_name: str,
+    recipe_name: str,
+    event_type: str,
+    result: str,
+    message: str,
+    runtime_state: str,
+) -> None:
+    if release_log_service is None:
+        return
+    try:
+        release_log_service.write_event(
+            product_name=product_name,
+            recipe_name=recipe_name,
+            event_type=event_type,
+            result=result,
+            message=message,
+            runtime_state=runtime_state,
+        )
+    except Exception as exc:
+        runtime.logAppended.emit(f"[release] failed to write release log: {exc}")
+
+
+def _write_runtime_record_sync(runtime, record_service, runtime_result, *, lock_on_ng: bool) -> None:
+    if record_service is None:
+        return
+    try:
+        record_service.write_product_result(
+            product_name=runtime_result.product_name,
+            recipe_name=runtime_result.recipe_name,
+            final_result=runtime_result.final_result,
+            camera1_result=runtime_result.camera_results.get("cam1", None).result
+            if runtime_result.camera_results.get("cam1") is not None
+            else "",
+            camera2_result=runtime_result.camera_results.get("cam2", None).result
+            if runtime_result.camera_results.get("cam2") is not None
+            else "",
+            duration_ms=runtime_result.duration_ms,
+            is_error=runtime_result.is_system_error,
+            error_message=runtime_result.error_message,
+            lock_required=(runtime_result.final_result == "NG" and lock_on_ng),
+            release_required=(runtime_result.final_result == "NG" and lock_on_ng),
+            release_result="pending" if runtime_result.final_result == "NG" and lock_on_ng else "",
+            extra_fields=runtime_result.to_record_extra_fields(),
+        )
+    except Exception as exc:
+        runtime.logAppended.emit(f"[runtime] failed to write runtime record: {exc}")
+
+
+def _export_runtime_captures_sync(
+    runtime,
+    *,
+    task_id: str,
+    preview_frames: dict[str, object],
+    roles: tuple[str, ...],
+    capture_dir: str,
+    capture_root_dir: str,
+    stamp: str,
+) -> None:
+    retained_capture_paths: dict[str, str] = {}
+    exported_frames: dict[str, RuntimePreviewFrame] = {}
+    for role in roles:
+        source = preview_frames.get(role)
+        if not isinstance(source, RuntimePreviewFrame):
+            continue
+        try:
+            _ensure_capture_free_space_for_root(runtime, capture_dir, root_dir=capture_root_dir)
+            exported_frame = export_runtime_preview_frame(source, capture_dir, stamp=stamp)
+        except Exception as exc:
+            runtime.logAppended.emit(f"[runtime-capture] failed to export {role}: {exc}")
+            continue
+        retained_capture_paths[role] = exported_frame.source_path
+        exported_frames[role] = exported_frame
+
+    if not retained_capture_paths:
+        return
+
+    with runtime._frame_lock:
+        current_result = getattr(runtime, "_last_runtime_result", None)
+        if current_result is None or str(getattr(current_result, "task_id", "") or "") != str(task_id or ""):
+            return
+        runtime._last_capture_paths = dict(retained_capture_paths)
+        for role, exported_frame in exported_frames.items():
+            runtime._last_preview_frames[role] = exported_frame
+            camera_result = current_result.camera_results.get(role)
+            if camera_result is not None:
+                camera_result.image_path = exported_frame.source_path
+
+
 def _finalize_trigger_outcome(runtime, outcome, release_status_before) -> None:
-    runtime._last_record_path = ""
-    if runtime._record_service is not None:
-        runtime._last_record_path = str(runtime._record_service.writer.file_path_for_date())
     current_preview_frames = dict(runtime._last_preview_frames)
     current_roles = _outcome_roles(outcome)
-    retained_capture_paths: dict[str, str] = {}
-    if _should_export_captures(runtime, outcome.final_result):
-        capture_dt = datetime.now()
-        capture_dir = _capture_directory(runtime, capture_dt)
-        stamp = capture_dt.strftime("%Y%m%d_%H%M%S_%f")
-        for role in current_roles:
-            source = current_preview_frames.get(role)
-            if not isinstance(source, RuntimePreviewFrame):
-                continue
-            _ensure_capture_free_space(runtime, capture_dir)
-            exported_frame = export_runtime_preview_frame(source, capture_dir, stamp=stamp)
-            current_preview_frames[role] = exported_frame
-            retained_capture_paths[role] = exported_frame.source_path
-            with runtime._frame_lock:
-                runtime._last_preview_frames[role] = exported_frame
+    active_roles = runtime._connected_roles()
+    item_results_by_camera = {
+        str(role): list(rows or [])
+        for role, rows in dict(runtime._last_item_results_by_camera).items()
+    }
+    runtime._last_record_path = _record_path_for_service(runtime._record_service)
+    runtime._last_capture_paths = {}
+    runtime._last_runtime_result = aggregate_runtime_outcome(
+        product_name=runtime._session.current_product,
+        recipe_name=_recipe_name_for_roles(runtime, active_roles),
+        items=runtime._runtime_context.inspection_items,
+        active_roles=active_roles,
+        camera_outcomes=outcome.camera_outcomes,
+        final_result=outcome.final_result,
+        duration_ms=outcome.duration_ms,
+        error_message=outcome.error_message,
+        capture_paths={},
+        item_results_by_camera=item_results_by_camera,
+    )
+    detail_text = runtime._last_runtime_result.summary_text()
 
+    runtime.recordPathChanged.emit(runtime._last_record_path or "-")
+    runtime.triggerResultReady.emit(outcome.final_result, detail_text)
     for role in ("cam1", "cam2"):
         source = current_preview_frames.get(role)
         if source is None:
             source = ""
         runtime.previewUpdated.emit(role, source)
+    runtime.logAppended.emit(f"[runtime] result={outcome.final_result} detail={detail_text}")
+    runtime._emit_runtime_context()
+    runtime._update_status(detail_text or f"result={outcome.final_result}")
 
-    runtime.recordPathChanged.emit(runtime._last_record_path or "-")
+    should_export_captures = _should_export_captures(runtime, outcome.final_result)
+    if should_export_captures:
+        capture_dt = datetime.now()
+        runtime._submit_persistence_task(
+            _export_runtime_captures_sync,
+            runtime,
+            task_id=runtime._last_runtime_result.task_id,
+            preview_frames=current_preview_frames,
+            roles=current_roles,
+            capture_dir=_capture_directory(runtime, capture_dt),
+            capture_root_dir=str(_capture_root_directory(runtime)),
+            stamp=capture_dt.strftime("%Y%m%d_%H%M%S_%f"),
+            description=f"capture export {runtime._last_runtime_result.task_id}",
+        )
 
-    runtime._last_runtime_result = aggregate_runtime_outcome(
-        product_name=runtime._session.current_product,
-        recipe_name=_recipe_name_for_roles(runtime, runtime._connected_roles()),
-        items=runtime._runtime_context.inspection_items,
-        active_roles=runtime._connected_roles(),
-        camera_outcomes=outcome.camera_outcomes,
-        final_result=outcome.final_result,
-        duration_ms=outcome.duration_ms,
-        error_message=outcome.error_message,
-        capture_paths=retained_capture_paths,
-        item_results_by_camera=runtime._last_item_results_by_camera,
-    )
     runtime._write_runtime_record(runtime._last_runtime_result)
-    runtime._last_capture_paths = dict(retained_capture_paths)
-    if runtime._record_service is not None:
-        runtime._last_record_path = str(runtime._record_service.writer.file_path_for_date())
-        runtime.recordPathChanged.emit(runtime._last_record_path or "-")
-    detail_text = runtime._last_runtime_result.summary_text()
 
     if (
         release_status_before is not None
@@ -194,11 +324,6 @@ def _finalize_trigger_outcome(runtime, outcome, release_status_before) -> None:
             result="locked",
             message=outcome.error_message,
         )
-
-    runtime.triggerResultReady.emit(outcome.final_result, detail_text)
-    runtime.logAppended.emit(f"[runtime] result={outcome.final_result} detail={detail_text}")
-    runtime._emit_runtime_context()
-    runtime._update_status(detail_text or f"result={outcome.final_result}")
 
 
 def _precheck(runtime):
@@ -363,45 +488,35 @@ def _inspect_frame(runtime, role: str, frame):
 
 
 def _write_release_log(runtime, *, event_type: str, result: str, message: str = "") -> None:
-    if runtime._release_log_service is None:
+    release_log_service = runtime._release_log_service
+    if release_log_service is None:
         return
-    try:
-        runtime._release_log_service.write_event(
-            product_name=runtime._session.current_product,
-            recipe_name=_recipe_name_for_roles(runtime, runtime._connected_roles()),
-            event_type=event_type,
-            result=result,
-            message=message,
-            runtime_state=runtime._current_runtime_state_text(),
-        )
-    except Exception as exc:
-        runtime.logAppended.emit(f"[release] failed to write release log: {exc}")
+    runtime._submit_persistence_task(
+        _write_release_log_sync,
+        runtime,
+        release_log_service,
+        product_name=runtime._session.current_product,
+        recipe_name=_recipe_name_for_roles(runtime, runtime._connected_roles()),
+        event_type=event_type,
+        result=result,
+        message=message,
+        runtime_state=runtime._current_runtime_state_text(),
+        description=f"release log {event_type}",
+    )
 
 
 def _write_runtime_record(runtime, runtime_result) -> None:
-    if runtime._record_service is None:
+    record_service = runtime._record_service
+    if record_service is None:
         return
-    try:
-        runtime._record_service.write_product_result(
-            product_name=runtime_result.product_name,
-            recipe_name=runtime_result.recipe_name,
-            final_result=runtime_result.final_result,
-            camera1_result=runtime_result.camera_results.get("cam1", None).result
-            if runtime_result.camera_results.get("cam1") is not None
-            else "",
-            camera2_result=runtime_result.camera_results.get("cam2", None).result
-            if runtime_result.camera_results.get("cam2") is not None
-            else "",
-            duration_ms=runtime_result.duration_ms,
-            is_error=runtime_result.is_system_error,
-            error_message=runtime_result.error_message,
-            lock_required=(runtime_result.final_result == "NG" and runtime._lock_on_ng),
-            release_required=(runtime_result.final_result == "NG" and runtime._lock_on_ng),
-            release_result="pending" if runtime_result.final_result == "NG" and runtime._lock_on_ng else "",
-            extra_fields=runtime_result.to_record_extra_fields(),
-        )
-    except Exception as exc:
-        runtime.logAppended.emit(f"[runtime] failed to write runtime record: {exc}")
+    runtime._submit_persistence_task(
+        _write_runtime_record_sync,
+        runtime,
+        record_service,
+        runtime_result,
+        lock_on_ng=runtime._lock_on_ng,
+        description=f"runtime record {getattr(runtime_result, 'task_id', '')}",
+    )
 
 
 def _reload_runtime_context(runtime) -> None:

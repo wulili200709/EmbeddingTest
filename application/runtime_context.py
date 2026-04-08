@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any, Dict, List, Protocol
 
 import algorithms.proxy as qr_core
 import numpy as np
-from algorithms.embedding import embed_batch_from_array
 from algorithms.traditional import TraditionalThresholdModel, compute_roi_metrics_from_array, metric_value
 from application.runtime.preview_frame import RuntimePreviewShape
 from domain import (
@@ -209,6 +208,10 @@ def _predict_learning_items_batch_rows_from_frame(
     load_embedding_model,
     feat_net=None,
 ) -> Dict[str, Dict[str, object]]:
+    # Import the embedding helper on demand so startup does not pull torch/torchvision
+    # before the main window is visible.
+    from algorithms.embedding import embed_batch_from_array
+
     rows_by_key: Dict[str, Dict[str, object]] = {}
     learning_groups: Dict[str, List[InspectionItem]] = {}
     shape_by_label = _runtime_shape_by_label(roi_shapes)

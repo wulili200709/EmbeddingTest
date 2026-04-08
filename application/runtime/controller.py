@@ -18,9 +18,10 @@ from __future__ import annotations
 
 import os
 import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 
 from PySide6 import QtCore
 
@@ -224,6 +225,12 @@ class RuntimeController(QtCore.QObject):
 
         self._frame_lock = threading.RLock()
         self._inspect_lock = threading.RLock()
+        self._persistence_lock = threading.RLock()
+        self._persistence_executor: ThreadPoolExecutor | None = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="runtime-persist",
+        )
+        self._persistence_futures: set[Future] = set()
         self._last_capture_paths: Dict[str, str] = {}
         self._last_preview_frames: Dict[str, object] = {}
         self._last_record_path: Optional[str] = None
@@ -265,6 +272,58 @@ class RuntimeController(QtCore.QObject):
 
     def capture_retention_policy(self) -> str:
         return self._capture_retention_policy
+
+    def _submit_persistence_task(
+        self,
+        callback: Callable[..., Any],
+        *args,
+        description: str = "",
+        **kwargs,
+    ) -> Future | None:
+        executor = self._persistence_executor
+        if executor is None:
+            try:
+                callback(*args, **kwargs)
+            except Exception as exc:
+                self.logAppended.emit(
+                    f"[runtime] persistence task failed ({description or 'sync-fallback'}): {exc}"
+                )
+            return None
+
+        try:
+            future = executor.submit(callback, *args, **kwargs)
+        except RuntimeError:
+            try:
+                callback(*args, **kwargs)
+            except Exception as exc:
+                self.logAppended.emit(
+                    f"[runtime] persistence task failed ({description or 'sync-fallback'}): {exc}"
+                )
+            return None
+
+        with self._persistence_lock:
+            self._persistence_futures.add(future)
+
+        def _on_done(done: Future) -> None:
+            with self._persistence_lock:
+                self._persistence_futures.discard(done)
+            try:
+                done.result()
+            except Exception as exc:
+                self.logAppended.emit(
+                    f"[runtime] persistence task failed ({description or 'async'}): {exc}"
+                )
+
+        future.add_done_callback(_on_done)
+        return future
+
+    def shutdown_persistence(self, *, wait: bool = True) -> None:
+        with self._persistence_lock:
+            executor = self._persistence_executor
+            self._persistence_executor = None
+        if executor is None:
+            return
+        executor.shutdown(wait=wait)
 
     def initialize_startup_io(self, *, force: bool = False) -> bool:
         return self._initialize_startup_io(force=force)

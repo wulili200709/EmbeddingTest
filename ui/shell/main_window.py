@@ -92,10 +92,6 @@ from ui.window_common import (
     detect_runtime_import_error,
     embedding_test_root,
 )
-
-
-_RUNTIME_IMPORT_ERROR = detect_runtime_import_error()
-
 # Test-stage switch:
 # False = 测试模式：NG时不自动弹出放行密码框，且不进入NG锁定，可直接继续下一次测试
 # True  = 产线模式：NG时自动弹出放行密码框，并进入NG锁定
@@ -145,9 +141,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tower_light_settings = self._tower_light_store.load()
         self._release_password = self._password_settings["run_password"]
         self._admin_password = self._password_settings["engineer_password"]
+        self._runtime_import_error = detect_runtime_import_error()
         self._engine_warmup_thread: Optional[QtCore.QThread] = None
         self._brand_banner_source = QtGui.QPixmap(str(_resource_path("logo2.png")))
         self._startup_runtime_auto_connect_done = False
+        self._startup_after_show_scheduled = False
+        self._startup_after_show_completed = False
+        self._allow_initial_tool_session_load = False
+        self._initial_ui_ready_timer_started = False
         self._runtime_capture_policy = self._load_runtime_capture_policy_from_session()
 
         # ── UI 组装 ────────────────────────────────────────────────────
@@ -160,7 +161,7 @@ class MainWindow(QtWidgets.QMainWindow):
             session=self.session,
             algo=self.algo,
             runtime_context=ProductRuntimeContext(self.session, self.algo),
-            import_error=_RUNTIME_IMPORT_ERROR,
+            import_error=self._runtime_import_error,
             release_password=self._release_password,
             lock_on_ng=AUTO_SHOW_RELEASE_DIALOG_ON_NG,
             parent=self,
@@ -180,10 +181,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.runtime_ctrl.refresh_all_status() # 初始状态推送
         self._switch_workspace("debug")
         self._switch_workspace("debug")
-        QtCore.QTimer.singleShot(0, self.runtime_ctrl.reset_all_camera_triggers_off)
-        QtCore.QTimer.singleShot(0, self.runtime_ctrl.initialize_startup_io)
-        QtCore.QTimer.singleShot(0, self._start_algorithm_engine_warmup)
-        QtCore.QTimer.singleShot(150, self._startup_auto_connect_runtime_cameras)
+        QtCore.QTimer.singleShot(80, self.runtime_ctrl.reset_all_camera_triggers_off)
+        QtCore.QTimer.singleShot(80, self.runtime_ctrl.initialize_startup_io)
+        QtCore.QTimer.singleShot(80, self._start_algorithm_engine_warmup)
+        QtCore.QTimer.singleShot(200, self._startup_auto_connect_runtime_cameras)
       
     def _on_camera_settings_applied(self, serial: str, settings_payload) -> None:
         self.runtime_ctrl.apply_camera_settings_for_serial(serial, settings_payload)
@@ -230,7 +231,7 @@ class MainWindow(QtWidgets.QMainWindow):
         _restore_runtime_capture_policy_from_session_impl(self)
 
     def _startup_auto_connect_runtime_cameras(self) -> None:
-        _startup_auto_connect_runtime_cameras_impl(self, import_error=_RUNTIME_IMPORT_ERROR)
+        _startup_auto_connect_runtime_cameras_impl(self, import_error=self._runtime_import_error)
 
     @QtCore.Slot(list)
     def _on_runtime_active_roles_changed(self, roles: list[str]) -> None:
@@ -602,6 +603,17 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self, "lbl_brand_banner"):
             self.lbl_brand_banner.update()
 
+    def _mark_initial_ui_ready(self) -> None:
+        self._allow_initial_tool_session_load = True
+        self._initial_ui_ready_timer_started = False
+
+    def showEvent(self, event: QtGui.QShowEvent) -> None:
+        super().showEvent(event)
+        if self._allow_initial_tool_session_load or self._initial_ui_ready_timer_started:
+            return
+        self._initial_ui_ready_timer_started = True
+        QtCore.QTimer.singleShot(120, self._mark_initial_ui_ready)
+
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         try:
             self.tool_page._cleanup_debug_hardware()
@@ -612,6 +624,7 @@ class MainWindow(QtWidgets.QMainWindow):
             worker.wait()
             self._engine_warmup_thread = None
         self.runtime_ctrl.disconnect(silent=True)
+        self.runtime_ctrl.shutdown_persistence(wait=True)
         super().closeEvent(event)
 
 

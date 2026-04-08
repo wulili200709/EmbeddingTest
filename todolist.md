@@ -3413,4 +3413,10 @@ V= π x 0.7 x n /60/30=1.09*n
 如果你希望新加的点位在界面上显示友好的中文名字，再补 debug_camera_flow.py (line 22) 里的 _DEBUG_IO_NAME_LABELS
 
 
+# 优化时间
+AlgorithmController 可以理解成“当前产品的算法总控器”。它现在同时负责四件事：
 
+保存当前产品的运行参数：score_mode / margin / topk / traditional_models
+加载当前 embedding 模型到共享槽位 self.model
+缓存 backbone 特征网络 self._feat_net_cache
+提供单图预测入口 predict_image(...)

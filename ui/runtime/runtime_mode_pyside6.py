@@ -23,7 +23,9 @@ runtime_mode_pyside6.py
 
 from __future__ import annotations
 
+import csv
 import re
+from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -234,6 +236,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._inspection_rows: list[dict] = []
         self._camera_preview_sources: dict[str, object | None] = {"cam1": None, "cam2": None}
         self._current_product_name = ""
+        self._current_record_path = ""
         self._ok_count_total = 0
         self._ng_count_total = 0
         self._build_ui()
@@ -554,9 +557,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         product_text = str(product_name or "").strip()
         if product_text != self._current_product_name:
             self._current_product_name = product_text
-            self._ok_count_total = 0
-            self._ng_count_total = 0
-            self._refresh_count_labels()
+            self._reload_daily_result_counters()
         self.lbl_current_product.setText(f"产品: {product_name}" if product_name else "-")
 
     def set_runtime_state(self, state_text: str) -> None:
@@ -614,6 +615,10 @@ class RuntimeModePage(QtWidgets.QWidget):
 
     def set_record_path(self, record_path: str) -> None:
         self.lbl_footer_record.setText(record_path or "")
+        normalized_path = self._normalize_record_path(record_path)
+        if normalized_path != self._current_record_path:
+            self._current_record_path = normalized_path
+            self._reload_daily_result_counters()
 
     def set_configured_camera_roles(self, roles: list[str]) -> None:
         configured = {
@@ -902,6 +907,41 @@ class RuntimeModePage(QtWidgets.QWidget):
     def _refresh_count_labels(self) -> None:
         self.lbl_ok_count.setText(f"OK: {int(self._ok_count_total)}")
         self.lbl_ng_count.setText(f"NG: {int(self._ng_count_total)}")
+
+    def _reload_daily_result_counters(self) -> None:
+        ok_count = 0
+        ng_count = 0
+        product_name = str(self._current_product_name or "").strip()
+        record_path_text = str(self._current_record_path or "").strip()
+        if product_name and record_path_text:
+            record_path = Path(record_path_text)
+            if record_path.exists() and record_path.is_file():
+                try:
+                    with record_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+                        for row in csv.DictReader(csv_file):
+                            if str(row.get("product_name", "")).strip() != product_name:
+                                continue
+                            final_result = str(row.get("final_result", "")).strip().upper()
+                            if final_result == "OK":
+                                ok_count += 1
+                            elif final_result == "NG":
+                                ng_count += 1
+                except Exception:
+                    ok_count = 0
+                    ng_count = 0
+        self._ok_count_total = ok_count
+        self._ng_count_total = ng_count
+        self._refresh_count_labels()
+
+    @staticmethod
+    def _normalize_record_path(record_path: str) -> str:
+        path_text = str(record_path or "").strip()
+        if not path_text or path_text == "-":
+            return ""
+        try:
+            return str(Path(path_text))
+        except Exception:
+            return ""
 
     def _increment_result_counter(self, result_text: str) -> None:
         result_key = str(result_text or "").strip().upper()
