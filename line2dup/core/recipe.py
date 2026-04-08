@@ -14,7 +14,7 @@ class Line2DupRecipe:
     reference_image: str = ""
     class_id: str = ""
     backend: str = "original"
-    threshold: float = 70.0
+    threshold: float = 50.0
     auto_threshold_sweep: bool = False
     threshold_sweep_step: int = 10
     threshold_sweep_min: int = 20
@@ -38,7 +38,7 @@ class Line2DupRecipe:
             reference_image=str(data.get("reference_image", "")),
             class_id=str(data.get("class_id", "")),
             backend=str(data.get("backend", "original")),
-            threshold=float(data.get("threshold", 70.0)),
+            threshold=float(data.get("threshold", 50.0)),
             auto_threshold_sweep=bool(data.get("auto_threshold_sweep", False)),
             threshold_sweep_step=int(data.get("threshold_sweep_step", 10)),
             threshold_sweep_min=int(data.get("threshold_sweep_min", 20)),

@@ -521,7 +521,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.cmb_backend_create.setCurrentText("Original")
         self.spin_threshold_create = QtWidgets.QDoubleSpinBox()
         self.spin_threshold_create.setRange(0.0, 100.0)
-        self.spin_threshold_create.setValue(70.0)
+        self.spin_threshold_create.setValue(50.0)
         self.spin_nms_create = QtWidgets.QDoubleSpinBox()
         self.spin_nms_create.setRange(0.0, 1.0)
         self.spin_nms_create.setDecimals(2)
@@ -777,7 +777,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.cmb_backend_find.setCurrentText(_DEFAULT_FIND_BACKEND_LABEL)
         self.spin_threshold_find = QtWidgets.QDoubleSpinBox()
         self.spin_threshold_find.setRange(0.0, 100.0)
-        self.spin_threshold_find.setValue(70.0)
+        self.spin_threshold_find.setValue(50.0)
         self.spin_nms_find = QtWidgets.QDoubleSpinBox()
         self.spin_nms_find.setRange(0.0, 1.0)
         self.spin_nms_find.setDecimals(2)
@@ -1089,6 +1089,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
 
         self.detector = detector
         self.detector_path = self.paths.model_path
+        self._apply_detector_template_params(detector, source_info)
         self.template_roi = roi_rect
         self.btn_extract_points.setEnabled(self.template_roi is not None)
         self.mask_rects = [MaskRect(x=int(r.x), y=int(r.y), w=int(r.w), h=int(r.h)) for r in mask_rects]
@@ -1107,6 +1108,27 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.lbl_status.setText(
             f"状态：已加载模型 {os.path.basename(self.paths.model_path)}，特征点={self._feature_count}"
         )
+
+    def _apply_detector_template_params(self, detector: Line2DupLikeDetector, source_info: object) -> None:
+        pose_ui = {}
+        if isinstance(source_info, dict):
+            pose_info_block = source_info.get("pose_infos", {})
+            if isinstance(pose_info_block, dict):
+                pose_ui = pose_info_block.get("ui", {})
+                if not isinstance(pose_ui, dict):
+                    pose_ui = {}
+
+        levels_text = ",".join(str(int(level)) for level in list(getattr(detector, "T_at_level", []) or []))
+        self.edit_levels.setText(levels_text or "4,8")
+        self.spin_num_features.setValue(max(16, int(getattr(detector, "num_features", 128) or 128)))
+        self.spin_weak.setValue(float(getattr(detector, "weak_threshold", 30.0) or 30.0))
+        self.spin_strong.setValue(float(getattr(detector, "strong_threshold", 60.0) or 60.0))
+        self.spin_angle_start.setValue(float(pose_ui.get("angle_start", 0.0) or 0.0))
+        self.spin_angle_end.setValue(float(pose_ui.get("angle_end", 360.0) or 360.0))
+        self.spin_angle_step.setValue(float(pose_ui.get("angle_step", 10.0) or 10.0))
+        self.spin_scale_start.setValue(float(pose_ui.get("scale_start", 1.0) or 1.0))
+        self.spin_scale_end.setValue(float(pose_ui.get("scale_end", 1.0) or 1.0))
+        self.spin_scale_step.setValue(float(pose_ui.get("scale_step", 0.05) or 0.05))
 
     def _extract_points_from_roi(self) -> None:
         if self.image_bgr is None or not self.image_path:
@@ -1268,6 +1290,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
                 QtWidgets.QMessageBox.warning(self, "提示", "Mask 矩形需要和模板ROI相交。")
                 return
             self.mask_rects.append(rel)
+            self.btn_extract_points.setEnabled(self.template_roi is not None)
             self.lbl_status.setText(f"状态：已添加 {len(self.mask_rects)} 个 mask 矩形。")
         self.create_canvas.clear_roi()
         self._refresh_create_overlays()
@@ -1456,6 +1479,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         yr = max(0, min(yr, int(level0.height)))
         level0.features.append(Feature(x=int(xr), y=int(yr), label=int(label) & 7, theta=float(theta_deg)))
         self.points_dirty = True
+        self.original_mode = "manual_points"
         self._sync_editor_levels()
         self._refresh_create_overlays()
 
@@ -1467,6 +1491,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             return False
         del level0.features[int(idx)]
         self.points_dirty = True
+        self.original_mode = "manual_points"
         self._hover_feature_index = None
         self._sync_editor_levels()
         self._refresh_create_overlays()

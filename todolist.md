@@ -3420,3 +3420,346 @@ AlgorithmController 可以理解成“当前产品的算法总控器”。它现
 加载当前 embedding 模型到共享槽位 self.model
 缓存 backbone 特征网络 self._feat_net_cache
 提供单图预测入口 predict_image(...)
+
+改成：
+输入 batch:
+  [cam1_roi1, cam1_roi2, cam2_roi1, cam2_roi2]
+
+一次 feat_net forward 后输出:
+  [e1, e2, e3, e4]
+
+cam1 -> ROI1, ROI2 -> embedding
+cam2 -> ROI3, ROI4 -> embedding
+
+embedding worker:
+  [ROI1, ROI2, ROI3, ROI4] 一次 forward
+
+然后分发:
+  ROI1 -> model_key A 打分
+  ROI2 -> model_key B 打分
+  ROI3 -> model_key C 打分
+  ROI4 -> traditional / register model D 打分
+
+区别：
+1. 现在的结构：共享 self.model
+
+                 RuntimeController
+                        |
+                 _inspect_lock
+                        |
+        ---------------------------------
+        |                               |
+      cam1                            cam2
+        |                               |
+        |        但实际上不能同时进
+        |        因为会抢同一个 self.model
+        v
+      InspectionExecutor.execute(...)
+        v
+      ProductRuntimeContext.predict_items_batch_from_frame(...)
+        v
+      for 每个 learning item:
+          load_embedding_model(model_key)
+              |
+              v
+        AlgorithmController.self.model = 当前模型
+
+          然后再从 algo.model 取出来
+              |
+              v
+          embed_batch_from_array(...)
+              |
+              v
+          predict_one_with_model(embedding, model)
+核心问题是这里：
+
+cam1:
+  load model A
+  self.model = A
+
+cam2:
+  load model B
+  self.model = B
+
+cam1:
+  再继续往下取 algo.model
+  这时候拿到的可能已经是 B
+所以现在必须有这把锁：
+
+cam1 先整段跑完
+cam2 才能开始
+也就是：
+
+时间线
+
+cam1: [ line2dup + embedding + score ]
+cam2:                           [ line2dup + embedding + score ]
+这就是“不能真正并行”的本质。
+
+2. 优化后的核心：不再共享 self.model，改成只读 bundle
+
+先在运行初始化时，提前把运行所需内容准备好：
+
+Runtime Bundle Catalog
+
+(model_key=A) -> {
+  register_model: model_A,
+  feat_net: feat_net_mobilenet,
+  algorithm: mobilenet_v3_small,
+}
+
+(model_key=B) -> {
+  register_model: model_B,
+  feat_net: feat_net_mobilenet,
+  algorithm: mobilenet_v3_small,
+}
+
+(cam1) -> role bundle:
+  items = [roi1, roi2]
+  recipe = cam1_recipe
+  item -> model_key 映射
+
+(cam2) -> role bundle:
+  items = [roi3, roi4]
+  recipe = cam2_recipe
+  item -> model_key 映射
+然后运行时变成：
+
+cam1 thread
+  -> 取 cam1 role bundle
+  -> line2dup
+  -> 直接用 bundle 里的 feat_net / register_model
+  -> 不再 load_embedding_model()
+  -> 不再碰 self.model
+
+cam2 thread
+  -> 取 cam2 role bundle
+  -> line2dup
+  -> 直接用 bundle 里的 feat_net / register_model
+  -> 不再 load_embedding_model()
+  -> 不再碰 self.model
+图上就是：
+
+                    Runtime Bundle Catalog
+          ------------------------------------------------
+          | model_key A -> register_model_A + feat_net_M |
+          | model_key B -> register_model_B + feat_net_M |
+          | cam1 -> role bundle                          |
+          | cam2 -> role bundle                          |
+          ------------------------------------------------
+
+                 cam1 thread               cam2 thread
+                     |                         |
+              read-only bundle          read-only bundle
+                     |                         |
+                  line2dup                  line2dup
+                     |                         |
+                  embedding                 embedding
+                     |                         |
+                 score by A/B             score by C/D
+这里的关键变化是：
+
+以前:
+  线程 = 改共享状态 -> 再推理
+
+现在:
+  线程 = 只读自己上下文 -> 直接推理
+所以 _inspect_lock 就可以拿掉。
+
+3. 对比一下，究竟优化了什么
+
+之前
+
+模型入口:
+  动态加载
+  写共享 self.model
+  另一个线程可能覆盖
+
+并发性:
+  必须串行
+
+风险:
+  模型串台
+之后
+
+模型入口:
+  预加载到 bundle
+  线程只读 bundle
+  不写共享 self.model
+
+并发性:
+  cam1 / cam2 可真正并行
+
+风险:
+  不会因为 self.model 被覆盖而串台
+4. CPU 机器更推荐的进一步优化
+
+因为你是 CPU-only，最推荐的是这个版本：
+
+cam1 thread                      cam2 thread
+   |                                |
+ line2dup                         line2dup
+   |                                |
+ ROI/task queue  ---------------->  ROI/task queue
+                 \                /
+                  \              /
+                   v            v
+                 shared inference worker
+                      (同 backbone 合批)
+                           |
+                     一次 feat_net forward
+                           |
+          -----------------------------------------
+          |                  |                    |
+   embedding_cam1_roi1  embedding_cam1_roi2  embedding_cam2_roi1
+          |                  |                    |
+       model_A             model_B              model_C
+          |                  |                    |
+       cam1结果             cam1结果             cam2结果
+这时优化点变成两层：
+
+不共享 self.model，解决正确性
+feat_net 只做一次合批 forward，解决 CPU 抢核问题
+5. 一句话总结
+
+之前的瓶颈:
+  共享 self.model -> 必须加锁 -> 双相机检测串行
+
+优化后的本质:
+  把“共享可变模型状态”改成“只读 bundle”
+  这样 cam1/cam2 才能真正并行
+
+CPU 上再进一步:
+  两路先各自定位，再把 ROI 合批做一次 feat_net forward
+
+更合理的是：cam1 的 ROI 先入队，但 只等一个很短的合批窗口，不是一直等到 cam2 全部准备好。
+
+推荐策略：微批处理，不死等
+
+cam1 ROI 到队列
+  -> worker 开一个很短的等待窗，比如 2~5 ms
+  -> 这段时间内如果 cam2 ROI 也来了，就一起 batch forward
+  -> 如果没来，直接先算 cam1
+所以答案是：
+
+不是必须等 cam2
+但可以“稍微等一下”，争取合批
+超过短窗口就立刻推，不然会把延迟吃回去
+为什么不能死等
+如果你硬等 cam2，流程会变成：
+
+cam1 定位完 -> 干等 cam2 -> 一起推理
+这样有两个问题：
+
+cam1 本来可以先开始，结果被人为卡住
+如果 cam2 采图/定位慢一点，CT 会更差
+这就违背了你想提速的目标。
+
+CPU 上更合适的 flush 条件
+inference worker 可以按下面规则出发一次 forward：
+
+到了最短等待时间
+比如 2~5 ms
+
+batch 已经够大
+比如凑满 N 个 ROI
+
+某一路相机本轮已经全部定位完成，而且另一边还没来
+那就别等了，直接推
+
+当前是单相机任务
+直接推
+
+你可以理解成这个时间线
+
+t0   cam1采图完成
+t1   cam1 line2dup完成，ROI进队列
+t1~t1+3ms  worker短暂等一下
+
+情况A: cam2 ROI 在3ms内到
+  -> [cam1 ROI + cam2 ROI] 一起 forward
+
+情况B: cam2 ROI 没到
+  -> 先 forward(cam1 ROI)
+  -> cam2 之后到了，再单独或下一批 forward
+所以最优设计不是
+
+必须等 cam2 来了才能推
+而是
+
+优先低延迟
+顺便尽量捡到合批收益
+工程上我建议
+CPU 机默认用：
+
+line2dup：双相机并行
+embedding inference：单 worker
+batch wait window：先从 2~3 ms 开始试
+如果 cam2 通常很快跟上，再放大到 5 ms
+不建议一开始就做“必须双相机齐了才推”
+一句话：
+
+cam1 不该死等 cam2，只该短等一下；等得到就合批，等不到就先算。
+
+## 单 worker
+
+如果你让 cam1 和 cam2 同时各自跑一次 CPU forward，就会抢资源。
+
+但如果按我前面建议的 单个 inference worker 设计，就不会出现“两个 forward 同时跑”这件事。
+
+分两种情况看
+
+1. 单 worker 方案
+
+cam1 ROI 到了 -> worker 开始 forward
+cam2 ROI 这时候到了 -> 进队列等待下一批
+这时：
+
+不会和 cam1 forward 同时跑第二个 forward
+不会发生“两次 CNN 前向互相抢 CPU”
+代价是 cam2 要排队
+注意一点：
+
+一旦 cam1 那个 batch 已经开始 forward，cam2 不能中途插进这一次
+它只能进下一批
+所以单 worker 的本质是：
+
+避免资源争抢
+用一点排队换稳定 CT
+2. 双 worker / 双 forward 方案
+如果你做成：
+
+cam1 一个 forward
+cam2 另一个 forward
+同时跑
+那在 CPU 上通常会抢这些资源：
+
+CPU 核心
+L2/L3 cache
+内存带宽
+PyTorch / MKL / OpenMP 内部线程池
+结果常见是：
+
+平均 CT 不一定更快
+抖动会更大
+有时反而更慢
+所以这里要区分两种“抢”：
+
+不会再抢错模型
+因为 bundle 已经解决了共享 self.model 的正确性问题
+但会抢机器算力
+这是 CPU 并发 forward 的性能问题
+最实际的建议
+CPU 机默认就这样做：
+
+cam1/cam2 line2dup: 可以并行
+embedding forward: 只允许一个 worker 跑
+后来的任务先进队列
+这样你避免了最重的资源冲突。
+
+再补一句
+即使用单 inference worker，cam1 forward 期间，cam2 的 line2dup 仍然可能在别的线程跑，所以还是会有一些 CPU 竞争；但这通常比“两个 CNN forward 同时跑”轻得多，也更可控。
+
+一句话总结：
+
+如果 cam1 forward 时 cam2 也同时 forward，CPU 上基本一定会抢资源；所以更稳的设计是只让一个 forward 同时执行，另一个排队。
