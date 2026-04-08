@@ -374,6 +374,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         right_layout.addWidget(self._items_scroll, 1)
 
         total_frame = QtWidgets.QFrame()
+        self._right_total_frame = total_frame
         total_frame.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Preferred,
             QtWidgets.QSizePolicy.Policy.Minimum,
@@ -387,7 +388,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         total_header.setContentsMargins(0, 0, 0, 0)
         total_header.setSpacing(8)
 
-        total_label = QtWidgets.QLabel("总结果")
+        total_label = QtWidgets.QLabel("数据统计")
         total_label.setStyleSheet(f"color:{_TEXT_LIGHT};font-size:14px;font-weight:bold;")
         total_header.addWidget(total_label)
 
@@ -451,6 +452,7 @@ class RuntimeModePage(QtWidgets.QWidget):
             f"background:{_PENDING_GRAY};color:white;font-size:16px;font-weight:bold;border-radius:4px;"
         )
         total_layout.addWidget(self.lbl_final_result, 1)
+        self.lbl_final_result.hide()
 
         right_layout.addWidget(total_frame)
         body.addWidget(camera_frame)
@@ -839,8 +841,9 @@ class RuntimeModePage(QtWidgets.QWidget):
         return text
 
     def _refresh_camera_timing_visibility(self) -> None:
-        self.lbl_cam1_timing.setVisible("cam1" in self._active_role_set)
-        self.lbl_cam2_timing.setVisible("cam2" in self._active_role_set)
+        display_roles = self._display_role_set()
+        self.lbl_cam1_timing.setVisible("cam1" in display_roles)
+        self.lbl_cam2_timing.setVisible("cam2" in display_roles)
 
     def _display_role_set(self) -> set[str]:
         return set(self._active_role_set or self._configured_role_set)

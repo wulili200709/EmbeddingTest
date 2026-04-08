@@ -3219,6 +3219,11 @@ build_py312.ps1 只是调用 PyInstaller；而 LC_System.spec 里把 algorithms�
 2.不同的用户有不同的密码，先放3-5个用户。后面增加用户收费，存储不同ID放行，记录在csv里
 3.硬件相机序列号绑定
 4.外罩改成C口
+5.位置修正有bug,Extract points from ROI 慢，保存也慢。默认查找角度改成5？打开之前的模板model文件显示还是默认的模板参数？点数越多 越慢
+6.样本标注的时候 roi越多 生成的越慢 现象就越卡
+7.重新改了ROI的区域之后 调试界面还是显示已训练  这时候是不是要显示未训练或者待训练?
+8.打开特征分析的时候 为什么会出现powershell?
+9.启动变慢
 
 
 
@@ -3328,6 +3333,22 @@ line1 gpio +  接频闪控制器的输入1
     "reserved_in_2": {
       "channel": 3,
       "active_high": true
+    },
+     "reserved_in_3": {
+      "channel": 4,
+      "active_high": true
+    },
+    "reserved_in_4": {
+      "channel": 5,
+      "active_high": true
+    },
+    "reserved_in_5": {
+      "channel": 6,
+      "active_high": true
+    },
+    "reserved_in_6": {
+      "channel": 7,
+      "active_high": true
     }
   },
   "do": {
@@ -3344,15 +3365,15 @@ line1 gpio +  接频闪控制器的输入1
       "active_high": false
     },
     "light_cam1": {
-      "channel": 4,
-      "active_high": true
-    },
-    "light_cam2": {
       "channel": 3,
       "active_high": false
     },
-    "reserved_out_1": {
+    "light_cam2": {
       "channel": 5,
+      "active_high": false
+    },
+    "reserved_out_1": {
+      "channel": 4,
       "active_high": false
     },
     "reserved_out_2": {
@@ -3362,4 +3383,34 @@ line1 gpio +  接频闪控制器的输入1
   }
 }
 
+
 ~~~
+_STARTUP_OUTPUT_DEFAULTS: dict[str, bool] = {
+    "reserved_out_1": True,
+}
+皮带线的reserved_out_1 程序启动就是高电平  皮带转
+
+
+# 皮带线速度计算
+V = π × D × n / 60/减速比
+D = 主动轮（驱动轮）的直径（m）
+n = 电机输出转速（rpm）
+减速比 30
+
+V= π x 0.7 x n /60/30=1.09*n
+
+
+# IO配置
+ DI/DO 调试页，当前不是靠“一个数字参数”控制显示数量，而是靠“映射里配了哪些通道”来决定显示哪些卡片。
+
+关键链路是这几个地方：
+
+调试页先固定创建了 16 个 DI 卡和 16 个 DO 卡，在 page.py (line 2783) 和 page.py (line 2822)
+然后按映射决定某个卡片是否显示，在 debug_camera_flow.py (line 392)、debug_camera_flow.py (line 445)、debug_camera_flow.py (line 467)
+运行时实际加载的映射文件是 io_mapping.json，入口在 hardware.py (line 145)；调试页自己找的也是这个文件，在 camera_debug.py (line 165)
+在 io_mapping.json 的 di 里补齐 channel: 0 ~ 15
+在同一个文件的 do 里补齐 channel: 0 ~ 15
+如果你希望新加的点位在界面上显示友好的中文名字，再补 debug_camera_flow.py (line 22) 里的 _DEBUG_IO_NAME_LABELS
+
+
+

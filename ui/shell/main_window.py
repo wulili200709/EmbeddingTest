@@ -152,6 +152,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # ── UI 组装 ────────────────────────────────────────────────────
         self._build_ui()
+        self._set_sidebar_runtime_result("-", "")
         self._sync_configured_camera_roles()
 
         # ── 运行控制器（需要 tool_page 已创建） ─────────────────────────
@@ -183,7 +184,7 @@ class MainWindow(QtWidgets.QMainWindow):
         QtCore.QTimer.singleShot(0, self.runtime_ctrl.initialize_startup_io)
         QtCore.QTimer.singleShot(0, self._start_algorithm_engine_warmup)
         QtCore.QTimer.singleShot(150, self._startup_auto_connect_runtime_cameras)
-
+      
     def _on_camera_settings_applied(self, serial: str, settings_payload) -> None:
         self.runtime_ctrl.apply_camera_settings_for_serial(serial, settings_payload)
 
@@ -328,6 +329,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.runtime_ctrl.previewUpdated.connect(self._on_runtime_preview_updated)
         self.runtime_ctrl.productNameChanged.connect(lambda *_: self._sync_shell_status())
         self.runtime_ctrl.activeCameraRolesChanged.connect(self._on_runtime_active_roles_changed)
+        self.runtime_ctrl.triggerResultReady.connect(self._update_sidebar_runtime_result)
         self.runtime_ctrl.triggerResultReady.connect(self._on_runtime_trigger_result)
         self.runtime_ctrl.ioStatusChanged.connect(self._on_runtime_io_status_changed)
 
@@ -386,6 +388,44 @@ class MainWindow(QtWidgets.QMainWindow):
     def _set_algorithm_engine_status(self, text: str, *, tooltip: str = "") -> None:
         self.lbl_status_engine.setText(text)
         self.lbl_status_engine.setToolTip(tooltip or text)
+
+    def _set_sidebar_runtime_result(self, result: str, detail: str = "") -> None:
+        normalized = str(result or "").strip().upper()
+        display = str(result or "").strip() or "-"
+        background = "#555555"
+        border = "#666666"
+        font_size = 34
+
+        if normalized == "OK":
+            display = "OK"
+            background = "#379b37"
+            border = "#46b346"
+        elif normalized == "NG":
+            display = "NG"
+            background = "#dc1e1e"
+            border = "#ef4444"
+        elif normalized in {"ERROR", "BLOCKED"}:
+            display = normalized
+            background = "#dc1e1e"
+            border = "#ef4444"
+
+        if len(display) > 6:
+            font_size = 16
+        elif len(display) > 2:
+            font_size = 20
+
+        self.sidebar_runtime_result_frame.setStyleSheet(
+            f"#sidebarRuntimeResultFrame{{background:{background};border:1px solid {border};border-radius:6px;}}"
+        )
+        self.lbl_sidebar_runtime_result.setText(display)
+        self.lbl_sidebar_runtime_result.setToolTip(detail or display)
+        self.lbl_sidebar_runtime_result.setStyleSheet(
+            f"color:white;font-size:{font_size}px;font-weight:bold;"
+        )
+
+    @QtCore.Slot(str, str)
+    def _update_sidebar_runtime_result(self, result: str, detail: str) -> None:
+        self._set_sidebar_runtime_result(result, detail)
 
     @QtCore.Slot(bool, str, object)
     def _on_runtime_io_status_changed(self, ready: bool, detail: str, controller: object) -> None:

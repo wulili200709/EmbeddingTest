@@ -62,6 +62,9 @@ class EmbeddingAnalysisResult:
     model_key: str = ""
     tool_name: str = ""
     label_names: List[str] = field(default_factory=list)
+    score_mode: str = ""
+    margin: float = 0.0
+    topk: int = 0
 
 
 @dataclass(frozen=True)
@@ -293,6 +296,73 @@ def _build_rows(
     return rows
 
 
+def _margin_summary(rows: Sequence[EmbeddingAnalysisRow], current_margin: float) -> Dict[str, float]:
+    ok_diffs = [float(row.diff) for row in rows if row.gt_label == "OK"]
+    ng_diffs = [float(row.diff) for row in rows if row.gt_label == "NG"]
+
+    summary: Dict[str, float] = {
+        "current_margin": float(current_margin),
+        "suggested_margin": float(current_margin),
+        "suggested_accuracy": float("nan"),
+        "ok_diff_min": float(min(ok_diffs)) if ok_diffs else float("nan"),
+        "ok_diff_max": float(max(ok_diffs)) if ok_diffs else float("nan"),
+        "ng_diff_min": float(min(ng_diffs)) if ng_diffs else float("nan"),
+        "ng_diff_max": float(max(ng_diffs)) if ng_diffs else float("nan"),
+        "diff_gap": float("nan"),
+        "safe_margin_low": float("nan"),
+        "safe_margin_high": float("nan"),
+        "safe_margin_width": float("nan"),
+    }
+
+    labeled = [row for row in rows if row.gt_label in {"OK", "NG"}]
+    if not labeled:
+        return summary
+
+    diffs = sorted({float(row.diff) for row in labeled})
+    candidates: List[float] = []
+    if diffs:
+        candidates.append(diffs[0] - 1e-6)
+        candidates.extend(diffs)
+        candidates.extend((a + b) * 0.5 for a, b in zip(diffs, diffs[1:]))
+        candidates.append(diffs[-1] + 1e-6)
+
+    def _accuracy(threshold: float) -> float:
+        matched = 0
+        for row in labeled:
+            pred = "OK" if float(row.diff) >= threshold else "NG"
+            if pred == row.gt_label:
+                matched += 1
+        return float(matched) / float(len(labeled))
+
+    best_margin = float(current_margin)
+    best_acc = _accuracy(best_margin)
+    for candidate in candidates:
+        acc = _accuracy(candidate)
+        if acc > best_acc + 1e-12 or (
+            abs(acc - best_acc) <= 1e-12
+            and abs(candidate - current_margin) < abs(best_margin - current_margin)
+        ):
+            best_margin = float(candidate)
+            best_acc = float(acc)
+
+    summary["suggested_margin"] = best_margin
+    summary["suggested_accuracy"] = float(best_acc)
+
+    if ok_diffs and ng_diffs:
+        safe_low = float(max(ng_diffs))
+        safe_high = float(min(ok_diffs))
+        gap = safe_high - safe_low
+        summary["diff_gap"] = float(gap)
+        summary["safe_margin_low"] = safe_low
+        summary["safe_margin_high"] = safe_high
+        summary["safe_margin_width"] = float(gap)
+        if gap > 0:
+            summary["suggested_margin"] = float((safe_low + safe_high) * 0.5)
+            summary["suggested_accuracy"] = float(_accuracy(summary["suggested_margin"]))
+
+    return summary
+
+
 def load_product_analysis(
     session_root: str,
     product_name: str,
@@ -331,6 +401,7 @@ def load_product_analysis(
     point_labels = ["OK"] * ok_bank.shape[0] + ["NG"] * ng_bank.shape[0]
     point_names = _extend_names(ok_files, ok_bank.shape[0], "ok") + _extend_names(ng_files, ng_bank.shape[0], "ng")
     rows = _build_rows(model, ok_files, ng_files)
+    margin_metrics = _margin_summary(rows, float(model.margin))
 
     ok_proto = _safe_norm_row(np.asarray(model.ok_proto[0], dtype=np.float32))
     ng_proto = _safe_norm_row(np.asarray(model.ng_proto[0], dtype=np.float32))
@@ -349,6 +420,7 @@ def load_product_analysis(
         "ng_to_ok_proto": float(np.mean(ng_bank @ ok_proto)) if ng_bank.size else float("nan"),
         "proto_similarity": float(ok_proto @ ng_proto),
     }
+    metrics.update(margin_metrics)
 
     notes: List[str] = []
     if session_file and not os.path.exists(session_file):
@@ -359,6 +431,16 @@ def load_product_analysis(
         notes.append(f"NG file count ({len(ng_files)}) != NG feature count ({ng_bank.shape[0]}).")
     if used_method != projection_method.lower():
         notes.append(f"Projection fallback: requested {projection_method}, used {used_method}.")
+    gap = metrics.get("diff_gap", float("nan"))
+    if np.isfinite(gap):
+        if gap > 0:
+            notes.append(
+                "Training diffs are fully separated; any margin inside the safe range keeps OK/NG apart on the training set."
+            )
+        else:
+            notes.append(
+                "Training diffs overlap; rely on margin validation and a held-out test set instead of the TSNE plot alone."
+            )
 
     return EmbeddingAnalysisResult(
         product_name=product_name,
@@ -376,6 +458,9 @@ def load_product_analysis(
         model_key=entry.model_key,
         tool_name=entry.tool_name,
         label_names=list(model.effective_label_names()),
+        score_mode=str(model.score_mode),
+        margin=float(model.margin),
+        topk=int(model.topk),
     )
 
 

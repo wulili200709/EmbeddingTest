@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 from ui.debug import ToolPage
 from ui.runtime import RuntimeModePage
@@ -49,7 +49,59 @@ def build_main_window_ui(window) -> None:
     window.btn_workspace_runtime.setCheckable(True)
     window.btn_workspace_runtime.clicked.connect(lambda: window._switch_workspace("runtime"))
     nav_layout.addWidget(window.btn_workspace_runtime)
-    nav_layout.addStretch(1)
+
+    nav_layout.addSpacing(8)
+
+    window.sidebar_runtime_result_frame = QtWidgets.QFrame()
+    window.sidebar_runtime_result_frame.setObjectName("sidebarRuntimeResultFrame")
+    window.sidebar_runtime_result_frame.setMinimumHeight(260)
+    window.sidebar_runtime_result_frame.setSizePolicy(
+        QtWidgets.QSizePolicy.Policy.Expanding,
+        QtWidgets.QSizePolicy.Policy.Expanding,
+    )
+    window.sidebar_runtime_result_frame.setStyleSheet(
+        "#sidebarRuntimeResultFrame{background:#555555;border:1px solid #666666;border-radius:6px;}"
+    )
+
+    sidebar_result_layout = QtWidgets.QVBoxLayout(window.sidebar_runtime_result_frame)
+    sidebar_result_layout.setContentsMargins(6, 12, 6, 12)
+    sidebar_result_layout.setSpacing(10)
+
+    title_row = QtWidgets.QWidget()
+    title_row_layout = QtWidgets.QHBoxLayout(title_row)
+    title_row_layout.setContentsMargins(0, 0, 0, 0)
+    title_row_layout.setSpacing(4)
+    title_row_layout.addStretch(1)
+
+    window.lbl_sidebar_runtime_result_title_icon = QtWidgets.QLabel()
+    window.lbl_sidebar_runtime_result_title_icon.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+    window.lbl_sidebar_runtime_result_title_icon.setPixmap(shell_icon(SP.SP_MessageBoxInformation).pixmap(14, 14))
+    title_row_layout.addWidget(window.lbl_sidebar_runtime_result_title_icon, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
+
+    window.lbl_sidebar_runtime_result_title = QtWidgets.QLabel("总结果")
+    window.lbl_sidebar_runtime_result_title.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+    window.lbl_sidebar_runtime_result_title.setFont(window.btn_workspace_debug.font())
+    window.lbl_sidebar_runtime_result_title.setStyleSheet(
+        "color:rgba(255,255,255,0.92);font-weight:bold;"
+    )
+    title_row_layout.addWidget(window.lbl_sidebar_runtime_result_title, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
+    title_row_layout.addStretch(1)
+
+    sidebar_result_layout.addWidget(title_row, 0, QtCore.Qt.AlignmentFlag.AlignTop)
+
+    window.lbl_sidebar_runtime_result = QtWidgets.QLabel("-")
+    window.lbl_sidebar_runtime_result.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+    window.lbl_sidebar_runtime_result.setWordWrap(True)
+    window.lbl_sidebar_runtime_result.setSizePolicy(
+        QtWidgets.QSizePolicy.Policy.Expanding,
+        QtWidgets.QSizePolicy.Policy.Expanding,
+    )
+    window.lbl_sidebar_runtime_result.setStyleSheet(
+        "color:white;font-size:34px;font-weight:bold;"
+    )
+    sidebar_result_layout.addWidget(window.lbl_sidebar_runtime_result, 1)
+
+    nav_layout.addWidget(window.sidebar_runtime_result_frame, 1)
     outer.addWidget(nav_frame, 0)
 
     content = QtWidgets.QWidget()

@@ -296,7 +296,7 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
         self._fill_table(result)
         self._draw_plot(result)
 
-    def _format_summary(self, result: EmbeddingAnalysisResult) -> str:
+    def _format_summary_legacy(self, result: EmbeddingAnalysisResult) -> str:
         m = result.metrics
         lines = [
             f"产品: {result.product_name}",
@@ -320,6 +320,58 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
         if result.notes:
             lines.append("")
             lines.append("备注:")
+            lines.extend(f"- {note}" for note in result.notes)
+        return "\n".join(lines)
+
+    def _format_summary(self, result: EmbeddingAnalysisResult) -> str:
+        m = result.metrics
+        safe_low = float(m.get("safe_margin_low", float("nan")))
+        safe_high = float(m.get("safe_margin_high", float("nan")))
+        diff_gap = float(m.get("diff_gap", float("nan")))
+
+        def _fmt_metric(name: str) -> str:
+            value = float(m.get(name, float("nan")))
+            return f"{value:.4f}" if value == value else "-"
+
+        if safe_low == safe_low and safe_high == safe_high and diff_gap > 0:
+            safe_range_text = f"{safe_low:.4f} ~ {safe_high:.4f}"
+        elif diff_gap == diff_gap:
+            safe_range_text = "none (training diff overlap)"
+        else:
+            safe_range_text = "-"
+
+        lines = [
+            f"Product: {result.product_name}",
+            f"Tool: {result.tool_name or 'shared model'}",
+            f"Backbone: {algorithm_display_name(result.backbone) or result.backbone}",
+            f"ROI: {', '.join(result.label_names) if result.label_names else '-'}",
+            f"Projection: {result.projection_method.upper()}",
+            f"Feature dim: {result.feature_dim}",
+            f"Rule: {'diff >= margin => OK, else NG' if result.score_mode else '-'}",
+            f"Score mode: {result.score_mode or '-'}",
+            f"Current margin: {result.margin:.4f}",
+            f"Topk: {result.topk if result.topk else '-'}",
+            f"OK count: {int(m['ok_count'])}",
+            f"NG count: {int(m['ng_count'])}",
+            f"Train accuracy: {m['train_accuracy']:.4f}",
+            f"OK diff range: {_fmt_metric('ok_diff_min')} ~ {_fmt_metric('ok_diff_max')}",
+            f"NG diff range: {_fmt_metric('ng_diff_min')} ~ {_fmt_metric('ng_diff_max')}",
+            f"Diff gap (min OK - max NG): {_fmt_metric('diff_gap')}",
+            f"Safe margin range: {safe_range_text}",
+            f"Suggested margin: {_fmt_metric('suggested_margin')}",
+            f"Suggested margin train accuracy: {_fmt_metric('suggested_accuracy')}",
+            f"OK intra mean sim: {m['ok_intra_mean']:.4f}",
+            f"NG intra mean sim: {m['ng_intra_mean']:.4f}",
+            f"OK-NG cross mean sim: {m['ok_ng_cross_mean']:.4f}",
+            f"OK -> OK proto: {m['ok_to_ok_proto']:.4f}",
+            f"NG -> NG proto: {m['ng_to_ng_proto']:.4f}",
+            f"OK -> NG proto: {m['ok_to_ng_proto']:.4f}",
+            f"NG -> OK proto: {m['ng_to_ok_proto']:.4f}",
+            f"OK/NG proto sim: {m['proto_similarity']:.4f}",
+        ]
+        if result.notes:
+            lines.append("")
+            lines.append("Notes:")
             lines.extend(f"- {note}" for note in result.notes)
         return "\n".join(lines)
 

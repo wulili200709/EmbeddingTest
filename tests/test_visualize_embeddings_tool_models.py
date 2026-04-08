@@ -140,6 +140,17 @@ class VisualizeEmbeddingsToolModelsTest(unittest.TestCase):
         self.assertEqual(result.tool_name, "螺丝1 (cam1/roi1)")
         self.assertEqual(result.label_names, ["roi1"])
         self.assertEqual(len(result.rows), 2)
+        self.assertEqual(result.score_mode, "proto")
+        self.assertAlmostEqual(result.margin, 0.02, places=6)
+        self.assertEqual(result.topk, 3)
+        self.assertAlmostEqual(result.metrics["ok_diff_min"], 0.8, places=6)
+        self.assertAlmostEqual(result.metrics["ng_diff_max"], -0.7, places=6)
+        self.assertAlmostEqual(result.metrics["diff_gap"], 1.5, places=6)
+        self.assertAlmostEqual(result.metrics["safe_margin_low"], -0.7, places=6)
+        self.assertAlmostEqual(result.metrics["safe_margin_high"], 0.8, places=6)
+        self.assertAlmostEqual(result.metrics["suggested_margin"], 0.05, places=6)
+        self.assertAlmostEqual(result.metrics["suggested_accuracy"], 1.0, places=6)
+        self.assertTrue(any("fully separated" in note for note in result.notes))
 
 
 if __name__ == "__main__":
