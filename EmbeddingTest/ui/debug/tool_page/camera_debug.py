@@ -1,0 +1,263 @@
+"""Debug-camera helper methods for ToolPage."""
+
+from __future__ import annotations
+
+import configparser
+import json
+from pathlib import Path
+
+from PySide6 import QtGui
+
+from app_paths import packaged_embedding_test_root, packaged_repo_root
+from infrastructure.camera_settings_store import (
+    LIGHT_SOURCE_MODE_BOARD_IO,
+    light_source_mode_from_mapping,
+)
+
+
+def _embedding_test_root(tool_page) -> Path:
+    return packaged_embedding_test_root(__file__)
+
+
+def _selected_debug_camera_serial(tool_page) -> str:
+    return str(tool_page.cmb_debug_camera.currentData() or "").strip()
+
+
+def _selected_debug_camera_role(tool_page) -> str:
+    combo = getattr(tool_page, "cmb_debug_camera_role", None)
+    if combo is None:
+        getter = getattr(tool_page, "current_camera_role", None)
+        if callable(getter):
+            return str(getter() or "cam1").strip() or "cam1"
+        return "cam1"
+    return str(combo.currentData() or combo.currentText() or "cam1").strip() or "cam1"
+
+
+def _load_debug_role_binding(tool_page, role: str) -> str:
+    role_text = str(role or "").strip() or "cam1"
+    preferred_serial = str(tool_page._camera_settings_store.serial_for_role(role_text) or "").strip()
+    if preferred_serial:
+        return preferred_serial
+    if role_text == "cam2":
+        return str(tool_page.session.load_session().runtime_cam2_serial or "").strip()
+    return str(tool_page.session.load_session().runtime_cam1_serial or "").strip()
+
+
+def _save_debug_role_binding(tool_page, role: str, serial: str) -> None:
+    role_text = str(role or "").strip() or "cam1"
+    serial_text = str(serial or "").strip()
+    current_settings = tool_page._camera_settings_store.load_for_role(role_text, serial=serial_text) or {}
+    tool_page._camera_settings_store.save_for_role(role_text, serial_text, current_settings)
+    session_data = tool_page.session.load_session()
+    if role_text == "cam2":
+        session_data.runtime_cam2_serial = serial_text
+    else:
+        session_data.runtime_cam1_serial = serial_text
+    tool_page.session.save_session(session_data)
+
+
+def _apply_debug_role_binding_to_camera_combo(tool_page) -> None:
+    combo = getattr(tool_page, "cmb_debug_camera", None)
+    if combo is None:
+        return
+    role = tool_page._selected_debug_camera_role()
+    preferred_serial = tool_page._load_debug_role_binding(role)
+    if not preferred_serial:
+        preferred_serial = tool_page._camera_settings_store.serial_for_role(role)
+    if not preferred_serial:
+        return
+    index = combo.findData(preferred_serial)
+    if index >= 0 and combo.currentIndex() != index:
+        combo.blockSignals(True)
+        combo.setCurrentIndex(index)
+        combo.blockSignals(False)
+
+
+def _refresh_debug_role_status(tool_page) -> None:
+    role = tool_page._selected_debug_camera_role()
+    current = getattr(tool_page, "lbl_debug_current_role", None)
+    if current is not None:
+        current.setText(f"当前调试角色：{role}")
+
+
+def _debug_camera_settings_payload_from_ui(tool_page) -> dict[str, object]:
+    return {
+        "trigger_mode": str(tool_page.cmb_debug_trigger_mode.currentText() or "continuous"),
+        "exposure_time_us": float(tool_page.spin_debug_exposure.value()),
+        "gain": float(tool_page.spin_debug_gain.value()),
+        "digital_shift_enable": bool(tool_page.chk_debug_digital_shift_enable.isChecked()),
+        "digital_shift": float(tool_page.spin_debug_digital_shift.value()),
+        "light_source_mode": str(
+            tool_page.cmb_debug_light_source_mode.currentData() or LIGHT_SOURCE_MODE_BOARD_IO
+        ),
+    }
+
+
+def _load_saved_debug_camera_settings_to_ui(tool_page, serial: str) -> bool:
+    role = tool_page._selected_debug_camera_role()
+    tool_page._debug_camera_block_spin_apply = True
+    try:
+        payload = tool_page._camera_settings_store.load_for_role(role, serial=serial)
+        if not payload:
+            return False
+        if payload.get("exposure_time_us") is not None:
+            tool_page.spin_debug_exposure.setValue(float(payload["exposure_time_us"]))
+        if payload.get("gain") is not None:
+            tool_page.spin_debug_gain.setValue(float(payload["gain"]))
+        if payload.get("digital_shift_enable") is not None:
+            tool_page.chk_debug_digital_shift_enable.setChecked(bool(payload["digital_shift_enable"]))
+        if payload.get("digital_shift") is not None:
+            tool_page.spin_debug_digital_shift.setValue(float(payload["digital_shift"]))
+        trigger_mode = str(payload.get("trigger_mode") or "").strip()
+        if trigger_mode:
+            tool_page.cmb_debug_trigger_mode.setCurrentText(trigger_mode)
+        light_source_mode = light_source_mode_from_mapping(payload)
+        index = tool_page.cmb_debug_light_source_mode.findData(light_source_mode)
+        if index >= 0:
+            tool_page.cmb_debug_light_source_mode.setCurrentIndex(index)
+        return True
+    finally:
+        tool_page._debug_camera_block_spin_apply = False
+
+
+def _save_debug_camera_settings(tool_page, serial: str, settings: dict[str, object]) -> None:
+    serial_text = str(serial).strip()
+    if not serial_text:
+        return
+    role = tool_page._selected_debug_camera_role()
+    tool_page._camera_settings_store.save_for_role(role, serial_text, settings)
+
+
+def _set_debug_preview_placeholder(tool_page, text: str) -> None:
+    tool_page.view_debug_camera.set_runtime_pixmap(None, placeholder=text)
+
+
+def _show_debug_preview_image(tool_page, image: QtGui.QImage) -> None:
+    tool_page.view_debug_camera.set_runtime_pixmap(QtGui.QPixmap.fromImage(image))
+
+
+def _set_debug_preview_running(tool_page, running: bool) -> None:
+    if not hasattr(tool_page, "btn_debug_live_preview"):
+        return
+    tool_page.btn_debug_live_preview.blockSignals(True)
+    tool_page.btn_debug_live_preview.setChecked(running)
+    tool_page.btn_debug_live_preview.setText("停止预览" if running else "实时预览")
+    tool_page.btn_debug_live_preview.blockSignals(False)
+
+
+def _selected_debug_camera_info(tool_page):
+    serial = str(tool_page.cmb_debug_camera.currentData() or "").strip()
+    for info in tool_page._debug_camera_infos:
+        if str(getattr(info, "serial_number", "")) == serial:
+            return info
+    return None
+
+
+def _debug_camera_device(tool_page):
+    if tool_page._debug_frame_grab_service is None:
+        return None
+    try:
+        return tool_page._debug_frame_grab_service.get_device("debug")
+    except Exception:
+        return None
+
+
+def _default_io_mapping_path(tool_page) -> str:
+    return str(tool_page._embedding_test_root() / "config" / "defaults" / "io_mapping.json")
+
+
+def _load_nkio_runtime_options(mapping_path: str | Path) -> dict[str, str]:
+    try:
+        payload = json.loads(Path(mapping_path).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    result: dict[str, str] = {}
+    for key in ("nkio_config_path", "nkio_dll_path"):
+        value = payload.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            result[key] = text
+    return result
+
+
+def _selected_nkio_config_from_sdk_bin(root: Path):
+    select_ini = root / "NKDIOLC_SDK" / "Bin" / "select.ini"
+    if not select_ini.exists():
+        return None
+
+    parser = configparser.ConfigParser()
+    parser.optionxform = str
+    try:
+        parser.read(select_ini, encoding="utf-8")
+    except Exception:
+        return None
+
+    if not parser.has_section("SELECTED"):
+        return None
+
+    config_path = str(parser.get("SELECTED", "ConfigPath", fallback="") or "").strip()
+    if not config_path:
+        return None
+
+    relative_path = config_path.lstrip("/\\").replace("/", "\\")
+    candidate = root / "NKDIOLC_SDK" / "Bin" / Path(relative_path)
+    if candidate.exists():
+        return str(candidate)
+    return None
+
+
+def _find_debug_nkio_config_path(tool_page):
+    mapping_path = tool_page._default_io_mapping_path()
+    runtime_options = _load_nkio_runtime_options(mapping_path)
+    configured_path = runtime_options.get("nkio_config_path")
+    if configured_path:
+        configured = Path(configured_path)
+        if configured.exists():
+            return str(configured)
+
+    root = packaged_repo_root(__file__)
+    selected_path = _selected_nkio_config_from_sdk_bin(root)
+    if selected_path:
+        return selected_path
+    candidates = [
+        root / "NKDIOLC_SDK" / "Sample" / "C#" / "NK_IO_LC_TEST_CSharp" / "bin" / "x64" / "Debug" / "NP-6133-16I16O" / "nkio_config.ini",
+        root / "NKDIOLC_SDK" / "Bin" / "NP-6133-16I16O" / "nkio_config.ini",
+        root / "NKDIOLC_SDK" / "ConfigFile" / "NP-6133-16I16O" / "nkio_config.ini",
+        root / "NKDIOLC_SDK" / "ConfigFile" / "J1900" / "NP-6133-16I16O" / "nkio_config.ini",
+        root / "NKDIOLC_SDK" / "Bin" / "NP-61x0-16I16O" / "nkio_config.ini",
+    ]
+    for path in candidates:
+        if path.exists():
+            return str(path)
+    return None
+
+
+def _find_debug_nkio_dll_path(tool_page):
+    mapping_path = tool_page._default_io_mapping_path()
+    runtime_options = _load_nkio_runtime_options(mapping_path)
+    configured_path = runtime_options.get("nkio_dll_path")
+    if not configured_path:
+        return None
+    configured = Path(configured_path)
+    if configured.exists():
+        return str(configured)
+    return None
+
+
+def _cleanup_debug_hardware(tool_page) -> None:
+    try:
+        tool_page._stop_debug_camera_preview()
+    except Exception:
+        pass
+    try:
+        tool_page._close_debug_io(silent=True)
+    except Exception:
+        pass
+    try:
+        tool_page._disconnect_debug_camera()
+    except Exception:
+        pass

@@ -1,0 +1,68 @@
+{
+  "nkio_config_path": "",
+  "nkio_dll_path": "",
+  "di": {
+    "foot_switch": {
+      "channel": 1,
+      "active_high": false
+    },
+    "reject_signal": {
+      "channel": 0,
+      "active_high": false
+    },
+    "reserved_in_1": {
+      "channel": 2,
+      "active_high": true
+    },
+    "reserved_in_2": {
+      "channel": 3,
+      "active_high": true
+    },
+     "reserved_in_3": {
+      "channel": 4,
+      "active_high": true
+    },
+    "reserved_in_4": {
+      "channel": 5,
+      "active_high": true
+    },
+    "reserved_in_5": {
+      "channel": 6,
+      "active_high": true
+    },
+    "reserved_in_6": {
+      "channel": 7,
+      "active_high": true
+    }
+  },
+  "do": {
+    "tower_red": {
+      "channel": 0,
+      "active_high": false
+    },
+    "tower_green": {
+      "channel": 1,
+      "active_high": false
+    },
+    "tower_blue": {
+      "channel": 2,
+      "active_high": false
+    },
+    "light_cam1": {
+      "channel": 3,
+      "active_high": false
+    },
+    "light_cam2": {
+      "channel": 5,
+      "active_high": false
+    },
+    "reserved_out_1": {
+      "channel": 4,
+      "active_high": false
+    },
+    "reserved_out_2": {
+      "channel": 6,
+      "active_high": false
+    }
+  }
+}
