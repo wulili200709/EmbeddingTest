@@ -147,6 +147,39 @@ class RuntimeRolePrecheckTest(unittest.TestCase):
         self.assertEqual(runtime_context.loaded_algorithms, [("efficientnet_b0", "cam1__roi1"), ("efficientnet_b0", "cam1__roi1")])
         self.assertEqual(algo.feat_net_requests, ["efficientnet_b0", "efficientnet_b0"])
 
+    def test_role_precheck_requires_grouped_traditional_model_key(self) -> None:
+        items = [
+            InspectionItem(
+                item_id="roi1",
+                display_name="hole",
+                camera_id="cam1",
+                roi_label="roi1",
+                task_group="hole",
+                algorithm_code="meanstd",
+            ),
+        ]
+        runtime, _, _, tmpdir = self._make_runtime(
+            items,
+            traditional_models={
+                "meanstd::cam1__roi1": {
+                    "algorithm": "meanstd",
+                    "threshold": 0.5,
+                    "ok_when": "greater_equal",
+                }
+            },
+        )
+
+        original_frame_to_bgr = runtime_controller_module.frame_to_bgr_image
+        runtime_controller_module.frame_to_bgr_image = object()
+        try:
+            ok, message = _precheck_for_roles(runtime, ["cam1"])
+        finally:
+            runtime_controller_module.frame_to_bgr_image = original_frame_to_bgr
+            tmpdir.cleanup()
+
+        self.assertFalse(ok)
+        self.assertEqual(message, "traditional algorithm meanstd is not trained yet")
+
 
 if __name__ == "__main__":
     unittest.main()

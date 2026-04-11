@@ -856,26 +856,32 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         self._refresh_canvas_overlays(path, camera_role)
 
     def _refresh_canvas_overlays(self, path: str, camera_role: str) -> None:
-        jpath = qr_core.labelme_json_of_image(path)
         labels = self._tool_page._inspection_label_names_for_role(camera_role)
         overlays: list[OverlayShape] = []
         shape_entries: list[dict[str, object]] = []
-        if not os.path.exists(jpath):
+        shape_lookup = self._tool_page._shape_lookup_for_path(path)
+        if not shape_lookup:
             self._canvas_shapes = []
             self.preview_canvas.set_overlays([])
             return
         for label in labels:
-            poly_points = qr_core.try_read_polygon_points_from_labelme(jpath, label)
-            xywh = qr_core.try_read_xywh_from_labelme(jpath, label)
-            if poly_points and len(poly_points) >= 3:
-                status = self._tool_page._sample_roi_status_for_path(path, camera_role, label).lower()
-                color, width, dash = overlay_style_for_label(label, status=status)
-                if label == self._active_roi_label:
-                    width = max(float(width), 4.0)
+            shape_entry = shape_lookup.get(label)
+            if not isinstance(shape_entry, dict):
+                continue
+            status = self._tool_page._sample_roi_status_for_path(path, camera_role, label).lower()
+            color, width, dash = overlay_style_for_label(label, status=status)
+            if label == self._active_roi_label:
+                width = max(float(width), 4.0)
+            shape_type = str(shape_entry.get("shape_type") or "").strip().lower()
+            if shape_type == "polygon":
+                raw_points = list(shape_entry.get("points") or [])
+                points = [(float(x), float(y)) for x, y in raw_points]
+                if len(points) < 3:
+                    continue
                 overlays.append(
                     OverlayShape(
                         shape_type="polygon",
-                        points=[(float(x), float(y)) for x, y in poly_points],
+                        points=points,
                         color=QtGui.QColor(color),
                         width=float(width),
                         dash=bool(dash),
@@ -885,31 +891,30 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
                     {
                         "label": label,
                         "shape_type": "polygon",
-                        "points": [(float(x), float(y)) for x, y in poly_points],
+                        "points": points,
                     }
                 )
                 continue
-            if xywh:
-                status = self._tool_page._sample_roi_status_for_path(path, camera_role, label).lower()
-                color, width, dash = overlay_style_for_label(label, status=status)
-                if label == self._active_roi_label:
-                    width = max(float(width), 4.0)
-                overlays.append(
-                    OverlayShape(
-                        shape_type="rect",
-                        xywh=tuple(int(v) for v in xywh),
-                        color=QtGui.QColor(color),
-                        width=float(width),
-                        dash=bool(dash),
-                    )
+            xywh = shape_entry.get("xywh")
+            if not xywh:
+                continue
+            rect = tuple(int(v) for v in xywh)
+            overlays.append(
+                OverlayShape(
+                    shape_type="rect",
+                    xywh=rect,
+                    color=QtGui.QColor(color),
+                    width=float(width),
+                    dash=bool(dash),
                 )
-                shape_entries.append(
-                    {
-                        "label": label,
-                        "shape_type": "rect",
-                        "xywh": tuple(int(v) for v in xywh),
-                    }
-                )
+            )
+            shape_entries.append(
+                {
+                    "label": label,
+                    "shape_type": "rect",
+                    "xywh": rect,
+                }
+            )
         self._canvas_shapes = shape_entries
         self.preview_canvas.set_overlays(overlays)
 
@@ -1158,6 +1163,8 @@ class ToolPage(QtWidgets.QWidget):
         self._current_result_rows: List[Dict[str, object]] = []
         self._roi_results_by_image: Dict[str, Dict[str, str]] = {}
         self._sample_roi_annotations_by_path: Dict[str, Dict[str, str]] = {}
+        self._shape_lookup_cache_by_path: Dict[str, Dict[str, object]] = {}
+        self._sample_annotation_state_cache: Dict[Tuple[str, str], str] = {}
         self._updating_runtime_params = False
         self._skip_empty_autogen_message = False
         self._tool_dialogs: Dict[str, QtWidgets.QDialog] = {}
@@ -1491,6 +1498,67 @@ class ToolPage(QtWidgets.QWidget):
                 )
             ) or updated
         return updated
+
+    def _clear_previous_training_output(self, inspection_item: Optional[InspectionItem]) -> None:
+        if inspection_item is None:
+            return
+        clearer = getattr(self.algo, "clear_training_output", None)
+        if not callable(clearer):
+            return
+        algorithm = self._resolve_training_algorithm(inspection_item)
+        if not algorithm:
+            return
+        target_model_keys = {self._effective_model_key_for_item(inspection_item)}
+        is_embedding_algorithm = getattr(self.algo, "is_embedding_algorithm", None)
+        grouped_traditional = bool(
+            str(getattr(inspection_item, "task_group", "") or "").strip()
+            and callable(is_embedding_algorithm)
+            and not is_embedding_algorithm(algorithm)
+        )
+        if grouped_traditional:
+            for peer in self._group_items_for_inspection_item(inspection_item, enabled_only=False):
+                peer_model_key = str(getattr(peer, "model_key", "") or "").strip()
+                if peer_model_key:
+                    target_model_keys.add(peer_model_key)
+        for model_key in target_model_keys:
+            clearer(
+                algorithm,
+                self.session.product_dir,
+                model_key=model_key,
+            )
+
+    def _prune_stale_traditional_models_for_role(self, camera_role: object) -> None:
+        cleaner = getattr(self.algo, "clear_obsolete_traditional_models", None)
+        if not callable(cleaner):
+            return
+        role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        valid_model_keys_by_algorithm: Dict[str, set[str]] = {}
+        for inspection_item in list(getattr(self, "inspection_items", []) or []):
+            item_role = _normalize_camera_role(getattr(inspection_item, "camera_id", "")) or "cam1"
+            if item_role != role:
+                continue
+            algorithm = self._resolve_training_algorithm(inspection_item)
+            if not algorithm:
+                continue
+            is_embedding_algorithm = getattr(self.algo, "is_embedding_algorithm", None)
+            if callable(is_embedding_algorithm) and is_embedding_algorithm(algorithm):
+                continue
+            valid_model_keys_by_algorithm.setdefault(str(algorithm).strip(), set()).add(
+                self._effective_model_key_for_item(inspection_item)
+            )
+        cleaner(
+            camera_role=role,
+            valid_model_keys_by_algorithm=valid_model_keys_by_algorithm,
+        )
+
+    def _reload_runtime_params_from_disk(self) -> None:
+        loader = getattr(self.algo, "load_params", None)
+        if not callable(loader):
+            return
+        product_params_path = str(getattr(self.session, "product_params_path", "") or "").strip()
+        if not product_params_path:
+            return
+        loader(product_params_path)
 
     def _training_roi_ready_signature(self, camera_role: object = None) -> str:
         role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
@@ -2024,6 +2092,8 @@ class ToolPage(QtWidgets.QWidget):
         self.ng_files = []
         self.test_files = []
         self._sample_roi_annotations_by_path = {}
+        self._shape_lookup_cache_by_path = {}
+        self._sample_annotation_state_cache = {}
         self._current_result_rows = []
         self._roi_results_by_image = {}
         self.inspection_items = []
@@ -2047,6 +2117,8 @@ class ToolPage(QtWidgets.QWidget):
         self.ng_files = []
         self.test_files = []
         self._sample_roi_annotations_by_path = {}
+        self._shape_lookup_cache_by_path = {}
+        self._sample_annotation_state_cache = {}
         self.algo.model = None
         self.line2dup_recipe = None
         self._line2dup_recipes_by_role = {}
@@ -3213,6 +3285,12 @@ class ToolPage(QtWidgets.QWidget):
     def _sample_annotation_store_path(self) -> str:
         return os.path.join(self.session.product_dir, "sample_annotations.json")
 
+    def _normalized_sample_path(self, path: object) -> str:
+        text = str(path or "").strip()
+        if not text:
+            return ""
+        return os.path.normpath(text)
+
     def _sample_annotation_path_key(self, path: object) -> str:
         return product_relative_path(path, base_dir=self.session.product_dir)
 
@@ -3221,8 +3299,143 @@ class ToolPage(QtWidgets.QWidget):
         label = str(label_name or "").strip()
         return f"{role}::{label}" if label else role
 
+    def _invalidate_sample_annotation_state_cache(
+        self,
+        path: Optional[str] = None,
+        camera_role: object = None,
+    ) -> None:
+        if path is None and camera_role is None:
+            self._sample_annotation_state_cache.clear()
+            return
+        normalized_path = self._normalized_sample_path(path)
+        role = _normalize_camera_role(camera_role)
+        stale_keys: List[Tuple[str, str]] = []
+        for cache_path, cache_role in list(self._sample_annotation_state_cache.keys()):
+            if normalized_path and cache_path != normalized_path:
+                continue
+            if role and cache_role != role:
+                continue
+            stale_keys.append((cache_path, cache_role))
+        for cache_key in stale_keys:
+            self._sample_annotation_state_cache.pop(cache_key, None)
+
+    def _invalidate_shape_lookup_cache(self, path: Optional[str] = None) -> None:
+        if path is None:
+            self._shape_lookup_cache_by_path.clear()
+            self._invalidate_sample_annotation_state_cache()
+            return
+        normalized_path = self._normalized_sample_path(path)
+        if not normalized_path:
+            return
+        self._shape_lookup_cache_by_path.pop(normalized_path, None)
+        self._invalidate_sample_annotation_state_cache(path=normalized_path)
+
+    def _shape_lookup_for_path(self, path: str) -> Dict[str, Dict[str, object]]:
+        normalized_path = self._normalized_sample_path(path)
+        if not normalized_path:
+            return {}
+        json_path = qr_core.labelme_json_of_image(normalized_path)
+        if not json_path or not os.path.exists(json_path):
+            self._shape_lookup_cache_by_path.pop(normalized_path, None)
+            return {}
+        try:
+            mtime_ns = int(os.stat(json_path).st_mtime_ns)
+        except Exception:
+            mtime_ns = -1
+        cache_entry = self._shape_lookup_cache_by_path.get(normalized_path)
+        if (
+            cache_entry
+            and str(cache_entry.get("json_path") or "") == str(json_path)
+            and int(cache_entry.get("mtime_ns", -2)) == mtime_ns
+        ):
+            cached_shapes = cache_entry.get("shapes")
+            if isinstance(cached_shapes, dict):
+                return cached_shapes  # type: ignore[return-value]
+        shapes: Dict[str, Dict[str, object]] = {}
+        try:
+            with open(json_path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except Exception:
+            payload = {}
+        raw_shapes = payload.get("shapes", []) if isinstance(payload, dict) else []
+        if isinstance(raw_shapes, list):
+            for raw_shape in raw_shapes:
+                if not isinstance(raw_shape, dict):
+                    continue
+                label = str(raw_shape.get("label") or "").strip()
+                if not label:
+                    continue
+                raw_points = raw_shape.get("points", [])
+                points: List[Tuple[float, float]] = []
+                if isinstance(raw_points, list):
+                    for raw_point in raw_points:
+                        if not isinstance(raw_point, (list, tuple)) or len(raw_point) < 2:
+                            continue
+                        try:
+                            points.append((float(raw_point[0]), float(raw_point[1])))
+                        except Exception:
+                            continue
+                shape_type = str(raw_shape.get("shape_type") or "").strip().lower()
+                if shape_type == "rectangle" and len(points) >= 2:
+                    (x0, y0), (x1, y1) = points[:2]
+                    x = int(round(min(x0, x1)))
+                    y = int(round(min(y0, y1)))
+                    w = max(1, int(round(abs(x1 - x0))))
+                    h = max(1, int(round(abs(y1 - y0))))
+                    shapes[label] = {
+                        "label": label,
+                        "shape_type": "rect",
+                        "xywh": (x, y, w, h),
+                        "has_geometry": True,
+                    }
+                    continue
+                if shape_type == "polygon" and len(points) >= 3:
+                    shapes[label] = {
+                        "label": label,
+                        "shape_type": "polygon",
+                        "points": points,
+                        "has_geometry": True,
+                    }
+                    continue
+                if len(points) >= 3:
+                    shapes[label] = {
+                        "label": label,
+                        "shape_type": "polygon",
+                        "points": points,
+                        "has_geometry": True,
+                    }
+                    continue
+                if len(points) >= 2:
+                    (x0, y0), (x1, y1) = points[:2]
+                    x = int(round(min(x0, x1)))
+                    y = int(round(min(y0, y1)))
+                    w = max(1, int(round(abs(x1 - x0))))
+                    h = max(1, int(round(abs(y1 - y0))))
+                    shapes[label] = {
+                        "label": label,
+                        "shape_type": "rect",
+                        "xywh": (x, y, w, h),
+                        "has_geometry": True,
+                    }
+        self._shape_lookup_cache_by_path[normalized_path] = {
+            "json_path": str(json_path),
+            "mtime_ns": mtime_ns,
+            "shapes": shapes,
+        }
+        return shapes
+
+    def _shape_entry_for_path(self, path: str, label_name: str) -> Optional[Dict[str, object]]:
+        label = str(label_name or "").strip()
+        if not label:
+            return None
+        entry = self._shape_lookup_for_path(path).get(label)
+        if isinstance(entry, dict):
+            return entry
+        return None
+
     def _load_sample_roi_annotations(self) -> None:
         self._sample_roi_annotations_by_path = {}
+        self._invalidate_sample_annotation_state_cache()
         store_path = self._sample_annotation_store_path()
         if not store_path or not os.path.exists(store_path):
             return
@@ -3257,7 +3470,7 @@ class ToolPage(QtWidgets.QWidget):
                     continue
                 normalized_labels[annotation_key] = annotation_value
             if normalized_labels:
-                self._sample_roi_annotations_by_path[os.path.normpath(resolved_path)] = normalized_labels
+                self._sample_roi_annotations_by_path[self._normalized_sample_path(resolved_path)] = normalized_labels
 
     def _save_sample_roi_annotations(self) -> None:
         store_path = self._sample_annotation_store_path()
@@ -3286,17 +3499,11 @@ class ToolPage(QtWidgets.QWidget):
                 os.remove(store_path)
         except Exception:
             pass
+        self._invalidate_sample_annotation_state_cache()
 
     def _path_has_roi_geometry(self, path: str, label_name: str) -> bool:
-        if not path or not label_name:
-            return False
-        json_path = qr_core.labelme_json_of_image(path)
-        if not os.path.exists(json_path):
-            return False
-        try:
-            return qr_core.read_shape_from_labelme(json_path, label_name) is not None
-        except Exception:
-            return False
+        entry = self._shape_entry_for_path(path, label_name)
+        return bool(entry and bool(entry.get("has_geometry")))
 
     def _path_has_roi_label(self, path: str, label_name: str) -> bool:
         return self._path_has_roi_geometry(path, label_name)
@@ -3319,8 +3526,10 @@ class ToolPage(QtWidgets.QWidget):
         camera_role: object,
         label_name: str,
         status: object,
+        *,
+        persist: bool = True,
     ) -> None:
-        normalized_path = os.path.normpath(str(path or ""))
+        normalized_path = self._normalized_sample_path(path)
         if not normalized_path:
             return
         annotation_key = self._sample_roi_annotation_key(camera_role, label_name)
@@ -3334,26 +3543,46 @@ class ToolPage(QtWidgets.QWidget):
             self._sample_roi_annotations_by_path[normalized_path] = annotations
         else:
             self._sample_roi_annotations_by_path.pop(normalized_path, None)
-        self._save_sample_roi_annotations()
+        self._invalidate_sample_annotation_state_cache(
+            path=normalized_path,
+            camera_role=camera_role,
+        )
+        if persist:
+            self._save_sample_roi_annotations()
 
     def _mark_sample_path_all_ok(self, path: str, camera_role: object = None) -> None:
         role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        updated = False
         for label in self._inspection_label_names_for_role(role):
             if not self._path_has_roi_geometry(path, label):
                 continue
-            self._set_sample_roi_status_for_path(path, role, label, "OK")
+            self._set_sample_roi_status_for_path(path, role, label, "OK", persist=False)
+            updated = True
+        if updated:
+            self._save_sample_roi_annotations()
+            self._invalidate_sample_annotation_state_cache(path=path, camera_role=role)
 
     def _mark_sample_path_all_ng(self, path: str, camera_role: object = None) -> None:
         role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        updated = False
         for label in self._inspection_label_names_for_role(role):
             if not self._path_has_roi_geometry(path, label):
                 continue
-            self._set_sample_roi_status_for_path(path, role, label, "NG")
+            self._set_sample_roi_status_for_path(path, role, label, "NG", persist=False)
+            updated = True
+        if updated:
+            self._save_sample_roi_annotations()
+            self._invalidate_sample_annotation_state_cache(path=path, camera_role=role)
 
     def _clear_sample_path_annotations(self, path: str, camera_role: object = None) -> None:
         role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        updated = False
         for label in self._inspection_label_names_for_role(role):
-            self._set_sample_roi_status_for_path(path, role, label, "")
+            self._set_sample_roi_status_for_path(path, role, label, "", persist=False)
+            updated = True
+        if updated:
+            self._save_sample_roi_annotations()
+            self._invalidate_sample_annotation_state_cache(path=path, camera_role=role)
 
     def _sample_annotation_counts_for_roi(
         self,
@@ -3402,17 +3631,28 @@ class ToolPage(QtWidgets.QWidget):
         path: str,
         camera_role: object = None,
     ) -> str:
+        normalized_path = self._normalized_sample_path(path)
+        role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        cache_key = (normalized_path, role)
+        cached_state = self._sample_annotation_state_cache.get(cache_key)
+        if cached_state:
+            return cached_state
         labels = self._inspection_label_names_for_role(camera_role)
         if not labels:
+            self._sample_annotation_state_cache[cache_key] = "未标注"
             return "未标注"
         geometry_missing = sum(1 for label in labels if not self._path_has_roi_geometry(path, label))
         if geometry_missing:
+            self._sample_annotation_state_cache[cache_key] = "缺少ROI"
             return "缺少ROI"
-        present_count, total_count = self._sample_annotation_progress_for_path(path, camera_role)
+        present_count, total_count = self._sample_annotation_progress_for_path(path, role)
         if total_count <= 0 or present_count <= 0:
+            self._sample_annotation_state_cache[cache_key] = "未标注"
             return "未标注"
         if present_count < total_count:
+            self._sample_annotation_state_cache[cache_key] = "部分标注"
             return "部分标注"
+        self._sample_annotation_state_cache[cache_key] = "已完成"
         return "已完成"
 
     def _sample_item_display_text(
@@ -3746,6 +3986,7 @@ class ToolPage(QtWidgets.QWidget):
             except Exception:
                 deleted = False
             if deleted:
+                self._invalidate_shape_lookup_cache(p)
                 self._load_canvas_image(p)
                 return
         self.canvas.update()
@@ -3778,6 +4019,7 @@ class ToolPage(QtWidgets.QWidget):
             self, "已保存",
             f"已更新到 labelme json：\n{jpath}\n(label={label_name}, type={st.shape_type})",
         )
+        self._invalidate_shape_lookup_cache(p)
         self._load_canvas_image(p)
 
     # ------------------------------------------------------------------
@@ -4053,6 +4295,7 @@ class ToolPage(QtWidgets.QWidget):
             raise RuntimeError(f"missing {'/'.join(missing_groups)} images for {camera_id}")
 
         runtime_params = sync_item_runtime_params_to_controller(self, inspection_item, algorithm=algorithm)
+        self._clear_previous_training_output(inspection_item)
         result = self.algo.train(
             training_ok_files,
             training_ng_files,
@@ -4063,6 +4306,50 @@ class ToolPage(QtWidgets.QWidget):
             ok_samples=training_ok_samples,
             ng_samples=training_ng_samples,
         )
+        if not result.is_embedding:
+            expected_model_key = str(
+                training_context.get("model_key", "") or self._effective_model_key_for_item(inspection_item)
+            ).strip()
+            grouped_traditional = bool(str(getattr(inspection_item, "task_group", "") or "").strip())
+            if isinstance(result.traditional_model_dict, dict):
+                storage_key = self.algo.traditional_model_storage_key(
+                    algorithm,
+                    model_key=expected_model_key,
+                )
+                self.algo.product_params.traditional_models[storage_key] = dict(result.traditional_model_dict)
+                if grouped_traditional:
+                    for peer in self._group_items_for_inspection_item(inspection_item, enabled_only=False):
+                        peer_model_key = str(getattr(peer, "model_key", "") or "").strip()
+                        if peer_model_key and peer_model_key != expected_model_key:
+                            peer_storage_key = self.algo.traditional_model_storage_key(
+                                algorithm,
+                                model_key=peer_model_key,
+                            )
+                            self.algo.product_params.traditional_models.pop(peer_storage_key, None)
+            model_dict = self.algo.get_traditional_model_dict(algorithm, model_key=expected_model_key)
+            if not isinstance(model_dict, dict):
+                storage_key = self.algo.traditional_model_storage_key(algorithm, model_key=expected_model_key)
+                raise RuntimeError(
+                    "traditional calibration finished but model was not saved under expected key: "
+                    f"{storage_key}"
+                )
+            if grouped_traditional:
+                stale_peer_keys = []
+                for peer in self._group_items_for_inspection_item(inspection_item, enabled_only=False):
+                    peer_model_key = str(getattr(peer, "model_key", "") or "").strip()
+                    if not peer_model_key or peer_model_key == expected_model_key:
+                        continue
+                    peer_storage_key = self.algo.traditional_model_storage_key(
+                        algorithm,
+                        model_key=peer_model_key,
+                    )
+                    if peer_storage_key in self.algo.product_params.traditional_models:
+                        stale_peer_keys.append(peer_storage_key)
+                if stale_peer_keys:
+                    raise RuntimeError(
+                        "grouped traditional calibration left per-item keys: "
+                        + ", ".join(sorted(stale_peer_keys))
+                    )
         if result.is_embedding:
             trained_model = getattr(result, "model", None)
             trained_score_mode = runtime_params["score_mode"]
@@ -4108,6 +4395,7 @@ class ToolPage(QtWidgets.QWidget):
             QtWidgets.QMessageBox.information(self, "Info", f"Please enable at least one inspection tool for {current_role}.")
             return
 
+        self._prune_stale_traditional_models_for_role(current_role)
         selected_item = self._selected_inspection_item()
         selected_item_id = str(selected_item.item_id or "") if selected_item is not None else ""
         selected_item_group_key = self._effective_model_key_for_item(selected_item)
@@ -4155,8 +4443,9 @@ class ToolPage(QtWidgets.QWidget):
         persist_items = getattr(self, "_persist_inspection_items", None)
         if callable(persist_items):
             persist_items()
-        self._refresh_inspection_items_table()
         self._save_runtime_params()
+        self._reload_runtime_params_from_disk()
+        self._refresh_inspection_items_table()
         self._save_session()
         self._update_runtime_widgets()
 
@@ -4199,6 +4488,7 @@ class ToolPage(QtWidgets.QWidget):
         if not inspection_item.enabled:
             QtWidgets.QMessageBox.information(self, "Info", "The selected inspection tool is disabled")
             return
+        self._prune_stale_traditional_models_for_role(inspection_item.camera_id)
         try:
             result = self._train_inspection_item(inspection_item)
         except RuntimeError as exc:
@@ -4214,8 +4504,9 @@ class ToolPage(QtWidgets.QWidget):
         persist_items = getattr(self, "_persist_inspection_items", None)
         if callable(persist_items):
             persist_items()
-        self._refresh_inspection_items_table()
         self._save_runtime_params()
+        self._reload_runtime_params_from_disk()
+        self._refresh_inspection_items_table()
         self._save_session()
         self._update_runtime_widgets()
         QtWidgets.QMessageBox.information(self, "Train complete", result.dialog_message)

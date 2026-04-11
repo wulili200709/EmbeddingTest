@@ -84,7 +84,6 @@ def _update_save_label_text(tool_page) -> None:
 
 
 def _set_overlay_shapes(tool_page, img_path: str, current_label: str) -> None:
-    j = qr_core.labelme_json_of_image(img_path)
     overlays: List[OverlayShape] = []
     visible_roi_labels: Optional[set[str]] = None
 
@@ -126,21 +125,44 @@ def _set_overlay_shapes(tool_page, img_path: str, current_label: str) -> None:
                     )
                 )
 
-    if not os.path.exists(j):
+    shape_lookup = tool_page._shape_lookup_for_path(img_path)
+    if not shape_lookup:
         tool_page.canvas.set_overlays(overlays)
         return
 
     def add_shape(label: str, color: QtGui.QColor, *, width: float, dash: bool = False) -> None:
-        poly_pts = qr_core.try_read_polygon_points_from_labelme(j, label)
-        if poly_pts and len(poly_pts) >= 3:
-            overlays.append(OverlayShape(shape_type="polygon", points=poly_pts, color=color, width=width, dash=dash))
+        shape_entry = tool_page._shape_entry_for_path(img_path, label)
+        if not isinstance(shape_entry, dict):
             return
-        xywh = qr_core.try_read_xywh_from_labelme(j, label)
+        shape_type = str(shape_entry.get("shape_type") or "").strip().lower()
+        if shape_type == "polygon":
+            poly_pts = [(float(x), float(y)) for x, y in list(shape_entry.get("points") or [])]
+            if len(poly_pts) >= 3:
+                overlays.append(
+                    OverlayShape(
+                        shape_type="polygon",
+                        points=poly_pts,
+                        color=color,
+                        width=width,
+                        dash=dash,
+                    )
+                )
+            return
+        xywh = shape_entry.get("xywh")
         if xywh:
-            overlays.append(OverlayShape(shape_type="rect", xywh=xywh, color=color, width=width, dash=dash))
+            overlays.append(
+                OverlayShape(
+                    shape_type="rect",
+                    xywh=tuple(int(v) for v in xywh),
+                    color=color,
+                    width=width,
+                    dash=dash,
+                )
+            )
+            return
 
     seen_labels: set[str] = set()
-    for label in qr_core.sorted_label_names_from_labelme(j, label_prefix="roi"):
+    for label in sorted(name for name in shape_lookup.keys() if str(name).startswith("roi")):
         if visible_roi_labels is not None and label not in visible_roi_labels:
             continue
         if label == current_label:
@@ -167,19 +189,22 @@ def _load_shape_for_label(tool_page, img_path: str, label_name: str) -> None:
         roi_width=roi_width,
         preview_width=roi_width,
     )
-    j = qr_core.labelme_json_of_image(img_path)
     loaded = False
-    if os.path.exists(j):
-        poly_pts = qr_core.try_read_polygon_points_from_labelme(j, label_name)
-        if poly_pts and len(poly_pts) >= 3:
-            tool_page.canvas.set_roi_polygon(poly_pts)
-            tool_page.cmb_shape.setCurrentText("polygon")
-            loaded = True
-        xywh = qr_core.try_read_xywh_from_labelme(j, label_name)
-        if xywh:
-            tool_page.canvas.set_roi_rect(xywh)
-            tool_page.cmb_shape.setCurrentText("rect")
-            loaded = True
+    shape_entry = tool_page._shape_entry_for_path(img_path, label_name)
+    if isinstance(shape_entry, dict):
+        shape_type = str(shape_entry.get("shape_type") or "").strip().lower()
+        if shape_type == "polygon":
+            poly_pts = [(float(x), float(y)) for x, y in list(shape_entry.get("points") or [])]
+            if len(poly_pts) >= 3:
+                tool_page.canvas.set_roi_polygon(poly_pts)
+                tool_page.cmb_shape.setCurrentText("polygon")
+                loaded = True
+        if not loaded:
+            xywh = shape_entry.get("xywh")
+            if xywh:
+                tool_page.canvas.set_roi_rect(tuple(int(v) for v in xywh))
+                tool_page.cmb_shape.setCurrentText("rect")
+                loaded = True
     tool_page._set_overlay_shapes(img_path, label_name)
     if not loaded:
         tool_page._on_shapes_changed()

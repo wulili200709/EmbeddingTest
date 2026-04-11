@@ -42,6 +42,9 @@ def _actual_inspection_item_index(tool_page, visible_row: int) -> int:
 
 def _persist_inspection_items(tool_page) -> None:
     save_inspection_items(tool_page.inspection_items, tool_page.session.inspection_items_path)
+    save_runtime_params = getattr(tool_page, "_save_runtime_params", None)
+    if callable(save_runtime_params):
+        save_runtime_params()
     changed_signal = getattr(tool_page, "inspectionItemsChanged", None)
     emit = getattr(changed_signal, "emit", None)
     if callable(emit):
@@ -203,10 +206,20 @@ def _inspection_item_status(tool_page, inspection_item):
         return "未训练", tooltip, "#d98c8c"
 
     algorithm = tool_page.algo.resolve_tool_algorithm(inspection_item.algorithm_code)
-    model_dict = tool_page.algo.get_traditional_model_dict(algorithm, model_key=inspection_item.effective_model_key)
+    storage_key = tool_page.algo.traditional_model_storage_key(
+        algorithm,
+        model_key=inspection_item.effective_model_key,
+    )
+    product_params = getattr(tool_page.algo, "product_params", None)
+    traditional_models = getattr(product_params, "traditional_models", {}) if product_params is not None else {}
+    model_dict = tool_page.algo.get_traditional_model_dict(
+        algorithm,
+        model_key=inspection_item.effective_model_key,
+    )
+    actual_key = storage_key if storage_key in traditional_models else algorithm
+    status_text = "已标定" if actual_key == storage_key else "已标定(旧)"
+    color = "#79d279" if actual_key == storage_key else "#cfc76a"
     if isinstance(model_dict, dict):
-        storage_key = tool_page.algo.traditional_model_storage_key(algorithm, model_key=inspection_item.effective_model_key)
-        actual_key = storage_key if storage_key in tool_page.algo.product_params.traditional_models else algorithm
         threshold = model_dict.get("threshold")
         ok_when = str(model_dict.get("ok_when", "")).strip() or "-"
         accuracy = model_dict.get("accuracy")
@@ -218,8 +231,6 @@ def _inspection_item_status(tool_page, inspection_item):
         if accuracy is not None:
             detail_parts.append(f"准确率: {float(accuracy):.4f}")
         detail_parts.append(f"存储键: {actual_key}")
-        status_text = "已标定" if actual_key == storage_key else "已标定(旧)"
-        color = "#79d279" if actual_key == storage_key else "#cfc76a"
         return status_text, "\n".join(detail_parts), color
 
     tooltip = (
@@ -241,9 +252,11 @@ def _refresh_inspection_items_table(tool_page) -> None:
     tool_page._visible_inspection_item_indexes = list(visible_indexes)
     tool_page._inspection_items_table_loading = True
     table.blockSignals(True)
+    table.setUpdatesEnabled(False)
     try:
         table.setRowCount(len(visible_indexes))
         algorithm_specs = list_tool_algorithm_specs()
+        group_options_by_role: dict[str, list[str]] = {}
 
         for row, actual_index in enumerate(visible_indexes):
             inspection_item = tool_page.inspection_items[actual_index]
@@ -302,7 +315,12 @@ def _refresh_inspection_items_table(tool_page) -> None:
             group_combo.setStyleSheet(_inspection_combo_style(False))
             group_combo.addItem("", "")
             current_group = str(getattr(inspection_item, "task_group", "") or "").strip()
-            for group_name in _group_name_options_for_camera(tool_page, inspection_item.camera_id):
+            item_role = str(getattr(inspection_item, "camera_id", "") or "").strip() or "cam1"
+            group_options = group_options_by_role.get(item_role)
+            if group_options is None:
+                group_options = _group_name_options_for_camera(tool_page, item_role)
+                group_options_by_role[item_role] = list(group_options)
+            for group_name in group_options:
                 group_combo.addItem(group_name, group_name)
             if current_group and group_combo.findData(current_group) < 0:
                 group_combo.addItem(current_group, current_group)
@@ -330,6 +348,7 @@ def _refresh_inspection_items_table(tool_page) -> None:
             table.clearContents()
     finally:
         table.blockSignals(False)
+        table.setUpdatesEnabled(True)
         tool_page._inspection_items_table_loading = False
 
     if table.rowCount() > 0:

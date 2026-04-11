@@ -25,9 +25,14 @@ class _SampleAnnotationHarness:
     _effective_model_key_for_item = ToolPage._effective_model_key_for_item
     _group_items_for_inspection_item = ToolPage._group_items_for_inspection_item
     _training_samples_for_inspection_item = ToolPage._training_samples_for_inspection_item
+    _normalized_sample_path = ToolPage._normalized_sample_path
     _sample_annotation_store_path = ToolPage._sample_annotation_store_path
     _sample_annotation_path_key = ToolPage._sample_annotation_path_key
     _sample_roi_annotation_key = ToolPage._sample_roi_annotation_key
+    _invalidate_sample_annotation_state_cache = ToolPage._invalidate_sample_annotation_state_cache
+    _invalidate_shape_lookup_cache = ToolPage._invalidate_shape_lookup_cache
+    _shape_lookup_for_path = ToolPage._shape_lookup_for_path
+    _shape_entry_for_path = ToolPage._shape_entry_for_path
     _load_sample_roi_annotations = ToolPage._load_sample_roi_annotations
     _save_sample_roi_annotations = ToolPage._save_sample_roi_annotations
     _delete_sample_annotation_file = ToolPage._delete_sample_annotation_file
@@ -67,6 +72,8 @@ class _SampleAnnotationHarness:
         self.ng_files: list[str] = []
         self.test_files: list[str] = []
         self._sample_roi_annotations_by_path: dict[str, dict[str, str]] = {}
+        self._shape_lookup_cache_by_path: dict[str, dict[str, object]] = {}
+        self._sample_annotation_state_cache: dict[tuple[str, str], str] = {}
 
     def current_camera_role(self) -> str:
         return "cam1"
@@ -151,6 +158,44 @@ class ToolPageSampleAnnotationsTest(unittest.TestCase):
 
             self.assertEqual(harness._sample_roi_status_for_path(str(image_path), "cam1", "roi1"), "NG")
             self.assertEqual(harness._sample_roi_status_for_path(str(image_path), "cam1", "roi2"), "NG")
+
+    def test_mark_sample_path_all_ng_persists_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image_path = Path(tmpdir) / "cam1_sample.png"
+            image_path.write_bytes(b"img")
+            self._write_labelme_json(image_path, ["roi1", "roi2"])
+
+            harness = _SampleAnnotationHarness(tmpdir)
+            save_calls: list[int] = []
+
+            def _save_once() -> None:
+                save_calls.append(1)
+                ToolPage._save_sample_roi_annotations(harness)
+
+            harness._save_sample_roi_annotations = _save_once  # type: ignore[assignment]
+            harness._mark_sample_path_all_ng(str(image_path), "cam1")
+
+            self.assertEqual(len(save_calls), 1)
+
+    def test_path_has_roi_geometry_reuses_cached_labelme_shapes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image_path = Path(tmpdir) / "cam1_sample.png"
+            image_path.write_bytes(b"img")
+            self._write_labelme_json(image_path, ["roi1"])
+
+            harness = _SampleAnnotationHarness(tmpdir)
+            original_json_load = json.load
+            load_calls: list[int] = []
+
+            def _counting_json_load(*args, **kwargs):
+                load_calls.append(1)
+                return original_json_load(*args, **kwargs)
+
+            with unittest.mock.patch("ui.debug.tool_page.page.json.load", side_effect=_counting_json_load):
+                self.assertTrue(harness._path_has_roi_geometry(str(image_path), "roi1"))
+                self.assertTrue(harness._path_has_roi_geometry(str(image_path), "roi1"))
+
+            self.assertEqual(len(load_calls), 1)
 
 
 if __name__ == "__main__":

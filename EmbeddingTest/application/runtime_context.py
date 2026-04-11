@@ -9,7 +9,12 @@ from typing import TYPE_CHECKING, Any, Dict, List, Protocol
 import algorithms.proxy as qr_core
 import numpy as np
 from algorithms.embedding import embed_batch_from_array
-from algorithms.traditional import TraditionalThresholdModel, compute_roi_metrics_from_array, metric_value
+from algorithms.traditional import (
+    TraditionalThresholdModel,
+    compute_roi_metrics_batch,
+    compute_roi_metrics_batch_from_array,
+    metric_value,
+)
 from application.runtime.preview_frame import RuntimePreviewShape
 from domain import (
     InspectionItem,
@@ -178,6 +183,66 @@ def _predict_learning_items_batch_rows(
         for item in group:
             rows_by_key[item.model_key]["infer_ms"] = per_item_infer_ms
             rows_by_key[item.model_key]["total_ms"] = per_item_infer_ms
+    return rows_by_key
+
+
+def _predict_traditional_items_batch_rows(
+    *,
+    path: str,
+    items: List[InspectionItem],
+    match_ms: float | None,
+    algo,
+) -> Dict[str, Dict[str, object]]:
+    rows_by_key: Dict[str, Dict[str, object]] = {}
+    if not items:
+        return rows_by_key
+
+    traditional_algorithms: list[str] = []
+    threshold_models: list[TraditionalThresholdModel] = []
+    preferred_labels: list[str] = []
+    threshold_model_cache: dict[tuple[str, str], TraditionalThresholdModel] = {}
+    for item in items:
+        algorithm = algo.resolve_tool_algorithm(item.algorithm_code)
+        traditional_algorithms.append(algorithm)
+        lookup_model_key = str(item.effective_model_key or "").strip()
+        cache_key = (algorithm, lookup_model_key)
+        threshold_model = threshold_model_cache.get(cache_key)
+        if threshold_model is None:
+            model_dict = algo.get_traditional_model_dict(algorithm, model_key=lookup_model_key)
+            if not isinstance(model_dict, dict):
+                raise RuntimeError(f"traditional algorithm {algorithm} is not trained yet")
+            threshold_model = TraditionalThresholdModel.from_dict(model_dict)
+            threshold_model_cache[cache_key] = threshold_model
+        threshold_models.append(threshold_model)
+        preferred_labels.append(
+            str(item.roi_label or "").strip()
+            or str(threshold_model.roi_label or "").strip()
+            or "roi"
+        )
+
+    metrics_rows = compute_roi_metrics_batch(
+        path,
+        preferred_labels=preferred_labels,
+        required_algorithms=traditional_algorithms,
+    )
+    for item, algorithm, threshold_model, metrics in zip(
+        items,
+        traditional_algorithms,
+        threshold_models,
+        metrics_rows,
+    ):
+        value = metric_value(metrics, algorithm)
+        pred, diff = threshold_model.predict(value)
+        rows_by_key[item.model_key] = _runtime_prediction_row(
+            pred=pred,
+            diff=diff,
+            value=value,
+            threshold=threshold_model.threshold,
+            match_ms=match_ms,
+            infer_ms=0.0,
+            total_ms=0.0,
+            roi_label=str(metrics.get("roi_label", "") or ""),
+        )
     return rows_by_key
 
 
@@ -357,16 +422,14 @@ class ToolPageRuntimeContext:
             load_embedding_model=tool_page.load_embedding_model,
             feat_net=feat_net,
         )
-        for item in traditional_items:
-            roi_label = str(item.roi_label or "").strip()
-            labels_override = [roi_label] if roi_label else None
-            rows_by_key[item.model_key] = self.predict_image(
-                path,
-                feat_net=feat_net,
-                labels_override=labels_override,
-                algorithm_override=item.algorithm_code,
-                model_key_override=item.effective_model_key,
+        rows_by_key.update(
+            _predict_traditional_items_batch_rows(
+                path=path,
+                items=traditional_items,
+                match_ms=match_ms,
+                algo=tool_page.algo,
             )
+        )
 
         return [dict(rows_by_key[item.model_key]) for item in enabled_items]
 
@@ -499,16 +562,14 @@ class ProductRuntimeContext:
             load_embedding_model=self.load_embedding_model,
             feat_net=feat_net,
         )
-        for item in traditional_items:
-            roi_label = str(item.roi_label or "").strip()
-            labels_override = [roi_label] if roi_label else None
-            rows_by_key[item.model_key] = self.predict_image(
-                path,
-                feat_net=feat_net,
-                labels_override=labels_override,
-                algorithm_override=item.algorithm_code,
-                model_key_override=item.effective_model_key,
+        rows_by_key.update(
+            _predict_traditional_items_batch_rows(
+                path=path,
+                items=traditional_items,
+                match_ms=match_ms,
+                algo=self.algo,
             )
+        )
 
         return [dict(rows_by_key[item.model_key]) for item in enabled_items]
 
@@ -560,17 +621,41 @@ class ProductRuntimeContext:
             feat_net=feat_net,
         )
         shape_by_label = _runtime_shape_by_label(roi_shapes)
+        traditional_algorithms: list[str] = []
+        threshold_models: list[TraditionalThresholdModel] = []
+        preferred_labels: list[str] = []
+        threshold_model_cache: dict[tuple[str, str], TraditionalThresholdModel] = {}
         for item in traditional_items:
             algorithm = self.algo.resolve_tool_algorithm(item.algorithm_code)
-            model_dict = self.algo.get_traditional_model_dict(algorithm, model_key=item.effective_model_key)
-            if not isinstance(model_dict, dict):
-                raise RuntimeError(f"traditional algorithm {algorithm} is not trained yet")
-            threshold_model = TraditionalThresholdModel.from_dict(model_dict)
-            metrics = compute_roi_metrics_from_array(
-                image,
-                shape_by_label=shape_by_label,
-                preferred_label=threshold_model.roi_label or str(item.roi_label or "").strip() or "roi",
+            traditional_algorithms.append(algorithm)
+            lookup_model_key = str(item.effective_model_key or "").strip()
+            cache_key = (algorithm, lookup_model_key)
+            threshold_model = threshold_model_cache.get(cache_key)
+            if threshold_model is None:
+                model_dict = self.algo.get_traditional_model_dict(algorithm, model_key=lookup_model_key)
+                if not isinstance(model_dict, dict):
+                    raise RuntimeError(f"traditional algorithm {algorithm} is not trained yet")
+                threshold_model = TraditionalThresholdModel.from_dict(model_dict)
+                threshold_model_cache[cache_key] = threshold_model
+            threshold_models.append(threshold_model)
+            preferred_labels.append(
+                str(item.roi_label or "").strip()
+                or str(threshold_model.roi_label or "").strip()
+                or "roi"
             )
+
+        traditional_metrics_rows = compute_roi_metrics_batch_from_array(
+            image,
+            shape_by_label=shape_by_label,
+            preferred_labels=preferred_labels,
+            required_algorithms=traditional_algorithms,
+        )
+        for item, algorithm, threshold_model, metrics in zip(
+            traditional_items,
+            traditional_algorithms,
+            threshold_models,
+            traditional_metrics_rows,
+        ):
             value = metric_value(metrics, algorithm)
             pred, diff = threshold_model.predict(value)
             rows_by_key[item.model_key] = _runtime_prediction_row(

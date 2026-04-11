@@ -27,8 +27,12 @@ class _FakeAlgo:
             score_mode="proto",
             margin=0.02,
             topk=3,
+            traditional_models={},
         )
         self.train_calls: list[dict[str, object]] = []
+
+    def tool_model_key(self, model_key: object) -> str:
+        return str(model_key or "").strip()
 
     def is_learning_tool(self, code) -> bool:
         return str(code or "").strip() == "shared_backbone_register"
@@ -39,6 +43,16 @@ class _FakeAlgo:
     def resolve_tool_algorithm(self, code) -> str:
         return str(code or "").strip()
 
+    def get_traditional_model_dict(self, algorithm: str, *, model_key: object = ""):
+        storage_key = self.traditional_model_storage_key(algorithm, model_key=model_key)
+        return self.product_params.traditional_models.get(storage_key)
+
+    def traditional_model_storage_key(self, algorithm: str, *, model_key: object = "") -> str:
+        normalized = str(model_key or "").strip()
+        if normalized:
+            return f"{algorithm}::{normalized}"
+        return str(algorithm or "").strip()
+
     def train(
         self,
         ok_files,
@@ -48,6 +62,8 @@ class _FakeAlgo:
         product_dir,
         label_names,
         model_key,
+        ok_samples=None,
+        ng_samples=None,
     ):
         self.train_calls.append(
             {
@@ -57,8 +73,19 @@ class _FakeAlgo:
                 "product_dir": str(product_dir),
                 "label_names": list(label_names),
                 "model_key": str(model_key),
+                "ok_samples": list(ok_samples or []),
+                "ng_samples": list(ng_samples or []),
             }
         )
+        if str(algorithm or "").strip() != "efficientnet_b0":
+            self.product_params.traditional_models[
+                self.traditional_model_storage_key(algorithm, model_key=model_key)
+            ] = {
+                "algorithm": str(algorithm),
+                "threshold": 0.5,
+                "ok_when": "greater_equal",
+                "accuracy": 1.0,
+            }
         return TrainResult(
             algorithm=str(algorithm),
             is_embedding=True,
@@ -71,6 +98,12 @@ class _FakeAlgo:
 class _RoleFilterHarness:
     _refresh_lists = ToolPage._refresh_lists
     _current_selected_path = ToolPage._current_selected_path
+    _effective_model_key_for_item = ToolPage._effective_model_key_for_item
+    _group_items_for_inspection_item = ToolPage._group_items_for_inspection_item
+    _training_samples_for_inspection_item = ToolPage._training_samples_for_inspection_item
+    _train_sample_paths_for_role = ToolPage._train_sample_paths_for_role
+    _store_runtime_params_for_group = ToolPage._store_runtime_params_for_group
+    _clear_previous_training_output = ToolPage._clear_previous_training_output
     _resolve_training_algorithm = ToolPage._resolve_training_algorithm
     _train_inspection_item = ToolPage._train_inspection_item
     current_camera_role = ToolPage.current_camera_role
@@ -126,6 +159,7 @@ class _RoleFilterHarness:
         self.loc_method = "line2dup"
         self.session = SimpleNamespace(product_dir="demo_product")
         self.canvas = SimpleNamespace(image_path=lambda: None)
+        self.persist_calls = 0
 
     def _selected_inspection_item(self):
         return self._selected_item
@@ -148,6 +182,12 @@ class _RoleFilterHarness:
     def _update_runtime_widgets(self) -> None:
         return None
 
+    def _persist_inspection_items(self) -> None:
+        self.persist_calls += 1
+
+    def _save_runtime_params(self) -> None:
+        return None
+
     def _refresh_debug_role_status(self) -> None:
         self._debug_role = self.current_camera_role()
 
@@ -157,6 +197,17 @@ class _RoleFilterHarness:
         ok_files = [path for path in train_files if "_ok" in path]
         ng_files = [path for path in train_files if "_ng" in path]
         return ok_files, ng_files, list(train_files)
+
+    def _path_has_roi_geometry(self, path: str, roi_label: str) -> bool:
+        return True
+
+    def _sample_roi_status_for_path(self, path: str, camera_role: object, roi_label: str) -> str:
+        lower_name = os.path.basename(path).lower()
+        if "_ok" in lower_name:
+            return "OK"
+        if "_ng" in lower_name:
+            return "NG"
+        return ""
 
     def _sample_paths_for_kind(self, kind: str, camera_role=None):
         role = str(camera_role or self._debug_role)
@@ -233,6 +284,8 @@ class ToolPageCameraRoleFilterTest(unittest.TestCase):
                     "product_dir": "demo_product",
                     "label_names": ["roi1"],
                     "model_key": "cam1__roi1",
+                    "ok_samples": [("cam1_ok_a.png", "roi1")],
+                    "ng_samples": [("cam1_ng_a.png", "roi1")],
                 }
             ],
         )

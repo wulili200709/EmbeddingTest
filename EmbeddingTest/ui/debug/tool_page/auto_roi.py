@@ -59,6 +59,9 @@ def _reload_inspection_items(tool_page) -> None:
         )
     tool_page.inspection_items = other_role_items + synced_current_role_items
     save_inspection_items(tool_page.inspection_items, path)
+    invalidate_state_cache = getattr(tool_page, "_invalidate_sample_annotation_state_cache", None)
+    if callable(invalidate_state_cache):
+        invalidate_state_cache()
     tool_page._refresh_inspection_items_table()
     tool_page.inspectionItemsChanged.emit()
 

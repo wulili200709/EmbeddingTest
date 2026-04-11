@@ -20,9 +20,14 @@ from ui.debug.tool_page.page import ToolPage
 
 
 class _MixedGroupHarness:
+    _normalized_sample_path = ToolPage._normalized_sample_path
     _sample_annotation_store_path = ToolPage._sample_annotation_store_path
     _sample_annotation_path_key = ToolPage._sample_annotation_path_key
     _sample_roi_annotation_key = ToolPage._sample_roi_annotation_key
+    _invalidate_sample_annotation_state_cache = ToolPage._invalidate_sample_annotation_state_cache
+    _invalidate_shape_lookup_cache = ToolPage._invalidate_shape_lookup_cache
+    _shape_lookup_for_path = ToolPage._shape_lookup_for_path
+    _shape_entry_for_path = ToolPage._shape_entry_for_path
     _save_sample_roi_annotations = ToolPage._save_sample_roi_annotations
     _path_has_roi_geometry = ToolPage._path_has_roi_geometry
     _set_sample_roi_status_for_path = ToolPage._set_sample_roi_status_for_path
@@ -67,6 +72,8 @@ class _MixedGroupHarness:
         self.ng_files: list[str] = []
         self.test_files: list[str] = []
         self._sample_roi_annotations_by_path: dict[str, dict[str, str]] = {}
+        self._shape_lookup_cache_by_path: dict[str, dict[str, object]] = {}
+        self._sample_annotation_state_cache: dict[tuple[str, str], str] = {}
 
     def current_camera_role(self) -> str:
         return "cam1"

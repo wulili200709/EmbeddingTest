@@ -31,10 +31,14 @@ class _FakeAlgo:
                 "score_mode": "proto",
                 "margin": 0.02,
                 "topk": 3,
+                "traditional_models": {},
             },
         )()
         self.model = None
         self.train_calls: list[dict] = []
+        self.clear_calls: list[dict] = []
+        self.prune_calls: list[dict] = []
+        self.force_legacy_traditional_key = False
 
     def is_learning_tool(self, code) -> bool:
         return str(code or "").strip() == "shared_backbone_register"
@@ -45,6 +49,20 @@ class _FakeAlgo:
     def resolve_tool_algorithm(self, code) -> str:
         return str(code or "").strip()
 
+    def is_embedding_algorithm(self, algorithm) -> bool:
+        return str(algorithm or "").strip() == "efficientnet_b0"
+
+    def traditional_model_storage_key(self, algorithm: str, *, model_key: object = "") -> str:
+        normalized = str(model_key or "").strip()
+        if normalized:
+            return f"{algorithm}::{normalized}"
+        return str(algorithm or "").strip()
+
+    def get_traditional_model_dict(self, algorithm: str, *, model_key: object = ""):
+        return self.product_params.traditional_models.get(
+            self.traditional_model_storage_key(algorithm, model_key=model_key)
+        )
+
     def train(
         self,
         ok_files,
@@ -54,6 +72,8 @@ class _FakeAlgo:
         product_dir,
         label_names,
         model_key,
+        ok_samples=None,
+        ng_samples=None,
     ):
         self.train_calls.append(
             {
@@ -61,18 +81,62 @@ class _FakeAlgo:
                 "label_names": list(label_names),
                 "model_key": str(model_key),
                 "product_dir": str(product_dir),
+                "ok_samples": list(ok_samples or []),
+                "ng_samples": list(ng_samples or []),
             }
         )
+        if algorithm != "efficientnet_b0":
+            stored_model_key = str(model_key)
+            if self.force_legacy_traditional_key and str(model_key).startswith("cam1__hole"):
+                stored_model_key = "cam1__roi1"
+            storage_key = self.traditional_model_storage_key(algorithm, model_key=stored_model_key)
+            traditional_model_dict = {
+                "algorithm": str(algorithm),
+                "threshold": 0.5,
+                "ok_when": "greater_equal",
+                "accuracy": 1.0,
+            }
+            self.product_params.traditional_models[storage_key] = traditional_model_dict
+        else:
+            traditional_model_dict = None
         return TrainResult(
             algorithm=algorithm,
             is_embedding=(algorithm == "efficientnet_b0"),
             status_message=f"trained {algorithm}",
             dialog_message=f"done {algorithm}",
+            traditional_model_dict=traditional_model_dict,
             result_rows=[],
+        )
+
+    def clear_training_output(self, algorithm, product_dir, *, model_key=""):
+        self.clear_calls.append(
+            {
+                "algorithm": str(algorithm),
+                "product_dir": str(product_dir),
+                "model_key": str(model_key or ""),
+            }
+        )
+
+    def clear_obsolete_traditional_models(self, *, camera_role, valid_model_keys_by_algorithm):
+        self.prune_calls.append(
+            {
+                "camera_role": str(camera_role),
+                "valid_model_keys_by_algorithm": {
+                    str(key): set(value)
+                    for key, value in dict(valid_model_keys_by_algorithm or {}).items()
+                },
+            }
         )
 
 
 class _TrainAllHarness:
+    _effective_model_key_for_item = ToolPage._effective_model_key_for_item
+    _group_items_for_inspection_item = ToolPage._group_items_for_inspection_item
+    _training_samples_for_inspection_item = ToolPage._training_samples_for_inspection_item
+    _store_runtime_params_for_group = ToolPage._store_runtime_params_for_group
+    _clear_previous_training_output = ToolPage._clear_previous_training_output
+    _prune_stale_traditional_models_for_role = ToolPage._prune_stale_traditional_models_for_role
+    _reload_runtime_params_from_disk = ToolPage._reload_runtime_params_from_disk
     _resolve_training_algorithm = ToolPage._resolve_training_algorithm
     _train_sample_paths_for_role = ToolPage._train_sample_paths_for_role
     _training_camera_roles_in_lists = ToolPage._training_camera_roles_in_lists
@@ -120,6 +184,7 @@ class _TrainAllHarness:
         self.saved_session = 0
         self.refresh_count = 0
         self.update_count = 0
+        self.reload_count = 0
 
     def _selected_inspection_item(self):
         if 0 <= self._selected_index < len(self.inspection_items):
@@ -136,6 +201,21 @@ class _TrainAllHarness:
         ng_files = [path for path in train_files if "ng" in os.path.basename(path).lower()]
         return ok_files, ng_files, train_files
 
+    def _path_has_roi_geometry(self, path: str, roi_label: str) -> bool:
+        json_path = Path(path).with_suffix(".json")
+        if not json_path.exists():
+            return False
+        text = json_path.read_text(encoding="utf-8")
+        return f'"label":"{roi_label}"' in text or f'"label": "{roi_label}"' in text
+
+    def _sample_roi_status_for_path(self, path: str, camera_role: object, roi_label: str) -> str:
+        lower_name = os.path.basename(path).lower()
+        if "ok" in lower_name:
+            return "OK"
+        if "ng" in lower_name:
+            return "NG"
+        return ""
+
     def _autogen_roi_for_images(self, paths, only_missing=False, silent=False):
         return None
 
@@ -147,6 +227,9 @@ class _TrainAllHarness:
 
     def _save_session(self):
         self.saved_session += 1
+
+    def _reload_runtime_params_from_disk(self):
+        self.reload_count += 1
 
     def _refresh_inspection_items_table(self):
         self.refresh_count += 1
@@ -195,19 +278,48 @@ class ToolPageTrainAllTest(unittest.TestCase):
                         "label_names": ["roi1"],
                         "model_key": "cam1__roi1",
                         "product_dir": tmpdir,
+                        "ok_samples": [(str(ok_path), "roi1")],
+                        "ng_samples": [(str(ng_path), "roi1")],
                     },
                     {
                         "algorithm": "meanintensity",
                         "label_names": ["roi2"],
                         "model_key": "cam1__roi2",
                         "product_dir": tmpdir,
+                        "ok_samples": [(str(ok_path), "roi2")],
+                        "ng_samples": [(str(ng_path), "roi2")],
                     },
+                ],
+            )
+            self.assertEqual(
+                harness.algo.clear_calls,
+                [
+                    {
+                        "algorithm": "efficientnet_b0",
+                        "product_dir": tmpdir,
+                        "model_key": "cam1__roi1",
+                    },
+                    {
+                        "algorithm": "meanintensity",
+                        "product_dir": tmpdir,
+                        "model_key": "cam1__roi2",
+                    },
+                ],
+            )
+            self.assertEqual(
+                harness.algo.prune_calls,
+                [
+                    {
+                        "camera_role": "cam1",
+                        "valid_model_keys_by_algorithm": {"meanintensity": {"cam1__roi2"}},
+                    }
                 ],
             )
             self.assertEqual(harness.saved_runtime_params, 1)
             self.assertEqual(harness.saved_session, 1)
             self.assertEqual(harness.refresh_count, 1)
             self.assertEqual(harness.update_count, 1)
+            self.assertEqual(harness.reload_count, 1)
             self.assertTrue(info.called)
             self.assertFalse(warning.called)
 
@@ -245,21 +357,176 @@ class ToolPageTrainAllTest(unittest.TestCase):
                         "label_names": ["roi1"],
                         "model_key": "cam1__roi1",
                         "product_dir": tmpdir,
+                        "ok_samples": [(str(ok_cam1), "roi1")],
+                        "ng_samples": [(str(ng_cam1), "roi1")],
                     },
                     {
                         "algorithm": "meanintensity",
                         "label_names": ["roi2"],
                         "model_key": "cam1__roi2",
                         "product_dir": tmpdir,
+                        "ok_samples": [(str(ok_cam1), "roi2")],
+                        "ng_samples": [(str(ng_cam1), "roi2")],
                     },
+                ],
+            )
+            self.assertEqual(
+                harness.algo.clear_calls,
+                [
+                    {
+                        "algorithm": "efficientnet_b0",
+                        "product_dir": tmpdir,
+                        "model_key": "cam1__roi1",
+                    },
+                    {
+                        "algorithm": "meanintensity",
+                        "product_dir": tmpdir,
+                        "model_key": "cam1__roi2",
+                    },
+                ],
+            )
+            self.assertEqual(
+                harness.algo.prune_calls,
+                [
+                    {
+                        "camera_role": "cam1",
+                        "valid_model_keys_by_algorithm": {"meanintensity": {"cam1__roi2"}},
+                    }
                 ],
             )
             self.assertEqual(harness.saved_runtime_params, 1)
             self.assertEqual(harness.saved_session, 1)
             self.assertEqual(harness.refresh_count, 1)
             self.assertEqual(harness.update_count, 1)
+            self.assertEqual(harness.reload_count, 1)
             self.assertTrue(info.called)
             self.assertFalse(warning.called)
+
+    def test_train_all_deduplicates_grouped_traditional_tools_to_one_group_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ok_path = Path(tmpdir) / "cam1_ok.png"
+            ng_path = Path(tmpdir) / "cam1_ng.png"
+            for path in (ok_path, ng_path):
+                path.write_bytes(b"x")
+                path.with_suffix(".json").write_text(
+                    '{"shapes":[{"label":"roi1"},{"label":"roi2"}]}',
+                    encoding="utf-8",
+                )
+
+            harness = _TrainAllHarness(tmpdir, [str(ok_path)], [str(ng_path)])
+            harness.loc_method = "manual"
+            harness.inspection_items = [
+                InspectionItem(
+                    item_id="roi1",
+                    display_name="hole",
+                    camera_id="cam1",
+                    roi_label="roi1",
+                    task_group="hole",
+                    algorithm_code="meanstd",
+                ),
+                InspectionItem(
+                    item_id="roi2",
+                    display_name="hole",
+                    camera_id="cam1",
+                    roi_label="roi2",
+                    task_group="hole",
+                    algorithm_code="meanstd",
+                ),
+            ]
+
+            with (
+                mock.patch("PySide6.QtWidgets.QMessageBox.information"),
+                mock.patch("PySide6.QtWidgets.QMessageBox.warning"),
+            ):
+                harness._train_all_tools()
+
+            self.assertEqual(
+                harness.algo.train_calls,
+                [
+                    {
+                        "algorithm": "meanstd",
+                        "label_names": ["roi1", "roi2"],
+                        "model_key": "cam1__hole",
+                        "product_dir": tmpdir,
+                        "ok_samples": [(str(ok_path), "roi1"), (str(ok_path), "roi2")],
+                        "ng_samples": [(str(ng_path), "roi1"), (str(ng_path), "roi2")],
+                    },
+                ],
+            )
+            self.assertCountEqual(
+                harness.algo.clear_calls,
+                [
+                    {
+                        "algorithm": "meanstd",
+                        "product_dir": tmpdir,
+                        "model_key": "cam1__hole",
+                    },
+                    {
+                        "algorithm": "meanstd",
+                        "product_dir": tmpdir,
+                        "model_key": "cam1__roi1",
+                    },
+                    {
+                        "algorithm": "meanstd",
+                        "product_dir": tmpdir,
+                        "model_key": "cam1__roi2",
+                    },
+                ],
+            )
+            self.assertEqual(
+                harness.algo.prune_calls,
+                [
+                    {
+                        "camera_role": "cam1",
+                        "valid_model_keys_by_algorithm": {"meanstd": {"cam1__hole"}},
+                    }
+                ],
+            )
+            self.assertIn("meanstd::cam1__hole", harness.algo.product_params.traditional_models)
+            self.assertNotIn("meanstd::cam1__roi1", harness.algo.product_params.traditional_models)
+            self.assertNotIn("meanstd::cam1__roi2", harness.algo.product_params.traditional_models)
+
+    def test_train_all_repairs_grouped_traditional_storage_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ok_path = Path(tmpdir) / "cam1_ok.png"
+            ng_path = Path(tmpdir) / "cam1_ng.png"
+            for path in (ok_path, ng_path):
+                path.write_bytes(b"x")
+                path.with_suffix(".json").write_text(
+                    '{"shapes":[{"label":"roi1"},{"label":"roi2"}]}',
+                    encoding="utf-8",
+                )
+
+            harness = _TrainAllHarness(tmpdir, [str(ok_path)], [str(ng_path)])
+            harness.loc_method = "manual"
+            harness.algo.force_legacy_traditional_key = True
+            harness.inspection_items = [
+                InspectionItem(
+                    item_id="roi1",
+                    display_name="hole",
+                    camera_id="cam1",
+                    roi_label="roi1",
+                    task_group="hole",
+                    algorithm_code="meanstd",
+                ),
+                InspectionItem(
+                    item_id="roi2",
+                    display_name="hole",
+                    camera_id="cam1",
+                    roi_label="roi2",
+                    task_group="hole",
+                    algorithm_code="meanstd",
+                ),
+            ]
+
+            with (
+                mock.patch("PySide6.QtWidgets.QMessageBox.information"),
+                mock.patch("PySide6.QtWidgets.QMessageBox.warning"),
+            ):
+                harness._train_all_tools()
+
+            self.assertIn("meanstd::cam1__hole", harness.algo.product_params.traditional_models)
+            self.assertNotIn("meanstd::cam1__roi1", harness.algo.product_params.traditional_models)
 
     def test_train_all_line2dup_requires_second_click_after_roi_refresh(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

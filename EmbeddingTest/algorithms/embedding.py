@@ -378,6 +378,12 @@ class RegisterModel:
     ng_proto: Optional[np.ndarray] = None
     ok_bank: Optional[np.ndarray] = None
     ng_bank: Optional[np.ndarray] = None
+    ok_analysis_bank: Optional[np.ndarray] = None
+    ng_analysis_bank: Optional[np.ndarray] = None
+    ok_analysis_names: Optional[List[str]] = None
+    ng_analysis_names: Optional[List[str]] = None
+    ok_analysis_paths: Optional[List[str]] = None
+    ng_analysis_paths: Optional[List[str]] = None
     grouped_proto_only: bool = False
 
     def is_ready(self) -> bool:
@@ -403,6 +409,18 @@ def save_register_model_npz(model: RegisterModel, npz_path: str) -> None:
     ok_bank = model.ok_bank
     ng_bank = model.ng_bank
     assert ok_proto is not None and ng_proto is not None and ok_bank is not None and ng_bank is not None
+    ok_analysis_bank = np.asarray(
+        model.ok_analysis_bank if model.ok_analysis_bank is not None else ok_bank,
+        dtype=np.float32,
+    )
+    ng_analysis_bank = np.asarray(
+        model.ng_analysis_bank if model.ng_analysis_bank is not None else ng_bank,
+        dtype=np.float32,
+    )
+    ok_analysis_names = np.asarray(list(model.ok_analysis_names or []), dtype=str)
+    ng_analysis_names = np.asarray(list(model.ng_analysis_names or []), dtype=str)
+    ok_analysis_paths = np.asarray(list(model.ok_analysis_paths or []), dtype=str)
+    ng_analysis_paths = np.asarray(list(model.ng_analysis_paths or []), dtype=str)
 
     os.makedirs(os.path.dirname(npz_path) or ".", exist_ok=True)
     np.savez_compressed(
@@ -419,6 +437,12 @@ def save_register_model_npz(model: RegisterModel, npz_path: str) -> None:
         ng_proto=ng_proto.astype(np.float32),
         ok_bank=ok_bank.astype(np.float32),
         ng_bank=ng_bank.astype(np.float32),
+        ok_analysis_bank=ok_analysis_bank,
+        ng_analysis_bank=ng_analysis_bank,
+        ok_analysis_names=ok_analysis_names,
+        ng_analysis_names=ng_analysis_names,
+        ok_analysis_paths=ok_analysis_paths,
+        ng_analysis_paths=ng_analysis_paths,
     )
 
 
@@ -439,6 +463,20 @@ def load_register_model_npz(npz_path: str) -> RegisterModel:
         ng_proto=data["ng_proto"],
         ok_bank=data["ok_bank"],
         ng_bank=data["ng_bank"],
+        ok_analysis_bank=data["ok_analysis_bank"] if "ok_analysis_bank" in data.files else None,
+        ng_analysis_bank=data["ng_analysis_bank"] if "ng_analysis_bank" in data.files else None,
+        ok_analysis_names=[str(value) for value in data["ok_analysis_names"]]
+        if "ok_analysis_names" in data.files
+        else None,
+        ng_analysis_names=[str(value) for value in data["ng_analysis_names"]]
+        if "ng_analysis_names" in data.files
+        else None,
+        ok_analysis_paths=[str(value) for value in data["ok_analysis_paths"]]
+        if "ok_analysis_paths" in data.files
+        else None,
+        ng_analysis_paths=[str(value) for value in data["ng_analysis_paths"]]
+        if "ng_analysis_paths" in data.files
+        else None,
     )
 
 
@@ -502,6 +540,12 @@ def train_register_model(
         ng_proto=ng_proto.astype(np.float32),
         ok_bank=ok_bank,
         ng_bank=ng_bank,
+        ok_analysis_bank=ok_emb.astype(np.float32),
+        ng_analysis_bank=ng_emb.astype(np.float32),
+        ok_analysis_names=[os.path.basename(path) for path in ok_files],
+        ng_analysis_names=[os.path.basename(path) for path in ng_files],
+        ok_analysis_paths=[str(path) for path in ok_files],
+        ng_analysis_paths=[str(path) for path in ng_files],
         grouped_proto_only=collapsed,
     )
 
@@ -522,6 +566,17 @@ def _normalize_sample_entries(
             continue
         normalized.append((path, label))
     return normalized
+
+
+def _analysis_sample_name(
+    img_path: str,
+    label_name: str,
+) -> str:
+    base = os.path.basename(str(img_path or "").strip())
+    label = str(label_name or "").strip()
+    if base and label:
+        return f"{base} [{label}]"
+    return base or label or "sample"
 
 
 def train_register_model_from_samples(
@@ -588,6 +643,18 @@ def train_register_model_from_samples(
         ng_proto=ng_proto.astype(np.float32),
         ok_bank=ok_bank,
         ng_bank=ng_bank,
+        ok_analysis_bank=ok_emb.astype(np.float32),
+        ng_analysis_bank=ng_emb.astype(np.float32),
+        ok_analysis_names=[
+            _analysis_sample_name(path, label)
+            for path, label in normalized_ok_samples
+        ],
+        ng_analysis_names=[
+            _analysis_sample_name(path, label)
+            for path, label in normalized_ng_samples
+        ],
+        ok_analysis_paths=[str(path) for path, _label in normalized_ok_samples],
+        ng_analysis_paths=[str(path) for path, _label in normalized_ng_samples],
         grouped_proto_only=collapsed,
     )
 

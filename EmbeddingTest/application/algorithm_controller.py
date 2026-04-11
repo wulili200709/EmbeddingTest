@@ -335,6 +335,101 @@ class AlgorithmController:
     def clear_feat_net_cache(self) -> None:
         self._feat_net_cache.clear()
 
+    @staticmethod
+    def _remove_file_if_exists(path: str) -> bool:
+        if not path or not os.path.exists(path):
+            return False
+        try:
+            os.remove(path)
+        except OSError:
+            return False
+        return True
+
+    def clear_training_output(
+        self,
+        algorithm: str,
+        product_dir: str,
+        *,
+        model_key: object = "",
+    ) -> bool:
+        normalized_algorithm = self.resolve_learning_algorithm(algorithm)
+        normalized_model_key = self.tool_model_key(model_key)
+        changed = False
+
+        if self.is_anomaly_algorithm(normalized_algorithm):
+            changed = self._remove_file_if_exists(
+                self.anomaly_model_path(normalized_algorithm, product_dir, model_key=normalized_model_key)
+            ) or changed
+            if self._loaded_embedding_model_key == (normalized_algorithm, normalized_model_key):
+                self.model = None
+                self._loaded_embedding_model_key = ("", "")
+            return changed
+
+        if self.is_embedding_algorithm(normalized_algorithm):
+            candidate_paths = [
+                self.embedding_model_path(normalized_algorithm, product_dir, model_key=normalized_model_key),
+                self.embedding_model_legacy_path(normalized_algorithm, product_dir, model_key=normalized_model_key),
+            ]
+            seen_paths: set[str] = set()
+            for candidate_path in candidate_paths:
+                normalized_path = os.path.normcase(os.path.abspath(candidate_path))
+                if normalized_path in seen_paths:
+                    continue
+                seen_paths.add(normalized_path)
+                changed = self._remove_file_if_exists(candidate_path) or changed
+            if self._loaded_embedding_model_key == (normalized_algorithm, normalized_model_key):
+                self.model = None
+                self._loaded_embedding_model_key = ("", "")
+            return changed
+
+        storage_key = self.traditional_model_storage_key(normalized_algorithm, model_key=normalized_model_key)
+        if self.product_params.traditional_models.pop(storage_key, None) is not None:
+            changed = True
+        return changed
+
+    def clear_obsolete_traditional_models(
+        self,
+        *,
+        camera_role: object,
+        valid_model_keys_by_algorithm: Dict[str, set[str]],
+    ) -> bool:
+        normalized_role = self.tool_model_key(camera_role)
+        if not normalized_role:
+            return False
+        role_prefix = f"{normalized_role}__"
+        changed = False
+        scoped_algorithms = {
+            str(algorithm or "").strip(): {
+                self.tool_model_key(model_key)
+                for model_key in (model_keys or set())
+                if self.tool_model_key(model_key)
+            }
+            for algorithm, model_keys in dict(valid_model_keys_by_algorithm or {}).items()
+            if str(algorithm or "").strip()
+        }
+
+        for storage_key in list(self.product_params.traditional_models.keys()):
+            if "::" not in storage_key:
+                continue
+            algorithm_name, model_key = storage_key.split("::", 1)
+            valid_model_keys = scoped_algorithms.get(str(algorithm_name or "").strip())
+            if valid_model_keys is None:
+                continue
+            normalized_model_key = self.tool_model_key(model_key)
+            if not normalized_model_key.startswith(role_prefix):
+                continue
+            if normalized_model_key in valid_model_keys:
+                continue
+            self.product_params.traditional_models.pop(storage_key, None)
+            changed = True
+
+        for algorithm_name, valid_model_keys in scoped_algorithms.items():
+            if not valid_model_keys:
+                continue
+            if self.product_params.traditional_models.pop(algorithm_name, None) is not None:
+                changed = True
+        return changed
+
     # ------------------------------------------------------------------
     # 模型加载
     # ------------------------------------------------------------------
@@ -677,7 +772,8 @@ class AlgorithmController:
             if not isinstance(model_dict, dict):
                 raise RuntimeError(f"{self.algorithm_display_name(algorithm) or algorithm} is not trained yet")
             threshold_model = TraditionalThresholdModel.from_dict(model_dict)
-            metrics = compute_roi_metrics(path, preferred_label=threshold_model.roi_label or labels[0])
+            preferred_label = str(labels[0] if labels else "").strip() or str(threshold_model.roi_label or "").strip() or "roi"
+            metrics = compute_roi_metrics(path, preferred_label=preferred_label)
             value = metric_value(metrics, algorithm)
             pred, diff = threshold_model.predict(value)
             sim_ok = None

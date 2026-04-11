@@ -3305,3 +3305,113 @@ line1 gpio +  接频闪控制器的输入1
 在 io_mapping.json 的 di 里补齐 channel: 0 ~ 15
 在同一个文件的 do 里补齐 channel: 0 ~ 15
 如果你希望新加的点位在界面上显示友好的中文名字，再补 debug_camera_flow.py (line 22) 里的 _DEBUG_IO_NAME_LABELS
+
+
+
+产品：1841678
+工具：cam1__hole
+模型文件：
+cam1__hole_register_model_lt01.npz
+cam1__hole_register_model_lt02.npz
+cam1__hole_register_model_lt03.npz
+这 3 个分别是：
+
+lt01 = efficientnet_b0 = 高精度学习
+lt02 = mobilenet_v3_small = 轻量学习
+lt03 = mobilenet_v3_large = 均衡学习
+对应定义在 registry.py。
+
+先说结论
+这组 hole 上，3 个模型都能用，而且当前训练集上都分得开。
+如果只按你这批样本看，我会这样排：
+
+均衡学习 lt03
+轻量学习 lt02
+高精度学习 lt01
+不是因为 lt01 不行，而是这组数据上，lt03 的判定余量最稳。
+
+定量结果
+我算的是当前保存模型在训练样本上的真实分布：
+
+高精度学习 lt01
+
+特征维度：1280
+proto_similarity：0.6015
+ok_intra_mean：0.6302
+ng_intra_mean：0.4835
+ok_ng_cross_mean：0.3368
+proto 训练集准确率：1.0
+OK diff min/mean/max：0.0733 / 0.3176 / 0.4524
+NG diff min/mean/max：-0.3828 / -0.2801 / -0.0131
+轻量学习 lt02
+
+特征维度：576
+proto_similarity：0.6277
+ok_intra_mean：0.7641
+ng_intra_mean：0.6273
+ok_ng_cross_mean：0.4380
+proto 训练集准确率：1.0
+OK diff min/mean/max：0.0552 / 0.3261 / 0.4790
+NG diff min/mean/max：-0.4819 / -0.2966 / -0.0282
+均衡学习 lt03
+
+特征维度：960
+proto_similarity：0.6358
+ok_intra_mean：0.7122
+ng_intra_mean：0.6042
+ok_ng_cross_mean：0.4209
+proto 训练集准确率：1.0
+OK diff min/mean/max：0.1548 / 0.3081 / 0.4574
+NG diff min/mean/max：-0.3709 / -0.2849 / -0.0586
+怎么解读
+看 3 个指标最有用：
+
+OK diff 最小值
+
+越大越好，说明最难的 OK 样本离判错边界越远。
+这里 lt03 最好：0.1548
+NG diff 最大值
+
+越负越好，说明最容易漏掉的 NG 样本也还在安全侧。
+这里 lt03 也最好：-0.0586
+lt01 最危险：-0.0131，已经很贴近 margin=0.02 的边界了
+训练集准确率
+
+3 个都是 1.0
+所以差别不在“能不能分开”，而在“分开得稳不稳”
+所以这组上真正有区分度的不是准确率，而是判定余量。
+按这个标准，lt03 最稳，lt02 次之，lt01 最差。
+
+为什么高精度反而不是最优
+这不奇怪。efficientnet_b0 维度更高，不代表在你这个 hole group 上就一定更稳。
+
+你这组数据的特点是：
+
+同一个 group 里有 16 个位置
+NG 还来自多种坏法和多批图
+这是一个“组内变化很复杂”的问题
+这类问题里：
+
+更大的 backbone 有时会把细碎差异也放大
+反而让某些边界样本更贴近判错边界
+所以在你这里：
+
+lt01 全局分离看起来不差
+但边缘样本余量没有 lt03 好
+topk/bank 要不要上
+我也顺手比了同一批样本下的 proto 和 topk/full bank：
+
+3 个模型在训练样本上都是 1.0
+当前这组数据上，看不出 topk 比 proto 明显更值
+所以就你这组 hole 来说：
+
+现在先继续用 proto 没问题
+不急着切 topk/bank
+建议
+
+如果你现在要选一套上线优先试：选 均衡学习 lt03
+如果你更在意 CPU 速度：选 轻量学习 lt02
+高精度 lt01 在这组上不建议作为首选
+一句话总结：
+
+当前 1841678 / cam1__hole 这组数据里，3 个学习模型都能分开，但综合判定余量看，均衡学习 lt03 最稳，轻量学习 lt02 次之，高精度 lt01 反而最靠近边界。

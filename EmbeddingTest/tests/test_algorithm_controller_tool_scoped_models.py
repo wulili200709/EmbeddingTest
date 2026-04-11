@@ -116,6 +116,86 @@ class AlgorithmControllerToolScopedModelsTest(unittest.TestCase):
         self.assertEqual(roi1_result.pred, "OK")
         self.assertEqual(roi2_result.pred, "NG")
 
+    def test_predict_image_prefers_requested_roi_over_group_model_roi_label(self) -> None:
+        controller = AlgorithmController()
+        controller.product_params.traditional_models = {
+            "meanintensity::cam1__hole": {
+                "algorithm": "meanintensity",
+                "threshold": 0.40,
+                "ok_when": "greater_equal",
+                "ok_mean": 0.7,
+                "ng_mean": 0.2,
+                "accuracy": 1.0,
+                "roi_label": "hole",
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image_path = Path(tmpdir) / "demo.png"
+            image_path.write_bytes(b"demo")
+
+            with mock.patch.object(
+                algorithm_controller,
+                "compute_roi_metrics",
+                return_value={"meanintensity": 0.5},
+            ) as compute_mock, mock.patch.object(
+                algorithm_controller,
+                "metric_value",
+                side_effect=lambda metrics, _algorithm: float(metrics["meanintensity"]),
+            ), mock.patch.object(
+                algorithm_controller.qr_core,
+                "labelme_json_of_image",
+                return_value="demo.json",
+                create=True,
+            ):
+                controller.predict_image(
+                    str(image_path),
+                    labels=["roi7"],
+                    algorithm_override="meanintensity",
+                    model_key_override="cam1__hole",
+                )
+
+        self.assertEqual(compute_mock.call_args.kwargs["preferred_label"], "roi7")
+
+    def test_clear_training_output_removes_traditional_scoped_model(self) -> None:
+        controller = AlgorithmController()
+        controller.product_params.traditional_models = {
+            "meanintensity::cam1__roi1": {"threshold": 0.4},
+            "meanintensity::cam1__roi2": {"threshold": 0.8},
+        }
+
+        changed = controller.clear_training_output(
+            "meanintensity",
+            "C:/demo/product",
+            model_key="cam1__roi1",
+        )
+
+        self.assertTrue(changed)
+        self.assertNotIn("meanintensity::cam1__roi1", controller.product_params.traditional_models)
+        self.assertIn("meanintensity::cam1__roi2", controller.product_params.traditional_models)
+
+    def test_clear_obsolete_traditional_models_prunes_stale_camera_keys(self) -> None:
+        controller = AlgorithmController()
+        controller.product_params.traditional_models = {
+            "meanstd::cam1__roi1": {"threshold": 0.4},
+            "meanstd::cam1__roi2": {"threshold": 0.5},
+            "meanstd::cam1__roi24": {"threshold": 0.9},
+            "meanstd::cam2__roi1": {"threshold": 0.6},
+            "meanstd": {"threshold": 0.7},
+        }
+
+        changed = controller.clear_obsolete_traditional_models(
+            camera_role="cam1",
+            valid_model_keys_by_algorithm={"meanstd": {"cam1__roi1", "cam1__roi2"}},
+        )
+
+        self.assertTrue(changed)
+        self.assertIn("meanstd::cam1__roi1", controller.product_params.traditional_models)
+        self.assertIn("meanstd::cam1__roi2", controller.product_params.traditional_models)
+        self.assertNotIn("meanstd::cam1__roi24", controller.product_params.traditional_models)
+        self.assertIn("meanstd::cam2__roi1", controller.product_params.traditional_models)
+        self.assertNotIn("meanstd", controller.product_params.traditional_models)
+
 
     def test_anomaly_model_path_uses_tool_key(self) -> None:
         controller = AlgorithmController()

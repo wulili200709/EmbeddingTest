@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -202,6 +203,199 @@ def load_session_lists(session_file: str) -> Tuple[List[str], List[str], List[st
     )
 
 
+def _load_session_payload(session_file: str) -> dict:
+    if not os.path.exists(session_file):
+        return {}
+    with open(session_file, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _resolve_session_paths(
+    session_payload: dict,
+    *,
+    product_dir: str,
+) -> List[Tuple[str, str]]:
+    entries: List[Tuple[str, str]] = []
+    raw_paths = list(session_payload.get("train_files", []) or [])
+    if not raw_paths:
+        raw_paths = list(session_payload.get("ok_files", []) or []) + list(session_payload.get("ng_files", []) or [])
+    for raw_path in raw_paths:
+        text = str(raw_path or "").strip()
+        if not text:
+            continue
+        resolved = text
+        if not os.path.isabs(resolved):
+            resolved = os.path.normpath(os.path.join(product_dir, text))
+        if not os.path.exists(resolved):
+            continue
+        entries.append((resolved, text.replace("\\", "/")))
+    return entries
+
+
+def _load_sample_annotations_payload(product_dir: str) -> Dict[str, Dict[str, str]]:
+    store_path = os.path.join(product_dir, "sample_annotations.json")
+    if not os.path.exists(store_path):
+        return {}
+    try:
+        with open(store_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception:
+        return {}
+    images_payload = payload.get("images", payload) if isinstance(payload, dict) else {}
+    if not isinstance(images_payload, dict):
+        return {}
+    normalized: Dict[str, Dict[str, str]] = {}
+    for path_key, raw_value in images_payload.items():
+        if not isinstance(raw_value, dict):
+            continue
+        roi_status = raw_value.get("roi_status", raw_value)
+        if not isinstance(roi_status, dict):
+            continue
+        normalized[str(path_key or "").replace("\\", "/")] = {
+            str(key or "").strip(): str(value or "").strip().upper()
+            for key, value in roi_status.items()
+            if str(key or "").strip() and str(value or "").strip().upper() in {"OK", "NG"}
+        }
+    return normalized
+
+
+def _analysis_sample_name(path: str, label_name: str) -> str:
+    base = os.path.basename(str(path or "").strip())
+    label = str(label_name or "").strip()
+    if base and label:
+        return f"{base} [{label}]"
+    return base or label or "sample"
+
+
+def compact_plot_label(name: str) -> str:
+    text = str(name or "").strip()
+    if not text:
+        return ""
+    roi_label = ""
+    match = re.search(r"\[([^\]]+)\]\s*$", text)
+    if match:
+        roi_label = str(match.group(1) or "").strip()
+        text = text[: match.start()].strip()
+    base = os.path.basename(text)
+    stem, _ext = os.path.splitext(base)
+    token = stem.rsplit("_", 1)[-1] if stem else base
+    token = str(token or stem or base or name).strip()
+    if roi_label:
+        roi_short = re.sub(r"^roi", "r", roi_label, flags=re.IGNORECASE)
+        return f"{token}[{roi_short}]"
+    return token
+
+
+def _resolve_group_analysis_samples(
+    product_dir: str,
+    *,
+    model_key: str,
+) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]]]:
+    if not model_key:
+        return [], []
+    inspection_items = load_inspection_items(os.path.join(product_dir, "inspection_items.json"))
+    group_items = [
+        item
+        for item in inspection_items
+        if str(getattr(item, "effective_model_key", getattr(item, "model_key", "")) or "").strip() == str(model_key).strip()
+    ]
+    if not group_items:
+        return [], []
+    label_names = list(
+        dict.fromkeys(
+            str(getattr(item, "roi_label", "") or "").strip()
+            for item in group_items
+            if str(getattr(item, "roi_label", "") or "").strip()
+        )
+    )
+    camera_role = str(getattr(group_items[0], "camera_id", "") or "cam1").strip() or "cam1"
+    session_payload = _load_session_payload(os.path.join(product_dir, "session.json"))
+    sample_entries = _resolve_session_paths(session_payload, product_dir=product_dir)
+    annotations_by_path = _load_sample_annotations_payload(product_dir)
+    ok_samples: List[Tuple[str, str]] = []
+    ng_samples: List[Tuple[str, str]] = []
+    for resolved_path, session_key in sample_entries:
+        annotation_payload = annotations_by_path.get(session_key, {})
+        if not annotation_payload:
+            continue
+        json_path = qr_core.labelme_json_of_image(resolved_path)
+        if not os.path.exists(json_path):
+            continue
+        for label_name in label_names:
+            try:
+                if qr_core.read_shape_from_labelme(json_path, label_name) is None:
+                    continue
+            except Exception:
+                continue
+            status = str(annotation_payload.get(f"{camera_role}::{label_name}", "") or "").strip().upper()
+            if status == "OK":
+                ok_samples.append((resolved_path, label_name))
+            elif status == "NG":
+                ng_samples.append((resolved_path, label_name))
+    return ok_samples, ng_samples
+
+
+def _analysis_payload_from_model(
+    model: qr_core.RegisterModel,
+    *,
+    ok_files: Sequence[str],
+    ng_files: Sequence[str],
+    product_dir: str,
+    backbone: str,
+    model_key: str,
+) -> Tuple[np.ndarray, np.ndarray, List[str], List[str], List[str], List[str], List[str]]:
+    ok_analysis_bank = getattr(model, "ok_analysis_bank", None)
+    ng_analysis_bank = getattr(model, "ng_analysis_bank", None)
+    ok_bank = np.asarray(
+        ok_analysis_bank if ok_analysis_bank is not None else model.ok_bank if model.ok_bank is not None else np.zeros((0, 0), dtype=np.float32),
+        dtype=np.float32,
+    )
+    ng_bank = np.asarray(
+        ng_analysis_bank if ng_analysis_bank is not None else model.ng_bank if model.ng_bank is not None else np.zeros((0, 0), dtype=np.float32),
+        dtype=np.float32,
+    )
+    ok_names = list(getattr(model, "ok_analysis_names", None) or [])
+    ng_names = list(getattr(model, "ng_analysis_names", None) or [])
+    ok_paths = list(getattr(model, "ok_analysis_paths", None) or [])
+    ng_paths = list(getattr(model, "ng_analysis_paths", None) or [])
+    notes: List[str] = []
+
+    explicit_analysis = (
+        ok_analysis_bank is not None
+        and ng_analysis_bank is not None
+        and ok_bank.shape[0] > 0
+        and ng_bank.shape[0] > 0
+    )
+    if not explicit_analysis and bool(getattr(model, "grouped_proto_only", False)) and model_key:
+        ok_samples, ng_samples = _resolve_group_analysis_samples(product_dir, model_key=model_key)
+        if ok_samples and ng_samples:
+            device = str(getattr(model, "device", "") or "") or "cpu"
+            feat_net, _ = qr_core.load_backbone(backbone, device=device)
+            ok_bank = np.stack(
+                [qr_core.embed_one(path, feat_net, label_name=label, device=device) for path, label in ok_samples]
+            ).astype(np.float32)
+            ng_bank = np.stack(
+                [qr_core.embed_one(path, feat_net, label_name=label, device=device) for path, label in ng_samples]
+            ).astype(np.float32)
+            ok_names = [_analysis_sample_name(path, label) for path, label in ok_samples]
+            ng_names = [_analysis_sample_name(path, label) for path, label in ng_samples]
+            ok_paths = [str(path) for path, _label in ok_samples]
+            ng_paths = [str(path) for path, _label in ng_samples]
+            notes.append("Recovered grouped analysis points from session annotations.")
+
+    if len(ok_names) != ok_bank.shape[0]:
+        ok_names = _bank_display_names(model, ok_files, ok_bank.shape[0], "ok", gt_label="OK")
+    if len(ng_names) != ng_bank.shape[0]:
+        ng_names = _bank_display_names(model, ng_files, ng_bank.shape[0], "ng", gt_label="NG")
+    if len(ok_paths) != ok_bank.shape[0]:
+        ok_paths = _bank_display_paths(model, ok_files, ok_bank.shape[0])
+    if len(ng_paths) != ng_bank.shape[0]:
+        ng_paths = _bank_display_paths(model, ng_files, ng_bank.shape[0])
+
+    return ok_bank, ng_bank, ok_names, ng_names, ok_paths, ng_paths, notes
+
+
 def _safe_norm_row(vec: np.ndarray) -> np.ndarray:
     norm = float(np.linalg.norm(vec))
     if norm <= 0:
@@ -282,25 +476,22 @@ def _bank_display_paths(
 
 def _build_rows(
     model: qr_core.RegisterModel,
-    ok_files: Sequence[str],
-    ng_files: Sequence[str],
+    ok_bank: np.ndarray,
+    ng_bank: np.ndarray,
+    ok_names: Sequence[str],
+    ng_names: Sequence[str],
+    ok_paths: Sequence[str],
+    ng_paths: Sequence[str],
 ) -> List[EmbeddingAnalysisRow]:
     rows: List[EmbeddingAnalysisRow] = []
-    ok_bank = np.asarray(model.ok_bank if model.ok_bank is not None else np.zeros((0, 0), dtype=np.float32))
-    ng_bank = np.asarray(model.ng_bank if model.ng_bank is not None else np.zeros((0, 0), dtype=np.float32))
-
-    ok_names = _bank_display_names(model, ok_files, ok_bank.shape[0], "ok", gt_label="OK")
-    ng_names = _bank_display_names(model, ng_files, ng_bank.shape[0], "ng", gt_label="NG")
-    ok_paths = _bank_display_paths(model, ok_files, ok_bank.shape[0])
-    ng_paths = _bank_display_paths(model, ng_files, ng_bank.shape[0])
 
     for idx, vec in enumerate(ok_bank):
         pred, diff, sim_ok, sim_ng = qr_core.predict_one_with_model(vec, model)
         rows.append(
             EmbeddingAnalysisRow(
                 gt_label="OK",
-                file_path=ok_paths[idx],
-                file_name=ok_names[idx],
+                file_path=str(ok_paths[idx]) if idx < len(ok_paths) else "",
+                file_name=str(ok_names[idx]) if idx < len(ok_names) else f"ok_{idx + 1}",
                 pred_label=pred,
                 diff=float(diff),
                 sim_ok=float(sim_ok),
@@ -313,8 +504,8 @@ def _build_rows(
         rows.append(
             EmbeddingAnalysisRow(
                 gt_label="NG",
-                file_path=ng_paths[idx],
-                file_name=ng_names[idx],
+                file_path=str(ng_paths[idx]) if idx < len(ng_paths) else "",
+                file_name=str(ng_names[idx]) if idx < len(ng_names) else f"ng_{idx + 1}",
                 pred_label=pred,
                 diff=float(diff),
                 sim_ok=float(sim_ok),
@@ -354,17 +545,28 @@ def load_product_analysis(
     if not model.is_ready():
         raise RuntimeError("register model is not ready")
 
-    ok_bank = np.asarray(model.ok_bank if model.ok_bank is not None else np.zeros((0, 0), dtype=np.float32), dtype=np.float32)
-    ng_bank = np.asarray(model.ng_bank if model.ng_bank is not None else np.zeros((0, 0), dtype=np.float32), dtype=np.float32)
+    ok_bank, ng_bank, ok_names, ng_names, ok_paths, ng_paths, analysis_notes = _analysis_payload_from_model(
+        model,
+        ok_files=ok_files,
+        ng_files=ng_files,
+        product_dir=product_dir,
+        backbone=entry.backbone,
+        model_key=entry.model_key,
+    )
     all_features = np.vstack([ok_bank, ng_bank]).astype(np.float32)
     coords, used_method = project_embeddings(all_features, method=projection_method)
 
     point_labels = ["OK"] * ok_bank.shape[0] + ["NG"] * ng_bank.shape[0]
-    point_names = (
-        _bank_display_names(model, ok_files, ok_bank.shape[0], "ok", gt_label="OK")
-        + _bank_display_names(model, ng_files, ng_bank.shape[0], "ng", gt_label="NG")
+    point_names = list(ok_names) + list(ng_names)
+    rows = _build_rows(
+        model,
+        ok_bank,
+        ng_bank,
+        ok_names,
+        ng_names,
+        ok_paths,
+        ng_paths,
     )
-    rows = _build_rows(model, ok_files, ng_files)
 
     ok_proto = _safe_norm_row(np.asarray(model.ok_proto[0], dtype=np.float32))
     ng_proto = _safe_norm_row(np.asarray(model.ng_proto[0], dtype=np.float32))
@@ -385,6 +587,7 @@ def load_product_analysis(
     }
 
     notes: List[str] = []
+    notes.extend(analysis_notes)
     if session_file and not os.path.exists(session_file):
         notes.append("session.json missing; file names unavailable.")
     if not bool(getattr(model, "grouped_proto_only", False)) and len(ok_files) != ok_bank.shape[0]:
@@ -436,7 +639,7 @@ def visualize_analysis_matplotlib(result: EmbeddingAnalysisResult):
         plt.scatter([ng_center[0]], [ng_center[1]], c="darkred", marker="*", s=280, label="NG center")
 
     for idx, name in enumerate(result.point_names):
-        plt.annotate(name, (coords[idx, 0], coords[idx, 1]), fontsize=8, alpha=0.75)
+        plt.annotate(compact_plot_label(name), (coords[idx, 0], coords[idx, 1]), fontsize=8, alpha=0.75)
 
     plt.title(
         f"Embedding analysis: {result.product_name} / {result.backbone} / {result.projection_method.upper()}",

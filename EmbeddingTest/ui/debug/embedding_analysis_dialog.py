@@ -19,6 +19,7 @@ except Exception:  # pragma: no cover - handled in UI
 from tools.visualize_embeddings import (
     EmbeddingAnalysisResult,
     EmbeddingModelEntry,
+    compact_plot_label,
     list_available_embedding_models,
     list_product_names,
     load_product_analysis,
@@ -372,7 +373,7 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
 
         for idx, name in enumerate(result.point_names):
             ax.annotate(
-                self._plot_text(name),
+                self._plot_text(compact_plot_label(name)),
                 (coords[idx, 0], coords[idx, 1]),
                 fontsize=8,
                 alpha=0.75,

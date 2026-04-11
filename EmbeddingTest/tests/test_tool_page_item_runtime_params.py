@@ -39,6 +39,7 @@ class _RuntimeParamsAlgo:
         self.load_calls: list[dict[str, object]] = []
         self.train_calls: list[dict[str, object]] = []
         self.apply_calls = 0
+        self.clear_calls: list[dict[str, object]] = []
 
     def tool_model_key(self, model_key: object) -> str:
         return str(model_key or "").strip()
@@ -111,6 +112,8 @@ class _RuntimeParamsAlgo:
         product_dir,
         label_names,
         model_key,
+        ok_samples=None,
+        ng_samples=None,
     ):
         self.train_calls.append(
             {
@@ -120,6 +123,8 @@ class _RuntimeParamsAlgo:
                 "product_dir": str(product_dir),
                 "label_names": list(label_names),
                 "model_key": str(model_key),
+                "ok_samples": list(ok_samples or []),
+                "ng_samples": list(ng_samples or []),
                 "score_mode": str(self.product_params.score_mode),
                 "margin": float(self.product_params.margin),
                 "topk": int(self.product_params.topk),
@@ -151,8 +156,23 @@ class _RuntimeParamsAlgo:
             result_rows=[],
         )
 
+    def clear_training_output(self, algorithm: str, product_dir: str, *, model_key: object = "") -> None:
+        self.clear_calls.append(
+            {
+                "algorithm": str(algorithm),
+                "product_dir": str(product_dir),
+                "model_key": str(model_key or ""),
+            }
+        )
+
 
 class _RuntimeParamsHarness:
+    _effective_model_key_for_item = ToolPage._effective_model_key_for_item
+    _group_items_for_inspection_item = ToolPage._group_items_for_inspection_item
+    _training_samples_for_inspection_item = ToolPage._training_samples_for_inspection_item
+    _store_runtime_params_for_group = ToolPage._store_runtime_params_for_group
+    _clear_previous_training_output = ToolPage._clear_previous_training_output
+    _reload_runtime_params_from_disk = ToolPage._reload_runtime_params_from_disk
     _apply_runtime_params_to_ui = ToolPage._apply_runtime_params_to_ui
     _on_runtime_params_changed = ToolPage._on_runtime_params_changed
     _resolve_training_algorithm = ToolPage._resolve_training_algorithm
@@ -168,6 +188,9 @@ class _RuntimeParamsHarness:
             current_product="demo",
         )
         self.algo = _RuntimeParamsAlgo()
+        self.train_files = ["ok.png"]
+        self.ok_files = []
+        self.ng_files = []
         self.lbl_status = QtWidgets.QLabel("")
         self.cmb_mode = QtWidgets.QComboBox()
         self.cmb_mode.addItems(["proto", "topk"])
@@ -209,6 +232,7 @@ class _RuntimeParamsHarness:
         self.save_runtime_calls = 0
         self.update_calls = 0
         self.hint_calls = 0
+        self.reload_calls = 0
 
     def cleanup(self) -> None:
         self._tmpdir.cleanup()
@@ -236,8 +260,20 @@ class _RuntimeParamsHarness:
     def _update_learning_backbone_hint(self) -> None:
         self.hint_calls += 1
 
+    def _reload_runtime_params_from_disk(self) -> None:
+        self.reload_calls += 1
+
     def _training_sample_groups_for_role(self, camera_role=None, *, roi_label=None):
         return ["ok.png"], [], ["ok.png"]
+
+    def _train_sample_paths_for_role(self, camera_role=None):
+        return ["ok.png"]
+
+    def _path_has_roi_geometry(self, path: str, roi_label: str) -> bool:
+        return True
+
+    def _sample_roi_status_for_path(self, path: str, camera_role: object, roi_label: str) -> str:
+        return "OK"
 
     def _missing_training_roi_paths(self, roi_label: str, candidate_paths: list[str]):
         return []
@@ -321,9 +357,21 @@ class ToolPageItemRuntimeParamsTest(unittest.TestCase):
                         "product_dir": harness.session.product_dir,
                         "label_names": ["roi3"],
                         "model_key": "cam1__roi3",
+                        "ok_samples": [("ok.png", "roi3")],
+                        "ng_samples": [],
                         "score_mode": "topk",
                         "margin": 0.21,
                         "topk": 5,
+                    }
+                ],
+            )
+            self.assertEqual(
+                harness.algo.clear_calls,
+                [
+                    {
+                        "algorithm": "patchcore_lite",
+                        "product_dir": harness.session.product_dir,
+                        "model_key": "cam1__roi3",
                     }
                 ],
             )

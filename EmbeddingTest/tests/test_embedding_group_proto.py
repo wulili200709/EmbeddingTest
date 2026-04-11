@@ -47,6 +47,10 @@ class EmbeddingGroupProtoTest(unittest.TestCase):
         self.assertEqual(model.score_mode, "proto")
         self.assertEqual(model.ok_bank.shape, (1, 2))
         self.assertEqual(model.ng_bank.shape, (1, 2))
+        self.assertEqual(model.ok_analysis_bank.shape, (2, 2))
+        self.assertEqual(model.ng_analysis_bank.shape, (2, 2))
+        self.assertEqual(model.ok_analysis_names, ["ok_1.png [roi1]", "ok_2.png [roi2]"])
+        self.assertEqual(model.ng_analysis_names, ["ng_1.png [roi1]", "ng_2.png [roi2]"])
         np.testing.assert_allclose(model.ok_bank, model.ok_proto, atol=1e-6)
         np.testing.assert_allclose(model.ng_bank, model.ng_proto, atol=1e-6)
 

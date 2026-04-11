@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -24,7 +25,7 @@ from ui.debug.tool_page import roi_ops, tool_config
 
 class _DummyAlgo:
     def __init__(self, product_dir: str) -> None:
-        self.product_params = SimpleNamespace(algorithm="")
+        self.product_params = SimpleNamespace(algorithm="", traditional_models={})
         self._product_dir = product_dir
 
     def is_learning_tool(self, algorithm_code: str) -> bool:
@@ -44,6 +45,10 @@ class _DummyAlgo:
         return str(algorithm_code or "").strip()
 
     def get_traditional_model_dict(self, algorithm: str, model_key: str | None = None):
+        key = f"{algorithm}::{model_key or 'shared'}"
+        model_dict = getattr(self, "_traditional_models", {}).get(key)
+        if isinstance(model_dict, dict):
+            return model_dict
         return None
 
     def traditional_model_storage_key(self, algorithm: str, model_key: str | None = None) -> str:
@@ -64,8 +69,11 @@ class _ToolConfigHarness:
         self.session = SimpleNamespace(
             product_dir=self._tmpdir.name,
             inspection_items_path=os.path.join(self._tmpdir.name, "inspection_items.json"),
+            product_params_path=os.path.join(self._tmpdir.name, "product_params.json"),
         )
         self.algo = _DummyAlgo(self.session.product_dir)
+        self.algo._traditional_models = {}
+        self.inspectionItemsChanged = SimpleNamespace(emit=self._reload_runtime_params_from_disk)
         self.inspection_items = [
             InspectionItem(
                 item_id="roi1",
@@ -149,6 +157,22 @@ class _ToolConfigHarness:
 
     def _on_inspection_item_group_changed(self, row: int, group_name: object) -> None:
         tool_config._on_inspection_item_group_changed(self, row, group_name)
+
+    def _save_runtime_params(self) -> None:
+        payload = {
+            "algorithm": str(getattr(self.algo.product_params, "algorithm", "") or ""),
+            "traditional_models": dict(getattr(self.algo.product_params, "traditional_models", {}) or {}),
+        }
+        with open(self.session.product_params_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+
+    def _reload_runtime_params_from_disk(self) -> None:
+        if not os.path.exists(self.session.product_params_path):
+            return
+        with open(self.session.product_params_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        self.algo.product_params.algorithm = str(payload.get("algorithm", "") or "")
+        self.algo.product_params.traditional_models = dict(payload.get("traditional_models", {}) or {})
 
 
 class ToolPageToolConfigTest(unittest.TestCase):
@@ -286,6 +310,74 @@ class ToolPageToolConfigTest(unittest.TestCase):
             group_combo.setCurrentIndex(group_combo.findData("hole"))
 
             self.assertEqual(harness.inspection_items[0].task_group, "hole")
+        finally:
+            harness.cleanup()
+
+    def test_grouped_traditional_status_requires_group_model_key(self) -> None:
+        harness = _ToolConfigHarness()
+        try:
+            harness.inspection_items[0].algorithm_code = "meanstd"
+            harness.inspection_items[0].task_group = "hole"
+            harness.algo._traditional_models = {
+                "meanstd::cam1__roi1": {
+                    "threshold": 0.5,
+                    "ok_when": "greater_equal",
+                    "accuracy": 1.0,
+                }
+            }
+
+            harness._refresh_inspection_items_table()
+
+            status_item = harness.inspection_items_table.item(0, 5)
+            self.assertIsNotNone(status_item)
+            self.assertIn("未标定", status_item.text())
+        finally:
+            harness.cleanup()
+
+    def test_persist_inspection_items_saves_runtime_params_before_emit(self) -> None:
+        harness = _ToolConfigHarness()
+        try:
+            old_model = {
+                "algorithm": "meanintensity",
+                "threshold": 80.0,
+                "ok_when": "less_equal",
+                "accuracy": 0.99,
+            }
+            new_model = {
+                "algorithm": "meanintensity",
+                "threshold": 80.58402252197266,
+                "ok_when": "less_equal",
+                "accuracy": 0.9776785714285714,
+            }
+            with open(harness.session.product_params_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "algorithm": "meanintensity",
+                        "traditional_models": {
+                            "meanintensity::cam1__hole": dict(old_model),
+                        },
+                    },
+                    handle,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            harness.algo.product_params.algorithm = "meanintensity"
+            harness.algo.product_params.traditional_models = {
+                "meanintensity::cam1__hole": dict(new_model),
+            }
+
+            tool_config._persist_inspection_items(harness)
+
+            self.assertAlmostEqual(
+                harness.algo.product_params.traditional_models["meanintensity::cam1__hole"]["threshold"],
+                new_model["threshold"],
+            )
+            with open(harness.session.product_params_path, "r", encoding="utf-8") as handle:
+                saved_payload = json.load(handle)
+            self.assertAlmostEqual(
+                float(saved_payload["traditional_models"]["meanintensity::cam1__hole"]["threshold"]),
+                new_model["threshold"],
+            )
         finally:
             harness.cleanup()
 

@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 
 from .image_io import imread
-from .labelme import labelme_json_of_image, read_shape_from_labelme
+from .labelme import labelme_json_of_image, list_shapes_from_labelme, read_shape_from_labelme
 
 
 TRADITIONAL_ALGORITHMS = ["meanintensity", "meanstd", "meanhsv_h", "meanhsv_v", "meanhsv_s"]
@@ -51,6 +51,64 @@ class TraditionalThresholdModel:
 
 def is_traditional_algorithm(name: str) -> bool:
     return str(name or "").strip().lower() in TRADITIONAL_ALGORITHMS
+
+
+def _normalized_bgr_array(image_bgr: np.ndarray) -> np.ndarray:
+    img_bgr = np.ascontiguousarray(np.asarray(image_bgr))
+    if img_bgr.ndim != 3 or img_bgr.shape[2] < 3:
+        raise ValueError(f"unsupported image shape: {img_bgr.shape!r}")
+    return img_bgr[:, :, :3]
+
+
+def _resolve_roi_shape(
+    shape_by_label: Dict[str, dict],
+    preferred_label: str = "roi1",
+) -> tuple[str, dict]:
+    label_name = str(preferred_label or "").strip() or "roi1"
+    shape = dict(shape_by_label or {}).get(label_name)
+    if shape is None:
+        label_name = "roi"
+        shape = dict(shape_by_label or {}).get(label_name)
+    if shape is None:
+        raise RuntimeError(f"memory image missing {preferred_label}/roi")
+    return label_name, shape
+
+
+def _roi_bbox_and_mask(
+    *,
+    shape: Dict[str, Any],
+    image_height: int,
+    image_width: int,
+) -> Dict[str, Any]:
+    pts = np.asarray(shape.get("points", []), dtype=np.float32)
+    if pts.size == 0:
+        raise RuntimeError("memory ROI points empty")
+    x_min, y_min = pts.min(axis=0)
+    x_max, y_max = pts.max(axis=0)
+    x = max(0, int(np.floor(float(x_min))))
+    y = max(0, int(np.floor(float(y_min))))
+    x2 = min(image_width, int(np.ceil(float(x_max))))
+    y2 = min(image_height, int(np.ceil(float(y_max))))
+    if x2 <= x or y2 <= y:
+        raise RuntimeError("memory ROI bbox invalid")
+
+    mask = np.zeros((y2 - y, x2 - x), dtype=np.uint8)
+    rel_pts = pts - np.array([[x, y]], dtype=np.float32)
+    if str(shape.get("shape_type", "rectangle")) == "polygon" and len(rel_pts) >= 3:
+        cv2.fillPoly(mask, [np.round(rel_pts).astype(np.int32)], 255)
+    else:
+        p0 = rel_pts.min(axis=0)
+        p1 = rel_pts.max(axis=0)
+        rx = max(0, int(np.floor(float(p0[0]))))
+        ry = max(0, int(np.floor(float(p0[1]))))
+        rx2 = min(mask.shape[1], int(np.ceil(float(p1[0]))))
+        ry2 = min(mask.shape[0], int(np.ceil(float(p1[1]))))
+        mask[ry:ry2, rx:rx2] = 255
+
+    return {
+        "mask": mask,
+        "bbox_xywh": (x, y, x2 - x, y2 - y),
+    }
 
 
 def _load_roi_mask_crop(img_path: str, preferred_label: str = "roi1") -> Dict[str, Any]:
@@ -113,53 +171,22 @@ def _load_roi_mask_crop_from_array(
     shape_by_label: Dict[str, dict],
     preferred_label: str = "roi1",
 ) -> Dict[str, Any]:
-    label_name = preferred_label
-    shape = dict(shape_by_label or {}).get(preferred_label)
-    if shape is None:
-        label_name = "roi"
-        shape = dict(shape_by_label or {}).get(label_name)
-    if shape is None:
-        raise RuntimeError(f"memory image missing {preferred_label}/roi")
-
-    img_bgr = np.ascontiguousarray(np.asarray(image_bgr))
-    if img_bgr.ndim != 3 or img_bgr.shape[2] < 3:
-        raise ValueError(f"unsupported image shape: {img_bgr.shape!r}")
-    img_bgr = img_bgr[:, :, :3]
+    label_name, shape = _resolve_roi_shape(shape_by_label, preferred_label=preferred_label)
+    img_bgr = _normalized_bgr_array(image_bgr)
     h_img, w_img = img_bgr.shape[:2]
-
-    pts = np.asarray(shape.get("points", []), dtype=np.float32)
-    if pts.size == 0:
-        raise RuntimeError("memory ROI points empty")
-    x_min, y_min = pts.min(axis=0)
-    x_max, y_max = pts.max(axis=0)
-    x = max(0, int(np.floor(float(x_min))))
-    y = max(0, int(np.floor(float(y_min))))
-    x2 = min(w_img, int(np.ceil(float(x_max))))
-    y2 = min(h_img, int(np.ceil(float(y_max))))
-    if x2 <= x or y2 <= y:
-        raise RuntimeError("memory ROI bbox invalid")
-
+    roi_geometry = _roi_bbox_and_mask(shape=shape, image_height=h_img, image_width=w_img)
+    x, y, width, height = roi_geometry["bbox_xywh"]
+    x2 = x + width
+    y2 = y + height
     crop_bgr = img_bgr[y:y2, x:x2].copy()
     crop_gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
-    mask = np.zeros((y2 - y, x2 - x), dtype=np.uint8)
-    rel_pts = pts - np.array([[x, y]], dtype=np.float32)
-    if str(shape.get("shape_type", "rectangle")) == "polygon" and len(rel_pts) >= 3:
-        cv2.fillPoly(mask, [np.round(rel_pts).astype(np.int32)], 255)
-    else:
-        p0 = rel_pts.min(axis=0)
-        p1 = rel_pts.max(axis=0)
-        rx = max(0, int(np.floor(float(p0[0]))))
-        ry = max(0, int(np.floor(float(p0[1]))))
-        rx2 = min(mask.shape[1], int(np.ceil(float(p1[0]))))
-        ry2 = min(mask.shape[0], int(np.ceil(float(p1[1]))))
-        mask[ry:ry2, rx:rx2] = 255
 
     return {
         "label_name": label_name,
         "crop_bgr": crop_bgr,
         "crop_gray": crop_gray,
-        "mask": mask,
-        "bbox_xywh": (x, y, x2 - x, y2 - y),
+        "mask": roi_geometry["mask"],
+        "bbox_xywh": roi_geometry["bbox_xywh"],
     }
 
 
@@ -193,41 +220,121 @@ def compute_roi_metrics(img_path: str, preferred_label: str = "roi1") -> Dict[st
     }
 
 
+def compute_roi_metrics_batch(
+    img_path: str,
+    *,
+    preferred_labels: Sequence[str],
+    required_algorithms: Sequence[str] | None = None,
+    json_path: str | None = None,
+) -> List[Dict[str, Any]]:
+    path_text = str(img_path or "").strip()
+    if not path_text:
+        raise FileNotFoundError(path_text)
+    img_bgr = imread(path_text, cv2.IMREAD_COLOR)
+    if img_bgr is None:
+        raise FileNotFoundError(path_text)
+
+    jpath = str(json_path or labelme_json_of_image(path_text))
+    if not os.path.exists(jpath):
+        raise FileNotFoundError(f"Missing labelme json: {jpath}")
+
+    shape_by_label = {
+        str(shape.get("label", "")).strip(): shape
+        for shape in list_shapes_from_labelme(jpath)
+        if str(shape.get("label", "")).strip()
+    }
+    rows = compute_roi_metrics_batch_from_array(
+        img_bgr,
+        shape_by_label=shape_by_label,
+        preferred_labels=preferred_labels,
+        required_algorithms=required_algorithms,
+    )
+    for row in rows:
+        row["file_path"] = path_text
+        row["file_name"] = os.path.basename(path_text)
+    return rows
+
+
 def compute_roi_metrics_from_array(
     image_bgr: np.ndarray,
     *,
     shape_by_label: Dict[str, dict],
     preferred_label: str = "roi1",
 ) -> Dict[str, Any]:
-    roi = _load_roi_mask_crop_from_array(
+    return compute_roi_metrics_batch_from_array(
         image_bgr,
         shape_by_label=shape_by_label,
-        preferred_label=preferred_label,
-    )
-    crop_gray = np.asarray(roi["crop_gray"], dtype=np.float32)
-    crop_bgr = np.asarray(roi["crop_bgr"], dtype=np.uint8)
-    mask = np.asarray(roi["mask"], dtype=np.uint8)
-    valid_gray = crop_gray[mask > 0]
-    if valid_gray.size == 0:
-        raise RuntimeError("memory ROI valid pixels empty")
+        preferred_labels=[preferred_label],
+    )[0]
 
-    hsv = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2HSV)
-    valid_hsv = np.asarray(hsv[mask > 0], dtype=np.float32)
-    if valid_hsv.size == 0:
-        raise RuntimeError("memory ROI HSV pixels empty")
 
-    return {
-        "roi_label": str(roi["label_name"]),
-        "bbox_xywh": list(roi["bbox_xywh"]),
-        "meanintensity": float(np.mean(valid_gray)),
-        "mean_intensity": float(np.mean(valid_gray)),
-        "meanstd": float(np.std(valid_gray)),
-        "mean_std": float(np.std(valid_gray)),
-        "meanhsv_h": float(np.mean(valid_hsv[:, 0])),
-        "meanhsv_s": float(np.mean(valid_hsv[:, 1])),
-        "meanhsv_v": float(np.mean(valid_hsv[:, 2])),
-        "roi_area": int(valid_gray.size),
+def compute_roi_metrics_batch_from_array(
+    image_bgr: np.ndarray,
+    *,
+    shape_by_label: Dict[str, dict],
+    preferred_labels: Sequence[str],
+    required_algorithms: Sequence[str] | None = None,
+) -> List[Dict[str, Any]]:
+    labels = [str(label or "").strip() or "roi1" for label in list(preferred_labels or [])]
+    if not labels:
+        return []
+
+    img_bgr = _normalized_bgr_array(image_bgr)
+    need_gray = True
+    need_hsv = True
+    normalized_algorithms = {
+        str(name or "").strip().lower()
+        for name in list(required_algorithms or [])
+        if is_traditional_algorithm(name)
     }
+    if normalized_algorithms:
+        need_gray = any(name in {"meanintensity", "meanstd"} for name in normalized_algorithms)
+        need_hsv = any(name in {"meanhsv_h", "meanhsv_s", "meanhsv_v"} for name in normalized_algorithms)
+
+    gray_image = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY) if need_gray else None
+    hsv_image = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV) if need_hsv else None
+    h_img, w_img = img_bgr.shape[:2]
+
+    rows: List[Dict[str, Any]] = []
+    for preferred_label in labels:
+        label_name, shape = _resolve_roi_shape(shape_by_label, preferred_label=preferred_label)
+        roi_geometry = _roi_bbox_and_mask(shape=shape, image_height=h_img, image_width=w_img)
+        x, y, width, height = roi_geometry["bbox_xywh"]
+        x2 = x + width
+        y2 = y + height
+        mask = np.asarray(roi_geometry["mask"], dtype=np.uint8)
+        valid_pixels = mask > 0
+
+        row: Dict[str, Any] = {
+            "roi_label": str(label_name),
+            "bbox_xywh": list(roi_geometry["bbox_xywh"]),
+        }
+
+        valid_gray = None
+        if gray_image is not None:
+            crop_gray = np.asarray(gray_image[y:y2, x:x2], dtype=np.float32)
+            valid_gray = crop_gray[valid_pixels]
+            if valid_gray.size == 0:
+                raise RuntimeError("memory ROI valid pixels empty")
+            row["meanintensity"] = float(np.mean(valid_gray))
+            row["mean_intensity"] = float(np.mean(valid_gray))
+            row["meanstd"] = float(np.std(valid_gray))
+            row["mean_std"] = float(np.std(valid_gray))
+            row["roi_area"] = int(valid_gray.size)
+
+        if hsv_image is not None:
+            crop_hsv = np.asarray(hsv_image[y:y2, x:x2], dtype=np.float32)
+            valid_hsv = crop_hsv[valid_pixels]
+            if valid_hsv.size == 0:
+                raise RuntimeError("memory ROI HSV pixels empty")
+            row["meanhsv_h"] = float(np.mean(valid_hsv[:, 0]))
+            row["meanhsv_s"] = float(np.mean(valid_hsv[:, 1]))
+            row["meanhsv_v"] = float(np.mean(valid_hsv[:, 2]))
+            if "roi_area" not in row:
+                row["roi_area"] = int(valid_hsv.shape[0])
+
+        rows.append(row)
+    return rows
 
 
 def metric_value(metrics: Dict[str, Any], algorithm: str) -> float:
@@ -419,7 +526,7 @@ def train_threshold_model_from_samples(
         ok_mean=float(np.mean(ok_values)),
         ng_mean=float(np.mean(ng_values)),
         accuracy=best_acc,
-        roi_label=labels[0] if labels else preferred_label,
+        roi_label=str(preferred_label or (labels[0] if labels else "roi1")).strip() or "roi1",
     )
     return best_model, rows
 
@@ -427,7 +534,9 @@ def train_threshold_model_from_samples(
 __all__ = [
     "TRADITIONAL_ALGORITHMS",
     "TraditionalThresholdModel",
+    "compute_roi_metrics_batch",
     "compute_roi_metrics",
+    "compute_roi_metrics_batch_from_array",
     "compute_roi_metrics_from_array",
     "is_traditional_algorithm",
     "metric_value",
