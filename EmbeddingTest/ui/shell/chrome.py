@@ -107,6 +107,9 @@ def build_menu_bar(window) -> None:
         shell_icon(SP.SP_FileDialogContentsView), "位置修正工具"
     ).triggered.connect(window.tool_page.open_template_editor_dialog)
     hardware_menu.addAction(
+        shell_icon(SP.SP_FileDialogDetailedView), "NCC位置修正工具"
+    ).triggered.connect(window.tool_page.open_ncc_match_dialog)
+    hardware_menu.addAction(
         shell_icon(SP.SP_FileDialogListView), "自动区域工具"
     ).triggered.connect(window.tool_page.open_template_match_dialog)
 

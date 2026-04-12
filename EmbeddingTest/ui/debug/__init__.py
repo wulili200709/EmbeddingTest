@@ -9,6 +9,7 @@ _SYMBOL_TO_MODULE = {
     "AnomalyHeatmapDialog": ".anomaly_heatmap_dialog",
     "EmbeddingAnalysisDialog": ".embedding_analysis_dialog",
     "Line2DupTemplateDialog": "line2dup.ui.template_page_pyside6",
+    "NccMatchWorkbenchDialog": "ncc.ui.workbench_dialog",
     "OverlayShape": ".roi_canvas_pyside6",
     "RoiCanvas": ".roi_canvas_pyside6",
     "pixmap_from_path": ".roi_canvas_pyside6",

@@ -1169,6 +1169,7 @@ class ToolPage(QtWidgets.QWidget):
         self._skip_empty_autogen_message = False
         self._tool_dialogs: Dict[str, QtWidgets.QDialog] = {}
         self._template_editor_dialog: Optional[QtWidgets.QDialog] = None
+        self._ncc_workbench_dialog: Optional[QtWidgets.QDialog] = None
         self._sample_annotation_preview_dialog: Optional[QtWidgets.QDialog] = None
         self._debug_camera_manager = None
         self._debug_frame_grab_service = None
@@ -1877,6 +1878,29 @@ class ToolPage(QtWidgets.QWidget):
 
     def open_template_editor_dialog(self) -> None:
         self._open_line2dup_template_page()
+
+    def open_ncc_match_dialog(self) -> None:
+        dialog = self._ncc_workbench_dialog
+        if dialog is not None and dialog.isVisible():
+            dialog.raise_()
+            dialog.activateWindow()
+            return
+
+        from ui.debug import NccMatchWorkbenchDialog
+
+        dialog = NccMatchWorkbenchDialog(
+            product_name=self.session.current_product,
+            product_dir=self.session.product_dir,
+            camera_role=self.current_camera_role(),
+            initial_image_path=str(self.canvas.image_path() or ""),
+            parent=self.window(),
+        )
+        dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
+        dialog.destroyed.connect(lambda *_: setattr(self, "_ncc_workbench_dialog", None))
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        self._ncc_workbench_dialog = dialog
 
     def runtime_controller(self):
         parent = self.parent()
