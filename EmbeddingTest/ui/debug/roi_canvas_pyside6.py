@@ -125,15 +125,16 @@ class RoiCanvas(QtWidgets.QLabel):
     def reset_zoom(self) -> None:
         self.set_zoom(1.0)
 
-    def clear_roi(self) -> None:
+    def clear_roi(self, *, emit_signal: bool = True) -> None:
         self.roi.xywh = None
         self.roi.points = None
         self._poly_pts = []
         self._mouse_pos = None
         self.update()
-        self.shapesChanged.emit()
+        if emit_signal:
+            self.shapesChanged.emit()
 
-    def set_roi_rect(self, xywh: Optional[Tuple[int, int, int, int]]) -> None:
+    def set_roi_rect(self, xywh: Optional[Tuple[int, int, int, int]], *, emit_signal: bool = True) -> None:
         if xywh is None:
             self.roi.shape_type = "rect"
             self.roi.xywh = None
@@ -145,9 +146,10 @@ class RoiCanvas(QtWidgets.QLabel):
         self._poly_pts = []
         self._mouse_pos = None
         self.update()
-        self.shapesChanged.emit()
+        if emit_signal:
+            self.shapesChanged.emit()
 
-    def set_roi_polygon(self, points: Optional[List[Tuple[float, float]]]) -> None:
+    def set_roi_polygon(self, points: Optional[List[Tuple[float, float]]], *, emit_signal: bool = True) -> None:
         if not points or len(points) < 3:
             self.roi.shape_type = "polygon"
             self.roi.points = None
@@ -159,7 +161,8 @@ class RoiCanvas(QtWidgets.QLabel):
         self._poly_pts = []
         self._mouse_pos = None
         self.update()
-        self.shapesChanged.emit()
+        if emit_signal:
+            self.shapesChanged.emit()
 
     def set_overlays(self, overlays: Optional[List[OverlayShape]]) -> None:
         self._overlays = list(overlays or [])

@@ -58,6 +58,7 @@ def _open_line2dup_template_page(self) -> None:
         self._template_editor_dialog.raise_()
         self._template_editor_dialog.activateWindow()
         return
+    _ensure_line2dup_reference_regions_sync_timer(self)
     initial = self.ref_image or self.canvas.image_path() or ""
     dlg = Line2DupTemplateDialog(
         product_name=self.session.current_product,
@@ -76,7 +77,38 @@ def _open_line2dup_template_page(self) -> None:
     dlg.raise_()
     dlg.activateWindow()
 
+def _ensure_line2dup_reference_regions_sync_timer(self):
+    timer = getattr(self, "_line2dup_reference_regions_sync_timer", None)
+    if timer is not None:
+        return timer
+    timer = QtCore.QTimer(self)
+    timer.setSingleShot(True)
+    timer.timeout.connect(self._flush_line2dup_reference_regions_sync)
+    self._line2dup_reference_regions_sync_timer = timer
+    self._line2dup_reference_regions_sync_pending = False
+    return timer
+
+def _schedule_line2dup_reference_regions_sync(self) -> None:
+    timer = _ensure_line2dup_reference_regions_sync_timer(self)
+    self._line2dup_reference_regions_sync_pending = True
+    timer.start(120)
+
+def _flush_line2dup_reference_regions_sync(self) -> None:
+    timer = getattr(self, "_line2dup_reference_regions_sync_timer", None)
+    if timer is not None and timer.isActive():
+        timer.stop()
+    if not bool(getattr(self, "_line2dup_reference_regions_sync_pending", False)):
+        return
+    self._line2dup_reference_regions_sync_pending = False
+    self._clear_training_roi_review_state(self.current_camera_role())
+    self._sync_line2dup_recipe_and_items()
+    current_path = self.canvas.image_path()
+    if current_path and os.path.exists(current_path):
+        self._load_canvas_image(current_path)
+    self.lbl_status.setText("状态：参考ROI已同步到运行界面")
+
 def _on_template_editor_dialog_destroyed(self, *_args) -> None:
+    self._flush_line2dup_reference_regions_sync()
     self._template_editor_dialog = None
 
 def _on_line2dup_model_saved(self, model_path: str, recipe_path: str) -> None:
@@ -91,12 +123,8 @@ def _on_line2dup_model_saved(self, model_path: str, recipe_path: str) -> None:
     self.lbl_status.setText(f"状态：模板模型已保存 {os.path.basename(model_path)}")
 
 def _on_line2dup_reference_regions_changed(self) -> None:
-    self._clear_training_roi_review_state(self.current_camera_role())
-    self._sync_line2dup_recipe_and_items()
-    current_path = self.canvas.image_path()
-    if current_path and os.path.exists(current_path):
-        self._load_canvas_image(current_path)
-    self.lbl_status.setText("状态：参考ROI已同步到运行界面")
+    self._schedule_line2dup_reference_regions_sync()
+    self.lbl_status.setText("状态：参考ROI已更新，正在同步运行界面")
 
 def _sync_line2dup_recipe_and_items(self) -> None:
     try:

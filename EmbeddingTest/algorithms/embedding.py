@@ -4,6 +4,8 @@ import glob
 import json
 import os
 from dataclasses import dataclass
+from pathlib import Path
+from threading import RLock
 from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -18,10 +20,153 @@ try:
 except Exception:  # pragma: no cover
     cv2 = None
 
+try:
+    import onnxruntime as ort  # type: ignore
+except Exception:  # pragma: no cover
+    ort = None
+
 from .labelme import (
     clamp_roi_xywh,
     labelme_json_of_image,
 )
+from .registry import learning_backbone_storage_code
+from app_paths import writable_embedding_test_root
+
+
+_ORT_BACKBONE_NAMES = {"mobilenet_v3_large"}
+_ORT_OPSET = 17
+_ORT_CACHE_LOCK = RLock()
+_ORT_BACKBONE_CACHE: dict[tuple[str, str], "_OnnxRuntimeFeatureNet"] = {}
+_ORT_LOGGED_EVENTS: set[tuple[str, str, str]] = set()
+
+
+def _ort_log(event: str, backbone: str, detail: str) -> None:
+    normalized_backbone = str(backbone or "").strip() or "unknown"
+    normalized_detail = str(detail or "").strip()
+    key = (str(event or "").strip(), normalized_backbone, normalized_detail)
+    with _ORT_CACHE_LOCK:
+        if key in _ORT_LOGGED_EVENTS:
+            return
+        _ORT_LOGGED_EVENTS.add(key)
+    message = f"[ORT] event={key[0]} backbone={normalized_backbone}"
+    if normalized_detail:
+        message += f" {normalized_detail}"
+    print(message, flush=True)
+
+
+class _OnnxRuntimeFeatureNet:
+    def __init__(self, session):
+        self._session = session
+        self._input_name = session.get_inputs()[0].name
+        self._output_name = session.get_outputs()[0].name
+        self.backend = "onnxruntime"
+        self.device = "cpu"
+
+    def __call__(self, batch):
+        if isinstance(batch, torch.Tensor):
+            array = batch.detach().cpu().numpy().astype(np.float32, copy=False)
+        else:
+            array = np.asarray(batch, dtype=np.float32)
+        outputs = self._session.run([self._output_name], {self._input_name: array})
+        return torch.from_numpy(np.asarray(outputs[0], dtype=np.float32))
+
+
+def _build_torch_backbone(name: str):
+    if name == "efficientnet_b0":
+        model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.DEFAULT)
+        feat = model.features
+    elif name == "mobilenet_v3_small":
+        model = models.mobilenet_v3_small(weights=models.MobileNet_V3_Small_Weights.DEFAULT)
+        feat = model.features
+    elif name == "mobilenet_v3_large":
+        model = models.mobilenet_v3_large(weights=models.MobileNet_V3_Large_Weights.DEFAULT)
+        feat = model.features
+    else:
+        raise ValueError(f"Unknown backbone: {name}")
+    return feat, _backbone_out_channels(name)
+
+
+def _backbone_out_channels(name: str) -> int:
+    if name == "efficientnet_b0":
+        return 1280
+    if name == "mobilenet_v3_small":
+        return 576
+    if name == "mobilenet_v3_large":
+        return 960
+    raise ValueError(f"Unknown backbone: {name}")
+
+
+def _ort_backbone_path(name: str) -> str:
+    storage_code = learning_backbone_storage_code(name) or str(name or "").strip()
+    root = writable_embedding_test_root(__file__)
+    cache_dir = root / ".qr_session" / "_onnx_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return str(cache_dir / f"{storage_code}_features_opset{_ORT_OPSET}.onnx")
+
+
+def _export_backbone_features_to_onnx(name: str, onnx_path: str) -> None:
+    feat, _out_ch = _build_torch_backbone(name)
+    feat.eval().cpu()
+    example = torch.randn(1, 3, 224, 224, dtype=torch.float32)
+    # Use the legacy TorchScript ONNX exporter here so ORT acceleration does not
+    # require the optional `onnxscript` package in the field environment.
+    torch.onnx.export(
+        feat,
+        example,
+        onnx_path,
+        export_params=True,
+        opset_version=_ORT_OPSET,
+        do_constant_folding=True,
+        input_names=["input"],
+        output_names=["features"],
+        dynamic_axes={
+            "input": {0: "batch"},
+            "features": {0: "batch"},
+        },
+        dynamo=False,
+    )
+
+
+def _maybe_load_ort_backbone(name: str, device: str):
+    normalized_name = str(name or "").strip()
+    normalized_device = str(device or "cpu").strip().lower() or "cpu"
+    if normalized_device != "cpu":
+        return None
+    if normalized_name not in _ORT_BACKBONE_NAMES:
+        return None
+    if ort is None:
+        return None
+
+    cache_key = (normalized_name, normalized_device)
+    cached = _ORT_BACKBONE_CACHE.get(cache_key)
+    if cached is not None:
+        _ort_log("reuse-session", normalized_name, "backend=onnxruntime source=in_process_cache")
+        return cached
+
+    with _ORT_CACHE_LOCK:
+        cached = _ORT_BACKBONE_CACHE.get(cache_key)
+        if cached is not None:
+            _ort_log("reuse-session", normalized_name, "backend=onnxruntime source=in_process_cache")
+            return cached
+        onnx_path = _ort_backbone_path(normalized_name)
+        exported = False
+        if not os.path.exists(onnx_path):
+            _export_backbone_features_to_onnx(normalized_name, onnx_path)
+            exported = True
+        session_options = ort.SessionOptions()
+        session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        session = ort.InferenceSession(
+            onnx_path,
+            sess_options=session_options,
+            providers=["CPUExecutionProvider"],
+        )
+        if exported:
+            _ort_log("exported", normalized_name, f"backend=onnxruntime path={onnx_path}")
+        else:
+            _ort_log("loaded-existing", normalized_name, f"backend=onnxruntime path={onnx_path}")
+        wrapper = _OnnxRuntimeFeatureNet(session)
+        _ORT_BACKBONE_CACHE[cache_key] = wrapper
+        return wrapper
 
 
 def get_device() -> str:
@@ -30,22 +175,21 @@ def get_device() -> str:
 
 def load_backbone(name: str, device: Optional[str] = None):
     device = device or get_device()
-    if name == "efficientnet_b0":
-        model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.DEFAULT)
-        feat = model.features
-        out_ch = 1280
-    elif name == "mobilenet_v3_small":
-        model = models.mobilenet_v3_small(weights=models.MobileNet_V3_Small_Weights.DEFAULT)
-        feat = model.features
-        out_ch = 576
-    elif name == "mobilenet_v3_large":
-        model = models.mobilenet_v3_large(weights=models.MobileNet_V3_Large_Weights.DEFAULT)
-        feat = model.features
-        out_ch = 960
-    else:
-        raise ValueError(f"Unknown backbone: {name}")
+    out_ch = _backbone_out_channels(name)
+    ort_feat = None
+    try:
+        ort_feat = _maybe_load_ort_backbone(name, str(device))
+    except Exception as exc:
+        if str(device or "").strip().lower() == "cpu" and str(name or "").strip() in _ORT_BACKBONE_NAMES:
+            _ort_log("fallback", str(name), f"backend=torch reason={type(exc).__name__}:{exc}")
+        ort_feat = None
+    if ort_feat is not None:
+        return ort_feat, out_ch
 
+    feat, _ = _build_torch_backbone(name)
     feat.eval().to(device)
+    if str(device or "").strip().lower() == "cpu" and str(name or "").strip() in _ORT_BACKBONE_NAMES:
+        _ort_log("backend", str(name), "backend=torch source=load_backbone")
     return feat, out_ch
 
 

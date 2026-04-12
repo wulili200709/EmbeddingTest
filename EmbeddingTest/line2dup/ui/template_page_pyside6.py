@@ -319,6 +319,8 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._search_roi_points: List[List[float]] = []
         self._find_result_cache: Dict[str, Dict[str, object]] = {}
         self._reference_preview_overlays: List[OverlayShape] = []
+        self._reference_region_overlay_cache: List[OverlayShape] = []
+        self._reference_region_overlay_cache_valid = False
 
         self._build_ui()
         self._load_recipe()
@@ -708,7 +710,11 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.table_reference_regions.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.table_reference_regions.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.table_reference_regions.setAlternatingRowColors(True)
+        self.table_reference_regions.setWordWrap(False)
+        self.table_reference_regions.setTextElideMode(QtCore.Qt.TextElideMode.ElideRight)
+        self.table_reference_regions.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
         self.table_reference_regions.currentCellChanged.connect(self._on_reference_region_selected)
+        self.table_reference_regions.verticalHeader().setDefaultSectionSize(24)
         self.table_reference_regions.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
         self.table_reference_regions.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
         self.table_reference_regions.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
@@ -1276,6 +1282,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             for region in (recipe.reference_regions or [])
             if isinstance(region, dict)
         ]
+        self._invalidate_reference_region_cache()
         self._selected_reference_idx = None
         with QtCore.QSignalBlocker(self.spin_array_count):
             self.spin_array_count.setValue(1)
@@ -1313,6 +1320,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
                     "points": [list(pt) for pt in points],
                 }
             ]
+            self._invalidate_reference_region_cache()
         self._selected_reference_idx = None
         self._refresh_reference_region_list()
         self._refresh_reference_canvas()
@@ -1917,52 +1925,87 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             return OverlayShape(shape_type="rect", xywh=(x, y, w, h), color=color, width=width, dash=dash)
         return OverlayShape(shape_type="rect", xywh=(0, 0, 1, 1), color=color, width=width, dash=dash)
 
+    def _invalidate_reference_region_cache(self) -> None:
+        self._reference_region_overlay_cache = []
+        self._reference_region_overlay_cache_valid = False
+
+    def _reference_region_overlay_shapes(self) -> List[OverlayShape]:
+        if not self._reference_region_overlay_cache_valid:
+            inactive_color = QtGui.QColor(255, 0, 255)
+            self._reference_region_overlay_cache = [
+                self._region_overlay_shape(region, inactive_color, 1.8, False)
+                for region in self._reference_regions
+            ]
+            self._reference_region_overlay_cache_valid = True
+        return list(self._reference_region_overlay_cache)
+
+    def _reference_region_row_values(self, idx: int, region: Dict[str, object]) -> List[str]:
+        label = str(region.get("output_label") or region.get("reference_label") or f"roi{idx + 1}")
+        display_name = str(region.get("display_name") or region.get("name") or label).strip() or label
+        shape_type = str(region.get("shape_type", "rectangle"))
+        points = [
+            [float(pt[0]), float(pt[1])]
+            for pt in region.get("points", []) or []
+            if isinstance(pt, (list, tuple)) and len(pt) >= 2
+        ]
+        if shape_type == "polygon":
+            info_text = f"Polygon · {len(points)} pts"
+        elif len(points) >= 2:
+            x0, y0 = float(points[0][0]), float(points[0][1])
+            x1, y1 = float(points[1][0]), float(points[1][1])
+            w = max(1, int(round(abs(x1 - x0))))
+            h = max(1, int(round(abs(y1 - y0))))
+            info_text = f"Rect · {w}x{h}"
+        else:
+            info_text = "Rect"
+        return [
+            str(idx),
+            display_name,
+            label,
+            info_text,
+        ]
+
     def _refresh_reference_region_list(self) -> None:
         if not hasattr(self, "table_reference_regions"):
             return
-        self.table_reference_regions.blockSignals(True)
-        self.table_reference_regions.setRowCount(0)
-        for idx, region in enumerate(self._reference_regions):
-            label = str(region.get("output_label") or region.get("reference_label") or f"roi{idx + 1}")
-            display_name = str(region.get("display_name") or region.get("name") or label).strip() or label
-            shape_type = str(region.get("shape_type", "rectangle"))
-            points = [
-                [float(pt[0]), float(pt[1])]
-                for pt in region.get("points", []) or []
-                if isinstance(pt, (list, tuple)) and len(pt) >= 2
-            ]
-            if shape_type == "polygon":
-                info_text = f"Polygon · {len(points)} pts"
-            elif len(points) >= 2:
-                x0, y0 = float(points[0][0]), float(points[0][1])
-                x1, y1 = float(points[1][0]), float(points[1][1])
-                w = max(1, int(round(abs(x1 - x0))))
-                h = max(1, int(round(abs(y1 - y0))))
-                info_text = f"Rect · {w}x{h}"
+        table = self.table_reference_regions
+        vbar = table.verticalScrollBar()
+        scroll_value = vbar.value()
+        blocker = QtCore.QSignalBlocker(table)
+        table.setUpdatesEnabled(False)
+        table.viewport().setUpdatesEnabled(False)
+        try:
+            region_count = len(self._reference_regions)
+            if table.rowCount() != region_count:
+                table.setRowCount(region_count)
+            for idx, region in enumerate(self._reference_regions):
+                values = self._reference_region_row_values(idx, region)
+                for col, value in enumerate(values):
+                    item = table.item(idx, col)
+                    if item is None:
+                        item = QtWidgets.QTableWidgetItem()
+                        if col == 0:
+                            item.setTextAlignment(
+                                QtCore.Qt.AlignmentFlag.AlignHCenter
+                                | QtCore.Qt.AlignmentFlag.AlignVCenter
+                            )
+                        table.setItem(idx, col, item)
+                    if item.text() != value:
+                        item.setText(value)
+                    if item.data(QtCore.Qt.UserRole) != idx:
+                        item.setData(QtCore.Qt.UserRole, idx)
+            if self._selected_reference_idx is not None and 0 <= self._selected_reference_idx < region_count:
+                if table.currentRow() != self._selected_reference_idx:
+                    table.setCurrentCell(self._selected_reference_idx, 0)
             else:
-                info_text = "Rect"
-            row = self.table_reference_regions.rowCount()
-            self.table_reference_regions.insertRow(row)
-            values = [
-                str(idx),
-                display_name,
-                label,
-                info_text,
-            ]
-            for col, value in enumerate(values):
-                item = QtWidgets.QTableWidgetItem(value)
-                item.setData(QtCore.Qt.UserRole, idx)
-                if col == 0:
-                    item.setTextAlignment(
-                        int(
-                            QtCore.Qt.AlignmentFlag.AlignHCenter
-                            | QtCore.Qt.AlignmentFlag.AlignVCenter
-                        )
-                    )
-                self.table_reference_regions.setItem(row, col, item)
-        if self._selected_reference_idx is not None and 0 <= self._selected_reference_idx < self.table_reference_regions.rowCount():
-            self.table_reference_regions.setCurrentCell(self._selected_reference_idx, 0)
-        self.table_reference_regions.blockSignals(False)
+                table.clearSelection()
+                table.setCurrentIndex(QtCore.QModelIndex())
+        finally:
+            table.viewport().setUpdatesEnabled(True)
+            table.setUpdatesEnabled(True)
+            del blocker
+        if vbar.value() != scroll_value:
+            vbar.setValue(min(scroll_value, vbar.maximum()))
 
     def _refresh_reference_region_fields(self) -> None:
         self.edit_output_label.blockSignals(True)
@@ -2012,18 +2055,17 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._set_reference_status(f"已更新基准 ROI 名称：{display_name}")
 
     def _refresh_reference_canvas(self) -> None:
-        overlays: List[OverlayShape] = []
-        inactive_color = QtGui.QColor(255, 0, 255)
-        for idx, region in enumerate(self._reference_regions):
-            if idx == self._selected_reference_idx:
-                continue
-            overlays.append(self._region_overlay_shape(region, inactive_color, 1.8, False))
+        overlays = [
+            overlay
+            for idx, overlay in enumerate(self._reference_region_overlay_shapes())
+            if idx != self._selected_reference_idx
+        ]
         overlays.extend(list(self._reference_preview_overlays or []))
         self.ref_canvas.set_overlays(overlays)
         self._syncing_reference_view = True
         try:
             if self._selected_reference_idx is None or not (0 <= self._selected_reference_idx < len(self._reference_regions)):
-                self.ref_canvas.clear_roi()
+                self.ref_canvas.clear_roi(emit_signal=False)
             else:
                 region = self._reference_regions[self._selected_reference_idx]
                 shape_type = str(region.get("shape_type", "rectangle"))
@@ -2034,7 +2076,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
                 ]
                 self.cmb_reference_shape.setCurrentText("polygon" if shape_type == "polygon" else "rectangle")
                 if shape_type == "polygon" and len(points) >= 3:
-                    self.ref_canvas.set_roi_polygon(points)
+                    self.ref_canvas.set_roi_polygon(points, emit_signal=False)
                 elif len(points) >= 2:
                     x0, y0 = float(points[0][0]), float(points[0][1])
                     x1, y1 = float(points[1][0]), float(points[1][1])
@@ -2044,10 +2086,11 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
                             int(round(min(y0, y1))),
                             max(1, int(round(abs(x1 - x0)))),
                             max(1, int(round(abs(y1 - y0)))),
-                        )
+                        ),
+                        emit_signal=False,
                     )
                 else:
-                    self.ref_canvas.clear_roi()
+                    self.ref_canvas.clear_roi(emit_signal=False)
         finally:
             self._syncing_reference_view = False
 
@@ -2081,6 +2124,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         if self._selected_reference_idx is None or not (0 <= self._selected_reference_idx < len(self._reference_regions)):
             return
         del self._reference_regions[self._selected_reference_idx]
+        self._invalidate_reference_region_cache()
         self._invalidate_reference_array_preview()
         self._selected_reference_idx = None
         self._refresh_reference_region_list()
@@ -2107,6 +2151,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
                     "points": points,
                 }
             )
+            self._invalidate_reference_region_cache()
             self._invalidate_reference_array_preview()
             self._selected_reference_idx = len(self._reference_regions) - 1
             self._refresh_reference_region_list()
@@ -2119,6 +2164,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             region = self._reference_regions[self._selected_reference_idx]
             region["shape_type"] = shape_type
             region["points"] = points
+            self._invalidate_reference_region_cache()
             self._invalidate_reference_array_preview()
             label = str(region.get("output_label") or region.get("reference_label") or f"roi{self._selected_reference_idx + 1}")
             self._refresh_reference_region_list()
@@ -2137,6 +2183,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         jpath = qr_core.labelme_json_of_image(self.image_path)
         if not os.path.exists(jpath):
             self._reference_regions = []
+            self._invalidate_reference_region_cache()
             self._selected_reference_idx = None
             self._refresh_reference_region_list()
             self._refresh_reference_canvas()
@@ -2173,6 +2220,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             if not regions:
                 raise RuntimeError("json 中没有 roi1/roi2/... 参考ROI")
             self._reference_regions = regions
+            self._invalidate_reference_region_cache()
             self._invalidate_reference_array_preview()
             self._selected_reference_idx = None
             self._refresh_reference_region_list()
@@ -2183,6 +2231,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self.referenceRegionsChanged.emit()
         except Exception as exc:
             self._reference_regions = []
+            self._invalidate_reference_region_cache()
             self._selected_reference_idx = None
             self._refresh_reference_region_list()
             self._refresh_reference_canvas()
@@ -2245,6 +2294,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
 
     def _clear_reference_roi(self) -> None:
         self._reference_regions = []
+        self._invalidate_reference_region_cache()
         self._invalidate_reference_array_preview()
         self._selected_reference_idx = None
         self._refresh_reference_region_list()

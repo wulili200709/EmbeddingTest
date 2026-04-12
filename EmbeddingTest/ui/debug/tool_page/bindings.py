@@ -45,6 +45,8 @@ _TOOL_PAGE_BINDINGS = (
             "_set_ref_from_current",
             "_pick_ref_image",
             "_open_line2dup_template_page",
+            "_schedule_line2dup_reference_regions_sync",
+            "_flush_line2dup_reference_regions_sync",
             "_on_template_editor_dialog_destroyed",
             "_on_line2dup_model_saved",
             "_on_line2dup_reference_regions_changed",
