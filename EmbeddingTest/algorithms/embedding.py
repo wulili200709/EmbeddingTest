@@ -411,16 +411,26 @@ def _resolve_roi_rgb_array_and_xywh(
     return roi_rgb, (x, y, w, h)
 
 
-def _roi_rgb_to_tensor_cv2(roi_rgb: np.ndarray) -> torch.Tensor:
+def _write_roi_rgb_to_chw_buffer_cv2(roi_rgb: np.ndarray, out_chw: np.ndarray) -> None:
     if cv2 is None:
-        return TF(Image.fromarray(np.ascontiguousarray(roi_rgb))).to(dtype=torch.float32)
+        tensor = TF(Image.fromarray(np.ascontiguousarray(roi_rgb))).to(dtype=torch.float32)
+        out_chw[...] = tensor.detach().cpu().numpy()
+        return
     resized = cv2.resize(np.ascontiguousarray(roi_rgb), (224, 224), interpolation=cv2.INTER_LINEAR)
     if resized.ndim == 2:
         resized = np.stack([resized, resized, resized], axis=-1)
     normalized = resized.astype(np.float32) / 255.0
-    normalized = (normalized - _IMAGENET_MEAN) / _IMAGENET_STD
-    chw = np.transpose(normalized, (2, 0, 1))
-    return torch.from_numpy(np.ascontiguousarray(chw))
+    # Write directly into the destination buffer to avoid one ROI -> one tensor
+    # allocations and the final torch.stack copy.
+    out_chw[0, :, :] = (normalized[:, :, 0] - float(_IMAGENET_MEAN[0, 0, 0])) / float(_IMAGENET_STD[0, 0, 0])
+    out_chw[1, :, :] = (normalized[:, :, 1] - float(_IMAGENET_MEAN[0, 0, 1])) / float(_IMAGENET_STD[0, 0, 1])
+    out_chw[2, :, :] = (normalized[:, :, 2] - float(_IMAGENET_MEAN[0, 0, 2])) / float(_IMAGENET_STD[0, 0, 2])
+
+
+def _roi_rgb_to_tensor_cv2(roi_rgb: np.ndarray) -> torch.Tensor:
+    buffer = np.empty((3, 224, 224), dtype=np.float32)
+    _write_roi_rgb_to_chw_buffer_cv2(roi_rgb, buffer)
+    return torch.from_numpy(buffer)
 
 
 @torch.no_grad()
@@ -548,7 +558,7 @@ def embed_batch_from_array(
         image_rgb = _rgb_array_from_bgr(image_bgr)
         height, width = image_rgb.shape[:2]
         normalized_shapes = _normalized_shape_by_label(shape_by_label)
-        tensors = []
+        batch_buffer = np.empty((len(labels), 3, 224, 224), dtype=np.float32)
         for index, label_name in enumerate(labels):
             roi_xywh = roi_xywhs[index] if roi_xywhs is not None else None
             roi_rgb, _resolved_xywh = _resolve_roi_rgb_array_and_xywh(
@@ -559,9 +569,10 @@ def embed_batch_from_array(
                 label_name=label_name,
                 roi_xywh=roi_xywh,
             )
-            tensors.append(_roi_rgb_to_tensor_cv2(roi_rgb))
-
-    batch = torch.stack(tensors, dim=0).to(device)
+            _write_roi_rgb_to_chw_buffer_cv2(roi_rgb, batch_buffer[index])
+        batch = torch.from_numpy(batch_buffer).to(device)
+    if cv2 is None:
+        batch = torch.stack(tensors, dim=0).to(device)
     feat = feat_net(batch)
     feat = F.adaptive_avg_pool2d(feat, 1).flatten(1)
     feat = F.normalize(feat, dim=1)
