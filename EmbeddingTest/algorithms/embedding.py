@@ -30,14 +30,17 @@ from .labelme import (
     labelme_json_of_image,
 )
 from .registry import learning_backbone_storage_code
+from .registry import LEARNING_BACKBONES
 from app_paths import writable_embedding_test_root
 
 
-_ORT_BACKBONE_NAMES = {"mobilenet_v3_large"}
+_ORT_BACKBONE_NAMES = set(LEARNING_BACKBONES)
 _ORT_OPSET = 17
 _ORT_CACHE_LOCK = RLock()
 _ORT_BACKBONE_CACHE: dict[tuple[str, str], "_OnnxRuntimeFeatureNet"] = {}
 _ORT_LOGGED_EVENTS: set[tuple[str, str, str]] = set()
+_IMAGENET_MEAN = np.asarray([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
+_IMAGENET_STD = np.asarray([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
 
 
 def _ort_log(event: str, backbone: str, detail: str) -> None:
@@ -283,6 +286,28 @@ def _build_array_roi_context(
     )
 
 
+def _rgb_array_from_bgr(image_bgr: np.ndarray) -> np.ndarray:
+    image = np.asarray(image_bgr)
+    if image.ndim == 2:
+        image = np.stack([image, image, image], axis=-1)
+    elif image.ndim == 3:
+        image = image[:, :, :3]
+        image = image[:, :, ::-1]
+    else:
+        raise ValueError(f"unsupported image shape: {image.shape!r}")
+    if image.dtype != np.uint8:
+        image = np.clip(image, 0, 255).astype(np.uint8)
+    return np.ascontiguousarray(image)
+
+
+def _normalized_shape_by_label(shape_by_label: dict[str, dict]) -> dict[str, dict]:
+    return {
+        str(label or ""): dict(shape)
+        for label, shape in dict(shape_by_label or {}).items()
+        if str(label or "").strip()
+    }
+
+
 def _shape_bbox_xywh(shape: dict, *, width: int, height: int) -> Tuple[int, int, int, int]:
     points = np.asarray(shape.get("points", []), dtype=np.float32)
     if points.size == 0:
@@ -347,6 +372,55 @@ def _resolve_roi_image_and_xywh(
         x, y, w, h = clamp_roi_xywh(x, y, w, h, W=context.width, H=context.height)
         roi_img = context.image.crop((x, y, x + w, y + h))
     return roi_img, (x, y, w, h)
+
+
+def _resolve_roi_rgb_array_and_xywh(
+    image_rgb: np.ndarray,
+    *,
+    width: int,
+    height: int,
+    shape_by_label: dict[str, dict],
+    label_name: str = "roi",
+    roi_xywh: Optional[Tuple[int, int, int, int]] = None,
+) -> Tuple[np.ndarray, Tuple[int, int, int, int]]:
+    roi_rgb: Optional[np.ndarray] = None
+    if roi_xywh is None:
+        shape = shape_by_label.get(label_name)
+        if shape and str(shape.get("shape_type", "rectangle")) == "polygon":
+            points = np.asarray(shape.get("points", []), dtype=np.float32)
+            if points.shape[0] >= 3 and cv2 is not None:
+                x, y, w, h = _shape_bbox_xywh(shape, width=width, height=height)
+                crop = np.ascontiguousarray(image_rgb[y : y + h, x : x + w]).copy()
+                rel_points = np.round(points - np.array([[x, y]], dtype=np.float32)).astype(np.int32)
+                mask = np.zeros((h, w), dtype=np.uint8)
+                cv2.fillPoly(mask, [rel_points], 255)
+                crop[mask == 0] = 0
+                roi_rgb = crop
+            else:
+                x, y, w, h = _shape_bbox_xywh(shape, width=width, height=height)
+        else:
+            if shape is None:
+                raise RuntimeError(f"Label '{label_name}' not found in runtime ROI shapes")
+            x, y, w, h = _shape_bbox_xywh(shape, width=width, height=height)
+    else:
+        x, y, w, h = roi_xywh
+
+    if roi_rgb is None:
+        x, y, w, h = clamp_roi_xywh(x, y, w, h, W=width, H=height)
+        roi_rgb = np.ascontiguousarray(image_rgb[y : y + h, x : x + w]).copy()
+    return roi_rgb, (x, y, w, h)
+
+
+def _roi_rgb_to_tensor_cv2(roi_rgb: np.ndarray) -> torch.Tensor:
+    if cv2 is None:
+        return TF(Image.fromarray(np.ascontiguousarray(roi_rgb))).to(dtype=torch.float32)
+    resized = cv2.resize(np.ascontiguousarray(roi_rgb), (224, 224), interpolation=cv2.INTER_LINEAR)
+    if resized.ndim == 2:
+        resized = np.stack([resized, resized, resized], axis=-1)
+    normalized = resized.astype(np.float32) / 255.0
+    normalized = (normalized - _IMAGENET_MEAN) / _IMAGENET_STD
+    chw = np.transpose(normalized, (2, 0, 1))
+    return torch.from_numpy(np.ascontiguousarray(chw))
 
 
 @torch.no_grad()
@@ -459,16 +533,33 @@ def embed_batch_from_array(
         raise ValueError("roi_xywhs must have the same length as label_names")
 
     device = device or get_device()
-    context = _build_array_roi_context(image_bgr, shape_by_label=shape_by_label)
-    tensors = []
-    for index, label_name in enumerate(labels):
-        roi_xywh = roi_xywhs[index] if roi_xywhs is not None else None
-        roi_img = _resolve_roi_image(
-            context,
-            label_name=label_name,
-            roi_xywh=roi_xywh,
-        )
-        tensors.append(TF(roi_img))
+    if cv2 is None:
+        context = _build_array_roi_context(image_bgr, shape_by_label=shape_by_label)
+        tensors = []
+        for index, label_name in enumerate(labels):
+            roi_xywh = roi_xywhs[index] if roi_xywhs is not None else None
+            roi_img = _resolve_roi_image(
+                context,
+                label_name=label_name,
+                roi_xywh=roi_xywh,
+            )
+            tensors.append(TF(roi_img))
+    else:
+        image_rgb = _rgb_array_from_bgr(image_bgr)
+        height, width = image_rgb.shape[:2]
+        normalized_shapes = _normalized_shape_by_label(shape_by_label)
+        tensors = []
+        for index, label_name in enumerate(labels):
+            roi_xywh = roi_xywhs[index] if roi_xywhs is not None else None
+            roi_rgb, _resolved_xywh = _resolve_roi_rgb_array_and_xywh(
+                image_rgb,
+                width=width,
+                height=height,
+                shape_by_label=normalized_shapes,
+                label_name=label_name,
+                roi_xywh=roi_xywh,
+            )
+            tensors.append(_roi_rgb_to_tensor_cv2(roi_rgb))
 
     batch = torch.stack(tensors, dim=0).to(device)
     feat = feat_net(batch)
