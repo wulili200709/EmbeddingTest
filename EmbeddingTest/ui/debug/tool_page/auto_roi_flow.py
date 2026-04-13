@@ -11,6 +11,7 @@ QtCore = page_module.QtCore
 QtWidgets = page_module.QtWidgets
 qr_core = page_module.qr_core
 line2dup_locator = page_module.line2dup_locator
+ncc_locator = page_module.ncc_locator
 _filter_paths_for_camera = page_module._filter_paths_for_camera
 
 
@@ -140,6 +141,10 @@ def _on_loc_method_changed(self, method: str) -> None:
     self.loc_method = method
     self._clear_training_roi_review_state()
     self._update_loc_ui()
+    self._reload_inspection_items()
+    current_path = self.canvas.image_path()
+    if current_path and os.path.exists(current_path):
+        self._load_canvas_image(current_path)
     self._save_session()
 
 def _resolve_autogen_targets(
@@ -255,6 +260,11 @@ def _autogen_roi_for_images(
                         f"参考图缺少参考ROI标注：{', '.join(missing_labels)}",
                     )
                     return
+    elif method == "ncc":
+        model_path = ncc_locator.resolved_model_path_for_product(self.session.product_dir, role)
+        if not os.path.exists(model_path):
+            QtWidgets.QMessageBox.warning(self, "提示", "当前产品还没有 NCC 模型，请先在 NCC 工具里制作模板。")
+            return
     else:
         if not ref_image or not os.path.exists(ref_image):
             QtWidgets.QMessageBox.warning(self, "提示", "请先设置参考图")
@@ -290,6 +300,14 @@ def _autogen_roi_for_images(
                     camera_role=role,
                 )
                 self._line2dup_match_ms_by_image[p] = float(run.total_ms)
+                self._line2dup_autogen_ms_by_image[p] = float(run.total_ms)
+            elif method == "ncc":
+                run = ncc_locator.autogen_roi_json_from_ncc_timed(
+                    tgt_img_path=p,
+                    product_dir=self.session.product_dir,
+                    camera_role=role,
+                )
+                self._line2dup_match_ms_by_image[p] = float(run.locate_ms)
                 self._line2dup_autogen_ms_by_image[p] = float(run.total_ms)
             else:
                 qr_core.autogen_roi_json_from_reference(

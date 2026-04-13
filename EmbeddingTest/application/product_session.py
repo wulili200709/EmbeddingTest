@@ -220,7 +220,7 @@ class ProductSession:
         ref_image = resolve_existing_product_path(ref, base_dir=self.product_dir, anchor_dir=self.product_dir)
 
         loc_method = str(raw.get("loc_method", "line2dup")).strip() or "line2dup"
-        if loc_method != "line2dup":
+        if loc_method not in {"line2dup", "ncc"}:
             loc_method = "line2dup"
 
         legacy_ok_files = _filter(raw.get("ok_files", []))

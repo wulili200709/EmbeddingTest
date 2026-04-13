@@ -64,6 +64,7 @@ from domain import (
 )
 from line2dup.core import locator as line2dup_locator
 from line2dup.core.recipe import Line2DupRecipe
+from ncc import locator as ncc_locator
 from ui.debug import (
     OverlayShape,
     RoiCanvas,
@@ -102,7 +103,7 @@ except Exception:
     frame_to_rgb_image = None  # type: ignore[assignment]
 
 
-SUPPORTED_LOC_MODES = ["line2dup"]
+SUPPORTED_LOC_MODES = ["line2dup", "ncc"]
 SUPPORTED_SHAPES = ["rect", "polygon"]
 ROI_OVERLAY_PALETTE = [
     QtGui.QColor(255, 215, 0),
@@ -4269,7 +4270,7 @@ class ToolPage(QtWidgets.QWidget):
                 continue
             if qr_core.read_shape_from_labelme(json_path, roi_label) is None:
                 missing_paths.append(path)
-        if missing_paths and self.loc_method == "line2dup":
+        if missing_paths and self.loc_method in {"line2dup", "ncc"}:
             try:
                 self._autogen_roi_for_images(missing_paths, only_missing=False, silent=True)
                 refreshed_missing_paths: List[str] = []
@@ -4611,11 +4612,13 @@ class ToolPage(QtWidgets.QWidget):
             row.setdefault("pred", response.result)
             row["match_ms"] = match_ms if match_ms > 0.0 else row.get("match_ms")
             row["total_ms"] = total_ms if total_ms > 0.0 else row.get("total_ms")
-            labels_override = (
-                self._line2dup_output_labels()
-                if self.loc_method == "line2dup"
-                else ["roi"]
-            )
+            labels_getter = getattr(self, "_current_loc_output_labels", None)
+            if callable(labels_getter):
+                labels_override = list(labels_getter())
+            elif self.loc_method == "line2dup":
+                labels_override = self._line2dup_output_labels()
+            else:
+                labels_override = ["roi"]
             for roi_label in labels_override:
                 self._record_roi_result(p, roi_label, response.result)
             rows.append(row)

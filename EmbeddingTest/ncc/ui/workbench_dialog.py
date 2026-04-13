@@ -95,23 +95,23 @@ QTableWidget {
     background: #333333;
     color: #e0e0e0;
     border: 1px solid #5a5a5a;
-    selection-background-color: #6ec0ff;
-    selection-color: #1a1a1a;
+    selection-background-color: #566170;
+    selection-color: #f2f4f7;
 }
 QAbstractItemView {
     background: #333333;
     color: #e0e0e0;
     alternate-background-color: #383838;
-    selection-background-color: #6ec0ff;
-    selection-color: #1a1a1a;
+    selection-background-color: #566170;
+    selection-color: #f2f4f7;
 }
 QListWidget::item {
     padding: 6px 8px;
     min-height: 26px;
 }
 QListWidget::item:selected {
-    background: #6ec0ff;
-    color: #1a1a1a;
+    background: #566170;
+    color: #f2f4f7;
 }
 QHeaderView::section {
     background: #3a3a3a;
@@ -488,6 +488,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
 
         scene_box = QtWidgets.QGroupBox("场景图")
         scene_form = QtWidgets.QFormLayout(scene_box)
+        self.scene_form = scene_form
         self.edt_scene_path = QtWidgets.QLineEdit()
         self.edt_scene_path.setReadOnly(True)
         self.edt_backend = QtWidgets.QLineEdit("python-ncc")
@@ -497,7 +498,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.lbl_writeback_hint.setWordWrap(True)
         scene_form.addRow("路径", self.edt_scene_path)
         scene_form.addRow("后端", self.edt_backend)
-        scene_form.addRow("LabelMe标签名", self.edt_writeback_label)
+        scene_form.addRow("写回标签名", self.edt_writeback_label)
         scene_form.addRow("", self.lbl_writeback_hint)
         left_layout.addWidget(scene_box)
 
@@ -549,6 +550,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.chk_use_simd = QtWidgets.QCheckBox("SIMD")
         self.chk_use_subpixel = QtWidgets.QCheckBox("Subpixel")
         self.chk_bitwise_not = QtWidgets.QCheckBox("Bitwise Not")
+        self.chk_stop_layer1 = QtWidgets.QCheckBox("快速模式(Layer1)")
         params_grid.addWidget(QtWidgets.QLabel("Target Num"), 0, 0)
         params_grid.addWidget(self.spn_target_num, 0, 1)
         params_grid.addWidget(QtWidgets.QLabel("Score"), 0, 2)
@@ -564,6 +566,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         params_grid.addWidget(self.chk_use_simd, 3, 0)
         params_grid.addWidget(self.chk_use_subpixel, 3, 1)
         params_grid.addWidget(self.chk_bitwise_not, 3, 2)
+        params_grid.addWidget(self.chk_stop_layer1, 3, 3)
         left_layout.addWidget(params_box)
 
         search_box = QtWidgets.QGroupBox("搜索ROI")
@@ -582,9 +585,11 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.btn_run_match = QtWidgets.QPushButton("Run Selected")
         self.btn_run_all = QtWidgets.QPushButton("Run All")
         self.btn_writeback = QtWidgets.QPushButton("写回 Top1 ROI")
+        self.btn_writeback_regions = QtWidgets.QPushButton("写回投影参考ROI")
         run_layout.addWidget(self.btn_run_match)
         run_layout.addWidget(self.btn_run_all)
         run_layout.addWidget(self.btn_writeback)
+        run_layout.addWidget(self.btn_writeback_regions)
         left_layout.addWidget(run_box)
 
         result_box = QtWidgets.QGroupBox("结果")
@@ -614,6 +619,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.btn_run_match.clicked.connect(self._run_match)
         self.btn_run_all.clicked.connect(self._run_all_find)
         self.btn_writeback.clicked.connect(self._writeback_top1)
+        self.btn_writeback_regions.clicked.connect(self._writeback_reference_regions)
         self.find_canvas.shapesChanged.connect(self._refresh_search_roi_status)
         return page
 
@@ -626,12 +632,24 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
 
         self.edt_writeback_label.setPlaceholderText("例如：ncc_roi")
         self.edt_writeback_label.setToolTip("写入到当前场景图对应的 LabelMe JSON 里的标签名。")
-        self.btn_writeback.setText("写回当前 Top1 到 LabelMe")
-        self.btn_writeback.setToolTip("按上面的标签名，把当前图片的 Top1 匹配结果写回 LabelMe JSON。")
+        self.btn_writeback.setText("写回当前 Top1 外框")
+        self.btn_writeback.setToolTip("按上面的标签名，把当前图片的 Top1 匹配外框写回 LabelMe JSON。")
+        self.btn_writeback_regions.setToolTip("把当前 Top1 匹配下投影得到的 roi1/roi2/... 参考区域批量写回 LabelMe JSON。")
+        self.chk_stop_layer1.setToolTip("只做到金字塔第1层就停止细化，通常更快，但角度和位置精度可能略降。")
         if hasattr(self, "lbl_writeback_hint") and isinstance(self.lbl_writeback_hint, QtWidgets.QLabel):
             self.lbl_writeback_hint.setText(
                 "说明：上面填写的是写回到 LabelMe 的标签名；下面按钮会把当前 Top1 匹配结果按这个标签写回。"
             )
+        if hasattr(self, "scene_form") and isinstance(self.scene_form, QtWidgets.QFormLayout):
+            if hasattr(self.scene_form, "setRowVisible"):
+                self.scene_form.setRowVisible(self.edt_backend, False)
+                self.scene_form.setRowVisible(self.lbl_writeback_hint, False)
+            else:
+                label = self.scene_form.labelForField(self.edt_backend)
+                if label is not None:
+                    label.hide()
+                self.edt_backend.hide()
+                self.lbl_writeback_hint.hide()
 
     def _load_model(self) -> None:
         self._model = load_model(self._model_path).normalized()
@@ -717,6 +735,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.chk_use_simd.setChecked(normalized.use_simd)
         self.chk_use_subpixel.setChecked(normalized.use_subpixel)
         self.chk_bitwise_not.setChecked(normalized.bitwise_not)
+        self.chk_stop_layer1.setChecked(normalized.stop_layer1)
 
     def _current_find_options(self) -> NccMatchOptions:
         return NccMatchOptions(
@@ -737,7 +756,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             use_simd=self.chk_use_simd.isChecked(),
             use_subpixel=self.chk_use_subpixel.isChecked(),
             bitwise_not=self.chk_bitwise_not.isChecked(),
-            stop_layer1=False,
+            stop_layer1=self.chk_stop_layer1.isChecked(),
         ).normalized()
 
     def _refresh_model_summary(self) -> None:
@@ -1321,7 +1340,10 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             dtype=np.float32,
         )
 
-    def _reference_region_match_overlays(self, match: NccMatchResult) -> List[OverlayShape]:
+    def _projected_reference_regions(
+        self,
+        match: NccMatchResult,
+    ) -> List[Tuple[str, List[Tuple[float, float]]]]:
         if not self._reference_regions:
             return []
         src_quad = self._template_roi_quad()
@@ -1329,17 +1351,24 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         if src_quad is None or dst_quad.shape != (4, 2):
             return []
         matrix = cv2.getPerspectiveTransform(src_quad, dst_quad)
-        overlays: List[OverlayShape] = []
-        for region in self._reference_regions:
+        projected: List[Tuple[str, List[Tuple[float, float]]]] = []
+        for index, region in enumerate(self._reference_regions, start=1):
             points = _region_polygon_points(region)
             if len(points) < 3:
                 continue
             src = np.asarray(points, dtype=np.float32).reshape(1, -1, 2)
             dst = cv2.perspectiveTransform(src, matrix).reshape(-1, 2)
+            label_name = str(region.label_name or "").strip() or f"roi{index}"
+            projected.append((label_name, [(float(x), float(y)) for x, y in dst]))
+        return projected
+
+    def _reference_region_match_overlays(self, match: NccMatchResult) -> List[OverlayShape]:
+        overlays: List[OverlayShape] = []
+        for _label_name, points in self._projected_reference_regions(match):
             overlays.append(
                 OverlayShape(
                     shape_type="polygon",
-                    points=[(float(x), float(y)) for x, y in dst],
+                    points=points,
                     color=QtGui.QColor(255, 0, 255),
                     width=1.4,
                     dash=False,
@@ -1498,6 +1527,28 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         top1 = self._latest_response.matches[0]
         upsert_labelme_polygon(scene_path, list(top1.quad), label_name=label_name)
         self._set_status(f"已写回 LabelMe 标签：{label_name}")
+
+    def _writeback_reference_regions(self) -> None:
+        scene_path = self.edt_scene_path.text().strip()
+        if not scene_path or self._latest_response is None or not self._latest_response.matches:
+            QtWidgets.QMessageBox.warning(self, "NCC", "当前没有可写回的匹配结果。")
+            return
+        if not self._reference_regions:
+            QtWidgets.QMessageBox.information(self, "NCC", "当前还没有配置 Reference ROI。")
+            return
+        projected = self._projected_reference_regions(self._latest_response.matches[0])
+        if not projected:
+            QtWidgets.QMessageBox.warning(self, "NCC", "当前没有可写回的投影参考 ROI。")
+            return
+
+        written_labels: List[str] = []
+        for label_name, points in projected:
+            upsert_labelme_polygon(scene_path, points, label_name=label_name)
+            written_labels.append(label_name)
+
+        preview = ", ".join(written_labels[:6])
+        suffix = " ..." if len(written_labels) > 6 else ""
+        self._set_status(f"已写回 {len(written_labels)} 个参考ROI：{preview}{suffix}")
 
 
 __all__ = ["NccMatchWorkbenchDialog"]

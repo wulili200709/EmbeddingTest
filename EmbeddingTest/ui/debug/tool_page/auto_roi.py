@@ -6,6 +6,7 @@ import os
 from typing import List, Tuple
 
 import algorithms.proxy as qr_core
+from ncc import locator as ncc_locator
 
 from domain import (
     clearable_roi_labels,
@@ -22,15 +23,39 @@ def _line2dup_output_labels(tool_page, camera_role=None) -> List[str]:
     return [str(label).strip() for label in output_labels_from_line2dup_recipe(recipe) if str(label).strip()]
 
 
+def _ncc_output_labels(tool_page, camera_role=None) -> List[str]:
+    role_getter = getattr(tool_page, "current_camera_role", None)
+    role = str(role_getter() if callable(role_getter) and camera_role is None else camera_role or "cam1").strip() or "cam1"
+    if not ncc_locator.model_is_ready(tool_page.session.product_dir, role):
+        return ["roi"]
+    labels = [
+        str(label).strip()
+        for label in ncc_locator.output_labels_for_product(tool_page.session.product_dir, role)
+        if str(label).strip()
+    ]
+    return labels or ["roi"]
+
+
+def _current_loc_output_labels(tool_page, camera_role=None) -> List[str]:
+    if tool_page.loc_method == "line2dup":
+        return tool_page._line2dup_output_labels(camera_role)
+    if tool_page.loc_method == "ncc":
+        ncc_getter = getattr(tool_page, "_ncc_output_labels", None)
+        if callable(ncc_getter):
+            return ncc_getter(camera_role)
+        return _ncc_output_labels(tool_page, camera_role)
+    return ["roi"]
+
+
 def _inspection_item_labels(tool_page) -> List[str]:
     return [str(item.roi_label).strip() for item in tool_page.inspection_items if str(item.roi_label).strip()]
 
 
 def _reload_inspection_items(tool_page) -> None:
     path = tool_page.session.inspection_items_path
-    labels = tool_page._line2dup_output_labels() if tool_page.loc_method == "line2dup" else ["roi"]
     current_role_getter = getattr(tool_page, "current_camera_role", None)
     current_role = str(current_role_getter() if callable(current_role_getter) else "cam1").strip() or "cam1"
+    labels = tool_page._current_loc_output_labels(current_role)
     display_names_by_label = {}
     if tool_page.loc_method == "line2dup":
         specs = inspection_item_specs_from_line2dup_recipe(tool_page.line2dup_recipe)
@@ -39,6 +64,11 @@ def _reload_inspection_items(tool_page) -> None:
             for spec in specs
             if str(spec.get("roi_label", "")).strip()
         }
+    elif tool_page.loc_method == "ncc" and ncc_locator.model_is_ready(tool_page.session.product_dir, current_role):
+        display_names_by_label = ncc_locator.display_names_by_label_for_product(
+            tool_page.session.product_dir,
+            current_role,
+        )
     existing_items = load_inspection_items(path)
     current_role_items = [
         item for item in existing_items
@@ -48,7 +78,9 @@ def _reload_inspection_items(tool_page) -> None:
         item for item in existing_items
         if str(getattr(item, "camera_id", "") or "").strip() != current_role
     ]
-    if tool_page.line2dup_recipe is None and not current_role_items:
+    if tool_page.loc_method == "line2dup" and tool_page.line2dup_recipe is None and not current_role_items:
+        synced_current_role_items = []
+    elif tool_page.loc_method == "ncc" and not ncc_locator.model_is_ready(tool_page.session.product_dir, current_role) and not current_role_items:
         synced_current_role_items = []
     else:
         synced_current_role_items = sync_items_with_labels(
@@ -68,7 +100,7 @@ def _reload_inspection_items(tool_page) -> None:
 
 def _missing_roi_files(tool_page, paths: List[str], camera_role=None) -> List[str]:
     missing: List[str] = []
-    labels = tool_page._line2dup_output_labels(camera_role) if tool_page.loc_method == "line2dup" else ["roi"]
+    labels = tool_page._current_loc_output_labels(camera_role)
     for p in paths:
         j = qr_core.labelme_json_of_image(p)
         if not os.path.exists(j):
@@ -102,7 +134,7 @@ def _existing_roi_like_labels(tool_page, paths: List[str]) -> List[str]:
 
 
 def _clear_roi_labels_for_paths(tool_page, paths: List[str], camera_role=None) -> Tuple[List[str], str]:
-    current_labels = tool_page._line2dup_output_labels(camera_role) if tool_page.loc_method == "line2dup" else ["roi"]
+    current_labels = tool_page._current_loc_output_labels(camera_role)
     prefer_stale_only = bool(
         tool_page.loc_method == "line2dup"
         and getattr(tool_page, "chk_only_missing", None) is not None

@@ -31,6 +31,8 @@ _TOOL_PAGE_BINDINGS = (
         auto_roi,
         (
             "_line2dup_output_labels",
+            "_ncc_output_labels",
+            "_current_loc_output_labels",
             "_inspection_item_labels",
             "_reload_inspection_items",
             "_missing_roi_files",

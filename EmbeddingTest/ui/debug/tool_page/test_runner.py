@@ -94,12 +94,19 @@ def _predict_image(
             match_ms = float(run.total_ms)
             tool_page._line2dup_match_ms_by_image[path] = match_ms
             tool_page._line2dup_autogen_ms_by_image[path] = float(run.total_ms)
-    elif tool_page.ref_image and os.path.exists(tool_page.ref_image):
+    elif tool_page.loc_method != "line2dup":
         tool_page._autogen_roi_for_images([path], only_missing=True, silent=True)
+        match_ms = tool_page._line2dup_autogen_ms_by_image.get(path)
 
     labels = [str(label).strip() for label in (labels_override or []) if str(label).strip()]
     if not labels:
-        labels = tool_page._line2dup_output_labels() if tool_page.loc_method == "line2dup" else ["roi"]
+        labels_getter = getattr(tool_page, "_current_loc_output_labels", None)
+        if callable(labels_getter):
+            labels = list(labels_getter(tool_page.current_camera_role()))
+        elif tool_page.loc_method == "line2dup":
+            labels = tool_page._line2dup_output_labels()
+        else:
+            labels = ["roi"]
     roi = None
     if prefer_canvas_roi and len(labels) == 1 and tool_page.canvas.image_path() == path:
         roi = tool_page._roi_xywh_from_canvas()

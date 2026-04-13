@@ -25,6 +25,7 @@ from domain import (
     sync_items_with_labels,
 )
 from line2dup.core import locator as line2dup_locator
+from ncc import locator as ncc_locator
 
 if TYPE_CHECKING:
     from application import AlgorithmController, ProductSession
@@ -411,8 +412,9 @@ class ToolPageRuntimeContext:
                 match_ms = float(run.total_ms)
                 tool_page._line2dup_match_ms_by_image[path] = match_ms
                 tool_page._line2dup_autogen_ms_by_image[path] = float(run.total_ms)
-        elif tool_page.ref_image and os.path.exists(tool_page.ref_image):
+        elif tool_page.loc_method == "ncc":
             tool_page._autogen_roi_for_images([path], only_missing=True, silent=True)
+            match_ms = tool_page._line2dup_autogen_ms_by_image.get(path)
 
         rows_by_key = _predict_learning_items_batch_rows(
             path=path,
@@ -492,10 +494,18 @@ class ProductRuntimeContext:
                 )
                 match_ms = float(run.total_ms)
                 self._line2dup_match_ms_by_image[path] = match_ms
+        elif self.loc_method == "ncc":
+            run = ncc_locator.autogen_roi_json_from_ncc_timed(
+                tgt_img_path=path,
+                product_dir=self.session.product_dir,
+                camera_role=camera_role,
+            )
+            match_ms = float(run.total_ms)
+            self._line2dup_match_ms_by_image[path] = match_ms
 
         labels = list(labels_override or [])
         if not labels:
-            labels = self._line2dup_output_labels() if self.loc_method == "line2dup" else ["roi"]
+            labels = self._current_loc_output_labels(camera_role)
         effective_algorithm = ""
         if str(algorithm_override or "").strip():
             effective_algorithm = self.algo.resolve_tool_algorithm(algorithm_override)
@@ -553,6 +563,14 @@ class ProductRuntimeContext:
                 )
                 match_ms = float(run.total_ms)
                 self._line2dup_match_ms_by_image[path] = match_ms
+        elif self.loc_method == "ncc":
+            run = ncc_locator.autogen_roi_json_from_ncc_timed(
+                tgt_img_path=path,
+                product_dir=self.session.product_dir,
+                camera_role=camera_role,
+            )
+            match_ms = float(run.total_ms)
+            self._line2dup_match_ms_by_image[path] = match_ms
 
         rows_by_key = _predict_learning_items_batch_rows(
             path=path,
@@ -742,6 +760,24 @@ class ProductRuntimeContext:
 
     def _line2dup_output_labels(self, camera_role: str = "cam1") -> List[str]:
         return output_labels_from_line2dup_recipe(self._ensure_recipe_loaded(camera_role))
+
+    def _ncc_output_labels(self, camera_role: str = "cam1") -> List[str]:
+        role = str(camera_role or "cam1").strip() or "cam1"
+        if not ncc_locator.model_is_ready(self.session.product_dir, role):
+            return ["roi"]
+        labels = [
+            str(label).strip()
+            for label in ncc_locator.output_labels_for_product(self.session.product_dir, role)
+            if str(label).strip()
+        ]
+        return labels or ["roi"]
+
+    def _current_loc_output_labels(self, camera_role: str = "cam1") -> List[str]:
+        if self.loc_method == "line2dup":
+            return self._line2dup_output_labels(camera_role)
+        if self.loc_method == "ncc":
+            return self._ncc_output_labels(camera_role)
+        return ["roi"]
 
     def _reference_image(self, recipe) -> str:
         if self._ref_image and os.path.exists(self._ref_image):
