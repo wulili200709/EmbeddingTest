@@ -67,6 +67,7 @@ from ui.debug import (
     OverlayShape,
     RoiCanvas,
 )
+from ui.i18n import tr
 from ui.roi_overlay_colors import is_roi_label, overlay_style_for_label
 from ui.runtime import RuntimeImageView
 from path_utils import product_relative_path, resolve_product_path
@@ -265,7 +266,7 @@ class _SampleAnnotationCanvas(QtWidgets.QWidget):
         painter.fillRect(self.rect(), QtGui.QColor("#111111"))
         if self._pixmap.isNull() or self._scaled_pixmap.isNull():
             painter.setPen(QtGui.QColor("#8a8a8a"))
-            painter.drawText(self.rect(), QtCore.Qt.AlignCenter, "请选择图片")
+            painter.drawText(self.rect(), QtCore.Qt.AlignCenter, tr("sample.no_selected_image"))
             return
         top_left = self._image_offset
         painter.drawPixmap(int(round(top_left.x())), int(round(top_left.y())), self._scaled_pixmap)
@@ -359,7 +360,7 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
         super().__init__(preview_dialog)
         self._preview_dialog = preview_dialog
         self._tool_page = preview_dialog._tool_page
-        self.setWindowTitle("自动生成 ROI 工具")
+        self.setWindowTitle(tr("sample.auto_roi_tool"))
         self.setModal(False)
         self.resize(760, 180)
 
@@ -375,19 +376,19 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
         self.lbl_ref.setStyleSheet("color:#d0d0d0;font-size:12px;")
         root.addWidget(self.lbl_ref)
 
-        self.chk_only_missing = QtWidgets.QCheckBox("仅缺失ROI")
+        self.chk_only_missing = QtWidgets.QCheckBox(tr("debug.only_missing_roi"))
         self.chk_only_missing.setChecked(True)
         root.addWidget(self.chk_only_missing, 0, QtCore.Qt.AlignmentFlag.AlignRight)
 
         row = QtWidgets.QHBoxLayout()
         row.setSpacing(8)
-        self.btn_autogen_current = QtWidgets.QPushButton("批量生成ROI(当前列表)")
+        self.btn_autogen_current = QtWidgets.QPushButton(tr("debug.batch_roi_current"))
         self.btn_autogen_current.clicked.connect(self._run_autogen_current_list)
         row.addWidget(self.btn_autogen_current)
-        self.btn_autogen_current_image = QtWidgets.QPushButton("补全当前图缺失ROI")
+        self.btn_autogen_current_image = QtWidgets.QPushButton("Generate Missing ROI (Current Image)")
         self.btn_autogen_current_image.clicked.connect(self._run_autogen_current_image)
         row.addWidget(self.btn_autogen_current_image)
-        self.btn_clear_current = QtWidgets.QPushButton("清空ROI(当前列表)")
+        self.btn_clear_current = QtWidgets.QPushButton(tr("debug.clear_roi_current"))
         self.btn_clear_current.clicked.connect(self._run_clear_current_list)
         row.addWidget(self.btn_clear_current)
         root.addLayout(row)
@@ -418,16 +419,16 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
         sample_kind = self._sample_kind()
         paths = self._scope_paths()
         current_path = self._current_path()
-        sample_text = "训练样本" if sample_kind == "train" else "测试样本"
+        sample_text = tr("debug.train_samples") if sample_kind == "train" else tr("debug.test_samples")
         self.lbl_scope.setText(
-            f"当前范围：{camera_role} / {sample_text} / 共 {len(paths)} 张"
-            + (f" / 当前图：{os.path.basename(current_path)}" if current_path else "")
+            tr("sample.current_scope", role=camera_role, sample=sample_text, count=len(paths))
+            + (tr("sample.current_image_suffix", image=os.path.basename(current_path)) if current_path else "")
         )
         recipe = self._tool_page.line2dup_recipe_for_role(camera_role, force_reload=False)
         ref_image = ""
         if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
             ref_image = str(recipe.reference_image)
-        self.lbl_ref.setText(f"参考图：{os.path.basename(ref_image) if ref_image else '未设置'}")
+        self.lbl_ref.setText(f"{tr('debug.reference_image')}: {os.path.basename(ref_image) if ref_image else '-'}")
         self.lbl_ref.setToolTip(ref_image)
         has_scope = bool(paths)
         self.btn_autogen_current.setEnabled(has_scope)
@@ -440,7 +441,7 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
     def _run_autogen_current_list(self) -> None:
         paths = self._scope_paths()
         if not paths:
-            QtWidgets.QMessageBox.information(self, "提示", "当前列表没有可处理的图片")
+            QtWidgets.QMessageBox.information(self, tr("common.info"), tr("sample.no_processable_images"))
             return
         self._sync_tool_page_role()
         self._tool_page._autogen_roi_for_images(
@@ -453,7 +454,7 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
     def _run_autogen_current_image(self) -> None:
         path = self._current_path()
         if not path:
-            QtWidgets.QMessageBox.information(self, "提示", "当前没有选中图片")
+            QtWidgets.QMessageBox.information(self, tr("common.info"), tr("sample.no_selected_image"))
             return
         self._sync_tool_page_role()
         self._tool_page._autogen_roi_for_images(
@@ -466,13 +467,13 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
     def _run_clear_current_list(self) -> None:
         paths = self._scope_paths()
         if not paths:
-            QtWidgets.QMessageBox.information(self, "提示", "当前列表没有可处理的图片")
+            QtWidgets.QMessageBox.information(self, tr("common.info"), tr("sample.no_processable_images"))
             return
-        sample_text = "训练样本" if self._sample_kind() == "train" else "测试样本"
+        sample_text = tr("debug.train_samples") if self._sample_kind() == "train" else tr("debug.test_samples")
         reply = QtWidgets.QMessageBox.question(
             self,
-            "清空ROI",
-            f"确定清空 {self._camera_role()} 的当前{sample_text}列表 ROI 吗？",
+            tr("auto.clear_title"),
+            tr("sample.clear_roi_confirm", role=self._camera_role(), sample=sample_text),
             QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.Cancel,
             QtWidgets.QMessageBox.StandardButton.Cancel,
         )
@@ -486,7 +487,7 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
     def __init__(self, tool_page: "ToolPage", parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent or tool_page)
         self._tool_page = tool_page
-        self.setWindowTitle("样本标注")
+        self.setWindowTitle(tr("sample.annotation_title"))
         self.resize(1100, 720)
         self.setModal(False)
 
@@ -496,19 +497,19 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
 
         top_row = QtWidgets.QHBoxLayout()
         top_row.setSpacing(8)
-        top_row.addWidget(QtWidgets.QLabel("产品"))
+        top_row.addWidget(QtWidgets.QLabel(tr("sample.product")))
         self.cmb_product = QtWidgets.QComboBox()
         self.cmb_product.addItem(tool_page.current_product_name())
         self.cmb_product.setEnabled(False)
         top_row.addWidget(self.cmb_product, 1)
-        top_row.addWidget(QtWidgets.QLabel("相机"))
+        top_row.addWidget(QtWidgets.QLabel(tr("sample.camera")))
         self.cmb_camera = QtWidgets.QComboBox()
         self.sync_camera_roles(tool_page.configured_camera_roles())
         top_row.addWidget(self.cmb_camera)
-        top_row.addWidget(QtWidgets.QLabel("样本"))
+        top_row.addWidget(QtWidgets.QLabel(tr("sample.sample")))
         self.cmb_sample_kind = QtWidgets.QComboBox()
-        self.cmb_sample_kind.addItem("训练样本", "train")
-        self.cmb_sample_kind.addItem("测试样本", "test")
+        self.cmb_sample_kind.addItem(tr("debug.train_samples"), "train")
+        self.cmb_sample_kind.addItem(tr("debug.test_samples"), "test")
         top_row.addWidget(self.cmb_sample_kind)
         root.addLayout(top_row)
 
@@ -520,7 +521,7 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         left_layout = QtWidgets.QVBoxLayout(left_panel)
         left_layout.setContentsMargins(8, 8, 8, 8)
         left_layout.setSpacing(6)
-        left_layout.addWidget(QtWidgets.QLabel("图片列表"))
+        left_layout.addWidget(QtWidgets.QLabel(tr("sample.image_list")))
         self.sample_list = QtWidgets.QListWidget()
         self.sample_list.setStyleSheet(
             "QListWidget{background:#333333;color:#e0e0e0;border:1px solid #404040;}"
@@ -534,15 +535,15 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         center_layout = QtWidgets.QVBoxLayout(center_panel)
         center_layout.setContentsMargins(8, 8, 8, 8)
         center_layout.setSpacing(6)
-        center_layout.addWidget(QtWidgets.QLabel("当前图片"))
-        self.lbl_canvas_hint = QtWidgets.QLabel("滚轮缩放，拖动画面平移，单击 ROI 直接设为 OK / NG / 清除标签")
+        center_layout.addWidget(QtWidgets.QLabel(tr("sample.current_image")))
+        self.lbl_canvas_hint = QtWidgets.QLabel(tr("sample.canvas_hint"))
         self.lbl_canvas_hint.setStyleSheet("color:#a0a0a0;font-size:12px;")
         center_layout.addWidget(self.lbl_canvas_hint)
         self.preview_canvas = _SampleAnnotationCanvas()
         self.preview_canvas.setStyleSheet("QWidget{background:#111111;border:1px solid #303030;}")
         self.preview_canvas.imagePressed.connect(self._on_canvas_image_pressed)
         center_layout.addWidget(self.preview_canvas, 1)
-        self.lbl_image_status = QtWidgets.QLabel("状态：未选择")
+        self.lbl_image_status = QtWidgets.QLabel(tr("sample.status_none"))
         self.lbl_image_status.setStyleSheet("color:#bcbcbc;font-size:12px;")
         center_layout.addWidget(self.lbl_image_status)
         body.addWidget(center_panel, 2)
@@ -554,9 +555,9 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         right_layout = QtWidgets.QVBoxLayout(right_panel)
         right_layout.setContentsMargins(8, 8, 8, 8)
         right_layout.setSpacing(6)
-        right_layout.addWidget(QtWidgets.QLabel("当前图 ROI 标签"))
+        right_layout.addWidget(QtWidgets.QLabel(tr("sample.current_roi_labels")))
         self.roi_table = QtWidgets.QTableWidget(0, 3)
-        self.roi_table.setHorizontalHeaderLabels(["ROI", "几何", "标签"])
+        self.roi_table.setHorizontalHeaderLabels(["ROI", tr("sample.geometry"), tr("sample.label")])
         self.roi_table.verticalHeader().setVisible(False)
         self.roi_table.horizontalHeader().setStretchLastSection(True)
         self.roi_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
@@ -566,10 +567,7 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
             "QHeaderView::section{background:#3a3a3a;color:#d0d0d0;border:1px solid #404040;padding:4px;}"
         )
         right_layout.addWidget(self.roi_table, 1)
-        self.lbl_dialog_hint = QtWidgets.QLabel(
-            "先点“本图全部设OK”，再把有缺陷的 ROI 改成 NG。\n"
-            "如果某个 ROI 还没生成几何框，对应标签会被禁用；可以点“自动ROI...”补齐当前列表。"
-        )
+        self.lbl_dialog_hint = QtWidgets.QLabel(tr("sample.annotation_tip"))
         self.lbl_dialog_hint.setWordWrap(True)
         self.lbl_dialog_hint.setStyleSheet("color:#a0a0a0;font-size:12px;")
         right_layout.addWidget(self.lbl_dialog_hint)
@@ -577,23 +575,23 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         root.addLayout(body, 1)
 
         footer = QtWidgets.QHBoxLayout()
-        self.btn_mark_all_ok = QtWidgets.QPushButton("本图全部设OK")
+        self.btn_mark_all_ok = QtWidgets.QPushButton(tr("sample.mark_all_ok"))
         self.btn_mark_all_ok.clicked.connect(self._mark_current_image_all_ok)
         footer.addWidget(self.btn_mark_all_ok)
-        self.btn_clear_current = QtWidgets.QPushButton("清空当前图标签")
+        self.btn_clear_current = QtWidgets.QPushButton(tr("sample.clear_current_labels"))
         self.btn_clear_current.clicked.connect(self._clear_current_image_annotations)
         footer.addWidget(self.btn_clear_current)
-        self.btn_open_autogen = QtWidgets.QPushButton("自动ROI...")
+        self.btn_open_autogen = QtWidgets.QPushButton(tr("sample.auto_roi"))
         self.btn_open_autogen.clicked.connect(self._open_autogen_dialog)
         footer.addWidget(self.btn_open_autogen)
         footer.addStretch(1)
-        self.btn_prev = QtWidgets.QPushButton("上一张")
+        self.btn_prev = QtWidgets.QPushButton(tr("sample.prev"))
         self.btn_prev.clicked.connect(lambda: self._step_selection(-1))
         footer.addWidget(self.btn_prev)
-        self.btn_next = QtWidgets.QPushButton("下一张")
+        self.btn_next = QtWidgets.QPushButton(tr("sample.next"))
         self.btn_next.clicked.connect(lambda: self._step_selection(1))
         footer.addWidget(self.btn_next)
-        btn_close = QtWidgets.QPushButton("关闭")
+        btn_close = QtWidgets.QPushButton(tr("sample.close"))
         btn_close.clicked.connect(self.close)
         footer.addWidget(btn_close)
         root.addLayout(footer)
@@ -657,7 +655,7 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         del blocker
         if self.sample_list.count() == 0:
             self.preview_canvas.clear_image()
-            self.lbl_image_status.setText("状态：当前列表为空")
+            self.lbl_image_status.setText(tr("sample.list_empty"))
             self.roi_table.setRowCount(0)
             self._sync_navigation_buttons()
             self._sync_tool_page_context("")
@@ -680,7 +678,7 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         self._load_canvas_preview(path, camera_role)
         usage_text = tool_page._sample_usage_text(path)
         annotation_state = tool_page._sample_annotation_state_for_path(path, camera_role)
-        self.lbl_image_status.setText(f"状态：{usage_text} / {annotation_state}")
+        self.lbl_image_status.setText(f"Status: {usage_text} / {annotation_state}")
         self._populate_roi_table(path, camera_role)
         self._sync_navigation_buttons()
         self._sync_tool_page_context(path)
@@ -693,10 +691,10 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
             self.roi_table.insertRow(row_index)
             self.roi_table.setItem(row_index, 0, QtWidgets.QTableWidgetItem(label))
             has_geometry = tool_page._path_has_roi_geometry(path, label)
-            geometry_item = QtWidgets.QTableWidgetItem("已生成" if has_geometry else "缺少ROI")
+            geometry_item = QtWidgets.QTableWidgetItem(tr("sample.generated") if has_geometry else tr("sample.missing_roi"))
             self.roi_table.setItem(row_index, 1, geometry_item)
             combo = QtWidgets.QComboBox()
-            combo.addItem("未标注", "")
+            combo.addItem(tr("sample.unset"), "")
             combo.addItem("OK", "OK")
             combo.addItem("NG", "NG")
             current_status = tool_page._sample_roi_status_for_path(path, camera_role, label)
@@ -723,7 +721,7 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         self._active_roi_label = label
         self._refresh_canvas_overlays(path, camera_role)
         self.lbl_image_status.setText(
-            f"状态：{self._tool_page._sample_usage_text(path)} / "
+            f"Status: {self._tool_page._sample_usage_text(path)} / "
             f"{self._tool_page._sample_annotation_state_for_path(path, camera_role)}"
         )
 
@@ -825,8 +823,11 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         self._populate_roi_table(path, camera_role)
         self._refresh_canvas_overlays(path, camera_role)
         self.lbl_image_status.setText(
-            f"状态：{self._tool_page._sample_usage_text(path)} / "
-            f"{self._tool_page._sample_annotation_state_for_path(path, camera_role)}"
+            tr(
+                "debug.current_image_state",
+                usage=self._tool_page._sample_usage_text(path),
+                state=self._tool_page._sample_annotation_state_for_path(path, camera_role),
+            )
         )
 
     def _load_canvas_preview(self, path: str, camera_role: str) -> None:
@@ -926,7 +927,7 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         menu = QtWidgets.QMenu(self)
         action_ok = menu.addAction(f"{label} -> OK")
         action_ng = menu.addAction(f"{label} -> NG")
-        action_clear = menu.addAction(f"{label} -> 清除标签")
+        action_clear = menu.addAction(tr("sample.clear_label", label=label))
         chosen = menu.exec(QtGui.QCursor.pos())
         if chosen is None:
             return
@@ -967,28 +968,28 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
 
 ALGORITHM_GROUPS = [
     (
-        "学习工具",
+        "learning",
         [
-            ("高精度学习工具", "efficientnet_b0", True),
-            ("轻量学习工具", "mobilenet_v3_small", True),
-            ("均衡学习工具", "mobilenet_v3_large", True),
+            ("High-Accuracy Learning Tool", "efficientnet_b0", True),
+            ("Lightweight Learning Tool", "mobilenet_v3_small", True),
+            ("Balanced Learning Tool", "mobilenet_v3_large", True),
         ],
     ),
     (
-        "传统工具",
+        "traditional",
         [
-            ("色相工具", "meanhsv_h", True),
-            ("灰度工具", "meanintensity", True),
-            ("偏差工具", "meanstd", True),
-            ("明度工具", "meanhsv_v", True),
-            ("饱和度工具", "meanhsv_s", True),
+            ("Hue Tool", "meanhsv_h", True),
+            ("Grayscale Tool", "meanintensity", True),
+            ("Deviation Tool", "meanstd", True),
+            ("Value Tool", "meanhsv_v", True),
+            ("Saturation Tool", "meanhsv_s", True),
         ],
     ),
     (
-        "测量工具",
+        "measurement",
         [
-            ("找圆", "find_circle", False),
-            ("找直线", "find_line", False),
+            ("Find Circle", "find_circle", False),
+            ("Find Line", "find_line", False),
         ],
     ),
 ]
@@ -999,6 +1000,35 @@ ALGORITHM_DISPLAY_NAMES = {
     for label, code, enabled in items
     if enabled
 }
+
+ALGORITHM_GROUP_KEYS = {
+    "learning": "debug.algorithm_group.learning",
+    "traditional": "debug.algorithm_group.traditional",
+    "measurement": "debug.algorithm_group.measurement",
+}
+
+ALGORITHM_DISPLAY_KEYS = {
+    "efficientnet_b0": "debug.algorithm.efficientnet_b0",
+    "mobilenet_v3_small": "debug.algorithm.mobilenet_v3_small",
+    "mobilenet_v3_large": "debug.algorithm.mobilenet_v3_large",
+    "meanhsv_h": "debug.algorithm.meanhsv_h",
+    "meanintensity": "debug.algorithm.meanintensity",
+    "meanstd": "debug.algorithm.meanstd",
+    "meanhsv_v": "debug.algorithm.meanhsv_v",
+    "meanhsv_s": "debug.algorithm.meanhsv_s",
+    "find_circle": "debug.algorithm.find_circle",
+    "find_line": "debug.algorithm.find_line",
+}
+
+
+def _algorithm_group_display_name(group_name: str) -> str:
+    key = ALGORITHM_GROUP_KEYS.get(str(group_name or ""))
+    return tr(key) if key else str(group_name or "")
+
+
+def _algorithm_display_name(label: str, code: str) -> str:
+    key = ALGORITHM_DISPLAY_KEYS.get(str(code or ""))
+    return tr(key) if key else str(label or code or "")
 
 
 def _pixmap_from_path(path: str) -> QtGui.QPixmap:
@@ -1066,7 +1096,7 @@ class _DebugCameraPreviewThread(QtCore.QThread):
                 image = _qimage_from_hik_frame(frame)
             except Exception as exc:
                 if self._running:
-                    self.errorOccurred.emit(f"预览转换失败: {exc}")
+                    self.errorOccurred.emit(tr("debug.preview_convert_failed", error=exc))
                     self.msleep(120)
                 continue
 
@@ -1174,6 +1204,131 @@ class ToolPage(QtWidgets.QWidget):
     # ------------------------------------------------------------------
     # 鍏紑鎺ュ彛锛圡ainWindow 璋冪敤锛?
     # ------------------------------------------------------------------
+
+    def retranslate_ui(self) -> None:
+        for attr, text in (
+            ("lbl_product_caption", tr("debug.product")),
+            ("lbl_current_camera_caption", tr("debug.current_camera")),
+            ("lbl_images_section", tr("debug.image_list")),
+            ("lbl_algo_tool", tr("debug.tool")),
+            ("lbl_algo_decision", tr("debug.decision")),
+            ("lbl_algo_threshold", tr("debug.threshold")),
+            ("lbl_action_section", tr("debug.actions")),
+            ("lbl_roi_shape_caption", tr("debug.shape")),
+            ("lbl_roi_label_caption", tr("debug.label")),
+            ("lbl_loc_method", tr("debug.location_method")),
+            ("lbl_cam_left_title", tr("debug.device_list")),
+            ("lbl_debug_role", tr("debug.debug_role")),
+            ("lbl_cam_info_title", tr("debug.device_info")),
+            ("lbl_cam_right_title", tr("debug.param_settings")),
+            ("lbl_io_ctrl_title", tr("debug.connection_control")),
+            ("lbl_io_status_title", tr("debug.io_status")),
+            ("lbl_io_panel_title", tr("debug.dido_panel")),
+            ("lbl_di_title", tr("debug.di_monitor")),
+            ("lbl_do_title", tr("debug.do_control")),
+        ):
+            widget = getattr(self, attr, None)
+            if widget is not None:
+                widget.setText(text)
+
+        for attr, text in (
+            ("btn_new_product", tr("debug.new")),
+            ("btn_import_train", tr("debug.add_external_images")),
+            ("btn_train_to_test", tr("debug.move_to_test")),
+            ("btn_sample_annotation", tr("debug.sample_annotation")),
+            ("btn_del_ok", tr("debug.remove")),
+            ("btn_test_to_train", tr("debug.move_to_train")),
+            ("btn_add_test", tr("debug.add_external_images")),
+            ("btn_del_test", tr("debug.remove")),
+            ("btn_sample_annotation_test", tr("debug.sample_annotation")),
+            ("btn_toggle_algo", tr("debug.algorithm_params")),
+            ("btn_toggle_tools", tr("debug.inspection_tools")),
+            ("btn_train", tr("debug.train_all_tools")),
+            ("btn_train_current", tr("debug.calibrate_current_tool")),
+            ("btn_test", tr("debug.test_current_image")),
+            ("btn_export_test", tr("debug.export_report")),
+            ("btn_clear_session", tr("debug.clear_session")),
+            ("btn_save", tr("debug.save_annotation")),
+            ("btn_clear", tr("debug.clear_annotation")),
+            ("btn_set_ref", tr("debug.set_as_reference")),
+            ("btn_pick_ref", tr("debug.pick_reference")),
+            ("chk_only_missing", tr("debug.only_missing_roi")),
+            ("btn_autogen", tr("debug.batch_roi_current")),
+            ("btn_autogen_all", tr("debug.batch_roi_all")),
+            ("btn_clear_roi_batch", tr("debug.clear_roi_current")),
+            ("btn_debug_refresh_camera", tr("debug.scan_camera")),
+            ("btn_debug_connect_camera", tr("debug.connect")),
+            ("btn_debug_disconnect_camera", tr("debug.disconnect")),
+            ("btn_debug_live_preview", tr("debug.live_preview")),
+            ("btn_debug_grab_once", tr("debug.grab_to_test")),
+            ("btn_debug_save_image", tr("debug.save_image")),
+            ("chk_debug_digital_shift_enable", tr("debug.enable")),
+            ("btn_debug_read_camera_settings", tr("debug.read_camera_params")),
+            ("btn_debug_apply_camera_settings", tr("debug.apply_camera_params")),
+            ("btn_debug_open_io", tr("debug.open_io_debug")),
+            ("btn_debug_close_io", tr("debug.close_io_debug")),
+            ("btn_debug_refresh_io", tr("debug.refresh_dido")),
+            ("btn_debug_simulate_trigger", tr("debug.simulate_trigger_todo")),
+        ):
+            widget = getattr(self, attr, None)
+            if widget is not None:
+                widget.setText(text)
+
+        if hasattr(self, "cmb_algorithm"):
+            current_algorithm = self.current_algorithm()
+            blocker = QtCore.QSignalBlocker(self.cmb_algorithm)
+            self._populate_algorithm_combo()
+            index = self._find_algorithm_combo_index(current_algorithm)
+            self.cmb_algorithm.setCurrentIndex(index if index >= 0 else -1)
+            del blocker
+        if hasattr(self, "btn_algorithm_picker"):
+            self.btn_algorithm_picker.setMenu(self._build_algorithm_picker_menu())
+            self._sync_algorithm_picker()
+        if hasattr(self, "tabs"):
+            self._update_sample_panel_widgets()
+        if hasattr(self, "inspection_items_table"):
+            self.inspection_items_table.setHorizontalHeaderLabels([
+                tr("debug.tools_table.enabled"),
+                tr("debug.tools_table.name"),
+                tr("debug.tools_table.camera"),
+                tr("debug.tools_table.algorithm"),
+                tr("debug.tools_table.status"),
+            ])
+        if hasattr(self, "template_match_box"):
+            self.template_match_box.setTitle(tr("debug.auto_roi"))
+        if hasattr(self, "btn_train_cancel"):
+            self.btn_train_cancel.setToolTip(tr("debug.cancel_train_confirm"))
+        if hasattr(self, "btn_train_current_cancel"):
+            self.btn_train_current_cancel.setToolTip(tr("debug.cancel_current_confirm"))
+        if hasattr(self, "cmb_debug_light_source_mode"):
+            current_data = self.cmb_debug_light_source_mode.currentData()
+            blocker = QtCore.QSignalBlocker(self.cmb_debug_light_source_mode)
+            self.cmb_debug_light_source_mode.clear()
+            self.cmb_debug_light_source_mode.addItem(tr("debug.board_do_light"), "board_io")
+            self.cmb_debug_light_source_mode.addItem(tr("debug.camera_line1_strobe"), "camera_line1_strobe")
+            index = self.cmb_debug_light_source_mode.findData(current_data)
+            self.cmb_debug_light_source_mode.setCurrentIndex(max(0, index))
+            self.cmb_debug_light_source_mode.setToolTip(tr("debug.camera_line1_tip"))
+            del blocker
+        form = getattr(self, "cam_params_form", None)
+        if form is not None:
+            row_labels = {
+                "spin_debug_exposure": tr("debug.exposure"),
+                "spin_debug_gain": tr("debug.gain"),
+                "chk_debug_digital_shift_enable": tr("debug.digital_shift_enable"),
+                "spin_debug_digital_shift": tr("debug.digital_shift"),
+                "cmb_debug_trigger_mode": tr("debug.trigger_mode"),
+                "cmb_debug_light_source_mode": tr("debug.light_source"),
+            }
+            for field_attr, label_text in row_labels.items():
+                field = getattr(self, field_attr, None)
+                label = form.labelForField(field) if field is not None else None
+                if label is not None:
+                    label.setText(label_text)
+        dialog = getattr(self, "_template_editor_dialog", None)
+        if dialog is not None and hasattr(dialog, "retranslate_ui"):
+            dialog.retranslate_ui()
+        self._sync_footer()
 
     def current_algorithm(self) -> str:
         value = self.cmb_algorithm.currentData() if hasattr(self, "cmb_algorithm") else None
@@ -1293,10 +1448,10 @@ class ToolPage(QtWidgets.QWidget):
             ref_image = str(recipe.reference_image)
         self.ref_image = ref_image or None
         if self.ref_image:
-            self.lbl_ref.setText(f"参考图: {os.path.basename(self.ref_image)}")
+            self.lbl_ref.setText(f"{tr('debug.reference_image')}: {os.path.basename(self.ref_image)}")
             self.lbl_ref.setToolTip(self.ref_image)
         else:
-            self.lbl_ref.setText("参考图：未设置")
+            self.lbl_ref.setText(tr("debug.reference_image_not_set"))
             self.lbl_ref.setToolTip("")
 
     def _train_sample_paths_for_role(self, camera_role: object = None) -> List[str]:
@@ -1373,14 +1528,14 @@ class ToolPage(QtWidgets.QWidget):
 
         current_role = self.current_camera_role()
         pending_action = getattr(self, "_training_roi_pending_actions", {}).get(current_role, "")
-        default_train_text = "训练 / 标定全部启用工具"
-        default_current_text = "标定当前工具"
+        default_train_text = tr("debug.train_all_tools")
+        default_current_text = tr("debug.calibrate_current_tool")
         default_train_style = getattr(self, "_train_action_btn_style", "")
         default_current_style = getattr(self, "_train_current_btn_style", "")
         confirm_style = getattr(self, "_train_confirm_btn_style", default_train_style)
 
         if pending_action == "all":
-            train_button.setText("确认开始训练 / 标定全部启用工具")
+            train_button.setText(tr("debug.confirm_train_all"))
             train_button.setStyleSheet(confirm_style)
             if cancel_train_button is not None:
                 cancel_train_button.setVisible(True)
@@ -1391,7 +1546,7 @@ class ToolPage(QtWidgets.QWidget):
                 cancel_train_button.setVisible(False)
 
         if pending_action == "current":
-            train_current_button.setText("确认开始标定当前工具")
+            train_current_button.setText(tr("debug.confirm_current_tool"))
             train_current_button.setStyleSheet(confirm_style)
             if cancel_current_button is not None:
                 cancel_current_button.setVisible(True)
@@ -1411,8 +1566,8 @@ class ToolPage(QtWidgets.QWidget):
             return
         self._training_roi_pending_actions.pop(role, None)
         self._update_runtime_widgets()
-        action_text = "训练 / 标定全部启用工具" if pending_action == "all" else "标定当前工具"
-        self.lbl_status.setText(f"状态：已取消“{action_text}”确认")
+        action_text = tr("debug.train_all_tools") if pending_action == "all" else tr("debug.calibrate_current_tool")
+        self.lbl_status.setText(tr("debug.cancelled_confirm", action=action_text))
 
     def _ensure_training_roi_reviewed(self, camera_role: object, *, action_name: str, action_key: str) -> bool:
         role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
@@ -1434,13 +1589,13 @@ class ToolPage(QtWidgets.QWidget):
 
         recipe = self.line2dup_recipe_for_role(role, force_reload=True)
         if recipe is None:
-            QtWidgets.QMessageBox.warning(self, "提示", f"{role} 尚未加载 line2dup 配方，请先创建模板。")
+            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("debug.recipe_missing", role=role))
             return False
         ref_image = self.ref_image
         if recipe.reference_image and os.path.exists(recipe.reference_image):
             ref_image = recipe.reference_image
         if not ref_image or not os.path.exists(ref_image):
-            QtWidgets.QMessageBox.warning(self, "提示", f"{role} 缺少参考图，请先确认位置修正模板。")
+            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("debug.reference_missing", role=role))
             return False
 
         ok_count = 0
@@ -1465,20 +1620,19 @@ class ToolPage(QtWidgets.QWidget):
             self._clear_training_roi_review_state(role)
             QtWidgets.QMessageBox.warning(
                 self,
-                "ROI 生成失败",
-                "训练前自动更新 ROI 失败，请先检查模板或图片。\n\n"
-                + "\n".join(errors[:20]),
+                tr("debug.roi_generate_failed_title"),
+                tr("debug.roi_generate_failed_message", errors="\n".join(errors[:20])),
             )
             return False
 
         self._training_roi_ready_signatures[role] = signature
         self._training_roi_pending_actions[role] = action_key
         self._update_runtime_widgets()
-        self.lbl_status.setText(f"状态：已更新 {role} 的 ROI，请检查后再次点击{action_name}")
+        self.lbl_status.setText(tr("debug.roi_updated_status", role=role, action=action_name))
         QtWidgets.QMessageBox.information(
             self,
-            "ROI 已更新",
-            f"已更新 {role} 的 OK/NG ROI，共 {ok_count} 张。\n请检查当前图片上的 ROI 后，再次点击“{action_name}”。",
+            tr("debug.roi_updated_title"),
+            tr("debug.roi_updated_message", role=role, count=ok_count, action=action_name),
         )
         return False
 
@@ -1523,19 +1677,19 @@ class ToolPage(QtWidgets.QWidget):
         selected_serial = self._selected_debug_camera_serial()
         if connected_serial and connected_serial != selected_serial:
             self._disconnect_debug_camera()
-            self._set_debug_camera_status(f"已切换到 {self.current_camera_role()}，请重新连接")
+            self._set_debug_camera_status(tr("debug.status_switched_camera_reconnect", role=self.current_camera_role()))
 
     def current_algorithm_display_name(self) -> str:
         algorithm = self.current_algorithm()
         if not algorithm:
             return ""
-        return ALGORITHM_DISPLAY_NAMES.get(algorithm, algorithm)
+        return _algorithm_display_name(ALGORITHM_DISPLAY_NAMES.get(algorithm, algorithm), algorithm)
 
     def _populate_algorithm_combo(self) -> None:
         self.cmb_algorithm.clear()
         model = self.cmb_algorithm.model()
         for group_name, items in ALGORITHM_GROUPS:
-            self.cmb_algorithm.addItem(group_name, None)
+            self.cmb_algorithm.addItem(_algorithm_group_display_name(group_name), None)
             header_index = self.cmb_algorithm.count() - 1
             header_item = model.item(header_index) if hasattr(model, "item") else None
             if header_item is not None:
@@ -1557,13 +1711,13 @@ class ToolPage(QtWidgets.QWidget):
                 header_item.setForeground(QtGui.QColor("#9fd2ff"))
 
             for label, code, enabled in items:
-                self.cmb_algorithm.addItem(label, code if enabled else None)
+                self.cmb_algorithm.addItem(_algorithm_display_name(label, code), code if enabled else None)
                 item_index = self.cmb_algorithm.count() - 1
                 item = model.item(item_index) if hasattr(model, "item") else None
                 if item is not None and not enabled:
                     item.setEnabled(False)
                     item.setForeground(QtGui.QColor("#707070"))
-                    item.setToolTip("暂未实现")
+                    item.setToolTip(tr("debug.tool_unimplemented"))
 
         self.cmb_algorithm.setCurrentIndex(-1)
 
@@ -1587,7 +1741,7 @@ class ToolPage(QtWidgets.QWidget):
             self.cmb_algorithm.setCurrentIndex(-1)
         self._sync_algorithm_picker()
         return
-        sec_tools = QtWidgets.QLabel("  检测工具")
+
     def _build_algorithm_picker_menu(self) -> QtWidgets.QMenu:
         menu = QtWidgets.QMenu(self)
         menu.setStyleSheet(
@@ -1599,12 +1753,12 @@ class ToolPage(QtWidgets.QWidget):
         self._algorithm_action_group = QtGui.QActionGroup(self)
         self._algorithm_action_group.setExclusive(True)
         for group_name, items in ALGORITHM_GROUPS:
-            submenu = menu.addMenu(group_name)
+            submenu = menu.addMenu(_algorithm_group_display_name(group_name))
             for label, code, enabled in items:
-                action = submenu.addAction(label)
+                action = submenu.addAction(_algorithm_display_name(label, code))
                 if not enabled:
                     action.setEnabled(False)
-                    action.setToolTip("暂未实现")
+                    action.setToolTip(tr("debug.tool_unimplemented"))
                     continue
                 action.setCheckable(True)
                 self._algorithm_action_group.addAction(action)
@@ -1617,7 +1771,7 @@ class ToolPage(QtWidgets.QWidget):
     def _sync_algorithm_picker(self) -> None:
         button = getattr(self, "btn_algorithm_picker", None)
         if button is not None:
-            text = self.current_algorithm_display_name() or "请选择工具"
+            text = self.current_algorithm_display_name() or tr("debug.select_tool")
             button.setText(text)
             button.setToolTip(text)
         actions = getattr(self, "_algorithm_actions", {})
@@ -1628,7 +1782,7 @@ class ToolPage(QtWidgets.QWidget):
     def open_camera_debug_dialog(self) -> None:
         self._show_tool_dialog(
             "camera_debug",
-            "相机取图 / 参数工具",
+            tr("action.camera_tool"),
             self.camera_debug_page,
             size=(1100, 700),
         )
@@ -1638,7 +1792,7 @@ class ToolPage(QtWidgets.QWidget):
     def open_io_debug_dialog(self) -> None:
         self._show_tool_dialog(
             "io_debug",
-            "DI / DO 调试工具",
+            tr("action.io_tool"),
             self.io_debug_page,
             size=(900, 480),
         )
@@ -1684,9 +1838,9 @@ class ToolPage(QtWidgets.QWidget):
             self._debug_io_timer.stop()
             self._debug_io_controller = None
             self._debug_io_uses_runtime_controller = False
-            self.lbl_debug_di_snapshot.setText("DI：未连接")
-            self.lbl_debug_do_snapshot.setText("DO：未连接")
-            self.lbl_debug_io_mapping_summary.setText("映射：未加载")
+            self.lbl_debug_di_snapshot.setText(tr("debug.di_disconnected"))
+            self.lbl_debug_do_snapshot.setText(tr("debug.do_disconnected"))
+            self.lbl_debug_io_mapping_summary.setText(tr("debug.mapping_not_loaded"))
 
         self.btn_debug_open_io.setEnabled(True)
         self.btn_debug_close_io.setEnabled(self._debug_io_controller is not None and not self._debug_io_uses_runtime_controller)
@@ -1696,7 +1850,7 @@ class ToolPage(QtWidgets.QWidget):
     def open_template_match_dialog(self) -> None:
         self._show_tool_dialog(
             "template_match",
-            "自动生成 ROI 工具",
+            tr("action.auto_region"),
             self.template_match_box,
             size=(880, 170),
         )
@@ -1732,8 +1886,9 @@ class ToolPage(QtWidgets.QWidget):
         self,
         *,
         status_kind: str = "pending",
-        status_text: str = "未检测",
+        status_text: str = "",
     ) -> List[Dict[str, object]]:
+        effective_status_text = status_text or tr("runtime.untested")
         return [
             {
                 "item_id": item.item_id,
@@ -1745,7 +1900,7 @@ class ToolPage(QtWidgets.QWidget):
                 "params": dict(item.params or {}),
                 "enabled": bool(item.enabled),
                 "status_kind": status_kind if item.enabled else "disabled",
-                "status_text": status_text if item.enabled else "已禁用",
+                "status_text": effective_status_text if item.enabled else tr("debug.status.disabled"),
             }
             for item in self.inspection_items
         ]
@@ -1834,7 +1989,7 @@ class ToolPage(QtWidgets.QWidget):
         self._apply_current_role_recipe_state()
         if not self.ref_image and sd.ref_image and os.path.exists(sd.ref_image):
             self.ref_image = sd.ref_image
-            self.lbl_ref.setText(f"参考图: {os.path.basename(self.ref_image)}")
+            self.lbl_ref.setText(f"{tr('debug.reference_image')}: {os.path.basename(self.ref_image)}")
             self.lbl_ref.setToolTip(self.ref_image)
         self._refresh_lists()
 
@@ -1875,9 +2030,9 @@ class ToolPage(QtWidgets.QWidget):
 
         self.table.setRowCount(0)
         self.canvas.clear_image()
-        self.lbl_ref.setText("参考图：未设置")
+        self.lbl_ref.setText(tr("debug.reference_image_not_set"))
         self.lbl_ref.setToolTip("")
-        self.lbl_status.setText("状态：已切换产品")
+        self.lbl_status.setText(tr("debug.status_switched_product"))
 
         self.load_session()
         self._refresh_lists()
@@ -1899,8 +2054,8 @@ class ToolPage(QtWidgets.QWidget):
         self.ref_image = None
         self._line2dup_match_ms_by_image = {}
         self._line2dup_autogen_ms_by_image = {}
-        self.lbl_ref.setText("参考图：未设置")
-        self.lbl_status.setText("状态：未训练")
+        self.lbl_ref.setText(tr("debug.reference_image_not_set"))
+        self.lbl_status.setText(tr("debug.status_untrained"))
         self.table.setRowCount(0)
         self._current_result_rows = []
         self._roi_results_by_image = {}
@@ -1955,7 +2110,8 @@ class ToolPage(QtWidgets.QWidget):
         header_layout.setContentsMargins(4, 0, 16, 0)
         header_layout.setSpacing(4)
 
-        header_layout.addWidget(QtWidgets.QLabel("\u4ea7\u54c1:"))
+        self.lbl_product_caption = QtWidgets.QLabel(tr("debug.product"))
+        header_layout.addWidget(self.lbl_product_caption)
         self.cmb_product = QtWidgets.QComboBox()
         self.cmb_product.setFixedWidth(180)
         self.cmb_product.addItems(self.session.product_names)
@@ -1964,14 +2120,15 @@ class ToolPage(QtWidgets.QWidget):
         self.cmb_product.setStyleSheet(_input_style)
         header_layout.addWidget(self.cmb_product)
 
-        self.btn_new_product = QtWidgets.QPushButton(_si(SP.SP_FileDialogNewFolder), "\u65b0\u5efa")
+        self.btn_new_product = QtWidgets.QPushButton(_si(SP.SP_FileDialogNewFolder), tr("debug.new"))
         self.btn_new_product.setFixedWidth(60)
         self.btn_new_product.setStyleSheet(_compact_btn)
         self.btn_new_product.clicked.connect(self._new_product)
         header_layout.addWidget(self.btn_new_product)
 
         header_layout.addSpacing(10)
-        header_layout.addWidget(QtWidgets.QLabel("当前相机:"))
+        self.lbl_current_camera_caption = QtWidgets.QLabel(tr("debug.current_camera"))
+        header_layout.addWidget(self.lbl_current_camera_caption)
         self.cmb_current_camera_role = QtWidgets.QComboBox()
         self.cmb_current_camera_role.setFixedWidth(84)
         self.cmb_current_camera_role.addItem("cam1", "cam1")
@@ -1982,7 +2139,7 @@ class ToolPage(QtWidgets.QWidget):
 
         header_layout.addStretch(1)
 
-        self.lbl_status = QtWidgets.QLabel("\u72b6\u6001\uff1a\u672a\u8bad\u7ec3")
+        self.lbl_status = QtWidgets.QLabel(tr("debug.status_untrained"))
         self.lbl_status.setStyleSheet(f"color:{_TEXT_DIM};font-size:13px;")
         self.lbl_status.hide()
         header_layout.addWidget(self.lbl_status)
@@ -2032,7 +2189,7 @@ class ToolPage(QtWidgets.QWidget):
         right_vbox.setSpacing(0)
 
         # --- 图片列表 ---
-        self.lbl_images_section = QtWidgets.QLabel("  \u56fe\u7247\u5217\u8868")
+        self.lbl_images_section = QtWidgets.QLabel(tr("debug.image_list"))
         self.lbl_images_section.setFixedHeight(28)
         self.lbl_images_section.setStyleSheet(_section_style)
         right_vbox.addWidget(self.lbl_images_section)
@@ -2063,16 +2220,16 @@ class ToolPage(QtWidgets.QWidget):
         train_actions = QtWidgets.QGridLayout()
         train_actions.setHorizontalSpacing(4)
         train_actions.setVerticalSpacing(4)
-        self.btn_import_train = QtWidgets.QPushButton("添加外部图片")
+        self.btn_import_train = QtWidgets.QPushButton(tr("debug.add_external_images"))
         self.btn_import_train.setStyleSheet(_compact_btn)
         self.btn_import_train.clicked.connect(lambda: self._add_images_to("TRAIN"))
-        self.btn_train_to_test = QtWidgets.QPushButton("转为测试")
+        self.btn_train_to_test = QtWidgets.QPushButton(tr("debug.move_to_test"))
         self.btn_train_to_test.setStyleSheet(_compact_btn)
         self.btn_train_to_test.clicked.connect(lambda: self._move_selected_sample_to("TEST"))
-        self.btn_sample_annotation = QtWidgets.QPushButton("样本标注...")
+        self.btn_sample_annotation = QtWidgets.QPushButton(tr("debug.sample_annotation"))
         self.btn_sample_annotation.setStyleSheet(_compact_btn)
         self.btn_sample_annotation.clicked.connect(self._open_sample_annotation_dialog)
-        self.btn_del_ok = QtWidgets.QPushButton(_si(SP.SP_DialogDiscardButton), "移除")
+        self.btn_del_ok = QtWidgets.QPushButton(_si(SP.SP_DialogDiscardButton), tr("debug.remove"))
         self.btn_del_ok.setStyleSheet(_compact_btn)
         self.btn_del_ok.clicked.connect(lambda: self._remove_selected_from("TRAIN"))
         train_actions.addWidget(self.btn_import_train, 0, 0)
@@ -2080,7 +2237,7 @@ class ToolPage(QtWidgets.QWidget):
         train_actions.addWidget(self.btn_sample_annotation, 1, 0)
         train_actions.addWidget(self.btn_del_ok, 1, 1)
         train_layout.addLayout(train_actions)
-        self.tabs.addTab(train_tab, "训练样本")
+        self.tabs.addTab(train_tab, tr("debug.train_samples"))
 
         self.ng_list = QtWidgets.QListWidget(self)
         self.ng_list.setStyleSheet(_lw_css)
@@ -2098,16 +2255,16 @@ class ToolPage(QtWidgets.QWidget):
         test_actions = QtWidgets.QGridLayout()
         test_actions.setHorizontalSpacing(4)
         test_actions.setVerticalSpacing(4)
-        self.btn_test_to_train = QtWidgets.QPushButton("转为训练")
+        self.btn_test_to_train = QtWidgets.QPushButton(tr("debug.move_to_train"))
         self.btn_test_to_train.setStyleSheet(_compact_btn)
         self.btn_test_to_train.clicked.connect(lambda: self._move_selected_sample_to("TRAIN"))
-        self.btn_add_test = QtWidgets.QPushButton(_si(SP.SP_FileDialogStart), "添加外部图片")
+        self.btn_add_test = QtWidgets.QPushButton(_si(SP.SP_FileDialogStart), tr("debug.add_external_images"))
         self.btn_add_test.setStyleSheet(_compact_btn)
         self.btn_add_test.clicked.connect(lambda: self._add_images_to("TEST"))
-        self.btn_del_test = QtWidgets.QPushButton(_si(SP.SP_DialogDiscardButton), "移除")
+        self.btn_del_test = QtWidgets.QPushButton(_si(SP.SP_DialogDiscardButton), tr("debug.remove"))
         self.btn_del_test.setStyleSheet(_compact_btn)
         self.btn_del_test.clicked.connect(lambda: self._remove_selected_from("TEST"))
-        self.btn_sample_annotation_test = QtWidgets.QPushButton("样本标注...")
+        self.btn_sample_annotation_test = QtWidgets.QPushButton(tr("debug.sample_annotation"))
         self.btn_sample_annotation_test.setStyleSheet(_compact_btn)
         self.btn_sample_annotation_test.clicked.connect(self._open_sample_annotation_dialog)
         test_actions.addWidget(self.btn_test_to_train, 0, 0)
@@ -2115,10 +2272,10 @@ class ToolPage(QtWidgets.QWidget):
         test_actions.addWidget(self.btn_sample_annotation_test, 1, 0)
         test_actions.addWidget(self.btn_del_test, 1, 1)
         test_layout.addLayout(test_actions)
-        self.tabs.addTab(test_tab, "测试样本")
+        self.tabs.addTab(test_tab, tr("debug.test_samples"))
         right_vbox.addWidget(self.tabs, 1)
 
-        self.lbl_current_image_sample_state = QtWidgets.QLabel("  当前图片样本状态：未选择")
+        self.lbl_current_image_sample_state = QtWidgets.QLabel(f"  {tr('debug.current_image_state_none')}")
         self.lbl_current_image_sample_state.setWordWrap(True)
         self.lbl_current_image_sample_state.setStyleSheet(
             f"color:{_TEXT_DIM};font-size:11px;padding:4px 10px 8px 10px;border-bottom:1px solid #505050;"
@@ -2127,7 +2284,7 @@ class ToolPage(QtWidgets.QWidget):
 
         # --- 算法参数 ---
         self.btn_toggle_algo = QtWidgets.QToolButton()
-        self.btn_toggle_algo.setText("  算法参数")
+        self.btn_toggle_algo.setText(tr("debug.algorithm_params"))
         self.btn_toggle_algo.setCheckable(True)
         self.btn_toggle_algo.setChecked(True)
         self.btn_toggle_algo.setArrowType(QtCore.Qt.ArrowType.DownArrow)
@@ -2196,14 +2353,14 @@ class ToolPage(QtWidgets.QWidget):
         _lbl_disabled_s = "color:#7a7a7a;font-size:12px;"
         self._algo_param_label_style = _lbl_s
         self._algo_param_label_disabled_style = _lbl_disabled_s
-        lbl_a = QtWidgets.QLabel("工具"); lbl_a.setStyleSheet(_lbl_s)
-        lbl_m = QtWidgets.QLabel("\u5224\u5b9a"); lbl_m.setStyleSheet(_lbl_s)
-        lbl_mg = QtWidgets.QLabel("阈值"); lbl_mg.setStyleSheet(_lbl_s)
+        self.lbl_algo_tool = QtWidgets.QLabel(tr("debug.tool")); self.lbl_algo_tool.setStyleSheet(_lbl_s)
+        self.lbl_algo_decision = QtWidgets.QLabel(tr("debug.decision")); self.lbl_algo_decision.setStyleSheet(_lbl_s)
+        self.lbl_algo_threshold = QtWidgets.QLabel(tr("debug.threshold")); self.lbl_algo_threshold.setStyleSheet(_lbl_s)
         self.lbl_topk = QtWidgets.QLabel("TopK")
         self.lbl_topk.setStyleSheet(self._algo_param_label_style)
-        algo_form.addRow(lbl_a, self.btn_algorithm_picker)
-        algo_form.addRow(lbl_m, self.cmb_mode)
-        algo_form.addRow(lbl_mg, self.spin_margin)
+        algo_form.addRow(self.lbl_algo_tool, self.btn_algorithm_picker)
+        algo_form.addRow(self.lbl_algo_decision, self.cmb_mode)
+        algo_form.addRow(self.lbl_algo_threshold, self.spin_margin)
         algo_form.addRow(self.lbl_topk, self.spin_topk)
         self.algorithm_params_frame = algo_frame
         right_vbox.addWidget(algo_frame)
@@ -2214,7 +2371,7 @@ class ToolPage(QtWidgets.QWidget):
         right_vbox.addWidget(tool_gap)
 
         self.btn_toggle_tools = QtWidgets.QToolButton()
-        self.btn_toggle_tools.setText("  检测工具")
+        self.btn_toggle_tools.setText(tr("debug.inspection_tools"))
         self.btn_toggle_tools.setCheckable(True)
         self.btn_toggle_tools.setChecked(True)
         self.btn_toggle_tools.setArrowType(QtCore.Qt.ArrowType.DownArrow)
@@ -2241,13 +2398,19 @@ class ToolPage(QtWidgets.QWidget):
 
         self.tool_config_frame = tool_frame
         self.inspection_items_table = QtWidgets.QTableWidget(0, 5)
-        self.inspection_items_table.setHorizontalHeaderLabels(["启用", "名称", "相机", "算法", "状态"])
+        self.inspection_items_table.setHorizontalHeaderLabels([
+            tr("debug.tools_table.enabled"),
+            tr("debug.tools_table.name"),
+            tr("debug.tools_table.camera"),
+            tr("debug.tools_table.algorithm"),
+            tr("debug.tools_table.status"),
+        ])
         self.inspection_items_table.verticalHeader().setVisible(False)
         self.inspection_items_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self.inspection_items_table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
         header = self.inspection_items_table.horizontalHeader()
         header.setStretchLastSection(False)
-        self.btn_toggle_tools.setText("  检测工具")
+        self.btn_toggle_tools.setText(tr("debug.inspection_tools"))
         header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Stretch)
@@ -2276,7 +2439,7 @@ class ToolPage(QtWidgets.QWidget):
         self.tool_config_scroll.setWidget(tool_frame)
         self.tool_config_scroll.setMinimumHeight(220)
         right_vbox.addWidget(self.tool_config_scroll, 1)
-        self.lbl_current_tool_sample_stats = QtWidgets.QLabel("  当前工具样本统计：请选择检测工具")
+        self.lbl_current_tool_sample_stats = QtWidgets.QLabel(f"  {tr('debug.current_tool_stats_select')}")
         self.lbl_current_tool_sample_stats.setWordWrap(True)
         self.lbl_current_tool_sample_stats.setStyleSheet(
             f"color:{_TEXT_DIM};font-size:11px;padding:6px 10px;border-top:1px solid #505050;border-bottom:1px solid #505050;"
@@ -2285,7 +2448,8 @@ class ToolPage(QtWidgets.QWidget):
         self._update_learning_backbone_hint()
 
         # --- 操作按钮 ---
-        sec_action = QtWidgets.QLabel("  \u64cd\u4f5c")
+        self.lbl_action_section = QtWidgets.QLabel(tr("debug.actions"))
+        sec_action = self.lbl_action_section
         sec_action.setFixedHeight(28)
         sec_action.setStyleSheet(_section_style)
         right_vbox.addWidget(sec_action)
@@ -2294,7 +2458,7 @@ class ToolPage(QtWidgets.QWidget):
         action_vbox = QtWidgets.QVBoxLayout(action_frame)
         action_vbox.setContentsMargins(8, 6, 8, 6)
         action_vbox.setSpacing(4)
-        self.lbl_training_validation = QtWidgets.QLabel("训练校验：请选择检测工具")
+        self.lbl_training_validation = QtWidgets.QLabel(tr("debug.training_validation_select"))
         self.lbl_training_validation.setWordWrap(True)
         self.lbl_training_validation.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;padding:0 2px 4px 2px;")
         action_vbox.addWidget(self.lbl_training_validation)
@@ -2322,7 +2486,7 @@ class ToolPage(QtWidgets.QWidget):
         train_row.setContentsMargins(0, 0, 0, 0)
         train_row.setSpacing(4)
 
-        self.btn_train = QtWidgets.QPushButton(_si(SP.SP_DialogApplyButton), "\u8bad\u7ec3 / \u6807\u5b9a\u5168\u90e8\u542f\u7528\u5de5\u5177")
+        self.btn_train = QtWidgets.QPushButton(_si(SP.SP_DialogApplyButton), tr("debug.train_all_tools"))
         self._train_action_btn_style = _action_btn
         self._train_current_btn_style = _compact_btn
         self._train_confirm_btn_style = _confirm_action_btn
@@ -2331,7 +2495,7 @@ class ToolPage(QtWidgets.QWidget):
         train_row.addWidget(self.btn_train, 1)
 
         self.btn_train_cancel = QtWidgets.QPushButton("×")
-        self.btn_train_cancel.setToolTip("取消训练确认")
+        self.btn_train_cancel.setToolTip(tr("debug.cancel_train_confirm"))
         self.btn_train_cancel.setStyleSheet(_cancel_action_btn)
         self.btn_train_cancel.setVisible(False)
         self.btn_train_cancel.clicked.connect(lambda: self._cancel_training_pending_action("all"))
@@ -2342,13 +2506,13 @@ class ToolPage(QtWidgets.QWidget):
         train_current_row.setContentsMargins(0, 0, 0, 0)
         train_current_row.setSpacing(4)
 
-        self.btn_train_current = QtWidgets.QPushButton("\u6807\u5b9a\u5f53\u524d\u5de5\u5177")
+        self.btn_train_current = QtWidgets.QPushButton(tr("debug.calibrate_current_tool"))
         self.btn_train_current.setStyleSheet(self._train_current_btn_style)
         self.btn_train_current.clicked.connect(self._train)
         train_current_row.addWidget(self.btn_train_current, 1)
 
         self.btn_train_current_cancel = QtWidgets.QPushButton("×")
-        self.btn_train_current_cancel.setToolTip("取消当前工具确认")
+        self.btn_train_current_cancel.setToolTip(tr("debug.cancel_current_confirm"))
         self.btn_train_current_cancel.setStyleSheet(_cancel_action_btn)
         self.btn_train_current_cancel.setVisible(False)
         self.btn_train_current_cancel.clicked.connect(lambda: self._cancel_training_pending_action("current"))
@@ -2357,13 +2521,13 @@ class ToolPage(QtWidgets.QWidget):
 
         act_row = QtWidgets.QHBoxLayout()
         act_row.setSpacing(4)
-        self.btn_test = QtWidgets.QPushButton(_si(SP.SP_MediaPlay), "\u6d4b\u8bd5\u5f53\u524d\u56fe")
+        self.btn_test = QtWidgets.QPushButton(_si(SP.SP_MediaPlay), tr("debug.test_current_image"))
         self.btn_test.setStyleSheet(_compact_btn)
         self.btn_test.clicked.connect(self._run_test)
-        self.btn_export_test = QtWidgets.QPushButton(_si(SP.SP_DialogSaveButton), "\u5bfc\u51fa\u62a5\u8868")
+        self.btn_export_test = QtWidgets.QPushButton(_si(SP.SP_DialogSaveButton), tr("debug.export_report"))
         self.btn_export_test.setStyleSheet(_compact_btn)
         self.btn_export_test.clicked.connect(self._export_current_results_csv)
-        self.btn_clear_session = QtWidgets.QPushButton(_si(SP.SP_DialogResetButton), "\u6e05\u7a7a\u4f1a\u8bdd")
+        self.btn_clear_session = QtWidgets.QPushButton(_si(SP.SP_DialogResetButton), tr("debug.clear_session"))
         self.btn_clear_session.setStyleSheet(
             "QPushButton{background:#383838;color:#e06666;border:1px solid #555;"
             "padding:4px 8px;border-radius:3px;font-size:12px;}"
@@ -2388,7 +2552,7 @@ class ToolPage(QtWidgets.QWidget):
         footer_layout.setContentsMargins(16, 0, 16, 0)
         footer_layout.setSpacing(20)
 
-        self.lbl_footer_ref = QtWidgets.QLabel("\u53c2\u8003\u56fe: \u672a\u8bbe\u7f6e")
+        self.lbl_footer_ref = QtWidgets.QLabel(tr("debug.reference_image_not_set"))
         self.lbl_footer_ref.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
         footer_layout.addWidget(self.lbl_footer_ref)
         self.lbl_footer_algo = QtWidgets.QLabel("")
@@ -2406,28 +2570,30 @@ class ToolPage(QtWidgets.QWidget):
         roi_bar_w = QtWidgets.QWidget(self)
         roi_bar = QtWidgets.QHBoxLayout(roi_bar_w)
         self._manual_roi_bar = roi_bar
-        roi_bar.addWidget(QtWidgets.QLabel("\u5f62\u72b6\uff1a"))
+        self.lbl_roi_shape_caption = QtWidgets.QLabel(tr("debug.shape"))
+        roi_bar.addWidget(self.lbl_roi_shape_caption)
         self.cmb_shape = QtWidgets.QComboBox()
         self.cmb_shape.addItems(SUPPORTED_SHAPES)
         self.cmb_shape.setCurrentText("rect")
         self.cmb_shape.currentTextChanged.connect(self._on_shape_changed)
         roi_bar.addWidget(self.cmb_shape)
-        roi_bar.addWidget(QtWidgets.QLabel("\u6807\u6ce8\uff1a"))
+        self.lbl_roi_label_caption = QtWidgets.QLabel(tr("debug.label"))
+        roi_bar.addWidget(self.lbl_roi_label_caption)
         self.cmb_label = QtWidgets.QComboBox()
         self.cmb_label.addItems(["roi", "anchor", "anchor_mask"])
         self.cmb_label.setCurrentText("roi")
         self.cmb_label.currentTextChanged.connect(self._on_label_changed)
         roi_bar.addWidget(self.cmb_label)
-        self.btn_save = QtWidgets.QPushButton(_si(SP.SP_DialogSaveButton), "\u4fdd\u5b58\u6807\u6ce8")
+        self.btn_save = QtWidgets.QPushButton(_si(SP.SP_DialogSaveButton), tr("debug.save_annotation"))
         self.btn_save.clicked.connect(self._save_current_rect)
-        self.btn_clear = QtWidgets.QPushButton(_si(SP.SP_DialogResetButton), "\u6e05\u7a7a\u6807\u6ce8")
+        self.btn_clear = QtWidgets.QPushButton(_si(SP.SP_DialogResetButton), tr("debug.clear_annotation"))
         self.btn_clear.clicked.connect(self._clear_current_rect)
         roi_bar.addWidget(self.btn_save)
         roi_bar.addWidget(self.btn_clear)
         roi_bar_w.hide()
 
         # 自动 ROI（对话框用）
-        auto_box = QtWidgets.QGroupBox("\u81ea\u52a8 ROI")
+        auto_box = QtWidgets.QGroupBox(tr("debug.auto_roi"))
         auto_l = QtWidgets.QGridLayout(auto_box)
         self._auto_roi_layout = auto_l
         auto_l.setHorizontalSpacing(10)
@@ -2435,29 +2601,29 @@ class ToolPage(QtWidgets.QWidget):
         auto_l.setColumnStretch(0, 1)
         auto_l.setColumnStretch(1, 1)
         auto_l.setColumnStretch(2, 1)
-        self.lbl_ref = QtWidgets.QLabel("\u53c2\u8003\u56fe\uff1a\u672a\u8bbe\u7f6e")
-        self.btn_set_ref = QtWidgets.QPushButton(_si(SP.SP_ArrowRight), "\u8bbe\u4e3a\u53c2\u8003\u56fe(\u5f53\u524d)")
+        self.lbl_ref = QtWidgets.QLabel(tr("debug.reference_not_set"))
+        self.btn_set_ref = QtWidgets.QPushButton(_si(SP.SP_ArrowRight), tr("debug.set_as_reference"))
         self.btn_set_ref.clicked.connect(self._set_ref_from_current)
-        self.btn_pick_ref = QtWidgets.QPushButton(_si(SP.SP_DirOpenIcon), "\u9009\u62e9\u53c2\u8003\u56fe\u2026")
+        self.btn_pick_ref = QtWidgets.QPushButton(_si(SP.SP_DirOpenIcon), tr("debug.pick_reference"))
         self.btn_pick_ref.clicked.connect(self._pick_ref_image)
         auto_l.addWidget(self.lbl_ref, 0, 0, 1, 3)
         auto_l.addWidget(self.btn_set_ref, 1, 0)
         auto_l.addWidget(self.btn_pick_ref, 1, 1)
-        self.lbl_loc_method = QtWidgets.QLabel("\u5b9a\u4f4d\u65b9\u5f0f\uff1a")
+        self.lbl_loc_method = QtWidgets.QLabel(tr("debug.location_method"))
         auto_l.addWidget(self.lbl_loc_method, 2, 0)
         self.cmb_loc = QtWidgets.QComboBox()
         self.cmb_loc.addItems(SUPPORTED_LOC_MODES)
         self.cmb_loc.setCurrentText(self.loc_method)
         self.cmb_loc.currentTextChanged.connect(self._on_loc_method_changed)
         auto_l.addWidget(self.cmb_loc, 2, 1)
-        self.chk_only_missing = QtWidgets.QCheckBox("\u4ec5\u7f3a\u5931ROI")
+        self.chk_only_missing = QtWidgets.QCheckBox(tr("debug.only_missing_roi"))
         self.chk_only_missing.setChecked(True)
         auto_l.addWidget(self.chk_only_missing, 0, 0, 1, 3, QtCore.Qt.AlignmentFlag.AlignRight)
-        self.btn_autogen = QtWidgets.QPushButton(_si(SP.SP_FileDialogListView), "\u6279\u91cf\u751f\u6210ROI(\u5f53\u524d\u5217\u8868)")
+        self.btn_autogen = QtWidgets.QPushButton(_si(SP.SP_FileDialogListView), tr("debug.batch_roi_current"))
         self.btn_autogen.clicked.connect(self._autogen_roi_current_tab)
-        self.btn_autogen_all = QtWidgets.QPushButton(_si(SP.SP_FileDialogListView), "\u6279\u91cf\u751f\u6210ROI(\u5168\u90e8\u5217\u8868)")
+        self.btn_autogen_all = QtWidgets.QPushButton(_si(SP.SP_FileDialogListView), tr("debug.batch_roi_all"))
         self.btn_autogen_all.clicked.connect(self._autogen_roi_all)
-        self.btn_clear_roi_batch = QtWidgets.QPushButton(_si(SP.SP_DialogResetButton), "\u6e05\u7a7aROI(\u5f53\u524d\u5217\u8868)")
+        self.btn_clear_roi_batch = QtWidgets.QPushButton(_si(SP.SP_DialogResetButton), tr("debug.clear_roi_current"))
         self.btn_clear_roi_batch.clicked.connect(self._clear_roi_current_tab)
         auto_l.addWidget(self.btn_autogen, 1, 0)
         auto_l.addWidget(self.btn_autogen_all, 1, 1)
@@ -2480,7 +2646,8 @@ class ToolPage(QtWidgets.QWidget):
         cam_left_vbox.setContentsMargins(0, 0, 0, 0)
         cam_left_vbox.setSpacing(0)
 
-        cam_left_title = QtWidgets.QLabel("  设备列表")
+        self.lbl_cam_left_title = QtWidgets.QLabel(tr("debug.device_list"))
+        cam_left_title = self.lbl_cam_left_title
         cam_left_title.setFixedHeight(28)
         cam_left_title.setStyleSheet(f"background:#404040;color:{_TEXT_LIGHT};font-size:12px;font-weight:bold;border-bottom:1px solid #505050;padding-left:8px;")
         cam_left_vbox.addWidget(cam_left_title)
@@ -2489,9 +2656,9 @@ class ToolPage(QtWidgets.QWidget):
         role_layout = QtWidgets.QHBoxLayout(role_row)
         role_layout.setContentsMargins(8, 6, 8, 2)
         role_layout.setSpacing(6)
-        lbl_debug_role = QtWidgets.QLabel("调试角色")
-        lbl_debug_role.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
-        role_layout.addWidget(lbl_debug_role)
+        self.lbl_debug_role = QtWidgets.QLabel(tr("debug.debug_role"))
+        self.lbl_debug_role.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
+        role_layout.addWidget(self.lbl_debug_role)
         self.cmb_debug_camera_role = QtWidgets.QComboBox()
         self.cmb_debug_camera_role.setStyleSheet(_input_style)
         self.cmb_debug_camera_role.addItem("cam1", "cam1")
@@ -2505,22 +2672,23 @@ class ToolPage(QtWidgets.QWidget):
         self.cmb_debug_camera.currentIndexChanged.connect(self._on_debug_camera_selected)
         cam_left_vbox.addWidget(self.cmb_debug_camera)
 
-        self.btn_debug_refresh_camera = QtWidgets.QPushButton(_si(SP.SP_BrowserReload), " 扫描相机")
+        self.btn_debug_refresh_camera = QtWidgets.QPushButton(_si(SP.SP_BrowserReload), tr("debug.scan_camera"))
         self.btn_debug_refresh_camera.setStyleSheet(_compact_btn)
         self.btn_debug_refresh_camera.clicked.connect(self._refresh_debug_camera_list)
         cam_left_vbox.addWidget(self.btn_debug_refresh_camera)
 
         cam_left_vbox.addSpacing(8)
-        cam_info_title = QtWidgets.QLabel("  设备信息")
+        self.lbl_cam_info_title = QtWidgets.QLabel(tr("debug.device_info"))
+        cam_info_title = self.lbl_cam_info_title
         cam_info_title.setFixedHeight(28)
         cam_info_title.setStyleSheet(f"background:#404040;color:{_TEXT_LIGHT};font-size:12px;font-weight:bold;border-bottom:1px solid #505050;border-top:1px solid #505050;padding-left:8px;")
         cam_left_vbox.addWidget(cam_info_title)
 
-        self.lbl_debug_camera_info = QtWidgets.QLabel("相机信息：")
+        self.lbl_debug_camera_info = QtWidgets.QLabel(tr("debug.camera_info"))
         self.lbl_debug_camera_info.setWordWrap(True)
         self.lbl_debug_camera_info.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;padding:8px;")
         cam_left_vbox.addWidget(self.lbl_debug_camera_info)
-        self.lbl_debug_current_role = QtWidgets.QLabel("当前调试角色：cam1")
+        self.lbl_debug_current_role = QtWidgets.QLabel(tr("debug.current_debug_role", role="cam1"))
         self.lbl_debug_current_role.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;padding:0 8px 8px 8px;")
         cam_left_vbox.addWidget(self.lbl_debug_current_role)
         cam_left_vbox.addStretch(1)
@@ -2539,32 +2707,32 @@ class ToolPage(QtWidgets.QWidget):
         cam_tb_layout.setContentsMargins(8, 2, 8, 2)
         cam_tb_layout.setSpacing(6)
 
-        self.btn_debug_connect_camera = QtWidgets.QPushButton(_si(SP.SP_DriveNetIcon), " 连接")
+        self.btn_debug_connect_camera = QtWidgets.QPushButton(_si(SP.SP_DriveNetIcon), tr("debug.connect"))
         self.btn_debug_connect_camera.setStyleSheet(_compact_btn)
         self.btn_debug_connect_camera.clicked.connect(self._connect_debug_camera)
         cam_tb_layout.addWidget(self.btn_debug_connect_camera)
 
-        self.btn_debug_disconnect_camera = QtWidgets.QPushButton(_si(SP.SP_DialogDiscardButton), " 断开")
+        self.btn_debug_disconnect_camera = QtWidgets.QPushButton(_si(SP.SP_DialogDiscardButton), tr("debug.disconnect"))
         self.btn_debug_disconnect_camera.setStyleSheet(_compact_btn)
         self.btn_debug_disconnect_camera.clicked.connect(self._disconnect_debug_camera)
         cam_tb_layout.addWidget(self.btn_debug_disconnect_camera)
 
         cam_tb_layout.addSpacing(12)
 
-        self.btn_debug_live_preview = QtWidgets.QPushButton(_si(SP.SP_MediaPlay), " 实时预览")
+        self.btn_debug_live_preview = QtWidgets.QPushButton(_si(SP.SP_MediaPlay), tr("debug.live_preview"))
         self.btn_debug_live_preview.setCheckable(True)
         self.btn_debug_live_preview.setStyleSheet(_compact_btn)
         self.btn_debug_live_preview.toggled.connect(self._toggle_debug_camera_preview)
         cam_tb_layout.addWidget(self.btn_debug_live_preview)
 
-        self.btn_debug_grab_once = QtWidgets.QPushButton(_si(SP.SP_DesktopIcon), " 拍照到 TEST")
+        self.btn_debug_grab_once = QtWidgets.QPushButton(_si(SP.SP_DesktopIcon), tr("debug.grab_to_test"))
         self.btn_debug_grab_once.setStyleSheet(_compact_btn)
         self.btn_debug_grab_once.clicked.connect(self._grab_debug_camera_once)
         cam_tb_layout.addWidget(self.btn_debug_grab_once)
 
         cam_tb_layout.addSpacing(12)
 
-        self.btn_debug_save_image = QtWidgets.QPushButton(_si(SP.SP_DialogSaveButton), " 保存图片")
+        self.btn_debug_save_image = QtWidgets.QPushButton(_si(SP.SP_DialogSaveButton), tr("debug.save_image"))
         self.btn_debug_save_image.setStyleSheet(_compact_btn)
         self.btn_debug_save_image.clicked.connect(self._save_debug_camera_image)
         cam_tb_layout.addWidget(self.btn_debug_save_image)
@@ -2572,9 +2740,9 @@ class ToolPage(QtWidgets.QWidget):
         cam_tb_layout.addStretch(1)
         cam_center_vbox.addWidget(cam_toolbar)
 
-        self.view_debug_camera = RuntimeImageView("调试预览")
+        self.view_debug_camera = RuntimeImageView(tr("debug.preview_title"))
         self.view_debug_camera.setMinimumSize(640, 400)
-        self.view_debug_camera.set_runtime_pixmap(None, placeholder="预览关闭")
+        self.view_debug_camera.set_runtime_pixmap(None, placeholder=tr("debug.preview_closed"))
         cam_center_vbox.addWidget(self.view_debug_camera, 1)
 
         cam_statusbar = QtWidgets.QFrame()
@@ -2582,7 +2750,7 @@ class ToolPage(QtWidgets.QWidget):
         cam_statusbar.setStyleSheet(f"QFrame{{background:{_HEADER_BG};border-top:1px solid #505050;}}")
         cam_sb_layout = QtWidgets.QHBoxLayout(cam_statusbar)
         cam_sb_layout.setContentsMargins(10, 0, 10, 0)
-        self.lbl_debug_camera_status = QtWidgets.QLabel("相机状态：未扫描")
+        self.lbl_debug_camera_status = QtWidgets.QLabel(tr("debug.camera_status_unscanned"))
         self.lbl_debug_camera_status.setWordWrap(False)
         self.lbl_debug_camera_status.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
         cam_sb_layout.addWidget(self.lbl_debug_camera_status)
@@ -2597,34 +2765,39 @@ class ToolPage(QtWidgets.QWidget):
         cam_right_vbox.setContentsMargins(0, 0, 0, 0)
         cam_right_vbox.setSpacing(0)
 
-        cam_right_title = QtWidgets.QLabel("  参数设置")
+        self.lbl_cam_right_title = QtWidgets.QLabel(tr("debug.param_settings"))
+        cam_right_title = self.lbl_cam_right_title
         cam_right_title.setFixedHeight(28)
         cam_right_title.setStyleSheet(f"background:#404040;color:{_TEXT_LIGHT};font-size:12px;font-weight:bold;border-bottom:1px solid #505050;padding-left:8px;")
         cam_right_vbox.addWidget(cam_right_title)
 
         cam_params = QtWidgets.QWidget()
         cam_params_form = QtWidgets.QFormLayout(cam_params)
+        self.cam_params_form = cam_params_form
         cam_params_form.setContentsMargins(12, 12, 12, 12)
         cam_params_form.setSpacing(10)
-        self.view_debug_camera.set_runtime_pixmap(None, placeholder="预览关闭")
+        self.view_debug_camera.set_runtime_pixmap(None, placeholder=tr("debug.preview_closed"))
 
         self.spin_debug_exposure = QtWidgets.QDoubleSpinBox()
         self.spin_debug_exposure.setDecimals(1)
         self.spin_debug_exposure.setRange(1.0, 1000000.0)
         self.spin_debug_exposure.setValue(20000.0)
         self.spin_debug_exposure.setStyleSheet(_input_style)
-        cam_params_form.addRow("曝光(us)", self.spin_debug_exposure)
-        self.lbl_debug_camera_status = QtWidgets.QLabel("相机状态：未扫描")
+        self._debug_exposure_row_label = tr("debug.exposure")
+        cam_params_form.addRow(self._debug_exposure_row_label, self.spin_debug_exposure)
+        self.lbl_debug_camera_status = QtWidgets.QLabel(tr("debug.camera_status_unscanned"))
         self.spin_debug_gain = QtWidgets.QDoubleSpinBox()
         self.spin_debug_gain.setDecimals(2)
         self.spin_debug_gain.setRange(0.0, 48.0)
         self.spin_debug_gain.setValue(0.0)
         self.spin_debug_gain.setStyleSheet(_input_style)
-        cam_params_form.addRow("增益", self.spin_debug_gain)
+        self._debug_gain_row_label = tr("debug.gain")
+        cam_params_form.addRow(self._debug_gain_row_label, self.spin_debug_gain)
 
-        self.chk_debug_digital_shift_enable = QtWidgets.QCheckBox("启用")
+        self.chk_debug_digital_shift_enable = QtWidgets.QCheckBox(tr("debug.enable"))
         self.chk_debug_digital_shift_enable.setStyleSheet(f"color:{_TEXT_LIGHT};")
-        cam_params_form.addRow("数字增益使能", self.chk_debug_digital_shift_enable)
+        self._debug_shift_enable_row_label = tr("debug.digital_shift_enable")
+        cam_params_form.addRow(self._debug_shift_enable_row_label, self.chk_debug_digital_shift_enable)
 
         self.spin_debug_digital_shift = QtWidgets.QDoubleSpinBox()
         self.spin_debug_digital_shift.setDecimals(4)
@@ -2632,8 +2805,9 @@ class ToolPage(QtWidgets.QWidget):
         self.spin_debug_digital_shift.setValue(0.0)
         self.spin_debug_digital_shift.setStyleSheet(_input_style)
         self.spin_debug_digital_shift.setEnabled(False)
-        self.spin_debug_digital_shift.setToolTip("对应海康 MVS 的 Digital Shift")
-        cam_params_form.addRow("数字增益", self.spin_debug_digital_shift)
+        self.spin_debug_digital_shift.setToolTip("Digital Shift")
+        self._debug_shift_row_label = tr("debug.digital_shift")
+        cam_params_form.addRow(self._debug_shift_row_label, self.spin_debug_digital_shift)
 
         # ????????????????????? autoDefault ???Enter ??????????????
         self.spin_debug_exposure.setKeyboardTracking(False)
@@ -2651,17 +2825,19 @@ class ToolPage(QtWidgets.QWidget):
         self.cmb_debug_trigger_mode.addItems(["software", "continuous"])
         self.cmb_debug_trigger_mode.setCurrentText("continuous")
         self.cmb_debug_trigger_mode.setStyleSheet(_input_style)
-        cam_params_form.addRow("触发模式", self.cmb_debug_trigger_mode)
+        self._debug_trigger_row_label = tr("debug.trigger_mode")
+        cam_params_form.addRow(self._debug_trigger_row_label, self.cmb_debug_trigger_mode)
         # activated?????????????? setCurrentIndex ???
         self.cmb_debug_trigger_mode.activated.connect(self._on_debug_camera_trigger_activated)
 
         self.cmb_debug_light_source_mode = QtWidgets.QComboBox()
-        self.cmb_debug_light_source_mode.addItem("板卡DO亮灯", "board_io")
-        self.cmb_debug_light_source_mode.addItem("相机Line1频闪", "camera_line1_strobe")
+        self.cmb_debug_light_source_mode.addItem(tr("debug.board_do_light"), "board_io")
+        self.cmb_debug_light_source_mode.addItem(tr("debug.camera_line1_strobe"), "camera_line1_strobe")
         self.cmb_debug_light_source_mode.setCurrentIndex(0)
         self.cmb_debug_light_source_mode.setStyleSheet(_input_style)
-        self.cmb_debug_light_source_mode.setToolTip("相机Line1频闪模式依赖海康 MVS 里已配置好的 Line1 输出/频闪参数")
-        cam_params_form.addRow("光源触发", self.cmb_debug_light_source_mode)
+        self.cmb_debug_light_source_mode.setToolTip(tr("debug.camera_line1_tip"))
+        self._debug_light_row_label = tr("debug.light_source")
+        cam_params_form.addRow(self._debug_light_row_label, self.cmb_debug_light_source_mode)
         self.cmb_debug_light_source_mode.activated.connect(self._on_debug_camera_trigger_activated)
 
         cam_right_vbox.addWidget(cam_params)
@@ -2672,12 +2848,12 @@ class ToolPage(QtWidgets.QWidget):
         cam_btns_layout.setContentsMargins(12, 0, 12, 12)
         cam_btns_layout.setSpacing(6)
 
-        self.btn_debug_read_camera_settings = QtWidgets.QPushButton(_si(SP.SP_FileDialogInfoView), " 读取相机参数")
+        self.btn_debug_read_camera_settings = QtWidgets.QPushButton(_si(SP.SP_FileDialogInfoView), tr("debug.read_camera_params"))
         self.btn_debug_read_camera_settings.setStyleSheet(_compact_btn)
         self.btn_debug_read_camera_settings.clicked.connect(self._refresh_debug_camera_settings)
         cam_btns_layout.addWidget(self.btn_debug_read_camera_settings)
 
-        self.btn_debug_apply_camera_settings = QtWidgets.QPushButton(_si(SP.SP_DialogApplyButton), " 应用相机参数")
+        self.btn_debug_apply_camera_settings = QtWidgets.QPushButton(_si(SP.SP_DialogApplyButton), tr("debug.apply_camera_params"))
         self.btn_debug_apply_camera_settings.setStyleSheet(_compact_btn)
         self.btn_debug_apply_camera_settings.clicked.connect(self._apply_debug_camera_settings)
         cam_btns_layout.addWidget(self.btn_debug_apply_camera_settings)
@@ -2700,7 +2876,8 @@ class ToolPage(QtWidgets.QWidget):
         io_left_vbox.setContentsMargins(0, 0, 0, 0)
         io_left_vbox.setSpacing(0)
 
-        io_ctrl_title = QtWidgets.QLabel("  连接控制")
+        self.lbl_io_ctrl_title = QtWidgets.QLabel(tr("debug.connection_control"))
+        io_ctrl_title = self.lbl_io_ctrl_title
         io_ctrl_title.setFixedHeight(28)
         io_ctrl_title.setStyleSheet(f"background:#404040;color:{_TEXT_LIGHT};font-size:12px;font-weight:bold;border-bottom:1px solid #505050;padding-left:8px;")
         io_left_vbox.addWidget(io_ctrl_title)
@@ -2710,22 +2887,22 @@ class ToolPage(QtWidgets.QWidget):
         io_ctrl_layout.setContentsMargins(10, 10, 10, 10)
         io_ctrl_layout.setSpacing(6)
 
-        self.btn_debug_open_io = QtWidgets.QPushButton(_si(SP.SP_DriveNetIcon), " 打开 IO 调试")
+        self.btn_debug_open_io = QtWidgets.QPushButton(_si(SP.SP_DriveNetIcon), tr("debug.open_io_debug"))
         self.btn_debug_open_io.setStyleSheet(_compact_btn)
         self.btn_debug_open_io.clicked.connect(self._open_debug_io)
         io_ctrl_layout.addWidget(self.btn_debug_open_io)
 
-        self.btn_debug_close_io = QtWidgets.QPushButton(_si(SP.SP_DialogCloseButton), " 关闭 IO 调试")
+        self.btn_debug_close_io = QtWidgets.QPushButton(_si(SP.SP_DialogCloseButton), tr("debug.close_io_debug"))
         self.btn_debug_close_io.setStyleSheet(_compact_btn)
         self.btn_debug_close_io.clicked.connect(self._close_debug_io)
         io_ctrl_layout.addWidget(self.btn_debug_close_io)
 
-        self.btn_debug_refresh_io = QtWidgets.QPushButton(_si(SP.SP_BrowserReload), " Refresh DI/DO Status")
+        self.btn_debug_refresh_io = QtWidgets.QPushButton(_si(SP.SP_BrowserReload), tr("debug.refresh_dido"))
         self.btn_debug_refresh_io.setStyleSheet(_compact_btn)
         self.btn_debug_refresh_io.clicked.connect(self._refresh_debug_io_snapshot)
         io_ctrl_layout.addWidget(self.btn_debug_refresh_io)
 
-        self.btn_debug_simulate_trigger = QtWidgets.QPushButton(" 模拟脚踏触发（待补）")
+        self.btn_debug_simulate_trigger = QtWidgets.QPushButton(tr("debug.simulate_trigger_todo"))
         self.btn_debug_simulate_trigger.setStyleSheet(_compact_btn)
         self.btn_debug_simulate_trigger.setEnabled(False)
         io_ctrl_layout.addWidget(self.btn_debug_simulate_trigger)
@@ -2733,7 +2910,8 @@ class ToolPage(QtWidgets.QWidget):
         io_left_vbox.addWidget(io_ctrl_w)
         io_left_vbox.addSpacing(4)
 
-        io_status_title = QtWidgets.QLabel("  IO Status")
+        self.lbl_io_status_title = QtWidgets.QLabel(tr("debug.io_status"))
+        io_status_title = self.lbl_io_status_title
         io_status_title.setFixedHeight(28)
         io_status_title.setStyleSheet(f"background:#404040;color:{_TEXT_LIGHT};font-size:12px;font-weight:bold;border-bottom:1px solid #505050;border-top:1px solid #505050;padding-left:8px;")
         io_left_vbox.addWidget(io_status_title)
@@ -2743,17 +2921,17 @@ class ToolPage(QtWidgets.QWidget):
         io_status_layout.setContentsMargins(10, 10, 10, 10)
         io_status_layout.setSpacing(6)
 
-        self.lbl_debug_di_snapshot = QtWidgets.QLabel("DI：未连接")
+        self.lbl_debug_di_snapshot = QtWidgets.QLabel(tr("debug.di_disconnected"))
         self.lbl_debug_di_snapshot.setWordWrap(True)
         self.lbl_debug_di_snapshot.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
         io_status_layout.addWidget(self.lbl_debug_di_snapshot)
 
-        self.lbl_debug_do_snapshot = QtWidgets.QLabel("DO：未连接")
+        self.lbl_debug_do_snapshot = QtWidgets.QLabel(tr("debug.do_disconnected"))
         self.lbl_debug_do_snapshot.setWordWrap(True)
         self.lbl_debug_do_snapshot.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
         io_status_layout.addWidget(self.lbl_debug_do_snapshot)
 
-        self.lbl_debug_io_mapping_summary = QtWidgets.QLabel("映射：未加载")
+        self.lbl_debug_io_mapping_summary = QtWidgets.QLabel(tr("debug.mapping_not_loaded"))
         self.lbl_debug_io_mapping_summary.setWordWrap(True)
         self.lbl_debug_io_mapping_summary.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
         io_status_layout.addWidget(self.lbl_debug_io_mapping_summary)
@@ -2767,7 +2945,8 @@ class ToolPage(QtWidgets.QWidget):
         io_right_vbox.setContentsMargins(0, 0, 0, 0)
         io_right_vbox.setSpacing(12)
 
-        io_panel_title = QtWidgets.QLabel("  DI / DO 通道面板")
+        self.lbl_io_panel_title = QtWidgets.QLabel(tr("debug.dido_panel"))
+        io_panel_title = self.lbl_io_panel_title
         io_panel_title.setFixedHeight(28)
         io_panel_title.setStyleSheet(
             f"background:#404040;color:{_TEXT_LIGHT};font-size:12px;font-weight:bold;"
@@ -2793,7 +2972,8 @@ class ToolPage(QtWidgets.QWidget):
             "QPushButton:disabled{background:#363636;color:#737373;border:1px solid #474747;}"
         )
 
-        di_title = QtWidgets.QLabel("DI 输入监视")
+        self.lbl_di_title = QtWidgets.QLabel(tr("debug.di_monitor"))
+        di_title = self.lbl_di_title
         di_title.setStyleSheet(f"color:{_TEXT_LIGHT};font-size:13px;font-weight:bold;")
         io_panel_layout.addWidget(di_title)
 
@@ -2819,7 +2999,7 @@ class ToolPage(QtWidgets.QWidget):
             indicator.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             card_layout.addWidget(indicator, alignment=QtCore.Qt.AlignmentFlag.AlignCenter)
 
-            hint = QtWidgets.QLabel("未映射")
+            hint = QtWidgets.QLabel(tr("debug.unmapped"))
             hint.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             hint.setWordWrap(True)
             hint.setStyleSheet(f"color:{_TEXT_DIM};font-size:9px;border:none;")
@@ -2832,7 +3012,8 @@ class ToolPage(QtWidgets.QWidget):
 
         io_panel_layout.addLayout(di_grid)
 
-        do_title = QtWidgets.QLabel("DO 输出控制")
+        self.lbl_do_title = QtWidgets.QLabel(tr("debug.do_control"))
+        do_title = self.lbl_do_title
         do_title.setStyleSheet(f"color:{_TEXT_LIGHT};font-size:13px;font-weight:bold;")
         io_panel_layout.addWidget(do_title)
 
@@ -2857,7 +3038,7 @@ class ToolPage(QtWidgets.QWidget):
             )
             card_layout.addWidget(button)
 
-            hint = QtWidgets.QLabel("未映射")
+            hint = QtWidgets.QLabel(tr("debug.unmapped"))
             hint.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             hint.setWordWrap(True)
             hint.setStyleSheet(f"color:{_TEXT_DIM};font-size:9px;border:none;")
@@ -2952,11 +3133,11 @@ class ToolPage(QtWidgets.QWidget):
     # ------------------------------------------------------------------
 
     def _sync_footer(self) -> None:
-        ref_name = os.path.basename(self.ref_image) if self.ref_image else "未设置"
-        self.lbl_footer_ref.setText(f"参考图: {ref_name}")
+        ref_name = os.path.basename(self.ref_image) if self.ref_image else "-"
+        self.lbl_footer_ref.setText(f"{tr('debug.reference_image')}: {ref_name}")
         algo = self.current_algorithm_display_name() if hasattr(self, "cmb_algorithm") else ""
-        self.lbl_footer_algo.setText(f"算法: {algo}" if algo else "")
-        self.lbl_footer_product_dir.setText(f"产品目录: {self.session.product_dir}")
+        self.lbl_footer_algo.setText(f"{tr('debug.algorithm')}: {algo}" if algo else "")
+        self.lbl_footer_product_dir.setText(f"{tr('debug.product_dir')}: {self.session.product_dir}")
 
     # ------------------------------------------------------------------
     # 列表刷新
@@ -2965,9 +3146,9 @@ class ToolPage(QtWidgets.QWidget):
     def _refresh_lists(self) -> None:
         current_role = _selected_image_list_camera_role(self)
         if hasattr(self, "lbl_images_section"):
-            title = "  图片列表"
+            title = tr("debug.image_list")
             if current_role:
-                title = f"{title}（{current_role}）"
+                title = f"{title} ({current_role})"
             self.lbl_images_section.setText(title)
 
         def fill(
@@ -3029,10 +3210,10 @@ class ToolPage(QtWidgets.QWidget):
 
     def _sample_usage_text(self, path: str) -> str:
         if path in self.train_files:
-            return "训练样本"
+            return tr("debug.train_samples")
         if path in self.test_files:
-            return "测试样本"
-        return "未归类样本"
+            return tr("debug.test_samples")
+        return "Uncategorized"
 
     def _inspection_label_names_for_role(self, camera_role: object = None) -> List[str]:
         role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
@@ -3245,16 +3426,16 @@ class ToolPage(QtWidgets.QWidget):
     ) -> str:
         labels = self._inspection_label_names_for_role(camera_role)
         if not labels:
-            return "未标注"
+            return tr("sample.unset")
         geometry_missing = sum(1 for label in labels if not self._path_has_roi_geometry(path, label))
         if geometry_missing:
-            return "缺少ROI"
+            return tr("sample.missing_roi")
         present_count, total_count = self._sample_annotation_progress_for_path(path, camera_role)
         if total_count <= 0 or present_count <= 0:
-            return "未标注"
+            return tr("sample.unset")
         if present_count < total_count:
-            return "部分标注"
-        return "已完成"
+            return tr("sample.partial")
+        return tr("sample.complete")
 
     def _sample_item_display_text(
         self,
@@ -3271,49 +3452,50 @@ class ToolPage(QtWidgets.QWidget):
     def _current_image_sample_state_text(self) -> str:
         path = self.canvas.image_path()
         if not path:
-            return "当前图片样本状态：未选择"
-        return (
-            f"当前图片样本状态：{self._sample_usage_text(path)} / "
-            f"{self._sample_annotation_state_for_path(path, self.current_camera_role())}"
+            return tr("debug.current_image_state_none")
+        return tr(
+            "debug.current_image_state",
+            usage=self._sample_usage_text(path),
+            state=self._sample_annotation_state_for_path(path, self.current_camera_role()),
         )
 
     def _current_tool_sample_stats_text(self) -> str:
         inspection_item = self._selected_inspection_item()
         if inspection_item is None:
-            return "当前工具样本统计：请选择检测工具"
+            return tr("debug.current_tool_stats_select")
         camera_role = _normalize_camera_role(getattr(inspection_item, "camera_id", "")) or self.current_camera_role()
         roi_label = str(getattr(inspection_item, "roi_label", "") or "").strip() or "roi"
         ok_count, ng_count, unset_count = self._sample_annotation_counts_for_roi(roi_label, camera_role)
-        return f"当前工具样本统计：{roi_label} -> OK {ok_count} / NG {ng_count} / 未标注 {unset_count}"
+        return tr("debug.current_tool_samples", roi=roi_label, ok=ok_count, ng=ng_count, unset=unset_count)
 
     def _training_validation_text(self) -> str:
         inspection_item = self._selected_inspection_item()
         if inspection_item is None:
-            return "训练校验：请选择检测工具"
+            return tr("debug.training_validation_select")
         camera_role = _normalize_camera_role(getattr(inspection_item, "camera_id", "")) or self.current_camera_role()
         roi_label = str(getattr(inspection_item, "roi_label", "") or "").strip() or "roi"
         ok_files, ng_files, candidate_paths = self._training_sample_groups_for_role(camera_role, roi_label=roi_label)
         if not candidate_paths:
-            return f"训练校验：{camera_role} 还没有训练样本"
+            return tr("debug.training_validation_no_samples", role=camera_role)
         _ok_count, _ng_count, missing_count = self._sample_annotation_counts_for_roi(roi_label, camera_role, paths=candidate_paths)
         if missing_count > 0:
-            return f"训练校验：{roi_label} 还有 {missing_count} 张未标注"
+            return tr("debug.training_validation_missing_annotations", roi=roi_label, count=missing_count)
         if not ok_files or not ng_files:
             missing_groups: List[str] = []
             if not ok_files:
                 missing_groups.append("OK")
             if not ng_files:
                 missing_groups.append("NG")
-            return f"训练校验：{roi_label} 缺少 {'/'.join(missing_groups)} 标签样本"
-        return f"训练校验：{roi_label} 可开始训练"
+            return tr("debug.training_validation_missing_groups", roi=roi_label, groups="/".join(missing_groups))
+        return tr("debug.training_validation_ready", roi=roi_label)
 
     def _update_sample_panel_widgets(self) -> None:
         current_role = _selected_image_list_camera_role(self)
         train_count = len(self._sample_paths_for_kind("train", current_role))
         test_count = len(self._sample_paths_for_kind("test", current_role))
         if hasattr(self, "tabs"):
-            self.tabs.setTabText(0, f"训练样本 ({train_count})")
-            self.tabs.setTabText(1, f"测试样本 ({test_count})")
+            self.tabs.setTabText(0, f"{tr('debug.train_samples')} ({train_count})")
+            self.tabs.setTabText(1, f"{tr('debug.test_samples')} ({test_count})")
         current_image_label = getattr(self, "lbl_current_image_sample_state", None)
         if current_image_label is not None:
             current_image_label.setText(f"  {self._current_image_sample_state_text()}")
@@ -3426,7 +3608,7 @@ class ToolPage(QtWidgets.QWidget):
         self.table.clearSelection()
         self.table.setCurrentCell(-1, -1)
         self._current_result_rows = []
-        self.lbl_status.setText(f"状态：已切换到 {self.current_camera_role()}，请重新选择图片。")
+        self.lbl_status.setText(tr("debug.status_switched_camera_select", role=self.current_camera_role()))
         self._update_sample_panel_widgets()
 
     def _clear_selected_inspection_item(self) -> None:
@@ -3448,7 +3630,7 @@ class ToolPage(QtWidgets.QWidget):
     def _add_images_to(self, kind: str) -> None:
         files, _ = QtWidgets.QFileDialog.getOpenFileNames(
             self,
-            f"Select images to add into {kind}",
+            tr("debug.add_images_title", kind=kind),
             "",
             "Images (*.jpg *.jpeg *.png *.bmp *.tif *.tiff *.webp)",
         )
@@ -3520,18 +3702,26 @@ class ToolPage(QtWidgets.QWidget):
         self.productChangeRequested.emit(product_name)
 
     def _new_product(self) -> None:
-        name, ok = QtWidgets.QInputDialog.getText(self, "新建产品", "请输入产品名称：")
+        name, ok = QtWidgets.QInputDialog.getText(
+            self,
+            tr("debug.new_product_title"),
+            tr("debug.new_product_prompt"),
+        )
         if not ok or not name.strip():
             return
         error = self.session.create_product(name.strip())
         if error:
-            QtWidgets.QMessageBox.warning(self, "错误", error)
+            QtWidgets.QMessageBox.warning(self, tr("common.error"), error)
             return
         self.cmb_product.addItem(name.strip())
         self.cmb_product.setCurrentText(name.strip())
 
     def _clear_session(self) -> None:
-        ret = QtWidgets.QMessageBox.question(self, "清空会话", "确认清空当前会话数据（列表 / 参考图 / 缓存）？")
+        ret = QtWidgets.QMessageBox.question(
+            self,
+            tr("debug.clear_session_title"),
+            tr("debug.clear_session_confirm"),
+        )
         if ret != QtWidgets.QMessageBox.Yes:
             return
         self.sessionClearRequested.emit()
@@ -3563,7 +3753,11 @@ class ToolPage(QtWidgets.QWidget):
             self._load_shape_for_label(p, label)
 
     def _clear_current_rect(self) -> None:
-        ret = QtWidgets.QMessageBox.question(self, "清空标注", "确认清空当前图片的所选标注？")
+        ret = QtWidgets.QMessageBox.question(
+            self,
+            tr("debug.clear_annotation_title"),
+            tr("debug.clear_annotation_confirm"),
+        )
         p = self.canvas.image_path()
         if p is not None:
             try:
@@ -3585,23 +3779,24 @@ class ToolPage(QtWidgets.QWidget):
         label_name = self._current_label()
 
         if label_name == "anchor_mask" and st.shape_type != "polygon":
-            QtWidgets.QMessageBox.warning(self, "Info", "anchor_mask only supports polygon annotation.")
+            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("debug.anchor_polygon_only"))
             return
 
         if st.shape_type == "rect":
             if st.xywh is None:
-                QtWidgets.QMessageBox.warning(self, "提示", "请先拖拽画出矩形标注")
+                QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("debug.draw_rect_first"))
                 return
             jpath = qr_core.upsert_labelme_rect(p, st.xywh, label_name=label_name)
         else:
             if not st.points or len(st.points) < 3:
-                QtWidgets.QMessageBox.warning(self, "Info", "Polygon needs at least 3 points.")
+                QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("debug.polygon_min_points"))
                 return
             jpath = qr_core.upsert_labelme_polygon(p, st.points, label_name=label_name)
 
         QtWidgets.QMessageBox.information(
-            self, "已保存",
-            f"已更新到 labelme json：\n{jpath}\n(label={label_name}, type={st.shape_type})",
+            self,
+            tr("debug.annotation_saved_title"),
+            tr("debug.annotation_saved_message", path=jpath, label=label_name, shape=st.shape_type),
         )
         self._load_canvas_image(p)
 
@@ -3718,7 +3913,7 @@ class ToolPage(QtWidgets.QWidget):
             self.algo.model = None
             self._save_runtime_params()
             self._update_runtime_widgets()
-            self.lbl_status.setText("状态：请选择工具")
+            self.lbl_status.setText(tr("debug.training_validation_select"))
             return
         if selected_item is not None:
             selected_item.algorithm_code = (
@@ -3772,12 +3967,11 @@ class ToolPage(QtWidgets.QWidget):
         if len(roles) < 2:
             return False
         role_text = _normalize_camera_role(camera_id) if camera_id is not None else ""
-        suffix = f"（当前角色 {role_text}）" if role_text else ""
+        suffix = tr("debug.current_role_suffix", role=role_text) if role_text else ""
         QtWidgets.QMessageBox.warning(
             self,
-            "训练样本提示",
-            f"当前训练样本列表{suffix}同时包含 cam1 和 cam2 图片。\n"
-            "请先分开整理样本后，再执行训练/注册/标定。",
+            tr("debug.mixed_training_title"),
+            tr("debug.mixed_training_message", suffix=suffix),
         )
         return True
 
@@ -3860,7 +4054,7 @@ class ToolPage(QtWidgets.QWidget):
             return
         if not self._ensure_training_roi_reviewed(
             self.current_camera_role(),
-            action_name="训练 / 标定全部启用工具",
+            action_name=tr("debug.train_all_tools"),
             action_key="all",
         ):
             return
@@ -3872,7 +4066,7 @@ class ToolPage(QtWidgets.QWidget):
             if item.enabled and _normalize_camera_role(getattr(item, "camera_id", "")) == current_role
         ]
         if not enabled_items:
-            QtWidgets.QMessageBox.information(self, "Info", f"Please enable at least one inspection tool for {current_role}.")
+            QtWidgets.QMessageBox.information(self, tr("common.info"), tr("debug.enable_one_tool", role=current_role))
             return
 
         selected_item = self._selected_inspection_item()
@@ -3919,12 +4113,12 @@ class ToolPage(QtWidgets.QWidget):
             self.lbl_status.setText(
                 f"Status: partial train done, success={len(success_names)}, failed={len(failure_messages)}"
             )
-            QtWidgets.QMessageBox.warning(self, "Train Result", "\n".join(summary_lines))
+            QtWidgets.QMessageBox.warning(self, tr("debug.train_result_title"), "\n".join(summary_lines))
             return
 
         QtWidgets.QMessageBox.information(
             self,
-            "Train Result",
+            tr("debug.train_result_title"),
             f"Finished training/calibrating {len(success_names)} enabled tool(s).",
         )
 
@@ -3934,25 +4128,25 @@ class ToolPage(QtWidgets.QWidget):
         self._current_result_rows = []
         inspection_item = self._selected_inspection_item()
         if inspection_item is None:
-            QtWidgets.QMessageBox.information(self, "Info", "Please select one inspection tool in the table first.")
+            QtWidgets.QMessageBox.information(self, tr("common.info"), tr("debug.select_inspection_tool_in_table"))
             return
         if self._warn_mixed_training_camera_samples(inspection_item.camera_id):
             return
         if not self._ensure_training_roi_reviewed(
             inspection_item.camera_id,
-            action_name="标定当前工具",
+            action_name=tr("debug.calibrate_current_tool"),
             action_key="current",
         ):
             return
         if not inspection_item.enabled:
-            QtWidgets.QMessageBox.information(self, "提示", "当前选中的检测工具已禁用")
+            QtWidgets.QMessageBox.information(self, tr("common.info"), tr("debug.tool_disabled"))
             return
         if self.algo.is_learning_tool(inspection_item.algorithm_code):
             algorithm = self.algo.current_learning_backbone()
         else:
             algorithm = self.algo.resolve_tool_algorithm(inspection_item.algorithm_code)
         if not algorithm:
-            QtWidgets.QMessageBox.information(self, "提示", "请先选择工具")
+            QtWidgets.QMessageBox.information(self, tr("common.info"), tr("debug.select_tool"))
             return
         roi_label = str(inspection_item.roi_label or "").strip() or "roi"
         label_names = [roi_label]
@@ -3964,8 +4158,8 @@ class ToolPage(QtWidgets.QWidget):
             camera_id = _normalize_camera_role(inspection_item.camera_id) or "cam1"
             QtWidgets.QMessageBox.warning(
                 self,
-                "训练样本不足",
-                f"{camera_id} 还没有训练样本，请先把图片转入训练样本列表。",
+                tr("debug.training_samples_insufficient_title"),
+                tr("debug.no_training_samples_message", camera=camera_id),
             )
             return
         missing_groups: List[str] = []
@@ -3977,8 +4171,8 @@ class ToolPage(QtWidgets.QWidget):
             camera_id = _normalize_camera_role(inspection_item.camera_id) or "cam1"
             QtWidgets.QMessageBox.warning(
                 self,
-                "训练样本不足",
-                f"{camera_id} 缺少 {'/'.join(missing_groups)} 标签样本，请先在样本标注里补齐当前 ROI 的标签。",
+                tr("debug.training_samples_insufficient_title"),
+                tr("debug.missing_label_samples_message", camera=camera_id, groups="/".join(missing_groups)),
             )
             return
         missing_paths = []
@@ -4004,9 +4198,8 @@ class ToolPage(QtWidgets.QWidget):
         if missing:
             QtWidgets.QMessageBox.warning(
                 self,
-                "缺少 ROI 标注",
-                f"每张训练样本都需要包含 ROI: {roi_label}\n"
-                "请逐张打开图片并保存对应 ROI。\n缺少文件:\n" + "\n".join(missing[:50]),
+                tr("debug.missing_roi_annotation_title"),
+                tr("debug.missing_roi_annotation_message", roi=roi_label, files="\n".join(missing[:50])),
             )
             return
 
@@ -4025,7 +4218,7 @@ class ToolPage(QtWidgets.QWidget):
                 model_key=inspection_item.model_key,
             )
         except Exception as e:
-            QtWidgets.QMessageBox.critical(self, "训练失败", str(e))
+            QtWidgets.QMessageBox.critical(self, tr("debug.train_failed_title"), str(e))
             return
 
         self.lbl_status.setText(result.status_message)
@@ -4036,7 +4229,7 @@ class ToolPage(QtWidgets.QWidget):
         self._save_session()
         self._refresh_inspection_items_table()
         self._update_runtime_widgets()
-        QtWidgets.QMessageBox.information(self, "训练完成", result.dialog_message)
+        QtWidgets.QMessageBox.information(self, tr("debug.train_done_title"), result.dialog_message)
 
     # ------------------------------------------------------------------
     # 预测 / 测试
@@ -4055,7 +4248,7 @@ class ToolPage(QtWidgets.QWidget):
 
         p = self.canvas.image_path()
         if p is None or not os.path.exists(p):
-            QtWidgets.QMessageBox.warning(self, "Info", "Please open a test image first.")
+            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("debug.open_test_image_first"))
             return
         self.canvas.set_overlays([])
 
@@ -4076,7 +4269,7 @@ class ToolPage(QtWidgets.QWidget):
                 )
             )
         except Exception as ex:
-            QtWidgets.QMessageBox.critical(self, "测试失败", str(ex))
+            QtWidgets.QMessageBox.critical(self, tr("debug.test_failed_title"), str(ex))
             return
 
         rows: List[Dict[str, object]] = []
@@ -4188,7 +4381,7 @@ class ToolPage(QtWidgets.QWidget):
 
     def _export_current_results_csv(self) -> None:
         if not self._current_result_rows:
-            QtWidgets.QMessageBox.information(self, "提示", "当前没有可导出的测试结果")
+            QtWidgets.QMessageBox.information(self, tr("common.info"), tr("debug.no_export_results"))
             return
         json_path, csv_path = self._save_test_result_report(
             self._current_result_rows,
@@ -4196,8 +4389,8 @@ class ToolPage(QtWidgets.QWidget):
         )
         QtWidgets.QMessageBox.information(
             self,
-            "导出完成",
-            f"测试结果已导出到：\n{json_path}\n{csv_path}",
+            tr("debug.export_done_title"),
+            tr("debug.export_done_message", json_path=json_path, csv_path=csv_path),
         )
 
     def _on_table_click(self, row: int, _col: int) -> None:
@@ -4257,10 +4450,10 @@ class ToolPage(QtWidgets.QWidget):
                 roi_label=labels_override[0],
             )
         else:
-            QtWidgets.QMessageBox.information(self, "Info", "Please select one inspection tool first.")
+            QtWidgets.QMessageBox.information(self, tr("common.info"), tr("debug.select_inspection_tool_first"))
             return
         if not self._is_embedding_algorithm(algorithm):
-            QtWidgets.QMessageBox.information(self, "Info", "Traditional algorithms do not support margin validation.")
+            QtWidgets.QMessageBox.information(self, tr("common.info"), tr("debug.margin_traditional_unsupported"))
             return
         if not self.algo._loaded_embedding_matches(
             algorithm,
@@ -4272,10 +4465,10 @@ class ToolPage(QtWidgets.QWidget):
             except Exception:
                 pass
         if self.algo.model is None:
-            QtWidgets.QMessageBox.warning(self, "Info", "Please train/register first (OK + NG).")
+            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("debug.train_register_first"))
             return
         if not validation_ok_files or not validation_ng_files:
-            QtWidgets.QMessageBox.warning(self, "Info", "Need at least one OK and one NG image for margin validation.")
+            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("debug.margin_need_ok_ng"))
             return
 
         feat_net = self.algo.get_feat_net(
@@ -4307,7 +4500,7 @@ class ToolPage(QtWidgets.QWidget):
                 row["gt"] = "NG"
                 rows.append(row)
         except Exception as ex:
-            QtWidgets.QMessageBox.critical(self, "Margin validation failed", str(ex))
+            QtWidgets.QMessageBox.critical(self, tr("debug.margin_failed_title"), str(ex))
             return
 
         self._populate_results_table(rows)
@@ -4317,7 +4510,7 @@ class ToolPage(QtWidgets.QWidget):
         safe_range = summary.get("safe_range")
         safe_text = ""
         if isinstance(safe_range, tuple):
-            safe_text = f"\n安全区间: {safe_range[0]:.4f} ~ {safe_range[1]:.4f}"
+            safe_text = "\n" + tr("debug.safe_range", low=safe_range[0], high=safe_range[1])
 
         self.lbl_status.setText(
             "Status: "
@@ -4341,22 +4534,20 @@ class ToolPage(QtWidgets.QWidget):
         except Exception as exc:
             QtWidgets.QMessageBox.critical(
                 self,
-                "打开特征分析失败",
-                "无法加载特征分析窗口。\n\n"
-                f"{exc}\n\n"
-                f"{traceback.format_exc()}",
+                tr("debug.embedding_analysis_failed_title"),
+                tr("debug.embedding_analysis_import_failed", detail=f"{exc}\n\n{traceback.format_exc()}"),
             )
             return
 
         inspection_item = self._selected_inspection_item()
         if inspection_item is None:
-            QtWidgets.QMessageBox.information(self, "Info", "Please select a learning tool first.")
+            QtWidgets.QMessageBox.information(self, tr("common.info"), tr("debug.select_learning_tool_first"))
             return
         if not inspection_item.enabled:
-            QtWidgets.QMessageBox.information(self, "提示", "当前选中的检测工具已禁用")
+            QtWidgets.QMessageBox.information(self, tr("common.info"), tr("debug.tool_disabled"))
             return
         if not self.algo.is_learning_tool(inspection_item.algorithm_code):
-            QtWidgets.QMessageBox.information(self, "Info", "Current selection is not a learning tool.")
+            QtWidgets.QMessageBox.information(self, tr("common.info"), tr("debug.not_learning_tool"))
             return
         current_role = self.current_camera_role()
         allowed_learning_items = [
@@ -4391,10 +4582,8 @@ class ToolPage(QtWidgets.QWidget):
         except Exception as exc:
             QtWidgets.QMessageBox.critical(
                 self,
-                "打开特征分析失败",
-                "特征分析窗口初始化失败。\n\n"
-                f"{exc}\n\n"
-                f"{traceback.format_exc()}",
+                tr("debug.embedding_analysis_failed_title"),
+                tr("debug.embedding_analysis_init_failed", detail=f"{exc}\n\n{traceback.format_exc()}"),
             )
 
     # ------------------------------------------------------------------
@@ -4405,12 +4594,12 @@ class ToolPage(QtWidgets.QWidget):
     def _run_traditional_baseline_debug(self) -> None:
         paths, tab_name = self._current_tab_paths_and_name()
         if not paths:
-            QtWidgets.QMessageBox.information(self, "Info", "Current list has no images.")
+            QtWidgets.QMessageBox.information(self, tr("common.info"), tr("debug.current_list_empty"))
             return
 
         inspection_item = self._selected_inspection_item()
         if inspection_item is None:
-            QtWidgets.QMessageBox.information(self, "Info", "Please select an inspection tool first.")
+            QtWidgets.QMessageBox.information(self, tr("common.info"), tr("debug.select_inspection_tool_first"))
             return
         roi_label = str(inspection_item.roi_label or "").strip() or "roi"
         display_name = str(

@@ -12,6 +12,7 @@ from application import AlgorithmController, ProductSession
 from application.runtime.preview_frame import RuntimePreviewFrame, RuntimePreviewShape
 from line2dup.core import locator as line2dup_locator
 import algorithms.proxy as qr_core
+from ui.i18n import tr
 from ui.roi_overlay_colors import overlay_style_for_label, search_region_style
 
 
@@ -58,7 +59,7 @@ def connect_runtime_refresh_sources(tool_page, runtime_ctrl, *, session_loaded_m
         lambda: runtime_ctrl.refresh_all_status(session_loaded_message)
     )
     tool_page.inspectionItemsChanged.connect(
-        lambda: runtime_ctrl.refresh_all_status("检测项配置已同步")
+        lambda: runtime_ctrl.refresh_all_status(tr("status.inspection_items_synced"))
     )
 
 
@@ -91,13 +92,13 @@ def connect_runtime_page(runtime_page, runtime_ctrl) -> None:
 
 def connect_runtime_dialogs(window: QtWidgets.QWidget, runtime_ctrl) -> None:
     runtime_ctrl.warningOccurred.connect(
-        lambda msg: QtWidgets.QMessageBox.warning(window, "运行页", msg)
+        lambda msg: QtWidgets.QMessageBox.warning(window, tr("workspace.runtime"), msg)
     )
     runtime_ctrl.errorOccurred.connect(
-        lambda msg: QtWidgets.QMessageBox.critical(window, "运行错误", msg)
+        lambda msg: QtWidgets.QMessageBox.critical(window, tr("runtime.state.Error"), msg)
     )
     runtime_ctrl.infoOccurred.connect(
-        lambda msg: QtWidgets.QMessageBox.information(window, "运行页", msg)
+        lambda msg: QtWidgets.QMessageBox.information(window, tr("workspace.runtime"), msg)
     )
 
 
@@ -127,7 +128,7 @@ def update_runtime_preview(runtime_page, role: str, source: object) -> None:
     runtime_page.set_camera_pixmap(
         role,
         None,
-        placeholder=f"{role.upper()} 画面占位",
+        placeholder=tr("runtime.camera_placeholder", role=role.upper()),
     )
 
 

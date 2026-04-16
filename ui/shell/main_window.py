@@ -32,6 +32,7 @@ from application import (
 from ui.shell.chrome import (
     build_menu_bar as _build_shell_menu_bar,
     build_status_bar as _build_shell_status_bar,
+    retranslate_shell_chrome as _retranslate_shell_chrome,
     show_about_dialog as _show_shell_about_dialog,
     switch_workspace as _switch_shell_workspace,
     sync_shell_status as _sync_shell_status_impl,
@@ -92,6 +93,7 @@ from ui.window_common import (
     detect_runtime_import_error,
     embedding_test_root,
 )
+from ui.i18n import set_language, tr
 # Test-stage switch:
 # False = 测试模式：NG时不自动弹出放行密码框，且不进入NG锁定，可直接继续下一次测试
 # True  = 产线模式：NG时自动弹出放行密码框，并进入NG锁定
@@ -367,6 +369,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self._apply_runtime_records_directory_setting()
             self._apply_runtime_capture_directory_setting()
 
+    def _change_language(self, language: str) -> None:
+        set_language(language)
+        self.retranslate_ui()
+
+    def retranslate_ui(self) -> None:
+        _retranslate_shell_chrome(self)
+        if hasattr(self, "runtime_page"):
+            self.runtime_page.retranslate_ui()
+        if hasattr(self, "tool_page") and hasattr(self.tool_page, "retranslate_ui"):
+            self.tool_page.retranslate_ui()
+
     def _update_brand_banner_pixmap(self) -> None:
         _update_brand_banner_pixmap_impl(self)
 
@@ -387,6 +400,22 @@ class MainWindow(QtWidgets.QMainWindow):
             self.tool_page.set_configured_camera_roles(roles)
 
     def _set_algorithm_engine_status(self, text: str, *, tooltip: str = "") -> None:
+        legacy_keys = {
+            "算法引擎：已就绪": "status.engine_ready",
+            "算法引擎：加载中...": "status.engine_loading",
+            "算法引擎：加载失败": "status.engine_failed",
+        }
+        key = legacy_keys.get(str(text or "").strip())
+        if key:
+            self._set_algorithm_engine_status_key(key, tooltip=tooltip)
+            return
+        self._algorithm_engine_status_key = ""
+        self.lbl_status_engine.setText(text)
+        self.lbl_status_engine.setToolTip(tooltip or text)
+
+    def _set_algorithm_engine_status_key(self, key: str, *, tooltip: str = "") -> None:
+        self._algorithm_engine_status_key = str(key or "").strip()
+        text = tr(self._algorithm_engine_status_key) if self._algorithm_engine_status_key else ""
         self.lbl_status_engine.setText(text)
         self.lbl_status_engine.setToolTip(tooltip or text)
 
@@ -433,7 +462,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_status_io_dot.setStyleSheet(
             "color:#2ea043;font-size:14px;font-weight:bold;" if ready else "color:#c74e39;font-size:14px;font-weight:bold;"
         )
-        self.lbl_status_io_text.setText("IO: 已就绪" if ready else "IO: 初始化失败")
+        self.lbl_status_io_text.setText(tr("status.io_ready") if ready else tr("status.io_failed"))
         self.lbl_status_io_text.setToolTip(detail or self.lbl_status_io_text.text())
         self.tool_page.set_runtime_io_state(ready, detail, controller)
 
@@ -454,7 +483,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def _open_in_explorer(self, path: str) -> None:
         target = Path(path)
         if not target.exists():
-            QtWidgets.QMessageBox.information(self, "路径", f"路径不存在：\n{target}")
+            QtWidgets.QMessageBox.information(
+                self,
+                tr("dialog.path"),
+                tr("dialog.path_missing", path=target),
+            )
             return
         QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(target)))
 
@@ -563,8 +596,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _show_release_dialog(self) -> None:
         pwd, ok = prompt_password_dialog(
             self,
-            title="\u5bc6\u7801\u653e\u884c",
-            label="\u8f93\u5165\u653e\u884c\u5bc6\u7801\uff1a",
+            title=tr("dialog.release_title"),
+            label=tr("dialog.release_label"),
         )
         if ok and pwd:
             self.runtime_page.releaseRequested.emit(pwd)

@@ -5,6 +5,7 @@ from pathlib import Path
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from algorithms.proxy import is_ready as is_qr_core_ready
+from ui.i18n import LANG_EN, LANG_ZH, language_code, set_language, tr
 
 from .support import APP_NAME, APP_VERSION, shell_icon
 
@@ -72,71 +73,71 @@ def build_menu_bar(window) -> None:
     top_layout.setContentsMargins(6, 2, 6, 2)
     top_layout.setSpacing(2)
 
-    file_menu = QtWidgets.QMenu("文件", window)
+    file_menu = QtWidgets.QMenu(tr("menu.file"), window)
     file_menu.setStyleSheet(menu_style)
-    act_exit = file_menu.addAction(shell_icon(SP.SP_DialogCloseButton), "退出")
+    act_exit = file_menu.addAction(shell_icon(SP.SP_DialogCloseButton), tr("action.exit"))
     act_exit.triggered.connect(window.close)
 
-    view_menu = QtWidgets.QMenu("视图", window)
+    view_menu = QtWidgets.QMenu(tr("menu.view"), window)
     view_menu.setStyleSheet(menu_style)
     window.act_show_debug = view_menu.addAction(
-        shell_icon(SP.SP_FileDialogDetailedView), "切换到调试界面"
+        shell_icon(SP.SP_FileDialogDetailedView), tr("action.switch_debug")
     )
     window.act_show_debug.triggered.connect(lambda: window._switch_workspace("debug"))
     window.act_show_runtime = view_menu.addAction(
-        shell_icon(SP.SP_MediaPlay), "切换到运行界面"
+        shell_icon(SP.SP_MediaPlay), tr("action.switch_runtime")
     )
     window.act_show_runtime.triggered.connect(lambda: window._switch_workspace("runtime"))
 
-    tools_menu = QtWidgets.QMenu("工具", window)
+    tools_menu = QtWidgets.QMenu(tr("menu.tools"), window)
     tools_menu.setStyleSheet(menu_style)
     window.act_reload_debug = tools_menu.addAction(
-        shell_icon(SP.SP_BrowserReload), "重新加载调试会话"
+        shell_icon(SP.SP_BrowserReload), tr("action.reload_debug")
     )
     window.act_reload_debug.triggered.connect(window._reload_debug_session)
     tools_menu.addSeparator()
 
-    hardware_menu = tools_menu.addMenu(shell_icon(SP.SP_ComputerIcon), "工程调试工具")
-    hardware_menu.addAction(
-        shell_icon(SP.SP_DesktopIcon), "相机取图工具"
+    hardware_menu = tools_menu.addMenu(shell_icon(SP.SP_ComputerIcon), tr("menu.engineering_tools"))
+    act_camera_tool = hardware_menu.addAction(
+        shell_icon(SP.SP_DesktopIcon), tr("action.camera_tool")
     ).triggered.connect(window.tool_page.open_camera_debug_dialog)
-    hardware_menu.addAction(
-        shell_icon(SP.SP_DriveNetIcon), "DI / DO 调试工具"
+    act_io_tool = hardware_menu.addAction(
+        shell_icon(SP.SP_DriveNetIcon), tr("action.io_tool")
     ).triggered.connect(window.tool_page.open_io_debug_dialog)
-    hardware_menu.addAction(
-        shell_icon(SP.SP_FileDialogContentsView), "位置修正工具"
+    act_template_editor = hardware_menu.addAction(
+        shell_icon(SP.SP_FileDialogContentsView), tr("action.template_editor")
     ).triggered.connect(window.tool_page.open_template_editor_dialog)
-    hardware_menu.addAction(
-        shell_icon(SP.SP_FileDialogListView), "自动区域工具"
+    act_auto_region = hardware_menu.addAction(
+        shell_icon(SP.SP_FileDialogListView), tr("action.auto_region")
     ).triggered.connect(window.tool_page.open_template_match_dialog)
 
     tools_menu.addSeparator()
-    algo_menu = tools_menu.addMenu(shell_icon(SP.SP_FileDialogInfoView), "算法工具")
-    algo_menu.addAction(
-        shell_icon(SP.SP_DialogApplyButton), "执行 Margin 验证"
+    algo_menu = tools_menu.addMenu(shell_icon(SP.SP_FileDialogInfoView), tr("menu.algorithm_tools"))
+    act_margin_validation = algo_menu.addAction(
+        shell_icon(SP.SP_DialogApplyButton), tr("action.margin_validation")
     ).triggered.connect(window.tool_page.open_margin_validation_tool)
-    algo_menu.addAction(
-        shell_icon(SP.SP_FileDialogDetailedView), "打开特征分析"
+    act_embedding_analysis = algo_menu.addAction(
+        shell_icon(SP.SP_FileDialogDetailedView), tr("action.embedding_analysis")
     ).triggered.connect(window.tool_page.open_embedding_analysis_tool)
-    algo_menu.addAction(
-        shell_icon(SP.SP_FileDialogListView), "打开传统基线调试"
+    act_baseline_debug = algo_menu.addAction(
+        shell_icon(SP.SP_FileDialogListView), tr("action.baseline_debug")
     ).triggered.connect(window.tool_page.open_baseline_debug_tool)
 
-    runtime_menu = QtWidgets.QMenu("控制", window)
+    runtime_menu = QtWidgets.QMenu(tr("menu.control"), window)
     runtime_menu.setStyleSheet(menu_style)
-    runtime_menu.addAction(
-        shell_icon(SP.SP_BrowserReload), "刷新相机列表"
+    act_refresh_cameras = runtime_menu.addAction(
+        shell_icon(SP.SP_BrowserReload), tr("action.refresh_cameras")
     ).triggered.connect(window.runtime_page.refreshCamerasRequested.emit)
-    runtime_menu.addAction(
-        shell_icon(SP.SP_DriveNetIcon), "连接相机..."
+    act_connect_camera = runtime_menu.addAction(
+        shell_icon(SP.SP_DriveNetIcon), tr("action.connect_camera")
     ).triggered.connect(window._show_connect_dialog)
-    runtime_menu.addAction(
-        shell_icon(SP.SP_DialogDiscardButton), "断开相机"
+    act_disconnect_camera = runtime_menu.addAction(
+        shell_icon(SP.SP_DialogDiscardButton), tr("action.disconnect_camera")
     ).triggered.connect(window.runtime_ctrl.disconnect)
-    capture_menu = runtime_menu.addMenu(shell_icon(SP.SP_DialogSaveButton), "运行图像保存")
+    capture_menu = runtime_menu.addMenu(shell_icon(SP.SP_DialogSaveButton), tr("menu.runtime_capture"))
     window.runtime_capture_policy_group = QtGui.QActionGroup(window)
     window.runtime_capture_policy_group.setExclusive(True)
-    window.act_runtime_capture_keep_all = capture_menu.addAction("全部保留")
+    window.act_runtime_capture_keep_all = capture_menu.addAction(tr("action.keep_all"))
     window.act_runtime_capture_keep_all.setCheckable(True)
     window.runtime_capture_policy_group.addAction(window.act_runtime_capture_keep_all)
     window.act_runtime_capture_keep_all.triggered.connect(
@@ -146,7 +147,7 @@ def build_menu_bar(window) -> None:
             show_message=True,
         )
     )
-    window.act_runtime_capture_keep_ng_only = capture_menu.addAction("仅保留NG")
+    window.act_runtime_capture_keep_ng_only = capture_menu.addAction(tr("action.keep_ng_only"))
     window.act_runtime_capture_keep_ng_only.setCheckable(True)
     window.runtime_capture_policy_group.addAction(window.act_runtime_capture_keep_ng_only)
     window.act_runtime_capture_keep_ng_only.triggered.connect(
@@ -157,80 +158,152 @@ def build_menu_bar(window) -> None:
         )
     )
     window._sync_runtime_capture_policy_actions()
-    runtime_menu.addAction(
-        shell_icon(SP.SP_FileDialogInfoView), "\u4e09\u8272\u706f\u5e8f\u8bbe\u7f6e..."
+    act_tower_light = runtime_menu.addAction(
+        shell_icon(SP.SP_FileDialogInfoView), tr("action.tower_light")
     ).triggered.connect(window._show_tower_light_settings_dialog)
     runtime_menu.addSeparator()
-    runtime_menu.addAction(
-        shell_icon(SP.SP_MediaPlay), "脚踏触发"
+    act_foot_trigger = runtime_menu.addAction(
+        shell_icon(SP.SP_MediaPlay), tr("action.foot_trigger")
     ).triggered.connect(window.runtime_page.triggerRequested.emit)
-    runtime_menu.addAction(
-        shell_icon(SP.SP_DialogYesButton), "密码放行..."
+    act_password_release = runtime_menu.addAction(
+        shell_icon(SP.SP_DialogYesButton), tr("action.password_release")
     ).triggered.connect(window._show_release_dialog)
-    runtime_menu.addAction(
-        shell_icon(SP.SP_FileDialogDetailedView), "修改放行密码..."
+    act_change_release_password = runtime_menu.addAction(
+        shell_icon(SP.SP_FileDialogDetailedView), tr("action.change_release_password")
     ).triggered.connect(window._show_change_release_password_dialog)
     runtime_menu.addSeparator()
-    runtime_menu.addAction(
-        shell_icon(SP.SP_BrowserReload), "刷新运行状态"
+    act_refresh_runtime = runtime_menu.addAction(
+        shell_icon(SP.SP_BrowserReload), tr("action.refresh_runtime")
     ).triggered.connect(
-        lambda: window.runtime_ctrl.refresh_all_status("手动刷新运行状态")
+        lambda: window.runtime_ctrl.refresh_all_status(tr("action.refresh_runtime"))
     )
 
-    path_menu = QtWidgets.QMenu("路径", window)
+    path_menu = QtWidgets.QMenu(tr("menu.path"), window)
     if runtime_menu.actions():
         runtime_menu.removeAction(runtime_menu.actions()[-1])
 
     path_menu.setStyleSheet(menu_style)
-    path_menu.addAction(
-        shell_icon(SP.SP_DirHomeIcon), "打开系统根目录"
+    act_open_system_root = path_menu.addAction(
+        shell_icon(SP.SP_DirHomeIcon), tr("action.open_system_root")
     ).triggered.connect(window._open_workspace_root)
-    path_menu.addAction(
-        shell_icon(SP.SP_DirOpenIcon), "打开当前产品目录"
+    act_open_product_dir = path_menu.addAction(
+        shell_icon(SP.SP_DirOpenIcon), tr("action.open_product_dir")
     ).triggered.connect(window._open_current_product_dir)
-    path_menu.addAction(
-        shell_icon(SP.SP_DirIcon), "打开会话目录"
+    act_open_session_dir = path_menu.addAction(
+        shell_icon(SP.SP_DirIcon), tr("action.open_session_dir")
     ).triggered.connect(window._open_session_dir)
-    path_menu.addAction(
-        shell_icon(SP.SP_DirLinkIcon), "打开运行图片目录"
+    act_open_runtime_images = path_menu.addAction(
+        shell_icon(SP.SP_DirLinkIcon), tr("action.open_runtime_images")
     ).triggered.connect(window._open_runtime_capture_dir)
-    path_menu.addAction(
-        shell_icon(SP.SP_DialogSaveButton), "保存图片路径..."
+    act_save_image_path = path_menu.addAction(
+        shell_icon(SP.SP_DialogSaveButton), tr("action.save_image_path")
     ).triggered.connect(window._show_runtime_capture_directory_dialog)
     path_menu.addSeparator()
-    path_menu.addAction(
-        shell_icon(SP.SP_DirLinkIcon), "打开运行记录目录"
+    act_open_runtime_records = path_menu.addAction(
+        shell_icon(SP.SP_DirLinkIcon), tr("action.open_runtime_records")
     ).triggered.connect(window._open_runtime_records_dir)
-    path_menu.addAction(
-        shell_icon(SP.SP_DialogSaveButton), "保存运行记录..."
+    act_save_runtime_records = path_menu.addAction(
+        shell_icon(SP.SP_DialogSaveButton), tr("action.save_runtime_records")
     ).triggered.connect(window._show_runtime_records_directory_dialog)
 
+    language_menu = QtWidgets.QMenu(tr("menu.language"), window)
+    language_menu.setStyleSheet(menu_style)
+    language_group = QtGui.QActionGroup(window)
+    language_group.setExclusive(True)
+    window.act_language_zh = language_menu.addAction(tr("language.zh"))
+    window.act_language_zh.setCheckable(True)
+    window.act_language_en = language_menu.addAction(tr("language.en"))
+    window.act_language_en.setCheckable(True)
+    language_group.addAction(window.act_language_zh)
+    language_group.addAction(window.act_language_en)
+    window.act_language_zh.setChecked(language_code() == LANG_ZH)
+    window.act_language_en.setChecked(language_code() == LANG_EN)
+    window.act_language_zh.triggered.connect(lambda checked=False: window._change_language(LANG_ZH))
+    window.act_language_en.triggered.connect(lambda checked=False: window._change_language(LANG_EN))
+
     top_layout.addWidget(
-        _make_popup_button("文件", shell_icon(SP.SP_DirOpenIcon), file_menu),
+        _make_popup_button(tr("menu.file"), shell_icon(SP.SP_DirOpenIcon), file_menu),
         0,
     )
+    window.btn_menu_file = top_layout.itemAt(top_layout.count() - 1).widget()
     top_layout.addWidget(
-        _make_popup_button("视图", shell_icon(SP.SP_FileDialogDetailedView), view_menu),
+        _make_popup_button(tr("menu.view"), shell_icon(SP.SP_FileDialogDetailedView), view_menu),
         0,
     )
+    window.btn_menu_view = top_layout.itemAt(top_layout.count() - 1).widget()
     top_layout.addWidget(
-        _make_popup_button("工具", shell_icon(SP.SP_ComputerIcon), tools_menu),
+        _make_popup_button(tr("menu.tools"), shell_icon(SP.SP_ComputerIcon), tools_menu),
         0,
     )
+    window.btn_menu_tools = top_layout.itemAt(top_layout.count() - 1).widget()
     top_layout.addWidget(
-        _make_popup_button("控制", shell_icon(SP.SP_MediaPlay), runtime_menu),
+        _make_popup_button(tr("menu.control"), shell_icon(SP.SP_MediaPlay), runtime_menu),
         0,
     )
+    window.btn_menu_control = top_layout.itemAt(top_layout.count() - 1).widget()
     top_layout.addWidget(
-        _make_popup_button("路径", shell_icon(SP.SP_DirIcon), path_menu),
+        _make_popup_button(tr("menu.path"), shell_icon(SP.SP_DirIcon), path_menu),
         0,
     )
+    window.btn_menu_path = top_layout.itemAt(top_layout.count() - 1).widget()
     top_layout.addWidget(
-        _make_action_button("帮助", shell_icon(SP.SP_MessageBoxInformation), window._show_about_dialog),
+        _make_popup_button(tr("menu.language"), shell_icon(SP.SP_FileDialogInfoView), language_menu),
         0,
     )
+    window.btn_menu_language = top_layout.itemAt(top_layout.count() - 1).widget()
+    top_layout.addWidget(
+        _make_action_button(tr("menu.help"), shell_icon(SP.SP_MessageBoxInformation), window._show_about_dialog),
+        0,
+    )
+    window.btn_menu_help = top_layout.itemAt(top_layout.count() - 1).widget()
     top_layout.addStretch(1)
 
+    window._shell_i18n_refs = {
+        "menus": {
+            "file": file_menu,
+            "view": view_menu,
+            "tools": tools_menu,
+            "hardware": hardware_menu,
+            "algo": algo_menu,
+            "runtime": runtime_menu,
+            "capture": capture_menu,
+            "path": path_menu,
+            "language": language_menu,
+        },
+        "actions": {
+            "exit": act_exit,
+            "camera_tool": hardware_menu.actions()[0],
+            "io_tool": hardware_menu.actions()[1],
+            "template_editor": hardware_menu.actions()[2],
+            "auto_region": hardware_menu.actions()[3],
+            "margin_validation": algo_menu.actions()[0],
+            "embedding_analysis": algo_menu.actions()[1],
+            "baseline_debug": algo_menu.actions()[2],
+            "refresh_cameras": runtime_menu.actions()[0],
+            "connect_camera": runtime_menu.actions()[1],
+            "disconnect_camera": runtime_menu.actions()[2],
+            "tower_light": runtime_menu.actions()[4],
+            "foot_trigger": runtime_menu.actions()[6],
+            "password_release": runtime_menu.actions()[7],
+            "change_release_password": runtime_menu.actions()[8],
+            "open_system_root": path_menu.actions()[0],
+            "open_product_dir": path_menu.actions()[1],
+            "open_session_dir": path_menu.actions()[2],
+            "open_runtime_images": path_menu.actions()[3],
+            "save_image_path": path_menu.actions()[4],
+            "open_runtime_records": path_menu.actions()[6],
+            "save_runtime_records": path_menu.actions()[7],
+        },
+        "buttons": {
+            "file": window.btn_menu_file,
+            "view": window.btn_menu_view,
+            "tools": window.btn_menu_tools,
+            "control": window.btn_menu_control,
+            "path": window.btn_menu_path,
+            "language": window.btn_menu_language,
+            "help": window.btn_menu_help,
+        },
+    }
     window.setMenuWidget(top_bar)
 
 
@@ -242,17 +315,17 @@ def build_status_bar(window) -> None:
         separator.setStyleSheet("color:#555;font-size:11px;padding:0 2px;")
         return separator
 
-    window.lbl_status_workspace = QtWidgets.QLabel("工作区：调试界面")
+    window.lbl_status_workspace = QtWidgets.QLabel(tr("status.workspace", workspace=tr("workspace.debug")))
     window.lbl_status_workspace.setStyleSheet(label_style)
-    window.lbl_status_product = QtWidgets.QLabel(f"产品：{window.session.current_product}")
+    window.lbl_status_product = QtWidgets.QLabel(tr("status.product", product=window.session.current_product))
     window.lbl_status_product.setStyleSheet(label_style)
     window.lbl_status_engine = QtWidgets.QLabel()
     window.lbl_status_engine.setStyleSheet(label_style)
     window.lbl_status_io_dot = QtWidgets.QLabel("●")
     window.lbl_status_io_dot.setStyleSheet(f"color:#c74e39;{io_dot_style}")
-    window.lbl_status_io_text = QtWidgets.QLabel("IO: 未初始化")
+    window.lbl_status_io_text = QtWidgets.QLabel(tr("status.io_uninitialized"))
     window.lbl_status_io_text.setStyleSheet(label_style)
-    window.lbl_status_path = QtWidgets.QLabel(f"产品目录：{window.session.product_dir}")
+    window.lbl_status_path = QtWidgets.QLabel(tr("status.product_dir", path=window.session.product_dir))
     window.lbl_status_path.setStyleSheet(label_style)
     window.lbl_status_path.setMinimumWidth(260)
     window._bottom_status_bar.addPermanentWidget(window.lbl_status_workspace)
@@ -266,8 +339,8 @@ def build_status_bar(window) -> None:
     window._bottom_status_bar.addPermanentWidget(_make_separator())
     window._bottom_status_bar.addPermanentWidget(window.lbl_status_path, 1)
     sync_shell_status(window)
-    window._set_algorithm_engine_status(
-        "算法引擎：已就绪" if is_qr_core_ready() else "算法引擎：加载中..."
+    window._set_algorithm_engine_status_key(
+        "status.engine_ready" if is_qr_core_ready() else "status.engine_loading"
     )
 
 
@@ -277,33 +350,33 @@ def switch_workspace(window, workspace: str) -> None:
     window.btn_workspace_runtime.setChecked(is_runtime)
     window.main_pages.setCurrentWidget(window.runtime_page if is_runtime else window.tool_page)
     if is_runtime:
-        window.lbl_workspace_title.setText("运行界面")
-        window.lbl_workspace_hint.setText("实时检测画面与检测项结果")
-        window.lbl_status_workspace.setText("工作区：运行界面")
+        window.lbl_workspace_title.setText(tr("workspace.runtime"))
+        window.lbl_workspace_hint.setText(tr("workspace.runtime_hint"))
+        window.lbl_status_workspace.setText(tr("status.workspace", workspace=tr("workspace.runtime")))
         runtime_message = window._activate_runtime_workspace()
-        window.runtime_ctrl.refresh_all_status("已切换到运行界面")
+        window.runtime_ctrl.refresh_all_status(tr("status.runtime_switched"))
         if runtime_message:
             window._bottom_status_bar.showMessage(runtime_message, 3000)
         return
 
-    window.lbl_workspace_title.setText("调试界面")
-    window.lbl_workspace_hint.setText("模板配置、ROI标注、测试与训练")
-    window.lbl_status_workspace.setText("工作区：调试界面")
+    window.lbl_workspace_title.setText(tr("workspace.debug"))
+    window.lbl_workspace_hint.setText(tr("workspace.debug_hint"))
+    window.lbl_status_workspace.setText(tr("status.workspace", workspace=tr("workspace.debug")))
 
 
 def sync_shell_status(window) -> None:
-    window.lbl_status_product.setText(f"产品：{window.session.current_product}")
+    window.lbl_status_product.setText(tr("status.product", product=window.session.current_product))
     product_dir = str(window.session.product_dir or "").strip()
     if product_dir:
         path_obj = Path(product_dir)
         parts = list(path_obj.parts)
         if len(parts) > 4:
             compact = "\\".join(parts[-4:])
-            display_text = f"产品目录：...\\{compact}"
+            display_text = tr("status.product_dir", path=f"...\\{compact}")
         else:
-            display_text = f"产品目录：{product_dir}"
+            display_text = tr("status.product_dir", path=product_dir)
     else:
-        display_text = "产品目录：-"
+        display_text = tr("status.product_dir_empty")
     window.lbl_status_path.setText(display_text)
     window.lbl_status_path.setToolTip(product_dir)
 
@@ -321,6 +394,113 @@ def update_brand_banner_pixmap(window) -> None:
 def show_about_dialog(window) -> None:
     QtWidgets.QMessageBox.information(
         window,
-        "About",
-        "Version:1.0.0",
+        tr("dialog.about_title"),
+        tr("dialog.about_body"),
     )
+
+
+def retranslate_shell_chrome(window) -> None:
+    refs = getattr(window, "_shell_i18n_refs", None) or {}
+    menus = refs.get("menus", {})
+    actions = refs.get("actions", {})
+    buttons = refs.get("buttons", {})
+
+    menu_keys = {
+        "file": "menu.file",
+        "view": "menu.view",
+        "tools": "menu.tools",
+        "hardware": "menu.engineering_tools",
+        "algo": "menu.algorithm_tools",
+        "runtime": "menu.control",
+        "capture": "menu.runtime_capture",
+        "path": "menu.path",
+        "language": "menu.language",
+    }
+    for name, key in menu_keys.items():
+        menu = menus.get(name)
+        if menu is not None:
+            menu.setTitle(tr(key))
+
+    button_keys = {
+        "file": "menu.file",
+        "view": "menu.view",
+        "tools": "menu.tools",
+        "control": "menu.control",
+        "path": "menu.path",
+        "language": "menu.language",
+        "help": "menu.help",
+    }
+    for name, key in button_keys.items():
+        button = buttons.get(name)
+        if button is not None:
+            button.setText(tr(key))
+
+    action_keys = {
+        "exit": "action.exit",
+        "camera_tool": "action.camera_tool",
+        "io_tool": "action.io_tool",
+        "template_editor": "action.template_editor",
+        "auto_region": "action.auto_region",
+        "margin_validation": "action.margin_validation",
+        "embedding_analysis": "action.embedding_analysis",
+        "baseline_debug": "action.baseline_debug",
+        "refresh_cameras": "action.refresh_cameras",
+        "connect_camera": "action.connect_camera",
+        "disconnect_camera": "action.disconnect_camera",
+        "tower_light": "action.tower_light",
+        "foot_trigger": "action.foot_trigger",
+        "password_release": "action.password_release",
+        "change_release_password": "action.change_release_password",
+        "open_system_root": "action.open_system_root",
+        "open_product_dir": "action.open_product_dir",
+        "open_session_dir": "action.open_session_dir",
+        "open_runtime_images": "action.open_runtime_images",
+        "save_image_path": "action.save_image_path",
+        "open_runtime_records": "action.open_runtime_records",
+        "save_runtime_records": "action.save_runtime_records",
+    }
+    for name, key in action_keys.items():
+        action = actions.get(name)
+        if action is not None:
+            action.setText(tr(key))
+
+    if hasattr(window, "act_show_debug"):
+        window.act_show_debug.setText(tr("action.switch_debug"))
+    if hasattr(window, "act_show_runtime"):
+        window.act_show_runtime.setText(tr("action.switch_runtime"))
+    if hasattr(window, "act_reload_debug"):
+        window.act_reload_debug.setText(tr("action.reload_debug"))
+    if hasattr(window, "act_runtime_capture_keep_all"):
+        window.act_runtime_capture_keep_all.setText(tr("action.keep_all"))
+    if hasattr(window, "act_runtime_capture_keep_ng_only"):
+        window.act_runtime_capture_keep_ng_only.setText(tr("action.keep_ng_only"))
+    if hasattr(window, "act_language_zh"):
+        window.act_language_zh.setText(tr("language.zh"))
+        window.act_language_zh.setChecked(language_code() == LANG_ZH)
+    if hasattr(window, "act_language_en"):
+        window.act_language_en.setText(tr("language.en"))
+        window.act_language_en.setChecked(language_code() == LANG_EN)
+
+    if hasattr(window, "btn_workspace_debug"):
+        window.btn_workspace_debug.setText(tr("workspace.debug"))
+    if hasattr(window, "btn_workspace_runtime"):
+        window.btn_workspace_runtime.setText(tr("workspace.runtime"))
+    if hasattr(window, "lbl_sidebar_runtime_result_title"):
+        window.lbl_sidebar_runtime_result_title.setText(tr("sidebar.final_result"))
+
+    is_runtime = hasattr(window, "runtime_page") and window.main_pages.currentWidget() == window.runtime_page
+    window.btn_workspace_debug.setChecked(not is_runtime)
+    window.btn_workspace_runtime.setChecked(is_runtime)
+    if is_runtime:
+        window.lbl_workspace_title.setText(tr("workspace.runtime"))
+        window.lbl_workspace_hint.setText(tr("workspace.runtime_hint"))
+        window.lbl_status_workspace.setText(tr("status.workspace", workspace=tr("workspace.runtime")))
+    else:
+        window.lbl_workspace_title.setText(tr("workspace.debug"))
+        window.lbl_workspace_hint.setText(tr("workspace.debug_hint"))
+        window.lbl_status_workspace.setText(tr("status.workspace", workspace=tr("workspace.debug")))
+    sync_shell_status(window)
+    status_key = getattr(window, "_algorithm_engine_status_key", "") or (
+        "status.engine_ready" if is_qr_core_ready() else "status.engine_loading"
+    )
+    window._set_algorithm_engine_status_key(status_key)

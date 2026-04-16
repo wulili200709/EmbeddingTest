@@ -9,6 +9,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from algorithms.registry import list_tool_algorithm_specs, normalize_tool_algorithm_code
 from domain import SUPPORTED_CAMERA_IDS, save_inspection_items
+from ui.i18n import tr
 
 
 def _current_camera_role(tool_page) -> str:
@@ -85,8 +86,8 @@ def _update_learning_backbone_hint(tool_page) -> None:
         label.setToolTip("")
         return
     status_text, tooltip, color = _inspection_item_status(tool_page, item)
-    display_name = str(item.display_name or item.roi_label or item.item_id or "工具").strip()
-    label.setText(f"当前工具：{display_name}  {status_text}")
+    display_name = str(item.display_name or item.roi_label or item.item_id or tr("debug.tool")).strip()
+    label.setText(f"{tr('debug.tool')}: {display_name}  {status_text}")
     label.setStyleSheet(f"color:{color};font-size:11px;")
     label.setToolTip(tooltip)
     label.show()
@@ -102,40 +103,40 @@ def _format_timestamp(path: str) -> str:
 
 def _inspection_item_status(tool_page, inspection_item):
     if not getattr(inspection_item, "enabled", True):
-        return "已禁用", "当前工具已禁用，不参与训练和运行。", "#8a8a8a"
+        return tr("debug.status.disabled"), "Current tool is disabled and will not join training or runtime.", "#8a8a8a"
 
     if tool_page.algo.is_learning_tool(inspection_item.algorithm_code):
         backbone = tool_page.algo.current_learning_backbone()
         if not backbone:
-            return "未选择", "请先为学习工具选择子类。", "#d98c8c"
+            return tr("debug.status.not_selected"), "Select a subtype for the learning tool first.", "#d98c8c"
         model_path = tool_page.algo.embedding_model_path(
             backbone,
             tool_page.session.product_dir,
             model_key=inspection_item.model_key,
         )
         if os.path.exists(model_path):
-            tooltip = (
-                f"学习工具已训练\n"
-                f"模型: {os.path.basename(model_path)}\n"
-                f"子类: {tool_page.algo.algorithm_display_name(backbone) or backbone}\n"
-                f"更新时间: {_format_timestamp(model_path)}"
+            tooltip = tr(
+                "debug.tooltip.learning_trained",
+                model=os.path.basename(model_path),
+                backbone=tool_page.algo.algorithm_display_name(backbone) or backbone,
+                time=_format_timestamp(model_path),
             )
-            return "已训练", tooltip, "#79d279"
+            return tr("debug.status.trained"), tooltip, "#79d279"
         legacy_path = tool_page.algo.embedding_model_path(backbone, tool_page.session.product_dir)
         if os.path.exists(legacy_path):
-            tooltip = (
-                f"学习工具已训练（兼容旧共享模型）\n"
-                f"模型: {os.path.basename(legacy_path)}\n"
-                f"子类: {tool_page.algo.algorithm_display_name(backbone) or backbone}\n"
-                f"更新时间: {_format_timestamp(legacy_path)}"
+            tooltip = tr(
+                "debug.tooltip.learning_trained_legacy",
+                model=os.path.basename(legacy_path),
+                backbone=tool_page.algo.algorithm_display_name(backbone) or backbone,
+                time=_format_timestamp(legacy_path),
             )
-            return "已训练(旧)", tooltip, "#cfc76a"
-        tooltip = (
-            f"学习工具未训练\n"
-            f"目标模型: {os.path.basename(model_path)}\n"
-            f"子类: {tool_page.algo.algorithm_display_name(backbone) or backbone}"
+            return tr("debug.status.trained_legacy"), tooltip, "#cfc76a"
+        tooltip = tr(
+            "debug.tooltip.learning_untrained",
+            model=os.path.basename(model_path),
+            backbone=tool_page.algo.algorithm_display_name(backbone) or backbone,
         )
-        return "未训练", tooltip, "#d98c8c"
+        return tr("debug.status.untrained"), tooltip, "#d98c8c"
 
     algorithm = tool_page.algo.resolve_tool_algorithm(inspection_item.algorithm_code)
     model_dict = tool_page.algo.get_traditional_model_dict(algorithm, model_key=inspection_item.model_key)
@@ -146,23 +147,23 @@ def _inspection_item_status(tool_page, inspection_item):
         ok_when = str(model_dict.get("ok_when", "")).strip() or "-"
         accuracy = model_dict.get("accuracy")
         detail_parts = [
-            f"算法: {tool_page.algo.algorithm_display_name(algorithm) or algorithm}",
-            f"阈值: {float(threshold):.4f}" if threshold is not None else "阈值: -",
-            f"规则: {ok_when}",
+            tr("debug.tooltip.algorithm", algorithm=tool_page.algo.algorithm_display_name(algorithm) or algorithm),
+            tr("debug.tooltip.threshold", threshold=f"{float(threshold):.4f}" if threshold is not None else "-"),
+            tr("debug.tooltip.rule", rule=ok_when),
         ]
         if accuracy is not None:
-            detail_parts.append(f"准确率: {float(accuracy):.4f}")
-        detail_parts.append(f"存储键: {actual_key}")
-        status_text = "已标定" if actual_key == storage_key else "已标定(旧)"
+            detail_parts.append(tr("debug.tooltip.accuracy", accuracy=f"{float(accuracy):.4f}"))
+        detail_parts.append(tr("debug.tooltip.storage_key", key=actual_key))
+        status_text = tr("debug.status.calibrated") if actual_key == storage_key else tr("debug.status.calibrated_legacy")
         color = "#79d279" if actual_key == storage_key else "#cfc76a"
         return status_text, "\n".join(detail_parts), color
 
-    tooltip = (
-        f"传统工具未标定\n"
-        f"算法: {tool_page.algo.algorithm_display_name(algorithm) or algorithm}\n"
-        f"存储键: {tool_page.algo.traditional_model_storage_key(algorithm, model_key=inspection_item.model_key)}"
+    tooltip = tr(
+        "debug.tooltip.traditional_untrained",
+        algorithm=tool_page.algo.algorithm_display_name(algorithm) or algorithm,
+        key=tool_page.algo.traditional_model_storage_key(algorithm, model_key=inspection_item.model_key),
     )
-    return "未标定", tooltip, "#d98c8c"
+    return tr("debug.status.uncalibrated"), tooltip, "#d98c8c"
 
 
 def _refresh_inspection_items_table(tool_page) -> None:

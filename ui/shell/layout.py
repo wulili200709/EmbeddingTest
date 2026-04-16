@@ -3,6 +3,7 @@ from __future__ import annotations
 from PySide6 import QtCore, QtWidgets
 
 from ui.debug import ToolPage
+from ui.i18n import tr
 from ui.runtime import RuntimeModePage
 
 from .support import BrandBannerWidget, shell_icon
@@ -37,14 +38,14 @@ def build_main_window_ui(window) -> None:
     nav_layout.setSpacing(4)
 
     window.btn_workspace_debug = QtWidgets.QPushButton(
-        shell_icon(SP.SP_FileDialogDetailedView), "调试界面"
+        shell_icon(SP.SP_FileDialogDetailedView), tr("workspace.debug")
     )
     window.btn_workspace_debug.setCheckable(True)
     window.btn_workspace_debug.clicked.connect(lambda: window._switch_workspace("debug"))
     nav_layout.addWidget(window.btn_workspace_debug)
 
     window.btn_workspace_runtime = QtWidgets.QPushButton(
-        shell_icon(SP.SP_MediaPlay), "运行界面"
+        shell_icon(SP.SP_MediaPlay), tr("workspace.runtime")
     )
     window.btn_workspace_runtime.setCheckable(True)
     window.btn_workspace_runtime.clicked.connect(lambda: window._switch_workspace("runtime"))
@@ -78,7 +79,7 @@ def build_main_window_ui(window) -> None:
     window.lbl_sidebar_runtime_result_title_icon.setPixmap(shell_icon(SP.SP_MessageBoxInformation).pixmap(14, 14))
     title_row_layout.addWidget(window.lbl_sidebar_runtime_result_title_icon, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
 
-    window.lbl_sidebar_runtime_result_title = QtWidgets.QLabel("总结果")
+    window.lbl_sidebar_runtime_result_title = QtWidgets.QLabel(tr("sidebar.final_result"))
     window.lbl_sidebar_runtime_result_title.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
     window.lbl_sidebar_runtime_result_title.setFont(window.btn_workspace_debug.font())
     window.lbl_sidebar_runtime_result_title.setStyleSheet(

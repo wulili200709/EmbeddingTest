@@ -29,6 +29,7 @@ from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from ui.i18n import tr, tr_runtime_state, tr_status_text
 from ui.roi_overlay_colors import merge_roi_statuses
 
 
@@ -42,20 +43,9 @@ _NG_RED = "#dc1e1e"
 _PENDING_GRAY = "#666666"
 _RUNNING_YELLOW = "#eab308"
 
-_RUN_STATE_FOOTER_ZH = {
-    "WaitingTrigger": "等待触发",
-    "ReleasedPendingConsume": "已放行，待消耗",
-    "CapturingCam1": "采集中（相机1）",
-    "CapturingCam2": "采集中（相机2）",
-    "Inspecting": "检测中",
-    "Aggregating": "汇总结果",
-    "CompletedOk": "本轮完成 OK",
-    "CompletedNg": "本轮 NG",
-    "LockedByNg": "NG 锁定",
-    "Error": "运行异常",
-    "Unavailable": "服务不可用",
-}
 
+def _camera_title(camera_id: str) -> str:
+    return tr("runtime.camera1") if str(camera_id).strip() == "cam1" else tr("runtime.camera2")
 
 class RuntimeImageView(QtWidgets.QLabel):
     def __init__(self, title: str) -> None:
@@ -73,7 +63,7 @@ class RuntimeImageView(QtWidgets.QLabel):
         self._pixmap = pixmap
         if pixmap is None:
             self.setPixmap(QtGui.QPixmap())
-            self.setText(placeholder or "等待画面")
+            self.setText(placeholder or tr("runtime.waiting_image"))
             return
         self._refresh_pixmap()
 
@@ -160,7 +150,7 @@ class _ItemIndicator(QtWidgets.QFrame):
             "inactive": "#444444",
         }
         bg = color_map.get(status_kind, _PENDING_GRAY)
-        display = status_text.split("(")[0].strip() if status_text else ""
+        display = tr_status_text(status_text.split("(")[0].strip()) if status_text else ""
         self.lbl_result.setText(display)
         self.lbl_result.setStyleSheet(
             f"background:{bg};color:white;font-size:14px;font-weight:bold;border-radius:4px;"
@@ -178,14 +168,14 @@ class _CameraSectionHeader(QtWidgets.QFrame):
         layout.setContentsMargins(10, 6, 10, 6)
         layout.setSpacing(8)
 
-        camera_name = "相机1" if self._camera_id == "cam1" else "相机2"
+        camera_name = _camera_title(self._camera_id)
         self.lbl_title = QtWidgets.QLabel(camera_name)
         self.lbl_title.setStyleSheet(f"color:{_TEXT_LIGHT};font-size:13px;font-weight:bold;")
         layout.addWidget(self.lbl_title)
 
         layout.addStretch(1)
 
-        self.lbl_result = QtWidgets.QLabel("未检测")
+        self.lbl_result = QtWidgets.QLabel(tr("runtime.untested"))
         self.lbl_result.setAlignment(QtCore.Qt.AlignCenter)
         self.lbl_result.setFixedSize(56, 28)
         self.lbl_result.setStyleSheet(
@@ -203,14 +193,18 @@ class _CameraSectionHeader(QtWidgets.QFrame):
             display = "NG"
         elif result_upper in {"RUNNING", "INSPECTING"}:
             bg = _RUNNING_YELLOW
-            display = "检测中"
+            display = tr("runtime.inspecting")
         else:
             bg = _PENDING_GRAY
-            display = "未检测"
+            display = tr("runtime.untested")
         self.lbl_result.setText(display)
         self.lbl_result.setStyleSheet(
             f"background:{bg};color:white;font-size:12px;font-weight:bold;border-radius:4px;"
         )
+
+    def retranslate_ui(self) -> None:
+        self.lbl_title.setText(_camera_title(self._camera_id))
+        self.set_result(self.lbl_result.text())
 
 
 class RuntimeModePage(QtWidgets.QWidget):
@@ -237,9 +231,52 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._camera_preview_sources: dict[str, object | None] = {"cam1": None, "cam2": None}
         self._current_product_name = ""
         self._current_record_path = ""
+        self._available_camera_count: int | None = None
+        self._last_runtime_state = "WaitingTrigger"
+        self._last_permission_status = ""
+        self._last_connection_status = ""
+        self._last_runtime_status = ""
+        self._last_timing_map: dict[str, object] = {}
+        self._last_duration_ms = 0.0
         self._ok_count_total = 0
         self._ng_count_total = 0
         self._build_ui()
+
+    def retranslate_ui(self) -> None:
+        self.btn_simulate_foot.setText(tr("runtime.simulate_foot"))
+        self.btn_simulate_foot.setToolTip(tr("runtime.simulate_foot_tip"))
+        self.btn_trigger_cam1.setText(tr("runtime.trigger_cam1"))
+        self.btn_trigger_cam2.setText(tr("runtime.trigger_cam2"))
+        self.lbl_panel_title.setText(tr("runtime.items"))
+        self.lbl_total_label.setText(tr("runtime.stats"))
+
+        if self._available_camera_count is None:
+            self.lbl_header_info.setText(tr("runtime.external_trigger"))
+        else:
+            self.set_available_cameras([""] * self._available_camera_count)
+
+        self.set_current_product(self._current_product_name)
+        self.set_runtime_state(self._last_runtime_state)
+        if self._last_runtime_status:
+            self.set_runtime_status(self._last_runtime_status)
+        if self._last_permission_status:
+            self.set_permission_status(self._last_permission_status)
+        if self._last_connection_status:
+            self.set_connection_status(self._last_connection_status)
+
+        if self._last_timing_map:
+            self.set_timing_breakdown(self._last_timing_map)
+        else:
+            self.lbl_capture_time.setText(self._format_timing_label(tr("runtime.capture"), 0.0))
+            self.lbl_match_time.setText(self._format_timing_label(tr("runtime.match"), 0.0))
+            self.lbl_infer_time.setText(self._format_timing_label(tr("runtime.infer"), 0.0))
+            self._set_total_duration_labels(self._last_duration_ms)
+
+        for header in self._camera_section_headers.values():
+            header.retranslate_ui()
+        if self._inspection_rows:
+            self.set_inspection_items(self._inspection_rows)
+        self._refresh_count_labels()
 
     def _build_ui(self) -> None:
         self.setStyleSheet(f"background:{_DARK_BG};")
@@ -258,13 +295,13 @@ class RuntimeModePage(QtWidgets.QWidget):
         header_layout.setContentsMargins(4, 0, 16, 0)
         header_layout.setSpacing(8)
 
-        self.lbl_run_indicator = QtWidgets.QLabel("已解锁")
+        self.lbl_run_indicator = QtWidgets.QLabel(tr("runtime.unlocked"))
         self.lbl_run_indicator.setStyleSheet(
             f"color:{_OK_GREEN};font-size:15px;font-weight:bold;"
         )
         header_layout.addWidget(self.lbl_run_indicator)
 
-        self.lbl_header_info = QtWidgets.QLabel("○ 外部触发")
+        self.lbl_header_info = QtWidgets.QLabel(tr("runtime.external_trigger"))
         self.lbl_header_info.setStyleSheet(f"color:{_TEXT_DIM};font-size:13px;")
         header_layout.addWidget(self.lbl_header_info)
 
@@ -276,16 +313,16 @@ class RuntimeModePage(QtWidgets.QWidget):
             "QPushButton:hover{background:#505050;}"
             "QPushButton:pressed{background:#3794ff;color:white;}"
         )
-        self.btn_simulate_foot = QtWidgets.QPushButton("▶ 模拟脚踏")
+        self.btn_simulate_foot = QtWidgets.QPushButton(tr("runtime.simulate_foot"))
         self.btn_simulate_foot.setStyleSheet(_trigger_btn_css)
         self.btn_simulate_foot.setAutoDefault(False)
         self.btn_simulate_foot.setDefault(False)
         self.btn_simulate_foot.setFocusPolicy(QtCore.Qt.NoFocus)
         self.btn_simulate_foot.setEnabled(False)
-        self.btn_simulate_foot.setToolTip("按正式运行链路模拟一次脚踏触发")
+        self.btn_simulate_foot.setToolTip(tr("runtime.simulate_foot_tip"))
         self.btn_simulate_foot.clicked.connect(self.triggerRequested.emit)
         header_layout.addWidget(self.btn_simulate_foot)
-        self.btn_trigger_cam1 = QtWidgets.QPushButton("▶ 触发相机1")
+        self.btn_trigger_cam1 = QtWidgets.QPushButton(tr("runtime.trigger_cam1"))
         self.btn_trigger_cam1.setStyleSheet(_trigger_btn_css)
         self.btn_trigger_cam1.setAutoDefault(False)
         self.btn_trigger_cam1.setDefault(False)
@@ -294,7 +331,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.btn_trigger_cam1.clicked.connect(lambda: self.triggerCameraRequested.emit(1))
         header_layout.addWidget(self.btn_trigger_cam1)
 
-        self.btn_trigger_cam2 = QtWidgets.QPushButton("▶ 触发相机2")
+        self.btn_trigger_cam2 = QtWidgets.QPushButton(tr("runtime.trigger_cam2"))
         self.btn_trigger_cam2.setStyleSheet(_trigger_btn_css)
         self.btn_trigger_cam2.setAutoDefault(False)
         self.btn_trigger_cam2.setDefault(False)
@@ -354,7 +391,8 @@ class RuntimeModePage(QtWidgets.QWidget):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
 
-        panel_title = QtWidgets.QLabel("  检测项")
+        self.lbl_panel_title = QtWidgets.QLabel(tr("runtime.items"))
+        panel_title = self.lbl_panel_title
         panel_title.setMinimumHeight(30)
         panel_title.setStyleSheet(
             f"background:#404040;color:{_TEXT_LIGHT};font-size:13px;font-weight:bold;"
@@ -391,7 +429,8 @@ class RuntimeModePage(QtWidgets.QWidget):
         total_header.setContentsMargins(0, 0, 0, 0)
         total_header.setSpacing(8)
 
-        total_label = QtWidgets.QLabel("数据统计")
+        self.lbl_total_label = QtWidgets.QLabel(tr("runtime.stats"))
+        total_label = self.lbl_total_label
         total_label.setStyleSheet(f"color:{_TEXT_LIGHT};font-size:14px;font-weight:bold;")
         total_header.addWidget(total_label)
 
@@ -402,19 +441,19 @@ class RuntimeModePage(QtWidgets.QWidget):
         timing_grid.setHorizontalSpacing(10)
         timing_grid.setVerticalSpacing(4)
 
-        self.lbl_capture_time = QtWidgets.QLabel("取图: -")
+        self.lbl_capture_time = QtWidgets.QLabel(self._format_timing_label(tr("runtime.capture"), 0.0))
         self.lbl_capture_time.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
         timing_grid.addWidget(self.lbl_capture_time, 0, 0)
 
-        self.lbl_match_time = QtWidgets.QLabel("匹配: -")
+        self.lbl_match_time = QtWidgets.QLabel(self._format_timing_label(tr("runtime.match"), 0.0))
         self.lbl_match_time.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
         timing_grid.addWidget(self.lbl_match_time, 0, 1)
 
-        self.lbl_infer_time = QtWidgets.QLabel("推理: -")
+        self.lbl_infer_time = QtWidgets.QLabel(self._format_timing_label(tr("runtime.infer"), 0.0))
         self.lbl_infer_time.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
         timing_grid.addWidget(self.lbl_infer_time, 1, 0)
 
-        self.lbl_duration = QtWidgets.QLabel("总流程: -")
+        self.lbl_duration = QtWidgets.QLabel(self._format_timing_label(tr("runtime.total_flow"), 0.0))
         self.lbl_duration.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
         timing_grid.addWidget(self.lbl_duration, 1, 1)
         self.lbl_capture_time.hide()
@@ -477,16 +516,20 @@ class RuntimeModePage(QtWidgets.QWidget):
         footer_layout.setContentsMargins(12, 4, 12, 4)
         footer_layout.setSpacing(12)
 
-        self.lbl_footer_time = QtWidgets.QLabel("处理: -")
+        self.lbl_footer_time = QtWidgets.QLabel(self._format_timing_label(tr("runtime.process"), 0.0))
         self.lbl_footer_time.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
         footer_layout.addWidget(self.lbl_footer_time)
         self.lbl_footer_time.hide()
 
-        self.lbl_footer_state = QtWidgets.QLabel("状态: 等待触发")
+        self.lbl_footer_state = QtWidgets.QLabel(
+            f"{tr('runtime.status')}: {tr_runtime_state('WaitingTrigger')}"
+        )
         self.lbl_footer_state.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
         footer_layout.addWidget(self.lbl_footer_state)
 
-        self.lbl_footer_connection = QtWidgets.QLabel("相机: 未连接")
+        self.lbl_footer_connection = QtWidgets.QLabel(
+            f"{tr('runtime.camera')}: {tr('runtime.not_connected')}"
+        )
         self.lbl_footer_connection.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
         footer_layout.addWidget(self.lbl_footer_connection)
 
@@ -551,45 +594,58 @@ class RuntimeModePage(QtWidgets.QWidget):
 
     def set_available_cameras(self, descriptions: list[str]) -> None:
         n = len(descriptions)
-        self.lbl_header_info.setText(f"可见相机: {n} 台" if n else "未发现相机")
+        self._available_camera_count = n
+        self.lbl_header_info.setText(
+            tr("runtime.visible_cameras", count=n) if n else tr("runtime.no_cameras_found")
+        )
 
     def set_current_product(self, product_name: str) -> None:
         product_text = str(product_name or "").strip()
         if product_text != self._current_product_name:
             self._current_product_name = product_text
             self._reload_daily_result_counters()
-        self.lbl_current_product.setText(f"产品: {product_name}" if product_name else "-")
+        self.lbl_current_product.setText(
+            f"{tr('runtime.product')}: {product_name}" if product_name else "-"
+        )
 
     def set_runtime_state(self, state_text: str) -> None:
         """顶栏：NG 锁或本轮 NG 结束时为「已锁定」红字，其余为「已解锁」绿字；底栏同步状态机中文。"""
         st = str(state_text or "").strip()
+        self._last_runtime_state = st
         locked_states = frozenset({"LockedByNg", "CompletedNg"})
         if st == "Unavailable":
-            text = "未就绪"
+            text = tr("runtime.not_ready")
             color = _TEXT_DIM
         elif st in locked_states:
-            text = "已锁定"
+            text = tr("runtime.locked")
             color = _NG_RED
         else:
-            text = "已解锁"
+            text = tr("runtime.unlocked")
             color = _OK_GREEN
         self.lbl_run_indicator.setText(text)
         self.lbl_run_indicator.setStyleSheet(f"color:{color};font-size:15px;font-weight:bold;")
-        footer_detail = _RUN_STATE_FOOTER_ZH.get(st, st)
-        self.lbl_footer_state.setText(f"状态: {footer_detail}")
+        footer_detail = tr_runtime_state(st) or st
+        self.lbl_footer_state.setText(f"{tr('runtime.status')}: {footer_detail}")
 
     def set_permission_status(self, status_text: str) -> None:
-        self.lbl_footer_permission.setText(f"放行: {status_text}" if status_text else "")
+        self._last_permission_status = str(status_text or "")
+        display = tr_status_text(status_text)
+        self.lbl_footer_permission.setText(f"{tr('runtime.release')}: {display}" if display else "")
 
     def set_connection_status(self, status_text: str) -> None:
-        self.lbl_footer_connection.setText(f"相机: {status_text}")
+        self._last_connection_status = str(status_text or "")
+        self.lbl_footer_connection.setText(f"{tr('runtime.camera')}: {tr_status_text(status_text)}")
 
     def set_tower_light_status(self, status_text: str) -> None:
         pass
 
     def set_runtime_status(self, status_text: str) -> None:
+        self._last_runtime_status = str(status_text or "")
         clean_text = self._sanitize_runtime_status_text_v3(status_text)
-        self.lbl_footer_state.setText(f"状态: {clean_text}" if clean_text else "状态: -")
+        display = tr_status_text(clean_text)
+        self.lbl_footer_state.setText(
+            f"{tr('runtime.status')}: {display}" if display else f"{tr('runtime.status')}: -"
+        )
 
     def set_final_result(self, result_text: str, detail_text: str) -> None:
         result_upper = str(result_text).strip().upper()
@@ -636,10 +692,11 @@ class RuntimeModePage(QtWidgets.QWidget):
         role_set = {str(role).strip() for role in roles if str(role).strip()}
         self._active_role_set = role_set
         if not role_set:
-            self.view_cam1.set_runtime_pixmap(None, placeholder="未连接相机")
+            self.view_cam1.set_runtime_pixmap(None, placeholder=tr("runtime.no_camera_connected"))
             self.view_cam2.set_runtime_pixmap(None, placeholder="Cam2")
         self.lbl_footer_connection.setText(
-            "相机: " + (", ".join(sorted(role_set)) if role_set else "未连接")
+            f"{tr('runtime.camera')}: "
+            + (", ".join(sorted(role_set)) if role_set else tr("runtime.not_connected"))
         )
         self._refresh_camera_role_layout()
         self._refresh_camera_timing_visibility()
@@ -755,6 +812,7 @@ class RuntimeModePage(QtWidgets.QWidget):
 
     def set_timing_breakdown(self, timing_map: dict[str, object]) -> None:
         timing_map = dict(timing_map or {})
+        self._last_timing_map = timing_map
         capture_ms = self._coerce_ms(timing_map.get("capture_ms"))
         match_ms = self._coerce_ms(timing_map.get("match_ms"))
         infer_ms = self._coerce_ms(timing_map.get("infer_ms"))
@@ -768,9 +826,9 @@ class RuntimeModePage(QtWidgets.QWidget):
         cam2_infer_ms = self._coerce_ms(timing_map.get("cam2_infer_ms"))
         cam2_total_ms = self._coerce_ms(timing_map.get("cam2_total_ms"))
 
-        self.lbl_capture_time.setText(self._format_timing_label("取图", capture_ms))
-        self.lbl_match_time.setText(self._format_timing_label("匹配", match_ms))
-        self.lbl_infer_time.setText(self._format_timing_label("推理", infer_ms))
+        self.lbl_capture_time.setText(self._format_timing_label(tr("runtime.capture"), capture_ms))
+        self.lbl_match_time.setText(self._format_timing_label(tr("runtime.match"), match_ms))
+        self.lbl_infer_time.setText(self._format_timing_label(tr("runtime.infer"), infer_ms))
         self._set_total_duration_labels(duration_ms)
         self.lbl_cam1_timing.setText(
             self._format_camera_timing_text("Cam1", cam1_capture_ms, cam1_match_ms, cam1_infer_ms, cam1_total_ms)
@@ -802,8 +860,10 @@ class RuntimeModePage(QtWidgets.QWidget):
         if capture_ms <= 0.0 and match_ms <= 0.0 and infer_ms <= 0.0 and total_ms <= 0.0:
             return f"{title}: -"
         return (
-            f"{title}: 取{capture_ms:.1f}  匹{match_ms:.1f}  推{infer_ms:.1f}"
-            f"  合{total_ms:.1f} ms"
+            f"{title}: {tr('runtime.capture')} {capture_ms:.1f}  "
+            f"{tr('runtime.match')} {match_ms:.1f}  "
+            f"{tr('runtime.infer')} {infer_ms:.1f}  "
+            f"{tr('runtime.total_flow')} {total_ms:.1f} ms"
         )
 
     @staticmethod
@@ -823,10 +883,13 @@ class RuntimeModePage(QtWidgets.QWidget):
         return text
 
     def _set_total_duration_labels(self, duration_ms: float) -> None:
+        self._last_duration_ms = float(duration_ms or 0.0)
         self.lbl_footer_time.setText(
-            f"处理: {duration_ms:.1f}ms" if duration_ms > 0.0 else "处理: -"
+            f"{tr('runtime.process')}: {duration_ms:.1f}ms"
+            if duration_ms > 0.0
+            else self._format_timing_label(tr("runtime.process"), 0.0)
         )
-        self.lbl_duration.setText(self._format_timing_label("总流程", duration_ms))
+        self.lbl_duration.setText(self._format_timing_label(tr("runtime.total_flow"), duration_ms))
 
     @staticmethod
     def _sanitize_runtime_status_text_v2(status_text: str) -> str:

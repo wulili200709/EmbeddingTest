@@ -38,6 +38,7 @@ from ..core.template_core import (
     sync_levels_from_level0,
 )
 from ui.debug import OverlayShape, RoiCanvas, pixmap_from_path
+from ui.i18n import tr
 
 ensure_repo_root_on_path()
 
@@ -268,7 +269,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         parent: Optional[QtWidgets.QWidget] = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle(f"模板页 - {product_name}")
+        self.setWindowTitle(tr("template.title", product=product_name))
         available = QtGui.QGuiApplication.primaryScreen().availableGeometry()
         self.resize(
             min(1450, max(1180, available.width() - 40)),
@@ -329,13 +330,104 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.tab_create = QtWidgets.QWidget()
         self.tab_reference = QtWidgets.QWidget()
         self.tab_find = QtWidgets.QWidget()
-        self.tabs.addTab(self.tab_create, "Create")
-        self.tabs.addTab(self.tab_reference, "Reference ROI")
-        self.tabs.addTab(self.tab_find, "Find")
+        self.tabs.addTab(self.tab_create, tr("template.tab.create"))
+        self.tabs.addTab(self.tab_reference, tr("template.tab.reference"))
+        self.tabs.addTab(self.tab_find, tr("template.tab.find"))
 
         self._build_create_tab()
         self._build_reference_tab()
         self._build_find_tab()
+
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle(tr("template.title", product=self.product_name))
+        self.tabs.setTabText(0, tr("template.tab.create"))
+        self.tabs.setTabText(1, tr("template.tab.reference"))
+        self.tabs.setTabText(2, tr("template.tab.find"))
+        for attr, text in (
+            ("file_box", tr("template.reference_image")),
+            ("select_box", tr("template.template_edit")),
+            ("point_box", tr("template.feature_point_edit")),
+            ("param_box", tr("template.params")),
+            ("recipe_box", tr("template.recipe")),
+            ("info_box", tr("template.reference_attrs")),
+            ("region_box", tr("template.reference_regions")),
+            ("model_box", tr("template.model")),
+            ("list_box", tr("template.test_images")),
+            ("find_recipe_box", tr("template.find_params")),
+            ("search_box", tr("template.search_roi")),
+        ):
+            widget = getattr(self, attr, None)
+            if widget is not None:
+                widget.setTitle(text)
+        for attr, text in (
+            ("btn_open_image", tr("template.open_image")),
+            ("btn_load_model", tr("template.load_existing_model")),
+            ("btn_apply_selection", tr("template.apply_current_box")),
+            ("btn_clear_roi", tr("template.clear_template_roi")),
+            ("btn_clear_masks", tr("template.clear_mask")),
+            ("chk_edit_points", tr("template.edit_points")),
+            ("btn_extract_points", tr("template.extract_points")),
+            ("btn_reset_points", tr("template.reset_points")),
+            ("btn_build", tr("template.save")),
+            ("btn_build_pinned", tr("template.save")),
+            ("btn_apply_region_name", tr("template.apply_name")),
+            ("btn_add_reference_roi", tr("template.new_roi")),
+            ("btn_remove_reference_roi", tr("template.delete_selected_roi")),
+            ("btn_clear_reference_rois", tr("template.clear_all_roi")),
+            ("btn_load_reference_roi", tr("template.load_reference_roi")),
+            ("btn_save_reference_roi", tr("template.save_current_roi")),
+            ("btn_find_open_model", tr("template.open_model")),
+            ("btn_find_use_product", tr("template.use_product_model")),
+            ("btn_add_find_images", tr("template.add_images")),
+            ("btn_remove_find_image", tr("template.remove")),
+            ("btn_clear_find_images", tr("template.clear")),
+            ("chk_auto_threshold_sweep", tr("template.auto_threshold_sweep")),
+            ("btn_apply_search_roi", tr("template.apply_search_roi")),
+            ("btn_clear_search_roi", tr("template.clear_search_roi")),
+            ("btn_run_find_selected", tr("template.run_selected")),
+            ("btn_run_find_all", tr("template.run_all")),
+        ):
+            widget = getattr(self, attr, None)
+            if widget is not None:
+                widget.setText(text)
+        if hasattr(self, "lbl_current_usage"):
+            self.lbl_current_usage.setText(tr("template.current_usage"))
+        if hasattr(self, "lbl_default_direction"):
+            self.lbl_default_direction.setText(tr("template.default_direction_label"))
+        if hasattr(self, "lbl_point_help"):
+            self.lbl_point_help.setText(tr("template.point_help"))
+        if hasattr(self, "help_text"):
+            self.help_text.setText(tr("template.create_help"))
+        if hasattr(self, "btn_build_pinned"):
+            self.btn_build_pinned.setToolTip(tr("template.save_template"))
+        if hasattr(self, "edit_output_label"):
+            self.edit_output_label.setPlaceholderText(tr("template.select_roi_placeholder"))
+        if hasattr(self, "edit_display_name"):
+            self.edit_display_name.setPlaceholderText(tr("template.select_roi_placeholder"))
+        if hasattr(self, "chk_auto_threshold_sweep"):
+            self.chk_auto_threshold_sweep.setToolTip(tr("template.auto_threshold_tip"))
+        if hasattr(self, "table_reference_regions"):
+            self.table_reference_regions.setHorizontalHeaderLabels([
+                tr("template.reference_table.index"),
+                tr("template.reference_table.name"),
+                tr("template.reference_table.roi_label"),
+                tr("template.reference_table.info"),
+            ])
+        if hasattr(self, "lbl_find_model"):
+            self._update_find_model_label()
+        if hasattr(self, "lbl_search_roi"):
+            self._refresh_search_roi_status()
+        if (
+            hasattr(self, "lbl_status")
+            and not self.image_path
+            and self.detector is None
+            and self.template_roi is None
+        ):
+            self.lbl_status.setText(tr("template.create_status"))
+        if hasattr(self, "lbl_reference_status") and not self._reference_regions:
+            self.lbl_reference_status.setText(tr("template.reference_status"))
+        if hasattr(self, "lbl_find_status") and self.list_find_images.count() <= 0:
+            self.lbl_find_status.setText(tr("template.find_status"))
 
     def _make_left_scroll_column(self) -> Tuple[QtWidgets.QScrollArea, QtWidgets.QVBoxLayout]:
         scroll = QtWidgets.QScrollArea()
@@ -390,82 +482,88 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         left_container_layout.addWidget(left_scroll, 1)
         splitter.addWidget(left_container)
 
-        file_box = QtWidgets.QGroupBox("参考图")
+        self.file_box = QtWidgets.QGroupBox(tr("template.reference_image"))
+        file_box = self.file_box
         file_l = QtWidgets.QGridLayout(file_box)
-        self.lbl_image = QtWidgets.QLabel("(未加载)")
+        self.lbl_image = QtWidgets.QLabel(tr("template.not_loaded"))
         self.lbl_image.setWordWrap(True)
-        self.btn_open_image = QtWidgets.QPushButton("打开图片...")
+        self.btn_open_image = QtWidgets.QPushButton(tr("template.open_image"))
         self.btn_open_image.clicked.connect(self._pick_image)
-        self.btn_load_model = QtWidgets.QPushButton("加载已有模型")
+        self.btn_load_model = QtWidgets.QPushButton(tr("template.load_existing_model"))
         self.btn_load_model.clicked.connect(lambda: self._load_existing_model(silent=False))
         file_l.addWidget(self.lbl_image, 0, 0, 1, 2)
         file_l.addWidget(self.btn_open_image, 1, 0)
         file_l.addWidget(self.btn_load_model, 1, 1)
-        file_box.setTitle("参考图")
-        self.lbl_image.setText("(未加载)")
-        self.btn_open_image.setText("打开图片...")
-        self.btn_load_model.setText("加载已有模型")
+        file_box.setTitle(tr("template.reference_image"))
+        self.lbl_image.setText(tr("template.not_loaded"))
+        self.btn_open_image.setText(tr("template.open_image"))
+        self.btn_load_model.setText(tr("template.load_existing_model"))
         left.addWidget(file_box)
 
-        select_box = QtWidgets.QGroupBox("模板编辑")
+        self.select_box = QtWidgets.QGroupBox(tr("template.template_edit"))
+        select_box = self.select_box
         select_l = QtWidgets.QGridLayout(select_box)
         self.cmb_role = QtWidgets.QComboBox()
         self.cmb_role.addItems(["template_roi", "exclude_mask"])
         self.cmb_role.setMinimumWidth(200)
         self.cmb_role.currentTextChanged.connect(self._on_role_changed)
-        self.btn_apply_selection = QtWidgets.QPushButton("应用当前框")
+        self.btn_apply_selection = QtWidgets.QPushButton(tr("template.apply_current_box"))
         self.btn_apply_selection.clicked.connect(self._apply_current_selection)
-        self.btn_clear_roi = QtWidgets.QPushButton("清空模板ROI")
+        self.btn_clear_roi = QtWidgets.QPushButton(tr("template.clear_template_roi"))
         self.btn_clear_roi.clicked.connect(self._clear_template_roi)
-        self.btn_clear_masks = QtWidgets.QPushButton("清空Mask")
+        self.btn_clear_masks = QtWidgets.QPushButton(tr("template.clear_mask"))
         self.btn_clear_masks.clicked.connect(self._clear_masks)
         select_l.setColumnStretch(0, 0)
         select_l.setColumnStretch(1, 1)
-        select_l.addWidget(QtWidgets.QLabel("当前用途"), 0, 0)
+        self.lbl_current_usage = QtWidgets.QLabel(tr("template.current_usage"))
+        select_l.addWidget(self.lbl_current_usage, 0, 0)
         select_l.addWidget(self.cmb_role, 0, 1)
         select_l.addWidget(self.btn_apply_selection, 1, 0, 1, 2)
         select_l.addWidget(self.btn_clear_roi, 2, 0)
         select_l.addWidget(self.btn_clear_masks, 2, 1)
-        select_box.setTitle("模板编辑")
-        cast(QtWidgets.QLabel, select_l.itemAtPosition(0, 0).widget()).setText("当前用途")
-        self.btn_apply_selection.setText("应用当前框")
-        self.btn_clear_roi.setText("清空模板ROI")
-        self.btn_clear_masks.setText("清空Mask")
+        select_box.setTitle(tr("template.template_edit"))
+        self.lbl_current_usage.setText(tr("template.current_usage"))
+        self.btn_apply_selection.setText(tr("template.apply_current_box"))
+        self.btn_clear_roi.setText(tr("template.clear_template_roi"))
+        self.btn_clear_masks.setText(tr("template.clear_mask"))
         left.addWidget(select_box)
 
-        point_box = QtWidgets.QGroupBox("特征点编辑")
+        self.point_box = QtWidgets.QGroupBox(tr("template.feature_point_edit"))
+        point_box = self.point_box
         point_l = QtWidgets.QGridLayout(point_box)
-        self.chk_edit_points = QtWidgets.QCheckBox("启用点编辑")
+        self.chk_edit_points = QtWidgets.QCheckBox(tr("template.edit_points"))
         self.chk_edit_points.toggled.connect(self._on_point_edit_toggled)
-        self.chk_edit_points.setText("Edit Points")
+        self.chk_edit_points.setText(tr("template.edit_points"))
         self.spin_point_label = QtWidgets.QSpinBox()
         self.spin_point_label.setRange(0, 7)
         self.spin_point_label.setMinimumWidth(160)
-        self.btn_extract_points = QtWidgets.QPushButton("Extract Points From ROI")
+        self.btn_extract_points = QtWidgets.QPushButton(tr("template.extract_points"))
         self.btn_extract_points.clicked.connect(self._extract_points_from_roi)
         self.btn_extract_points.setEnabled(False)
-        self.btn_reset_points = QtWidgets.QPushButton("恢复模型特征点")
+        self.btn_reset_points = QtWidgets.QPushButton(tr("template.reset_points"))
         self.btn_reset_points.clicked.connect(self._reset_editor_levels_from_detector)
-        self.lbl_point_help = QtWidgets.QLabel("左击添加点，短拖可设置方向；右击删除最近特征点。")
+        self.lbl_point_help = QtWidgets.QLabel(tr("template.point_help"))
         self.lbl_point_help.setWordWrap(True)
         point_l.setColumnStretch(0, 0)
         point_l.setColumnStretch(1, 1)
-        self.lbl_point_help.setText("宸﹀嚮娣诲姞鐐癸紝鐭嫋鍙缃柟鍚戯紱鍙冲嚮鍒犻櫎閫変腑/闄勮繎鐗瑰緛鐐广€?")
+        self.lbl_point_help.setText(tr("template.point_help"))
         point_l.addWidget(self.chk_edit_points, 0, 0, 1, 2)
-        point_l.addWidget(QtWidgets.QLabel("默认方向label"), 1, 0)
+        self.lbl_default_direction = QtWidgets.QLabel(tr("template.default_direction_label"))
+        point_l.addWidget(self.lbl_default_direction, 1, 0)
         point_l.addWidget(self.spin_point_label, 1, 1)
         point_l.addWidget(self.btn_reset_points, 2, 0, 1, 2)
         point_l.addWidget(self.lbl_point_help, 3, 0, 1, 2)
         point_l.addWidget(self.btn_extract_points, 4, 0, 1, 2)
-        self.lbl_point_help.setText("左击添加点，短拖可设置方向；右击删除选中/附近特征点。")
-        point_box.setTitle("特征点编辑")
-        self.chk_edit_points.setText("Edit Points")
-        cast(QtWidgets.QLabel, point_l.itemAtPosition(1, 0).widget()).setText("默认方向label")
-        self.btn_reset_points.setText("恢复模型特征点")
-        self.lbl_point_help.setText("左击添加点，短拖可设置方向；右击删除选中/附近特征点。")
+        self.lbl_point_help.setText(tr("template.point_help"))
+        point_box.setTitle(tr("template.feature_point_edit"))
+        self.chk_edit_points.setText(tr("template.edit_points"))
+        self.lbl_default_direction.setText(tr("template.default_direction_label"))
+        self.btn_reset_points.setText(tr("template.reset_points"))
+        self.lbl_point_help.setText(tr("template.point_help"))
         left.addWidget(point_box)
 
-        param_box = QtWidgets.QGroupBox("模板参数")
+        self.param_box = QtWidgets.QGroupBox(tr("template.params"))
+        param_box = self.param_box
         form = QtWidgets.QFormLayout(param_box)
         form.setFieldGrowthPolicy(QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.edit_class_id = QtWidgets.QLineEdit(self.product_name or "object")
@@ -511,10 +609,11 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         form.addRow("scale_start", self.spin_scale_start)
         form.addRow("scale_end", self.spin_scale_end)
         form.addRow("scale_step", self.spin_scale_step)
-        param_box.setTitle("模板参数")
+        param_box.setTitle(tr("template.params"))
         left.addWidget(param_box)
 
-        recipe_box = QtWidgets.QGroupBox("定位Recipe")
+        self.recipe_box = QtWidgets.QGroupBox(tr("template.recipe"))
+        recipe_box = self.recipe_box
         recipe_form = QtWidgets.QFormLayout(recipe_box)
         self.cmb_backend_create = QtWidgets.QComboBox()
         self.cmb_backend_create.addItems([label for label, _ in BACKEND_ITEMS])
@@ -532,7 +631,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         recipe_form.addRow("threshold", self.spin_threshold_create)
         recipe_form.addRow("nms_iou", self.spin_nms_create)
         recipe_form.addRow("follow_mode", self.cmb_follow_create)
-        recipe_box.setTitle("定位Recipe")
+        recipe_box.setTitle(tr("template.recipe"))
         left.addWidget(recipe_box)
         recipe_box.setVisible(False)
 
@@ -548,16 +647,16 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
                 widget.valueChanged.connect(lambda _value, s=source: self._sync_recipe_controls(s))
 
         action_row = QtWidgets.QHBoxLayout()
-        self.btn_build = QtWidgets.QPushButton("创建并保存模型")
+        self.btn_build = QtWidgets.QPushButton(tr("template.save"))
         self.btn_build.clicked.connect(self._build_and_save)
         action_row.addWidget(self.btn_build)
-        self.btn_build.setText("保存")
+        self.btn_build.setText(tr("template.save"))
         self.btn_build.hide()
         left.addLayout(action_row)
 
-        self.lbl_status = QtWidgets.QLabel("状态：先选参考图并设置 template_roi。")
+        self.lbl_status = QtWidgets.QLabel(tr("template.create_status"))
         self.lbl_status.setWordWrap(True)
-        self.lbl_status.setText("状态：先选参考图并设置 template_roi。")
+        self.lbl_status.setText(tr("template.create_status"))
         left.addWidget(self.lbl_status)
         left.addStretch(1)
         footer_box = QtWidgets.QFrame()
@@ -565,12 +664,12 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         footer_layout = QtWidgets.QVBoxLayout(footer_box)
         footer_layout.setContentsMargins(0, 0, 0, 0)
         footer_layout.setSpacing(0)
-        self.btn_build_pinned = QtWidgets.QPushButton("淇濆瓨")
+        self.btn_build_pinned = QtWidgets.QPushButton(tr("template.save"))
         self.btn_build_pinned.clicked.connect(self._build_and_save)
-        self.btn_build_pinned.setText("保存")
-        self.btn_build_pinned.setToolTip("保存模板")
-        self.btn_build_pinned.setText("保存")
-        self.btn_build_pinned.setToolTip("保存模板")
+        self.btn_build_pinned.setText(tr("template.save"))
+        self.btn_build_pinned.setToolTip(tr("template.save_template"))
+        self.btn_build_pinned.setText(tr("template.save"))
+        self.btn_build_pinned.setToolTip(tr("template.save_template"))
         footer_layout.addWidget(self.btn_build_pinned)
         left_container_layout.addWidget(footer_box, 0)
 
@@ -591,36 +690,16 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.create_canvas.imageReleased.connect(self._on_create_canvas_released)
         right.addWidget(self.create_canvas, 1)
 
-        help_text = QtWidgets.QLabel(
-            "Create：先画 template_roi，再按需画 exclude_mask。"
-            "\n启用点编辑后：左击添加点，短拖设置方向，右击删除最近特征点。"
-        )
+        self.help_text = QtWidgets.QLabel(tr("template.create_help"))
+        help_text = self.help_text
         help_text.setWordWrap(True)
-        help_text.setText(
-            "Create锛氬厛鐢?template_roi锛屽啀鎸夐渶鐢?exclude_mask銆?"
-            "\n鍙厛鐐?Extract Points From ROI 鎻愬彇鐗瑰緛鐐广€?"
-            "\n鍚敤 Edit Points 鍚庯細宸﹀嚮娣诲姞鐐癸紝鐭嫋璁炬柟鍚戯紝鍙冲嚮鍒犻櫎閫変腑/闄勮繎鐗瑰緛鐐广€?"
-        )
-        help_text.setText(
-            "Create：先画 template_roi，再按需画 exclude_mask。"
-            "\n可先点 Extract Points From ROI 提取特征点。"
-            "\n启用 Edit Points 后：左击添加点，短拖设置方向，右击删除选中/附近特征点。"
-        )
-        help_text.setText(
-            "Create：先画 template_roi，再按需画 exclude_mask。"
-            "\n可先点 Extract Points From ROI 提取特征点。"
-            "\n启用 Edit Points 后：左击添加点，短拖设置方向，右击删除选中/附近特征点。"
-        )
-        help_text.setText(
-            "Create：先画 template_roi，再按需画 exclude_mask。\n"
-            "可先点 Extract Points From ROI 提取特征点。\n"
-            "启用 Edit Points 后：左击添加点，短拖设置方向，右击删除选中/附近特征点。"
-        )
+        help_text.setText(tr("template.create_help"))
+        help_text.setText(tr("template.create_help"))
         right.addWidget(help_text)
 
         self._on_role_changed(self.cmb_role.currentText())
         self._on_point_edit_toggled(False)
-        self.lbl_status.setText("状态：先选参考图并设置 template_roi。")
+        self.lbl_status.setText(tr("template.create_status"))
 
     def _build_reference_tab(self) -> None:
         layout = QtWidgets.QHBoxLayout(self.tab_reference)
@@ -630,13 +709,14 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         left_scroll, left = self._make_left_scroll_column()
         layout.addWidget(left_scroll, 0)
 
-        info_box = QtWidgets.QGroupBox("选中 ROI 属性")
+        self.info_box = QtWidgets.QGroupBox(tr("template.reference_attrs"))
+        info_box = self.info_box
         info_form = QtWidgets.QFormLayout(info_box)
         self.edit_reference_label = QtWidgets.QLineEdit()
         self.edit_output_label = QtWidgets.QLineEdit()
-        self.edit_output_label.setPlaceholderText("先在列表中选择一个 ROI")
+        self.edit_output_label.setPlaceholderText(tr("template.select_roi_placeholder"))
         self.edit_display_name = QtWidgets.QLineEdit()
-        self.edit_display_name.setPlaceholderText("先在列表中选择一个 ROI")
+        self.edit_display_name.setPlaceholderText(tr("template.select_roi_placeholder"))
         self.cmb_reference_shape = QtWidgets.QComboBox()
         self.cmb_reference_shape.addItems(["rectangle", "polygon"])
         self.cmb_reference_shape.currentTextChanged.connect(self._on_reference_shape_changed)
@@ -644,24 +724,30 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.edit_display_name.textChanged.connect(self._on_region_field_edited)
         self.edit_output_label.returnPressed.connect(self._apply_reference_region_fields)
         self.edit_display_name.returnPressed.connect(self._apply_reference_region_fields)
-        self.btn_apply_region_name = QtWidgets.QPushButton("应用名称")
+        self.btn_apply_region_name = QtWidgets.QPushButton(tr("template.apply_name"))
         self.btn_apply_region_name.clicked.connect(self._apply_reference_region_fields)
-        info_form.addRow("ROI 标签", self.edit_output_label)
-        info_form.addRow("显示名称", self.edit_display_name)
+        info_form.addRow(tr("template.roi_label"), self.edit_output_label)
+        info_form.addRow(tr("template.display_name"), self.edit_display_name)
         name_btn_row = QtWidgets.QHBoxLayout()
         name_btn_row.addWidget(self.btn_apply_region_name)
         name_btn_row.addWidget(self.cmb_reference_shape)
-        info_form.addRow("形状 / 操作", name_btn_row)
+        info_form.addRow(tr("template.shape_action"), name_btn_row)
         self.edit_output_label.setEnabled(False)
         self.edit_display_name.setEnabled(False)
         self.btn_apply_region_name.setEnabled(False)
         left.addWidget(info_box)
 
-        region_box = QtWidgets.QGroupBox("Reference Regions")
+        self.region_box = QtWidgets.QGroupBox(tr("template.reference_regions"))
+        region_box = self.region_box
         region_l = QtWidgets.QVBoxLayout(region_box)
         region_body = QtWidgets.QHBoxLayout()
         self.table_reference_regions = QtWidgets.QTableWidget(0, 4)
-        self.table_reference_regions.setHorizontalHeaderLabels(["#", "Name", "ROI Label", "Info"])
+        self.table_reference_regions.setHorizontalHeaderLabels([
+            tr("template.reference_table.index"),
+            tr("template.reference_table.name"),
+            tr("template.reference_table.roi_label"),
+            tr("template.reference_table.info"),
+        ])
         self.table_reference_regions.verticalHeader().setVisible(False)
         self.table_reference_regions.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.table_reference_regions.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
@@ -675,15 +761,15 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         region_body.addWidget(self.table_reference_regions, 1)
 
         region_btn_col = QtWidgets.QVBoxLayout()
-        self.btn_add_reference_roi = QtWidgets.QPushButton("新建ROI")
+        self.btn_add_reference_roi = QtWidgets.QPushButton(tr("template.new_roi"))
         self.btn_add_reference_roi.clicked.connect(self._prepare_new_reference_roi)
-        self.btn_remove_reference_roi = QtWidgets.QPushButton("删除选中ROI")
+        self.btn_remove_reference_roi = QtWidgets.QPushButton(tr("template.delete_selected_roi"))
         self.btn_remove_reference_roi.clicked.connect(self._remove_selected_reference_roi)
-        self.btn_clear_reference_rois = QtWidgets.QPushButton("清空全部ROI")
+        self.btn_clear_reference_rois = QtWidgets.QPushButton(tr("template.clear_all_roi"))
         self.btn_clear_reference_rois.clicked.connect(self._clear_reference_roi)
-        self.btn_load_reference_roi = QtWidgets.QPushButton("加载已有参考ROI")
+        self.btn_load_reference_roi = QtWidgets.QPushButton(tr("template.load_reference_roi"))
         self.btn_load_reference_roi.clicked.connect(lambda: self._load_reference_roi_from_json(silent=False))
-        self.btn_save_reference_roi = QtWidgets.QPushButton("保存当前ROI")
+        self.btn_save_reference_roi = QtWidgets.QPushButton(tr("template.save_current_roi"))
         self.btn_save_reference_roi.clicked.connect(self._save_reference_roi_to_json)
         for button in [
             self.btn_add_reference_roi,
@@ -699,7 +785,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         region_l.addLayout(region_body, 1)
         left.addWidget(region_box)
 
-        self.lbl_reference_status = QtWidgets.QLabel("状态：这里设置的是最终输出给 embedding 的参考ROI。")
+        self.lbl_reference_status = QtWidgets.QLabel(tr("template.reference_status"))
         self.lbl_reference_status.setWordWrap(True)
         left.addWidget(self.lbl_reference_status)
         left.addStretch(1)
@@ -732,31 +818,33 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         left_container_layout.addWidget(left_scroll, 1)
         layout.addWidget(left_container, 0)
 
-        model_box = QtWidgets.QGroupBox("模型")
+        self.model_box = QtWidgets.QGroupBox(tr("template.model"))
+        model_box = self.model_box
         model_l = QtWidgets.QGridLayout(model_box)
-        self.lbl_find_model = QtWidgets.QLabel("(未设置)")
+        self.lbl_find_model = QtWidgets.QLabel(tr("template.not_set"))
         self.lbl_find_model.setWordWrap(True)
-        self.btn_find_open_model = QtWidgets.QPushButton("打开模型...")
+        self.btn_find_open_model = QtWidgets.QPushButton(tr("template.open_model"))
         self.btn_find_open_model.clicked.connect(self._pick_find_model)
-        self.btn_find_use_product = QtWidgets.QPushButton("使用产品模型")
+        self.btn_find_use_product = QtWidgets.QPushButton(tr("template.use_product_model"))
         self.btn_find_use_product.clicked.connect(self._use_product_model)
         model_l.addWidget(self.lbl_find_model, 0, 0, 1, 2)
         model_l.addWidget(self.btn_find_open_model, 1, 0)
         model_l.addWidget(self.btn_find_use_product, 1, 1)
         left.addWidget(model_box)
 
-        list_box = QtWidgets.QGroupBox("测试图片")
+        self.list_box = QtWidgets.QGroupBox(tr("template.test_images"))
+        list_box = self.list_box
         list_l = QtWidgets.QVBoxLayout(list_box)
         self.list_find_images = QtWidgets.QListWidget()
         self.list_find_images.itemDoubleClicked.connect(self._run_find_for_item)
         self.list_find_images.currentItemChanged.connect(self._on_find_item_selected)
         list_l.addWidget(self.list_find_images, 1)
         list_btn_row = QtWidgets.QHBoxLayout()
-        self.btn_add_find_images = QtWidgets.QPushButton("Add Images")
+        self.btn_add_find_images = QtWidgets.QPushButton(tr("template.add_images"))
         self.btn_add_find_images.clicked.connect(self._add_find_images)
-        self.btn_remove_find_image = QtWidgets.QPushButton("Remove")
+        self.btn_remove_find_image = QtWidgets.QPushButton(tr("template.remove"))
         self.btn_remove_find_image.clicked.connect(self._remove_selected_find_images)
-        self.btn_clear_find_images = QtWidgets.QPushButton("Clear")
+        self.btn_clear_find_images = QtWidgets.QPushButton(tr("template.clear"))
         self.btn_clear_find_images.clicked.connect(self._clear_find_images)
         for button in [self.btn_add_find_images, self.btn_remove_find_image, self.btn_clear_find_images]:
             button.setMinimumWidth(0)
@@ -770,7 +858,8 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         list_l.addLayout(list_btn_row)
         left.addWidget(list_box, 1)
 
-        recipe_box = QtWidgets.QGroupBox("Find 参数")
+        self.find_recipe_box = QtWidgets.QGroupBox(tr("template.find_params"))
+        recipe_box = self.find_recipe_box
         recipe_form = QtWidgets.QFormLayout(recipe_box)
         self.cmb_backend_find = QtWidgets.QComboBox()
         self.cmb_backend_find.addItems([label for label, _ in BACKEND_ITEMS])
@@ -784,8 +873,8 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.spin_nms_find.setValue(0.3)
         self.cmb_follow_find = QtWidgets.QComboBox()
         self.cmb_follow_find.addItems(["affine_roi", "match_bbox"])
-        self.chk_auto_threshold_sweep = QtWidgets.QCheckBox("Auto Threshold Sweep")
-        self.chk_auto_threshold_sweep.setToolTip("未命中时按当前阈值每次减 10，最低扫到 20。")
+        self.chk_auto_threshold_sweep = QtWidgets.QCheckBox(tr("template.auto_threshold_sweep"))
+        self.chk_auto_threshold_sweep.setToolTip(tr("template.auto_threshold_tip"))
         self.chk_auto_threshold_sweep.toggled.connect(lambda _checked: self._save_recipe())
         recipe_form.addRow("backend", self.cmb_backend_find)
         recipe_form.addRow("threshold", self.spin_threshold_find)
@@ -794,13 +883,14 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         recipe_form.addRow("", self.chk_auto_threshold_sweep)
         left.addWidget(recipe_box)
 
-        search_box = QtWidgets.QGroupBox("搜索ROI")
+        self.search_box = QtWidgets.QGroupBox(tr("template.search_roi"))
+        search_box = self.search_box
         search_l = QtWidgets.QVBoxLayout(search_box)
-        self.btn_apply_search_roi = QtWidgets.QPushButton("应用当前框为搜索ROI")
+        self.btn_apply_search_roi = QtWidgets.QPushButton(tr("template.apply_search_roi"))
         self.btn_apply_search_roi.clicked.connect(self._apply_find_search_roi)
-        self.btn_clear_search_roi = QtWidgets.QPushButton("清空搜索ROI")
+        self.btn_clear_search_roi = QtWidgets.QPushButton(tr("template.clear_search_roi"))
         self.btn_clear_search_roi.clicked.connect(self._clear_find_search_roi)
-        self.lbl_search_roi = QtWidgets.QLabel("状态：未设置搜索ROI，默认全图搜索。")
+        self.lbl_search_roi = QtWidgets.QLabel(tr("template.search_roi_unset"))
         self.lbl_search_roi.setWordWrap(True)
         search_l.addWidget(self.btn_apply_search_roi)
         search_l.addWidget(self.btn_clear_search_roi)
@@ -819,9 +909,9 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
                 widget.valueChanged.connect(lambda _value, s=source: self._sync_recipe_controls(s))
 
         run_row = QtWidgets.QHBoxLayout()
-        self.btn_run_find_selected = QtWidgets.QPushButton("Run Selected")
+        self.btn_run_find_selected = QtWidgets.QPushButton(tr("template.run_selected"))
         self.btn_run_find_selected.clicked.connect(self._run_selected_find)
-        self.btn_run_find_all = QtWidgets.QPushButton("Run All")
+        self.btn_run_find_all = QtWidgets.QPushButton(tr("template.run_all"))
         self.btn_run_find_all.clicked.connect(self._run_all_find)
         for button in [self.btn_run_find_selected, self.btn_run_find_all]:
             button.setMinimumWidth(0)
@@ -833,7 +923,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         run_row.addWidget(self.btn_run_find_all)
         left.addLayout(run_row)
 
-        self.lbl_find_status = QtWidgets.QLabel("状态：双击某张图片可直接测试。")
+        self.lbl_find_status = QtWidgets.QLabel(tr("template.find_status"))
         self.lbl_find_status.setWordWrap(True)
         left.addWidget(self.lbl_find_status)
 
@@ -846,7 +936,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
     def _pick_image(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
-            "选择参考图",
+            tr("auto.pick_reference_title"),
             self.image_path or "",
             "Images (*.jpg *.jpeg *.png *.bmp *.tif *.tiff *.webp)",
         )
@@ -856,7 +946,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
     def _set_image(self, path: str, *, reset_state: bool) -> None:
         image_bgr = cv2.imread(path, cv2.IMREAD_COLOR)
         if image_bgr is None:
-            QtWidgets.QMessageBox.critical(self, "读取失败", path)
+            QtWidgets.QMessageBox.critical(self, tr("common.read_failed"), path)
             return
         self.image_path = path
         self.image_bgr = image_bgr
@@ -876,12 +966,12 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self.detector = None
             self.detector_path = ""
         self._refresh_create_overlays()
-        self.lbl_status.setText(f"状态：已提取特征点，当前总数={self._feature_count}")
+        self.lbl_status.setText(tr("template.status_extracted", count=self._feature_count))
         if not self._apply_reference_roi_from_recipe():
             self._load_reference_roi_from_json(silent=True)
         self._save_recipe()
 
-        self.lbl_status.setText("状态：已加载参考图。")
+        self.lbl_status.setText(tr("template.status_loaded_reference"))
 
     def _sync_recipe_controls(self, source: str) -> None:
         if self._syncing_recipe_controls:
@@ -1050,19 +1140,19 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._refresh_reference_region_list()
         self._refresh_reference_canvas()
         self._refresh_reference_region_fields()
-        self.lbl_reference_status.setText("状态：已从 recipe 恢复参考ROI。")
+        self.lbl_reference_status.setText(tr("template.status_loaded_recipe_roi"))
         return bool(self._reference_regions)
 
     def _load_existing_model(self, *, silent: bool) -> None:
         if not os.path.exists(self.paths.model_path):
             if not silent:
-                QtWidgets.QMessageBox.information(self, "提示", "当前产品目录还没有模板模型。")
+                QtWidgets.QMessageBox.information(self, tr("common.info"), tr("template.no_model"))
             return
         try:
             detector = self._get_detector_for_model(self.paths.model_path, reuse_shared=False)
             class_ids = detector.class_ids()
             if not class_ids:
-                raise RuntimeError("模型中没有 class")
+                raise RuntimeError(tr("template.model_no_class"))
             class_id = class_ids[0]
             source_info, roi_img, _roi_mask, roi_rect, mask_rects = load_class_source_assets(detector, class_id)
             editor_levels = detector.get_original_editor_levels(class_id)
@@ -1073,7 +1163,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
                 )
         except Exception as exc:
             if not silent:
-                QtWidgets.QMessageBox.critical(self, "加载失败", str(exc))
+                QtWidgets.QMessageBox.critical(self, tr("common.load_failed"), str(exc))
             return
 
         source_block = source_info.get("source", {}) if isinstance(source_info, dict) else {}
@@ -1106,7 +1196,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._update_find_model_label()
         self._refresh_create_overlays()
         self.lbl_status.setText(
-            f"状态：已加载模型 {os.path.basename(self.paths.model_path)}，特征点={self._feature_count}"
+            tr("template.status_loaded_model", model=os.path.basename(self.paths.model_path), count=self._feature_count)
         )
 
     def _apply_detector_template_params(self, detector: Line2DupLikeDetector, source_info: object) -> None:
@@ -1132,16 +1222,16 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
 
     def _extract_points_from_roi(self) -> None:
         if self.image_bgr is None or not self.image_path:
-            QtWidgets.QMessageBox.warning(self, "提示", "请先加载参考图。")
+            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.load_reference_first"))
             return
         if self.template_roi is None:
-            QtWidgets.QMessageBox.warning(self, "提示", "请先设置 template_roi。")
+            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.set_template_roi_first"))
             return
 
         x, y, w, h = self.template_roi.x, self.template_roi.y, self.template_roi.w, self.template_roi.h
         roi_img = self.image_bgr[y : y + h, x : x + w].copy()
         if roi_img.size == 0:
-            QtWidgets.QMessageBox.critical(self, "模板无效", "模板ROI超出图像范围。")
+            QtWidgets.QMessageBox.critical(self, tr("common.invalid_template"), tr("template.roi_out_of_range"))
             return
 
         try:
@@ -1171,7 +1261,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             if not extracted_levels:
                 raise RuntimeError("No template extracted.")
         except Exception as exc:
-            QtWidgets.QMessageBox.critical(self, "提取失败", str(exc))
+            QtWidgets.QMessageBox.critical(self, tr("common.extract_failed"), str(exc))
             return
 
         self.editor_levels = [extracted_levels[0]]
@@ -1183,20 +1273,20 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._point_drag_end = None
         self.chk_edit_points.setChecked(True)
         self._refresh_create_overlays()
-        self.lbl_status.setText(f"状态：已提取特征点，当前总数={self._feature_count}")
+        self.lbl_status.setText(tr("template.status_extracted", count=self._feature_count))
 
     def _build_and_save(self) -> None:
         if self.image_bgr is None or not self.image_path:
-            QtWidgets.QMessageBox.warning(self, "提示", "请先加载参考图。")
+            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.load_reference_first"))
             return
         if self.template_roi is None:
-            QtWidgets.QMessageBox.warning(self, "提示", "请先设置 template_roi。")
+            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.set_template_roi_first"))
             return
 
         x, y, w, h = self.template_roi.x, self.template_roi.y, self.template_roi.w, self.template_roi.h
         roi_img = self.image_bgr[y : y + h, x : x + w].copy()
         if roi_img.size == 0:
-            QtWidgets.QMessageBox.critical(self, "模板无效", "模板ROI超出图像范围。")
+            QtWidgets.QMessageBox.critical(self, tr("common.invalid_template"), tr("template.roi_out_of_range"))
             return
 
         original_mode = "manual_points" if (self.points_dirty or self.original_mode == "manual_points") and self.editor_levels else "auto"
@@ -1229,7 +1319,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             os.makedirs(self.paths.role_dir, exist_ok=True)
             save_detector_model(detector, self.paths.model_path)
         except Exception as exc:
-            QtWidgets.QMessageBox.critical(self, "创建失败", str(exc))
+            QtWidgets.QMessageBox.critical(self, tr("common.create_failed"), str(exc))
             return
 
         self.detector = detector
@@ -1249,10 +1339,10 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.create_canvas.clear_roi()
         self._refresh_create_overlays()
         self.lbl_status.setText(
-            f"状态：模型已保存，kept={kept} skipped={skipped} 特征点={self._feature_count}"
+            tr("template.status_saved_model", kept=kept, skipped=skipped, count=self._feature_count)
         )
         self.modelSaved.emit(self.paths.model_path, self.paths.recipe_path)
-        QtWidgets.QMessageBox.information(self, "完成", f"模板模型已保存：\n{self.paths.model_path}")
+        QtWidgets.QMessageBox.information(self, tr("common.done"), tr("template.saved_model", path=self.paths.model_path))
 
     def _pose_ui_values(self) -> Dict[str, float]:
         return {
@@ -1267,7 +1357,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
     def _apply_current_selection(self) -> None:
         xywh = self.create_canvas.roi_xywh()
         if xywh is None:
-            QtWidgets.QMessageBox.warning(self, "提示", "请先在图上拉一个矩形。")
+            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.drag_rect_first"))
             return
         role = self.cmb_role.currentText()
         if role == "template_roi":
@@ -1280,18 +1370,18 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self._hover_feature_index = None
             self._point_drag_start = None
             self._point_drag_end = None
-            self.lbl_status.setText("状态：已更新模板ROI。重新建模后会提取新的特征点。")
+            self.lbl_status.setText(tr("template.status_template_roi_updated"))
         else:
             if self.template_roi is None:
-                QtWidgets.QMessageBox.warning(self, "提示", "请先设置 template_roi。")
+                QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.set_template_roi_first"))
                 return
             rel = _clamp_rect_to_roi(xywh, self.template_roi)
             if rel is None:
-                QtWidgets.QMessageBox.warning(self, "提示", "Mask 矩形需要和模板ROI相交。")
+                QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.mask_intersect_required"))
                 return
             self.mask_rects.append(rel)
             self.btn_extract_points.setEnabled(self.template_roi is not None)
-            self.lbl_status.setText(f"状态：已添加 {len(self.mask_rects)} 个 mask 矩形。")
+            self.lbl_status.setText(tr("template.status_mask_added", count=len(self.mask_rects)))
         self.create_canvas.clear_roi()
         self._refresh_create_overlays()
 
@@ -1306,14 +1396,14 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._point_drag_end = None
         self.create_canvas.clear_roi()
         self._refresh_create_overlays()
-        self.lbl_status.setText("状态：已清空模板ROI。")
+        self.lbl_status.setText(tr("template.status_template_roi_cleared"))
 
     def _clear_masks(self) -> None:
         self.mask_rects = []
         self.btn_extract_points.setEnabled(self.template_roi is not None)
         self.create_canvas.clear_roi()
         self._refresh_create_overlays()
-        self.lbl_status.setText("状态：已清空 mask。")
+        self.lbl_status.setText(tr("template.status_mask_cleared"))
 
     def _on_role_changed(self, role: str) -> None:
         if role == "exclude_mask":
@@ -1343,7 +1433,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.btn_clear_masks.setEnabled(not enabled)
         self.btn_extract_points.setEnabled(self.template_roi is not None)
         if enabled:
-            self.lbl_status.setText("状态：点编辑已开启。左击添加，短拖设方向，右击删最近点。")
+            self.lbl_status.setText(tr("template.status_point_edit_enabled"))
         else:
             self._point_drag_start = None
             self._point_drag_end = None
@@ -1357,9 +1447,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         if not self.chk_edit_points.isChecked():
             return
         if self.template_roi is None or not self.editor_levels:
-            self.lbl_status.setText("状态：请先创建或加载模型后再编辑特征点。")
-            return
-            self.lbl_status.setText("状态：请先创建或加载模型后再编辑特征点。")
+            self.lbl_status.setText(tr("template.status_edit_model_first"))
             return
         if not self._point_in_template_roi(x, y):
             return
@@ -1370,18 +1458,12 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         elif button == _button_right():
             idx = self._hover_feature_index
             if idx is not None and self._delete_feature_index(int(idx)):
-                self.lbl_status.setText(f"状态：已删除选中特征点，剩余 {self._feature_count}。")
-                return
-                self.lbl_status.setText(f"鐘舵€侊細宸插垹闄ょ壒寰佺偣锛屽墿浣?{self._feature_count}")
+                self.lbl_status.setText(tr("template.status_deleted_selected_point", count=self._feature_count))
                 return
             if self._delete_feature_near(x, y):
-                self.lbl_status.setText(f"状态：已删除附近特征点，剩余 {self._feature_count}。")
-                return
-                self.lbl_status.setText(f"状态：已删除特征点，剩余={self._feature_count}")
+                self.lbl_status.setText(tr("template.status_deleted_near_point", count=self._feature_count))
             else:
-                self.lbl_status.setText("状态：右击位置附近没有可删除的特征点。")
-                return
-                self.lbl_status.setText("状态：右击位置附近没有可删除的特征点。")
+                self.lbl_status.setText(tr("template.status_no_point_to_delete"))
 
     def _on_create_canvas_moved(self, _buttons: int, x: int, y: int) -> None:
         if self.chk_edit_points.isChecked():
@@ -1413,7 +1495,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self._add_feature_at(sx, sy, label, theta_deg=label_to_angle_deg(label))
         self._point_drag_start = None
         self._point_drag_end = None
-        self.lbl_status.setText(f"状态：已更新特征点，当前总数={self._feature_count}")
+        self.lbl_status.setText(tr("template.status_feature_points_updated", count=self._feature_count))
 
     def _point_in_template_roi(self, x: int, y: int) -> bool:
         if self.template_roi is None:
@@ -1508,11 +1590,11 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
 
     def _reset_editor_levels_from_detector(self) -> None:
         if self.detector is None:
-            self.lbl_status.setText("状态：当前没有已加载模型。")
+            self.lbl_status.setText(tr("template.status_no_loaded_model"))
             return
         class_id = self.edit_class_id.text().strip() or (self.detector.class_ids()[0] if self.detector.class_ids() else "")
         if not class_id:
-            self.lbl_status.setText("状态：模型里没有可恢复的 class。")
+            self.lbl_status.setText(tr("template.status_model_no_restorable_class"))
             return
         levels = self.detector.get_original_editor_levels(class_id)
         if not levels:
@@ -1523,7 +1605,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
                     roi_img,
                 )
             except Exception as exc:
-                self.lbl_status.setText(f"状态：恢复模型特征失败：{exc}")
+                self.lbl_status.setText(tr("template.status_restore_features_failed", error=exc))
                 return
         self.editor_levels = clone_levels(levels)
         self.points_dirty = False
@@ -1531,7 +1613,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._point_drag_start = None
         self._point_drag_end = None
         self._refresh_create_overlays()
-        self.lbl_status.setText(f"状态：已恢复模型特征点，当前总数={self._feature_count}")
+        self.lbl_status.setText(tr("template.status_restored_features", count=self._feature_count))
 
     def _feature_overlays(self) -> List[OverlayShape]:
         self._feature_count = 0
@@ -1752,7 +1834,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._refresh_reference_region_fields()
         self._save_recipe()
         self.referenceRegionsChanged.emit()
-        self.lbl_reference_status.setText(f"状态：已更新参考ROI名称：{display_name}")
+        self.lbl_reference_status.setText(tr("template.status_reference_name_updated", name=display_name))
 
     def _refresh_reference_canvas(self) -> None:
         overlays: List[OverlayShape] = []
@@ -1816,7 +1898,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self.table_reference_regions.blockSignals(False)
         self._refresh_reference_canvas()
         self._refresh_reference_region_fields()
-        self.lbl_reference_status.setText("状态：已切换到新增ROI模式，请直接在右侧画布上继续画框。")
+        self.lbl_reference_status.setText(tr("template.status_reference_add_mode"))
 
     def _remove_selected_reference_roi(self) -> None:
         if self._selected_reference_idx is None or not (0 <= self._selected_reference_idx < len(self._reference_regions)):
@@ -1828,7 +1910,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._refresh_reference_region_fields()
         self._save_recipe()
         self.referenceRegionsChanged.emit()
-        self.lbl_reference_status.setText("状态：已删除选中的参考ROI。")
+        self.lbl_reference_status.setText(tr("template.status_reference_deleted"))
 
     def _on_reference_canvas_shape_changed(self) -> None:
         if self._syncing_reference_view:
@@ -1852,7 +1934,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self._refresh_reference_canvas()
             self._refresh_reference_region_fields()
             self._save_recipe()
-            self.lbl_reference_status.setText(f"状态：已新增参考ROI：{label}")
+            self.lbl_reference_status.setText(tr("template.status_reference_added", label=label))
             return
         if 0 <= self._selected_reference_idx < len(self._reference_regions):
             region = self._reference_regions[self._selected_reference_idx]
@@ -1862,7 +1944,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self._refresh_reference_region_list()
             self._refresh_reference_canvas()
             self._save_recipe()
-            self.lbl_reference_status.setText(f"状态：已更新参考ROI：{label}")
+            self.lbl_reference_status.setText(tr("template.status_reference_updated", label=label))
 
     def _on_reference_shape_changed(self, shape_name: str) -> None:
         self.ref_canvas.draw_shape = "polygon" if shape_name == "polygon" else "rect"
@@ -1870,7 +1952,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
     def _load_reference_roi_from_json(self, *, silent: bool) -> None:
         if not self.image_path or not os.path.exists(self.image_path):
             if not silent:
-                QtWidgets.QMessageBox.warning(self, "提示", "请先加载参考图。")
+                QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.load_reference_first"))
             return
         jpath = qr_core.labelme_json_of_image(self.image_path)
         if not os.path.exists(jpath):
@@ -1879,7 +1961,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self._refresh_reference_region_list()
             self._refresh_reference_canvas()
             if not silent:
-                QtWidgets.QMessageBox.information(self, "提示", "当前参考图还没有 labelme json。")
+                QtWidgets.QMessageBox.information(self, tr("common.info"), tr("template.no_reference_json"))
             return
         try:
             regions: List[Dict[str, object]] = []
@@ -1909,13 +1991,13 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
                     }
                 )
             if not regions:
-                raise RuntimeError("json 中没有 roi1/roi2/... 参考ROI")
+                raise RuntimeError(tr("template.no_reference_roi_in_json"))
             self._reference_regions = regions
             self._selected_reference_idx = None
             self._refresh_reference_region_list()
             self._refresh_reference_canvas()
             self._refresh_reference_region_fields()
-            self.lbl_reference_status.setText(f"状态：已加载 {len(regions)} 个参考ROI")
+            self.lbl_reference_status.setText(tr("template.status_reference_loaded", count=len(regions)))
             self._save_recipe()
             self.referenceRegionsChanged.emit()
         except Exception as exc:
@@ -1925,15 +2007,15 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self._refresh_reference_canvas()
             self._refresh_reference_region_fields()
             if not silent:
-                QtWidgets.QMessageBox.warning(self, "加载失败", str(exc))
+                QtWidgets.QMessageBox.warning(self, tr("common.load_failed"), str(exc))
 
     def _save_reference_roi_to_json(self) -> None:
         if not self.image_path or not os.path.exists(self.image_path):
-            QtWidgets.QMessageBox.warning(self, "提示", "请先加载参考图。")
+            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.load_reference_first"))
             return
         try:
             if not self._reference_regions:
-                raise RuntimeError("当前没有可保存的参考ROI。")
+                raise RuntimeError(tr("template.no_reference_roi_to_save"))
             old_recipe = load_recipe(self.paths.recipe_path) if os.path.exists(self.paths.recipe_path) else Line2DupRecipe()
             old_labels = {
                 str(region.get("output_label") or region.get("reference_label") or "")
@@ -1974,11 +2056,11 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
                         label_name=label_name,
                     )
         except Exception as exc:
-            QtWidgets.QMessageBox.warning(self, "保存失败", str(exc))
+            QtWidgets.QMessageBox.warning(self, tr("common.save_failed"), str(exc))
             return
         self._save_recipe()
         self.referenceRegionsChanged.emit()
-        self.lbl_reference_status.setText(f"状态：参考ROI已保存，共 {len(self._reference_regions)} 个")
+        self.lbl_reference_status.setText(tr("template.status_reference_saved", count=len(self._reference_regions)))
 
     def _clear_reference_roi(self) -> None:
         self._reference_regions = []
@@ -1990,7 +2072,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._recipe_reference_points = []
         self._save_recipe()
         self.referenceRegionsChanged.emit()
-        self.lbl_reference_status.setText("状态：已清空全部参考ROI。")
+        self.lbl_reference_status.setText(tr("template.status_reference_cleared"))
 
     def _search_roi_xywh(self) -> Optional[Tuple[int, int, int, int]]:
         points = [
@@ -2010,10 +2092,10 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
     def _refresh_search_roi_status(self) -> None:
         xywh = self._search_roi_xywh()
         if xywh is None:
-            self.lbl_search_roi.setText("状态：未设置搜索ROI，默认全图搜索。")
+            self.lbl_search_roi.setText(tr("template.search_roi_unset"))
             return
         x, y, w, h = xywh
-        self.lbl_search_roi.setText(f"状态：搜索ROI=({x},{y},{w},{h})，Find 与主界面模板定位都会限制在此区域搜索。")
+        self.lbl_search_roi.setText(tr("template.status_search_roi_set", x=x, y=y, w=w, h=h))
 
     def _apply_search_roi_to_find_canvas(self) -> None:
         xywh = self._search_roi_xywh()
@@ -2029,7 +2111,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
     def _apply_find_search_roi(self) -> None:
         xywh = self.find_canvas.roi_xywh()
         if xywh is None:
-            QtWidgets.QMessageBox.information(self, "提示", "请先在右侧图片上拖一个矩形搜索区域。")
+            QtWidgets.QMessageBox.information(self, tr("common.info"), tr("template.draw_search_roi_first"))
             return
         x, y, w, h = xywh
         self._search_roi_shape_type = "rectangle"
@@ -2048,7 +2130,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
     def _pick_find_model(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
-            "选择模型",
+            tr("template.pick_model_title"),
             self.find_model_path or self.paths.model_path,
             "template model (*.json)",
         )
@@ -2061,14 +2143,14 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._update_find_model_label()
 
     def _update_find_model_label(self) -> None:
-        text = self.find_model_path or "(未设置)"
+        text = self.find_model_path or tr("template.not_set")
         self.lbl_find_model.setText(text)
         self.lbl_find_model.setToolTip(text)
 
     def _add_find_images(self) -> None:
         paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
             self,
-            "选择测试图片",
+            tr("template.pick_test_images_title"),
             self.image_path or "",
             "Images (*.jpg *.jpeg *.png *.bmp *.tif *.tiff *.webp)",
         )
@@ -2090,18 +2172,18 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self.list_find_images.takeItem(row)
         if self.list_find_images.count() <= 0:
             self.find_canvas.clear_image()
-            self.lbl_find_status.setText("状态：Find 列表为空。")
+            self.lbl_find_status.setText(tr("template.status_find_list_empty"))
 
     def _clear_find_images(self) -> None:
         self._find_result_cache.clear()
         self.list_find_images.clear()
         self.find_canvas.clear_image()
-        self.lbl_find_status.setText("状态：已清空 Find 列表。")
+        self.lbl_find_status.setText(tr("template.status_find_list_cleared"))
 
     def _run_selected_find(self) -> None:
         item = self.list_find_images.currentItem()
         if item is None:
-            QtWidgets.QMessageBox.information(self, "提示", "请先选择一张测试图片。")
+            QtWidgets.QMessageBox.information(self, tr("common.info"), tr("template.select_test_image_first"))
             return
         self._run_find_for_item(item)
 
@@ -2136,7 +2218,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         if os.path.exists(scene_path):
             self.find_canvas.set_image(scene_path, pixmap=pixmap_from_path(scene_path))
             self._apply_search_roi_to_find_canvas()
-        self.lbl_find_status.setText(f"状态：已切换到 {os.path.basename(scene_path)}。双击或点 Run Selected 开始测试。")
+        self.lbl_find_status.setText(tr("template.status_find_switched", image=os.path.basename(scene_path)))
 
     def _get_detector_for_model(self, model_path: str, *, reuse_shared: bool = True) -> Line2DupLikeDetector:
         if reuse_shared and self.detector is not None and os.path.abspath(model_path) == os.path.abspath(self.detector_path or ""):
@@ -2158,19 +2240,19 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             return
         model_path = self.find_model_path or self.paths.model_path
         if not model_path or not os.path.exists(model_path):
-            QtWidgets.QMessageBox.warning(self, "提示", "请先在 Find 页加载可用模型。")
+            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.load_find_model_first"))
             return
         recipe = self._recipe_from_controls(use_find_values=True)
         recipe.model_path = model_path
         if not recipe.reference_image and self.image_path:
             recipe.reference_image = self.image_path
         if not recipe.reference_image or not os.path.exists(recipe.reference_image):
-            QtWidgets.QMessageBox.warning(self, "提示", "请先设置参考图。")
+            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.set_reference_first"))
             return
 
         scene_bgr = cv2.imread(scene_path, cv2.IMREAD_COLOR)
         if scene_bgr is None:
-            self._set_find_item_error(item, f"读图失败: {scene_path}")
+            self._set_find_item_error(item, tr("template.read_image_failed", path=scene_path))
             return
 
         used_threshold = float(recipe.threshold)
@@ -2223,7 +2305,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         item.setText(f"{os.path.basename(scene_path)} | {msg}")
         item.setToolTip(f"{scene_path}\n{msg}")
         item.setForeground(QtGui.QBrush(QtGui.QColor(20, 160, 20)))
-        status_msg = f"状态：{os.path.basename(scene_path)} 测试完成，{msg}"
+        status_msg = tr("template.status_find_done", image=os.path.basename(scene_path), message=msg)
         self._find_result_cache[scene_path] = {
             "pixmap": QtGui.QPixmap(overlay_pixmap),
             "message": status_msg,
@@ -2235,7 +2317,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         item.setText(f"{os.path.basename(scene_path)} | ERROR: {message}")
         item.setToolTip(f"{scene_path}\nERROR: {message}")
         item.setForeground(QtGui.QBrush(QtGui.QColor(200, 40, 40)))
-        status_msg = f"状态：测试失败：{message}"
+        status_msg = tr("template.status_find_failed", message=message)
         pixmap: Optional[QtGui.QPixmap] = None
         if scene_path and os.path.exists(scene_path):
             pixmap = pixmap_from_path(scene_path)

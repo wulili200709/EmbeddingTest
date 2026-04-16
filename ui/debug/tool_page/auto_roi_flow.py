@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from . import page as page_module
+from ui.i18n import tr
 
 List = page_module.List
 Optional = page_module.Optional
@@ -19,7 +20,7 @@ def _set_reference(self, path: str) -> None:
     self._clear_training_roi_review_state(camera_role)
     self.ref_image = path
     if self.lbl_ref is not None:
-        self.lbl_ref.setText(f"参考图：{os.path.basename(path)}")
+        self.lbl_ref.setText(f"{tr('debug.reference_image')}: {os.path.basename(path)}")
         self.lbl_ref.setToolTip(path)
     try:
         recipe = self.line2dup_recipe_for_role(camera_role) or line2dup_locator.load_recipe_for_product(
@@ -38,13 +39,13 @@ def _set_reference(self, path: str) -> None:
 def _set_ref_from_current(self) -> None:
     p = self.canvas.image_path()
     if not p:
-        QtWidgets.QMessageBox.warning(self, "提示", "请先在右侧打开一张图片")
+        QtWidgets.QMessageBox.warning(self, "Info", "Open an image from the right-side list first")
         return
     self._set_reference(p)
 
 def _pick_ref_image(self) -> None:
     p, _ = QtWidgets.QFileDialog.getOpenFileName(
-        self, "选择参考图", "",
+        self, tr("auto.pick_reference_title"), "",
         "Images (*.jpg *.jpeg *.png *.bmp *.tif *.tiff *.webp)",
     )
     if not p:
@@ -88,7 +89,7 @@ def _on_line2dup_model_saved(self, model_path: str, recipe_path: str) -> None:
         self.line2dup_recipe = None
     self._reload_inspection_items()
     self._apply_current_role_recipe_state()
-    self.lbl_status.setText(f"状态：模板模型已保存 {os.path.basename(model_path)}")
+    self.lbl_status.setText(f"Status: template model saved {os.path.basename(model_path)}")
 
 def _on_line2dup_reference_regions_changed(self) -> None:
     self._clear_training_roi_review_state(self.current_camera_role())
@@ -96,7 +97,7 @@ def _on_line2dup_reference_regions_changed(self) -> None:
     current_path = self.canvas.image_path()
     if current_path and os.path.exists(current_path):
         self._load_canvas_image(current_path)
-    self.lbl_status.setText("状态：参考ROI已同步到运行界面")
+    self.lbl_status.setText("Status: reference ROI synchronized to runtime")
 
 def _sync_line2dup_recipe_and_items(self) -> None:
     try:
@@ -128,7 +129,7 @@ def _resolve_autogen_targets(
     missing = self._missing_roi_files(paths, camera_role=camera_role)
     if not missing:
         if not silent:
-            QtWidgets.QMessageBox.information(self, "提示", "这些图片已经存在 ROI。")
+            QtWidgets.QMessageBox.information(self, "Info", "These images already have ROI.")
             self._skip_empty_autogen_message = True
         return []
 
@@ -143,12 +144,9 @@ def _resolve_autogen_targets(
         else QtWidgets.QMessageBox.StandardButton.Yes
     )
     reply = QtWidgets.QMessageBox.question(
-        self, "覆盖已存在ROI？",
-        (
-            f"当前列表中已有 ROI 的图片有 {len(existing)} 张。\n"
-            "是否覆盖并重新创建这些 ROI？\n\n"
-            '选择"是"将重建整个列表；选择"否"只创建缺失 ROI；选择"取消"终止。'
-        ),
+        self,
+        tr("auto.overwrite_title"),
+        tr("auto.overwrite_message", count=len(existing)),
         QtWidgets.QMessageBox.StandardButton.Yes
         | QtWidgets.QMessageBox.StandardButton.No
         | QtWidgets.QMessageBox.StandardButton.Cancel,
@@ -171,7 +169,7 @@ def _autogen_roi_for_images(
 ) -> None:
     if not paths:
         if not silent:
-            QtWidgets.QMessageBox.information(self, "提示", "没有可处理的图片")
+            QtWidgets.QMessageBox.information(self, "Info", "No image to process")
         return
     ref_image = self.ref_image
     method = self.loc_method
@@ -182,7 +180,7 @@ def _autogen_roi_for_images(
             if role == self.current_camera_role():
                 self.line2dup_recipe = recipe
         except Exception as exc:
-            QtWidgets.QMessageBox.warning(self, "提示", f"无法加载模板 recipe：{exc}")
+            QtWidgets.QMessageBox.warning(self, "Info", f"Failed to load template recipe: {exc}")
             return
         if recipe.reference_image and os.path.exists(recipe.reference_image):
             ref_image = recipe.reference_image
@@ -192,10 +190,10 @@ def _autogen_roi_for_images(
                 else:
                     self.ref_image = ref_image
                     if getattr(self, "lbl_ref", None) is not None:
-                        self.lbl_ref.setText(f"参考图: {os.path.basename(ref_image)}")
+                        self.lbl_ref.setText(f"{tr('debug.reference_image')}: {os.path.basename(ref_image)}")
                         self.lbl_ref.setToolTip(ref_image)
         if not os.path.exists(self.line2dup_model_path_for_role(role)):
-            QtWidgets.QMessageBox.warning(self, "提示", "当前产品还没有模板模型，请先创建模板。")
+            QtWidgets.QMessageBox.warning(self, "Info", "Current product has no template model. Create a template first.")
             return
         labels = self._line2dup_output_labels(role)
         recipe_region_labels = {
@@ -205,7 +203,7 @@ def _autogen_roi_for_images(
         }
         recipe_region_labels.discard("")
         if (not ref_image or not os.path.exists(ref_image)) and not recipe_region_labels:
-            QtWidgets.QMessageBox.warning(self, "提示", "模板定位需要参考图或已保存的参考 ROI。")
+            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("auto.need_reference_or_saved"))
             return
         if labels:
             missing_labels = [label for label in labels if label not in recipe_region_labels]
@@ -213,8 +211,9 @@ def _autogen_roi_for_images(
                 ref_json = qr_core.labelme_json_of_image(ref_image) if ref_image else ""
                 if not ref_json or not os.path.exists(ref_json):
                     QtWidgets.QMessageBox.warning(
-                        self, "提示",
-                        f"参考图缺少 labelme json，且 recipe 中也没有这些参考ROI：{', '.join(missing_labels)}",
+                        self,
+                        tr("common.info"),
+                        tr("auto.missing_reference_json", labels=", ".join(missing_labels)),
                     )
                     return
                 missing_labels = [
@@ -223,23 +222,24 @@ def _autogen_roi_for_images(
                 ]
                 if missing_labels:
                     QtWidgets.QMessageBox.warning(
-                        self, "提示",
-                        f"参考图缺少参考ROI标注：{', '.join(missing_labels)}",
+                        self,
+                        tr("common.info"),
+                        tr("auto.missing_reference_roi", labels=", ".join(missing_labels)),
                     )
                     return
     else:
         if not ref_image or not os.path.exists(ref_image):
-            QtWidgets.QMessageBox.warning(self, "提示", "请先设置参考图")
+            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("auto.set_reference_first"))
             return
         ref_json = qr_core.labelme_json_of_image(ref_image)
         if not os.path.exists(ref_json):
-            QtWidgets.QMessageBox.warning(self, "提示", "参考图缺少标注 json（需要 anchor + roi）")
+            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("auto.reference_missing_json"))
             return
         if qr_core.try_read_xywh_from_labelme(ref_json, "anchor") is None:
-            QtWidgets.QMessageBox.warning(self, "提示", "参考图缺少 anchor 标注")
+            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("auto.reference_missing_anchor"))
             return
         if qr_core.try_read_xywh_from_labelme(ref_json, "roi") is None:
-            QtWidgets.QMessageBox.warning(self, "提示", "参考图缺少 roi 标注")
+            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("auto.reference_missing_roi"))
             return
 
     todo = self._resolve_autogen_targets(paths, only_missing=only_missing, silent=silent, camera_role=role)
@@ -248,7 +248,7 @@ def _autogen_roi_for_images(
             self._skip_empty_autogen_message = False
             return
         if not silent:
-            QtWidgets.QMessageBox.information(self, "提示", "这些图片已存在 ROI")
+            QtWidgets.QMessageBox.information(self, tr("common.info"), tr("auto.images_already_have_roi"))
         return
 
     ok = 0
@@ -273,12 +273,12 @@ def _autogen_roi_for_images(
             errs.append(f"{os.path.basename(p)}: {e}")
 
     if not silent:
-        msg = f"自动 ROI 完成：成功 {ok} / 失败 {len(errs)}"
+        msg = tr("auto.finished", ok=ok, failed=len(errs))
         if errs:
-            msg += "\n\n失败示例（前10）：\n" + "\n".join(errs[:10])
-        QtWidgets.QMessageBox.information(self, "完成", msg)
+            msg += "\n\n" + tr("auto.failed_examples") + "\n" + "\n".join(errs[:10])
+        QtWidgets.QMessageBox.information(self, tr("common.done"), msg)
         if ok:
-            self.lbl_status.setText(f"状态：当前列表已生成ROI，成功 {ok} 张，失败 {len(errs)} 张")
+            self.lbl_status.setText(tr("auto.status_generated", ok=ok, failed=len(errs)))
 
     if ok:
         self._reload_inspection_items()
@@ -314,7 +314,7 @@ def _clear_roi_for_images(
 ) -> None:
     if not paths:
         if not silent:
-            QtWidgets.QMessageBox.information(self, "提示", "没有可处理的图片")
+            QtWidgets.QMessageBox.information(self, tr("common.info"), "No image to process")
         return
     role = self.current_camera_role() if camera_role is None else str(camera_role)
     self._clear_training_roi_review_state(role)
@@ -348,34 +348,36 @@ def _clear_roi_for_images(
 
     if not silent:
         QtWidgets.QMessageBox.information(
-            self, "完成",
-            f"已清空 ROI：{touched} 张图片，删除 {removed} 个标签。\n标签: {', '.join(labels)}",
+            self,
+            tr("common.done"),
+            tr("auto.clear_done", images=touched, labels_count=removed, labels=", ".join(labels)),
         )
-        self.lbl_status.setText(f"状态：已清空 ROI，图片 {touched} 张，标签 {removed} 个")
+        self.lbl_status.setText(tr("auto.status_cleared", images=touched, labels_count=removed))
 
 def _clear_roi_current_tab(self) -> None:
     tab = self.tabs.currentIndex()
     if tab == 0:
         paths = self._sample_paths_for_kind("train", self.current_camera_role())
-        tab_name = "训练样本"
+        tab_name = tr("debug.train_samples")
     else:
         paths = _filter_paths_for_camera(self, self.test_files, self.current_camera_role())
-        tab_name = "测试样本"
+        tab_name = tr("debug.test_samples")
 
     if not paths:
-        QtWidgets.QMessageBox.information(self, "提示", "当前列表没有图片")
+        QtWidgets.QMessageBox.information(self, tr("common.info"), tr("auto.current_list_empty"))
         return
 
     labels, clear_mode = self._clear_roi_labels_for_paths(paths)
     if clear_mode == "stale_only":
-        action_text = "将删除当前列表中已失效的 ROI 标签: "
+        action_text = tr("auto.clear_invalid_action")
     elif clear_mode == "all_existing":
-        action_text = "将删除当前列表中的全部相关 ROI 标签: "
+        action_text = tr("auto.clear_all_action")
     else:
-        action_text = "将删除标签: "
+        action_text = tr("auto.clear_labels_action")
     reply = QtWidgets.QMessageBox.question(
-        self, "清空ROI",
-        f"确定清空当前 {tab_name} 列表中的 ROI 吗？\n{action_text}{', '.join(labels)}",
+        self,
+        tr("auto.clear_title"),
+        tr("auto.clear_confirm", tab=tab_name, action=action_text, labels=", ".join(labels)),
         QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.Cancel,
         QtWidgets.QMessageBox.StandardButton.Cancel,
     )
