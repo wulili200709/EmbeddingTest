@@ -116,6 +116,32 @@ def _shape_to_rect(shape: dict) -> Optional[Tuple[int, int, int, int]]:
     return int(round(x0)), int(round(y0)), max(1, int(round(x1 - x0))), max(1, int(round(y1 - y0)))
 
 
+def _region_hit_polygon(region: Dict[str, object]) -> List[Tuple[float, float]]:
+    points = [
+        (float(pt[0]), float(pt[1]))
+        for pt in region.get("points", []) or []
+        if isinstance(pt, (list, tuple)) and len(pt) >= 2
+    ]
+    shape_type = str(region.get("shape_type", "rectangle"))
+    if shape_type == "polygon" and len(points) >= 3:
+        return points
+    if len(points) >= 2:
+        (x0, y0), (x1, y1) = points[:2]
+        x_min = min(float(x0), float(x1))
+        y_min = min(float(y0), float(y1))
+        x_max = max(float(x0), float(x1))
+        y_max = max(float(y0), float(y1))
+        return [(x_min, y_min), (x_max, y_min), (x_max, y_max), (x_min, y_max)]
+    return []
+
+
+def _point_hits_polygon(points: List[Tuple[float, float]], x: float, y: float, *, tolerance: float = 4.0) -> bool:
+    if len(points) < 3:
+        return False
+    contour = np.asarray(points, dtype=np.float32).reshape((-1, 1, 2))
+    return float(cv2.pointPolygonTest(contour, (float(x), float(y)), True)) >= -float(tolerance)
+
+
 def _clamp_rect_to_roi(rect: Tuple[int, int, int, int], roi: RoiRect) -> Optional[MaskRect]:
     x, y, w, h = rect
     x1 = max(int(roi.x), int(x))
@@ -702,7 +728,6 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
 
         region_box = QtWidgets.QGroupBox("Reference Regions")
         region_l = QtWidgets.QVBoxLayout(region_box)
-        region_body = QtWidgets.QHBoxLayout()
         self.table_reference_regions = QtWidgets.QTableWidget(0, 4)
         self.table_reference_regions.setHorizontalHeaderLabels(["#", "Name", "ROI Label", "Info"])
         self.table_reference_regions.verticalHeader().setVisible(False)
@@ -719,9 +744,9 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.table_reference_regions.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
         self.table_reference_regions.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
         self.table_reference_regions.horizontalHeader().setSectionResizeMode(3, QtWidgets.QHeaderView.Stretch)
-        region_body.addWidget(self.table_reference_regions, 1)
+        region_l.addWidget(self.table_reference_regions, 1)
 
-        region_btn_col = QtWidgets.QVBoxLayout()
+        button_col = QtWidgets.QVBoxLayout()
         self.btn_add_reference_roi = QtWidgets.QPushButton("新建ROI")
         self.btn_add_reference_roi.clicked.connect(self._prepare_new_reference_roi)
         self.btn_remove_reference_roi = QtWidgets.QPushButton("删除选中ROI")
@@ -740,10 +765,14 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self.btn_save_reference_roi,
         ]:
             button.setMinimumWidth(120)
-            region_btn_col.addWidget(button)
-        region_btn_col.addStretch(1)
-        region_body.addLayout(region_btn_col)
-        region_l.addLayout(region_body, 1)
+            button_col.addWidget(button)
+        button_col.addStretch(1)
+        button_widget = QtWidgets.QWidget()
+        button_widget.setLayout(button_col)
+        region_bottom = QtWidgets.QHBoxLayout()
+        region_bottom.addStretch(1)
+        region_bottom.addWidget(button_widget)
+        region_l.addLayout(region_bottom)
         left.addWidget(region_box)
 
         self.lbl_reference_status = QtWidgets.QLabel(self._reference_status_text("这里设置的是标准片上的基准 ROI。"))
@@ -756,12 +785,13 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.ref_canvas = RoiCanvas()
         self.ref_canvas.setMinimumSize(640, 480)
         self.ref_canvas.set_roi_style(
-            roi_color=QtGui.QColor(0, 0, 255),
-            roi_width=3.5,
-            preview_color=QtGui.QColor(0, 0, 255),
+            roi_color=QtGui.QColor(0, 140, 255),
+            roi_width=2.0,
+            preview_color=QtGui.QColor(0, 140, 255),
             preview_dash=False,
             preview_width=2.0,
         )
+        self.ref_canvas.imagePressed.connect(self._on_reference_canvas_pressed)
         self.ref_canvas.shapesChanged.connect(self._on_reference_canvas_shape_changed)
         right.addWidget(self.ref_canvas, 1)
 
@@ -2055,11 +2085,18 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._set_reference_status(f"已更新基准 ROI 名称：{display_name}")
 
     def _refresh_reference_canvas(self) -> None:
-        overlays = [
-            overlay
-            for idx, overlay in enumerate(self._reference_region_overlay_shapes())
-            if idx != self._selected_reference_idx
-        ]
+        overlays = self._reference_region_overlay_shapes()
+        if (
+            self._selected_reference_idx is not None
+            and 0 <= self._selected_reference_idx < len(self._reference_regions)
+            and self._selected_reference_idx < len(overlays)
+        ):
+            overlays[self._selected_reference_idx] = self._region_overlay_shape(
+                self._reference_regions[self._selected_reference_idx],
+                QtGui.QColor(0, 140, 255),
+                2.4,
+                False,
+            )
         overlays.extend(list(self._reference_preview_overlays or []))
         self.ref_canvas.set_overlays(overlays)
         self._syncing_reference_view = True
@@ -2107,6 +2144,24 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self._selected_reference_idx = current_row
         self._refresh_reference_canvas()
         self._refresh_reference_region_fields()
+
+    def _reference_region_at_point(self, x: float, y: float) -> Optional[int]:
+        for index in range(len(self._reference_regions) - 1, -1, -1):
+            if _point_hits_polygon(_region_hit_polygon(self._reference_regions[index]), x, y):
+                return index
+        return None
+
+    def _on_reference_canvas_pressed(self, button: int, x: int, y: int) -> None:
+        if button != _button_left():
+            return
+        selected = self._reference_region_at_point(float(x), float(y))
+        if selected is None:
+            return
+        if self._selected_reference_idx != selected:
+            self._selected_reference_idx = selected
+            self._refresh_reference_region_list()
+            self._refresh_reference_region_fields()
+        self._refresh_reference_canvas()
 
     def _prepare_new_reference_roi(self) -> None:
         self._invalidate_reference_array_preview()

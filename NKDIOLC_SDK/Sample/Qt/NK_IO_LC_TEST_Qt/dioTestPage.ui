@@ -1,0 +1,916 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>dioTestPage</class>
+ <widget class="QWidget" name="dioTestPage">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>830</width>
+    <height>604</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>dioTestPage</string>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <item>
+    <widget class="QTabWidget" name="tabWidget">
+     <property name="currentIndex">
+      <number>0</number>
+     </property>
+     <widget class="QWidget" name="tabSinglePointTest">
+      <attribute name="title">
+       <string>SinglePointTest</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="verticalLayout_35">
+       <item>
+        <layout class="QHBoxLayout" name="horizontalLayout">
+         <item>
+          <widget class="QPushButton" name="m_StartStopBtn">
+           <property name="text">
+            <string>Start</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="horizontalSpacer">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>40</width>
+             <height>20</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="groupBoxDI">
+         <property name="title">
+          <string>DI</string>
+         </property>
+         <layout class="QGridLayout" name="gridLayout">
+          <property name="horizontalSpacing">
+           <number>10</number>
+          </property>
+          <item row="0" column="2">
+           <layout class="QVBoxLayout" name="verticalLayout_4">
+            <item>
+             <widget class="ledWidget" name="m_led2" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_led2Label">
+              <property name="text">
+               <string>DI_2</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="0" column="3">
+           <layout class="QVBoxLayout" name="verticalLayout_5">
+            <item>
+             <widget class="ledWidget" name="m_led3" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_led3Label">
+              <property name="text">
+               <string>DI_3</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="1" column="3">
+           <layout class="QVBoxLayout" name="verticalLayout_13">
+            <item>
+             <widget class="ledWidget" name="m_led11" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_led11Label">
+              <property name="text">
+               <string>DI_11</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="1" column="6">
+           <layout class="QVBoxLayout" name="verticalLayout_16">
+            <item>
+             <widget class="ledWidget" name="m_led14" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_led14Label">
+              <property name="text">
+               <string>DI_14</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="0" column="4">
+           <layout class="QVBoxLayout" name="verticalLayout_6">
+            <item>
+             <widget class="ledWidget" name="m_led4" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_led4Label">
+              <property name="text">
+               <string>DI_4</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="0" column="0">
+           <layout class="QVBoxLayout" name="verticalLayout_2">
+            <item>
+             <widget class="ledWidget" name="m_led0" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_led0Label">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="text">
+               <string>DI_0</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="1" column="2">
+           <layout class="QVBoxLayout" name="verticalLayout_12">
+            <item>
+             <widget class="ledWidget" name="m_led10" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_led10Label">
+              <property name="text">
+               <string>DI_10</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="1" column="5">
+           <layout class="QVBoxLayout" name="verticalLayout_15">
+            <item>
+             <widget class="ledWidget" name="m_led13" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_led13Label">
+              <property name="text">
+               <string>DI_13</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="0" column="7">
+           <layout class="QVBoxLayout" name="verticalLayout_9">
+            <item>
+             <widget class="ledWidget" name="m_led7" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_led7Label">
+              <property name="text">
+               <string>DI_7</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="1" column="1">
+           <layout class="QVBoxLayout" name="verticalLayout_11">
+            <item>
+             <widget class="ledWidget" name="m_led9" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_led9Label">
+              <property name="text">
+               <string>DI_9</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="1" column="0">
+           <layout class="QVBoxLayout" name="verticalLayout_10">
+            <item>
+             <widget class="ledWidget" name="m_led8" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_led8Label">
+              <property name="text">
+               <string>DI_8</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="0" column="1">
+           <layout class="QVBoxLayout" name="verticalLayout_3">
+            <item>
+             <widget class="ledWidget" name="m_led1" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_led1Label">
+              <property name="text">
+               <string>DI_1</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="0" column="6">
+           <layout class="QVBoxLayout" name="verticalLayout_8">
+            <item>
+             <widget class="ledWidget" name="m_led6" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_led6Label">
+              <property name="text">
+               <string>DI_6</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="1" column="7">
+           <layout class="QVBoxLayout" name="verticalLayout_17">
+            <item>
+             <widget class="ledWidget" name="m_led15" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_led15Label">
+              <property name="text">
+               <string>DI_15</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="0" column="5">
+           <layout class="QVBoxLayout" name="verticalLayout_7">
+            <item>
+             <widget class="ledWidget" name="m_led5" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_led5Label">
+              <property name="text">
+               <string>DI_5</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="1" column="4">
+           <layout class="QVBoxLayout" name="verticalLayout_14">
+            <item>
+             <widget class="ledWidget" name="m_led12" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_led12Label">
+              <property name="text">
+               <string>DI_12</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="groupBoxDO">
+         <property name="title">
+          <string>DO</string>
+         </property>
+         <layout class="QGridLayout" name="gridLayout_2">
+          <property name="horizontalSpacing">
+           <number>10</number>
+          </property>
+          <item row="1" column="5">
+           <layout class="QVBoxLayout" name="verticalLayout_31">
+            <item>
+             <widget class="switchButton" name="m_DO13" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>10</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_DO13Label">
+              <property name="text">
+               <string>DO_13</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="0" column="0">
+           <layout class="QVBoxLayout" name="verticalLayout_18">
+            <item>
+             <widget class="switchButton" name="m_DO0" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>10</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_DO0Label">
+              <property name="text">
+               <string>DO_0</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="1" column="2">
+           <layout class="QVBoxLayout" name="verticalLayout_28">
+            <item>
+             <widget class="switchButton" name="m_DO10" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>10</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_DO10Label">
+              <property name="text">
+               <string>DO_10</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="0" column="2">
+           <layout class="QVBoxLayout" name="verticalLayout_20">
+            <item>
+             <widget class="switchButton" name="m_DO2" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>10</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_DO2Label">
+              <property name="text">
+               <string>DO_2</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="0" column="6">
+           <layout class="QVBoxLayout" name="verticalLayout_24">
+            <item>
+             <widget class="switchButton" name="m_DO6" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>10</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_DO6Label">
+              <property name="text">
+               <string>DO_6</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="0" column="3">
+           <layout class="QVBoxLayout" name="verticalLayout_21">
+            <item>
+             <widget class="switchButton" name="m_DO3" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>10</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_DO3Label">
+              <property name="text">
+               <string>DO_3</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="2" column="0">
+           <layout class="QVBoxLayout" name="verticalLayout_34">
+            <item>
+             <widget class="switchButton" name="m_DOALL" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>10</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_DOAllLabel">
+              <property name="text">
+               <string>DOAll</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="1" column="6">
+           <layout class="QVBoxLayout" name="verticalLayout_32">
+            <item>
+             <widget class="switchButton" name="m_DO14" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>10</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_DO14Label">
+              <property name="text">
+               <string>DO_14</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="0" column="5">
+           <layout class="QVBoxLayout" name="verticalLayout_23">
+            <item>
+             <widget class="switchButton" name="m_DO5" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>10</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_DO5Label">
+              <property name="text">
+               <string>DO_5</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="1" column="0">
+           <layout class="QVBoxLayout" name="verticalLayout_26">
+            <item>
+             <widget class="switchButton" name="m_DO8" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>10</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_DO8Label">
+              <property name="text">
+               <string>DO_8</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="1" column="4">
+           <layout class="QVBoxLayout" name="verticalLayout_30">
+            <item>
+             <widget class="switchButton" name="m_DO12" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>10</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_DO12Label">
+              <property name="text">
+               <string>DO_12</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="2" column="1" colspan="2">
+           <spacer name="horizontalSpacer_2">
+            <property name="orientation">
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>188</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item row="1" column="3">
+           <layout class="QVBoxLayout" name="verticalLayout_29">
+            <item>
+             <widget class="switchButton" name="m_DO11" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>10</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_DO11Label">
+              <property name="text">
+               <string>DO_11</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="1" column="1">
+           <layout class="QVBoxLayout" name="verticalLayout_27">
+            <item>
+             <widget class="switchButton" name="m_DO9" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>10</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_DO9Label">
+              <property name="text">
+               <string>DO_9</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="1" column="7">
+           <layout class="QVBoxLayout" name="verticalLayout_33">
+            <item>
+             <widget class="switchButton" name="m_DO15" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>10</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_DO15Label">
+              <property name="text">
+               <string>DO_15</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="0" column="7">
+           <layout class="QVBoxLayout" name="verticalLayout_25">
+            <item>
+             <widget class="switchButton" name="m_DO7" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>10</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_DO7Label">
+              <property name="text">
+               <string>DO_7</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="0" column="1">
+           <layout class="QVBoxLayout" name="verticalLayout_19">
+            <item>
+             <widget class="switchButton" name="m_DO1" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>10</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_DO1Label">
+              <property name="text">
+               <string>DO_1</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="0" column="4">
+           <layout class="QVBoxLayout" name="verticalLayout_22">
+            <item>
+             <widget class="switchButton" name="m_DO4" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>10</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="m_DO4Label">
+              <property name="text">
+               <string>DO_4</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="groupBox">
+         <property name="title">
+          <string>Other</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <layoutdefault spacing="6" margin="11"/>
+ <customwidgets>
+  <customwidget>
+   <class>ledWidget</class>
+   <extends>QWidget</extends>
+   <header>ledWidget.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>switchButton</class>
+   <extends>QWidget</extends>
+   <header>switchButton.h</header>
+   <container>1</container>
+  </customwidget>
+ </customwidgets>
+ <resources/>
+ <connections/>
+</ui>

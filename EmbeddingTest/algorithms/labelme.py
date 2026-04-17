@@ -108,6 +108,45 @@ def upsert_labelme_shape(
     return jpath
 
 
+def upsert_labelme_shapes(
+    img_path: str,
+    shapes: List[dict],
+    json_path: Optional[str] = None,
+) -> str:
+    jpath, data = read_labelme_json_or_create(img_path, json_path=json_path)
+    with Image.open(img_path) as image:
+        width, height = image.size
+
+    shapes_by_label: dict[str, dict] = {}
+    for shape in shapes:
+        if not isinstance(shape, dict):
+            continue
+        label_name = str(shape.get("label", "")).strip()
+        if not label_name:
+            continue
+        shapes_by_label[label_name] = shape
+
+    existing_shapes = list(data.get("shapes", []))
+    merged_shapes: List[dict] = []
+    for current in existing_shapes:
+        if not isinstance(current, dict):
+            merged_shapes.append(current)
+            continue
+        label_name = str(current.get("label", "")).strip()
+        replacement = shapes_by_label.pop(label_name, None)
+        merged_shapes.append(replacement if replacement is not None else current)
+    merged_shapes.extend(shapes_by_label.values())
+
+    data["shapes"] = merged_shapes
+    data["imagePath"] = os.path.basename(img_path)
+    data["imageHeight"] = height
+    data["imageWidth"] = width
+
+    with open(jpath, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, ensure_ascii=False, indent=2)
+    return jpath
+
+
 def upsert_labelme_rect(
     img_path: str,
     xywh: Tuple[int, int, int, int],
@@ -149,6 +188,34 @@ def delete_labelme_shape(
     with open(jpath, "w", encoding="utf-8") as handle:
         json.dump(data, handle, ensure_ascii=False, indent=2)
     return True
+
+
+def delete_labelme_shapes(
+    img_path: str,
+    label_names: List[str],
+    json_path: Optional[str] = None,
+) -> int:
+    labels = {str(label).strip() for label in list(label_names or []) if str(label).strip()}
+    if not labels:
+        return 0
+    jpath = json_path or labelme_json_of_image(img_path)
+    if not os.path.exists(jpath):
+        return 0
+    with open(jpath, "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    shapes = list(data.get("shapes", []))
+    filtered = [
+        shape
+        for shape in shapes
+        if not isinstance(shape, dict) or str(shape.get("label", "")).strip() not in labels
+    ]
+    removed = len(shapes) - len(filtered)
+    if removed <= 0:
+        return 0
+    data["shapes"] = filtered
+    with open(jpath, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, ensure_ascii=False, indent=2)
+    return removed
 
 
 def write_labelme_json_for_roi(
@@ -256,6 +323,7 @@ def try_read_polygon_points_from_labelme(
 __all__ = [
     "clamp_roi_xywh",
     "delete_labelme_shape",
+    "delete_labelme_shapes",
     "labelme_json_of_image",
     "list_shapes_from_labelme",
     "polygon_points_to_labelme_shape",
@@ -269,6 +337,6 @@ __all__ = [
     "upsert_labelme_polygon",
     "upsert_labelme_rect",
     "upsert_labelme_shape",
+    "upsert_labelme_shapes",
     "write_labelme_json_for_roi",
 ]
-

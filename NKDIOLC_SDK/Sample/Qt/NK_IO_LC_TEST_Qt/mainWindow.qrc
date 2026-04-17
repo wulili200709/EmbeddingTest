@@ -1,0 +1,13 @@
+<RCC>
+    <qresource prefix="/logo">
+        <file alias="NodkaLogo">resources/images/Nodka_Logo.png</file>
+    </qresource>
+    <qresource prefix="/button">
+        <file alias="btncheckoff1">resources/images/btncheckoff1.png</file>
+        <file alias="btncheckoff2">resources/images/btncheckoff2.png</file>
+        <file alias="btncheckoff4">resources/images/btncheckoff4.png</file>
+        <file alias="btncheckon1">resources/images/btncheckon1.png</file>
+        <file alias="btncheckon2">resources/images/btncheckon2.png</file>
+        <file alias="btncheckon4">resources/images/btncheckon4.png</file>
+    </qresource>
+</RCC>

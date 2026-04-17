@@ -413,8 +413,11 @@ class ToolPageRuntimeContext:
                 tool_page._line2dup_match_ms_by_image[path] = match_ms
                 tool_page._line2dup_autogen_ms_by_image[path] = float(run.total_ms)
         elif tool_page.loc_method == "ncc":
-            tool_page._autogen_roi_for_images([path], only_missing=True, silent=True)
-            match_ms = tool_page._line2dup_autogen_ms_by_image.get(path)
+            tool_page._autogen_roi_for_images([path], only_missing=False, silent=True)
+            invalidate_shape_cache = getattr(tool_page, "_invalidate_shape_lookup_cache", None)
+            if callable(invalidate_shape_cache):
+                invalidate_shape_cache(path)
+            match_ms = tool_page._line2dup_match_ms_by_image.get(path)
 
         rows_by_key = _predict_learning_items_batch_rows(
             path=path,
@@ -500,7 +503,7 @@ class ProductRuntimeContext:
                 product_dir=self.session.product_dir,
                 camera_role=camera_role,
             )
-            match_ms = float(run.total_ms)
+            match_ms = float(run.locate_ms)
             self._line2dup_match_ms_by_image[path] = match_ms
 
         labels = list(labels_override or [])
@@ -569,7 +572,7 @@ class ProductRuntimeContext:
                 product_dir=self.session.product_dir,
                 camera_role=camera_role,
             )
-            match_ms = float(run.total_ms)
+            match_ms = float(run.locate_ms)
             self._line2dup_match_ms_by_image[path] = match_ms
 
         rows_by_key = _predict_learning_items_batch_rows(

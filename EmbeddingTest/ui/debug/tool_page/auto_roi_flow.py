@@ -159,6 +159,21 @@ def _resolve_autogen_targets(
     if not paths:
         return []
     missing = self._missing_roi_files(paths, camera_role=camera_role)
+    if not missing and not only_missing:
+        if silent:
+            return list(paths)
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            "覆盖已存在 ROI？",
+            f"当前列表中 {len(paths)} 张图片都已有 ROI。\n是否覆盖并重新创建 ROI？",
+            QtWidgets.QMessageBox.StandardButton.Yes
+            | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.Yes,
+        )
+        if reply == QtWidgets.QMessageBox.StandardButton.Yes:
+            return list(paths)
+        self._skip_empty_autogen_message = True
+        return []
     if not missing:
         if not silent:
             QtWidgets.QMessageBox.information(self, "提示", "这些图片已经存在 ROI。")
@@ -289,34 +304,75 @@ def _autogen_roi_for_images(
             QtWidgets.QMessageBox.information(self, "提示", "这些图片已存在 ROI")
         return
 
+    line2dup_detector = None
+    ncc_model_path = ""
+    ncc_model = None
+    ncc_compiled = None
+    if method == "line2dup":
+        try:
+            from line2dup.like_matcher import load_detector_model
+
+            line2dup_detector = load_detector_model(self.line2dup_model_path_for_role(role))
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Info", f"Failed to load line2dup model: {exc}")
+            return
+    elif method == "ncc":
+        try:
+            from ncc.runtime_service import NccCompiledModel
+
+            ncc_model_path = ncc_locator.resolved_model_path_for_product(self.session.product_dir, role)
+            ncc_model = ncc_locator.load_model(ncc_model_path).normalized()
+            ncc_compiled = NccCompiledModel(ncc_model_path, ncc_model)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Info", f"Failed to load NCC model: {exc}")
+            return
+
     ok = 0
     errs: List[str] = []
-    for p in todo:
-        try:
-            if method == "line2dup":
-                run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
-                    tgt_img_path=p, ref_img_path=ref_image,
-                    product_dir=self.session.product_dir,
-                    camera_role=role,
-                )
-                self._line2dup_match_ms_by_image[p] = float(run.total_ms)
-                self._line2dup_autogen_ms_by_image[p] = float(run.total_ms)
-            elif method == "ncc":
-                run = ncc_locator.autogen_roi_json_from_ncc_timed(
-                    tgt_img_path=p,
-                    product_dir=self.session.product_dir,
-                    camera_role=role,
-                )
-                self._line2dup_match_ms_by_image[p] = float(run.locate_ms)
-                self._line2dup_autogen_ms_by_image[p] = float(run.total_ms)
-            else:
-                qr_core.autogen_roi_json_from_reference(
-                    tgt_img_path=p, ref_img_path=ref_image,
-                    method=method, anchor_label="anchor", roi_label="roi",
-                )
-            ok += 1
-        except Exception as e:
-            errs.append(f"{os.path.basename(p)}: {e}")
+    try:
+        for index, p in enumerate(todo, start=1):
+            try:
+                if method == "line2dup":
+                    run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
+                        tgt_img_path=p, ref_img_path=ref_image,
+                        product_dir=self.session.product_dir,
+                        camera_role=role,
+                        recipe=recipe,
+                        detector=line2dup_detector,
+                    )
+                    self._line2dup_match_ms_by_image[p] = float(run.total_ms)
+                    self._line2dup_autogen_ms_by_image[p] = float(run.total_ms)
+                elif method == "ncc":
+                    run = ncc_locator.autogen_roi_json_from_ncc_timed(
+                        tgt_img_path=p,
+                        product_dir=self.session.product_dir,
+                        camera_role=role,
+                        model_path=ncc_model_path,
+                        model=ncc_model,
+                        compiled_model=ncc_compiled,
+                    )
+                    self._line2dup_match_ms_by_image[p] = float(run.locate_ms)
+                    self._line2dup_autogen_ms_by_image[p] = float(run.total_ms)
+                else:
+                    qr_core.autogen_roi_json_from_reference(
+                        tgt_img_path=p, ref_img_path=ref_image,
+                        method=method, anchor_label="anchor", roi_label="roi",
+                    )
+                ok += 1
+            except Exception as e:
+                errs.append(f"{os.path.basename(p)}: {e}")
+                if method == "ncc":
+                    self._line2dup_match_ms_by_image.pop(p, None)
+                    self._line2dup_autogen_ms_by_image.pop(p, None)
+            if not silent:
+                self.lbl_status.setText(f"状态：自动 ROI {index}/{len(todo)}，成功 {ok}，失败 {len(errs)}")
+                QtWidgets.QApplication.processEvents()
+    finally:
+        if ncc_compiled is not None:
+            try:
+                ncc_compiled.close()
+            except Exception:
+                pass
 
     if not silent:
         msg = f"自动 ROI 完成：成功 {ok} / 失败 {len(errs)}"
@@ -326,14 +382,23 @@ def _autogen_roi_for_images(
         if ok:
             self.lbl_status.setText(f"状态：当前列表已生成ROI，成功 {ok} 张，失败 {len(errs)} 张")
 
+    if ok or (errs and method == "ncc"):
+        invalidate_shape_cache = getattr(self, "_invalidate_shape_lookup_cache", None)
+        if callable(invalidate_shape_cache):
+            for image_path in todo:
+                invalidate_shape_cache(image_path)
     if ok:
         self._reload_inspection_items()
+    if ok or (errs and method == "ncc"):
         self.roiGeometryChanged.emit()
 
     cur = self.canvas.image_path()
     if cur and cur in todo:
         self._load_canvas_image(cur)
         self._set_status_for_current_image(cur)
+
+    if silent and errs and ok == 0:
+        raise RuntimeError("\n".join(errs[:10]))
 
 def _autogen_roi_current_tab(self) -> None:
     tab = self.tabs.currentIndex()
@@ -371,15 +436,12 @@ def _clear_roi_for_images(
     removed = 0
     touched = 0
     for path in paths:
-        any_removed = False
-        for label in labels:
-            try:
-                if qr_core.delete_labelme_shape(path, label):
-                    removed += 1
-                    any_removed = True
-            except Exception:
-                pass
-        if any_removed:
+        try:
+            path_removed = int(qr_core.delete_labelme_shapes(path, labels))
+        except Exception:
+            path_removed = 0
+        if path_removed > 0:
+            removed += path_removed
             touched += 1
             self._line2dup_match_ms_by_image.pop(path, None)
             self._line2dup_autogen_ms_by_image.pop(path, None)

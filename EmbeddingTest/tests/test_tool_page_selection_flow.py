@@ -36,6 +36,7 @@ class _ToolPageSelectionHarness:
     _on_select_test = ToolPage._on_select_test
     _on_tab_changed = ToolPage._on_tab_changed
     _remove_selected_from = ToolPage._remove_selected_from
+    _sync_sample_selection_to_path = ToolPage._sync_sample_selection_to_path
 
     def __init__(self) -> None:
         self.tabs = QtWidgets.QTabWidget()
@@ -69,6 +70,9 @@ class _ToolPageSelectionHarness:
             return list(self.train_files)
         return list(self.test_files)
 
+    def _current_sample_tab_kind(self) -> str:
+        return "train" if self.tabs.currentIndex() == 0 else "test"
+
     def _update_sample_panel_widgets(self) -> None:
         return None
 
@@ -83,6 +87,9 @@ class _ToolPageSelectionHarness:
 
     def _select_path_in_current_tab(self, path: str) -> None:
         self.selection_calls.append(path)
+
+    def current_camera_role(self) -> str:
+        return "cam1"
 
 
 class ToolPageSelectionFlowTest(unittest.TestCase):
@@ -159,6 +166,41 @@ class ToolPageSelectionFlowTest(unittest.TestCase):
         self.assertEqual(harness.save_calls, 1)
         self.assertEqual(harness.refresh_calls, 1)
         self.assertEqual(harness.selection_calls, ["test_a.png"])
+
+    def test_sync_sample_selection_switches_to_test_path_after_test_run(self) -> None:
+        harness = _ToolPageSelectionHarness()
+        harness.train_files = ["train_a.png", "train_b.png"]
+        harness.test_files = ["test_a.png", "test_b.png"]
+        for path in harness.train_files:
+            harness.ok_list.addItem(path)
+        for path in harness.test_files:
+            harness.test_list.addItem(path)
+        harness.tabs.setCurrentIndex(0)
+        harness.ok_list.setCurrentRow(1)
+
+        synced = harness._sync_sample_selection_to_path("test_a.png", switch_tab=True)
+
+        self.assertTrue(synced)
+        self.assertEqual(harness.tabs.currentIndex(), 1)
+        self.assertEqual(harness.test_list.currentRow(), 0)
+        self.assertEqual(harness.ok_list.currentRow(), -1)
+
+    def test_sync_sample_selection_keeps_training_path_selected(self) -> None:
+        harness = _ToolPageSelectionHarness()
+        harness.train_files = ["train_a.png", "train_b.png"]
+        harness.test_files = ["test_a.png"]
+        for path in harness.train_files:
+            harness.ok_list.addItem(path)
+        for path in harness.test_files:
+            harness.test_list.addItem(path)
+        harness.tabs.setCurrentIndex(0)
+        harness.ok_list.setCurrentRow(1)
+
+        synced = harness._sync_sample_selection_to_path("train_a.png", switch_tab=True)
+
+        self.assertTrue(synced)
+        self.assertEqual(harness.tabs.currentIndex(), 0)
+        self.assertEqual(harness.ok_list.currentRow(), 0)
 
     def test_application_font_normalization_sets_valid_point_size(self) -> None:
         app = self.app

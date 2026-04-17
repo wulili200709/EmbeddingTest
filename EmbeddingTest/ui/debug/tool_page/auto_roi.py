@@ -51,6 +51,17 @@ def _inspection_item_labels(tool_page) -> List[str]:
     return [str(item.roi_label).strip() for item in tool_page.inspection_items if str(item.roi_label).strip()]
 
 
+def _task_groups_from_display_names(display_names_by_label: dict[str, str]) -> dict[str, str]:
+    groups: dict[str, str] = {}
+    for label, name in dict(display_names_by_label or {}).items():
+        roi_label = str(label or "").strip()
+        group_name = str(name or "").strip()
+        if not roi_label or not group_name or group_name == roi_label:
+            continue
+        groups[roi_label] = group_name
+    return groups
+
+
 def _reload_inspection_items(tool_page) -> None:
     path = tool_page.session.inspection_items_path
     current_role_getter = getattr(tool_page, "current_camera_role", None)
@@ -88,6 +99,7 @@ def _reload_inspection_items(tool_page) -> None:
             labels,
             default_camera_id=current_role,
             display_names_by_label=display_names_by_label,
+            task_groups_by_label=_task_groups_from_display_names(display_names_by_label),
         )
     tool_page.inspection_items = other_role_items + synced_current_role_items
     save_inspection_items(tool_page.inspection_items, path)
@@ -101,12 +113,22 @@ def _reload_inspection_items(tool_page) -> None:
 def _missing_roi_files(tool_page, paths: List[str], camera_role=None) -> List[str]:
     missing: List[str] = []
     labels = tool_page._current_loc_output_labels(camera_role)
+    labels = [str(label).strip() for label in labels if str(label).strip()]
     for p in paths:
         j = qr_core.labelme_json_of_image(p)
         if not os.path.exists(j):
             missing.append(p)
             continue
-        if any(qr_core.read_shape_from_labelme(j, label) is None for label in labels):
+        try:
+            existing = {
+                str(shape.get("label", "")).strip()
+                for shape in qr_core.list_shapes_from_labelme(j)
+                if isinstance(shape, dict)
+            }
+        except Exception:
+            missing.append(p)
+            continue
+        if any(label not in existing for label in labels):
             missing.append(p)
     return missing
 

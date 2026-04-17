@@ -71,6 +71,48 @@ class InspectionItemDisplayNameTest(unittest.TestCase):
         self.assertEqual(synced[1].display_name, "SpringL2")
         self.assertEqual(synced[1].roi_label, "roi2")
 
+    def test_sync_items_can_default_task_group_from_reference_names(self) -> None:
+        synced = sync_items_with_labels(
+            [],
+            ["roi1", "roi2", "roi9"],
+            display_names_by_label={
+                "roi1": "Hole",
+                "roi2": "Hole",
+                "roi9": "Pusher",
+            },
+            task_groups_by_label={
+                "roi1": "Hole",
+                "roi2": "Hole",
+                "roi9": "Pusher",
+            },
+        )
+
+        self.assertEqual([item.task_group for item in synced], ["Hole", "Hole", "Pusher"])
+        self.assertEqual(synced[0].effective_model_key, "cam1__Hole")
+        self.assertEqual(synced[2].effective_model_key, "cam1__Pusher")
+
+    def test_sync_items_replaces_stale_roi_task_group_with_reference_name(self) -> None:
+        existing_items = [
+            InspectionItem(
+                item_id="roi1",
+                display_name="Hole",
+                camera_id="cam1",
+                roi_label="roi1",
+                task_group="roi1",
+                algorithm_code="shared_backbone_register",
+            )
+        ]
+
+        synced = sync_items_with_labels(
+            existing_items,
+            ["roi1"],
+            display_names_by_label={"roi1": "Hole"},
+            task_groups_by_label={"roi1": "Hole"},
+        )
+
+        self.assertEqual(synced[0].task_group, "Hole")
+        self.assertEqual(synced[0].effective_model_key, "cam1__Hole")
+
     def test_recipe_array_count_expands_item_specs(self) -> None:
         recipe = Line2DupRecipe(
             array_count=3,

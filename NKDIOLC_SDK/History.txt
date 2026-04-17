@@ -1,0 +1,144 @@
+V5.0.10:
+Date: 20251016
+Description:
+	1.Added scripts for DLL and sys to enter the trust list
+--------------------------------------------------------------------------------------------------------------
+V5.0.9:
+Date: 20251013
+Description:
+	1.Add the nkio_config of NP-61x0-MVS
+--------------------------------------------------------------------------------------------------------------
+V5.0.8:
+Date: 20250731
+Description:
+	1.Due to NP-61x0-EX01 hardware changes, the  nkio_config of NP-61x0-EX01 has been modified.
+--------------------------------------------------------------------------------------------------------------
+V5.0.7:
+Date: 20250722
+Description:
+	1.Add the nkio_config of NP-61x0-16I16O and NP-61x0-EX01
+--------------------------------------------------------------------------------------------------------------
+V5.0.6:
+Date: 20241223
+Description:
+	1.Add the nkio_config of AC_1121
+--------------------------------------------------------------------------------------------------------------
+V5.0.5:
+Date: 20240801
+Description:
+	1.Add the nkio_config of NK3310_RISER_SM8I8O
+--------------------------------------------------------------------------------------------------------------
+V5.0.4:
+Date: 20240628
+Description:
+	1.Add the nkio_config of NP-6122-JH5
+	2.Add the nkio_config of NP-6125-JH5
+	3.Add the nkio_config of NP-6132-JH5
+	4.Add the nkio_config of NP-6135-JH5
+--------------------------------------------------------------------------------------------------------------
+V5.0.3:
+Date: 20240419
+Description:
+	1.fix the path of NP-6113-16I16O in config.ini
+--------------------------------------------------------------------------------------------------------------
+V5.0.2:
+Date: 20240318
+Description:
+	1.Add the nkio_config of XXX4
+--------------------------------------------------------------------------------------------------------------
+V5.0.1:
+Date: 20231222
+Description:
+	1.Add the C# sample project
+--------------------------------------------------------------------------------------------------------------
+V5.0.0:
+Date: 20231129
+Description:
+	1.Separate the DIO and light control in the original library into two separate libraries.
+	2.Add the nkio_configs of exiting models. 
+	3.Add the usermanual.
+--------------------------------------------------------------------------------------------------------------
+V4.2.2:
+Date: 20231128
+Description:
+	1.Add nkio_config of NP-6118-J6412 and NP-6118-J1900.
+--------------------------------------------------------------------------------------------------------------
+V4.2.1:
+Date: 20231110
+Description:
+	1.Add nkio_config of NP-6113-MVS and NP-6113-16I16O.
+--------------------------------------------------------------------------------------------------------------
+V4.2.0:
+Date: 20231109
+Description:
+	1.Add nkio_config of NP-6116-J6412.
+--------------------------------------------------------------------------------------------------------------
+V4.1.9:
+Date: 20230816
+Description:
+	1.Change the PortNum to 6 in the nkio_config of NP-6122-H1.
+--------------------------------------------------------------------------------------------------------------
+V4.1.8:
+Date: 20210617
+Description:
+	1. Add the mutex protection for the light control API.
+--------------------------------------------------------------------------------------------------------------
+V4.1.7:
+Date: 20210512
+Description:
+	1. Add the API to read back the DO by bit, byte and word.
+--------------------------------------------------------------------------------------------------------------
+V4.1.6:
+Date: 20210418
+Description:
+	1. Fix the bug in the usermanual
+	2. Add Visual C/C++ console sample project
+	3. Add the Linux console sample
+--------------------------------------------------------------------------------------------------------------
+V4.1.5:
+Date: 20210413
+Description:
+	1. Add the interface for to set the holding time unit for the firmware version 4.2.3 or new
+--------------------------------------------------------------------------------------------------------------
+V4.1.4:
+Date: 20210406
+Description:
+	1. Fix the bug for the hardware version 2.14.12
+	2. Add the mutex for IO interface
+--------------------------------------------------------------------------------------------------------------
+V4.1.3:
+Date: 20210125
+Description:
+	1. Change the DO signal from 0: ON to 1:ON for the hardware version 2.14.12 
+	2. Add the NP-61xx user manual.
+--------------------------------------------------------------------------------------------------------------
+V4.1.2:
+Date: 20210205
+Description:
+	1. Add the config file for NP-6123-MVS， the serial port is COM6，which is configured in the nkio_config.ini file
+--------------------------------------------------------------------------------------------------------------
+V4.1.1:
+Date: 20210204
+Description:
+	1. Fix the bug DO can not be set by bit
+	2. Change the DO signal from 0: ON to 1:ON
+--------------------------------------------------------------------------------------------------------------
+V4.1.0:
+Date: 20210129
+Description:
+	1. Fixed known bug
+	2. Compatiable with the hardware version 2.x.x
+                3. Modify the API definations
+	4. Modify the C# sample project
+	5. Add the Qt sample project
+--------------------------------------------------------------------------------------------------------------
+V4.0.1:
+Date: 20201221
+Description:
+	1. Fixed known bug
+                2. add C# Sample project
+--------------------------------------------------------------------------------------------------------------
+V4.0.0:
+Date: 20201217
+Description:
+	First release;

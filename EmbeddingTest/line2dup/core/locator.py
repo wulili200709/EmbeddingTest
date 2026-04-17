@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import cv2
 
@@ -166,6 +166,8 @@ def autogen_roi_json_from_line2dup_timed(
     *,
     camera_role: str = "cam1",
     scene_mask_path: str = "",
+    recipe: Optional[Line2DupRecipe] = None,
+    detector: Any = None,
 ) -> Line2DupAutogenRun:
     total_t0 = time.perf_counter()
     paths = product_paths(product_dir, camera_role)
@@ -173,10 +175,10 @@ def autogen_roi_json_from_line2dup_timed(
     recipe_path = _resolve_recipe_file(paths)
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Missing line2dup model: {model_path}")
-    recipe = load_recipe(recipe_path)
-    recipe.model_path = model_path
-    if (not ref_img_path) and recipe.reference_image:
-        ref_img_path = recipe.reference_image
+    active_recipe = recipe or load_recipe(recipe_path)
+    active_recipe.model_path = model_path
+    if (not ref_img_path) and active_recipe.reference_image:
+        ref_img_path = active_recipe.reference_image
 
     scene = imread(tgt_img_path, cv2.IMREAD_COLOR)
     if scene is None:
@@ -189,9 +191,9 @@ def autogen_roi_json_from_line2dup_timed(
             raise FileNotFoundError(scene_mask_path)
 
     locate_t0 = time.perf_counter()
-    result = locate_and_follow(scene, ref_img_path, recipe, scene_mask=scene_mask)
+    result = locate_and_follow(scene, ref_img_path, active_recipe, detector=detector, scene_mask=scene_mask)
     locate_ms = (time.perf_counter() - locate_t0) * 1000.0
-    _delete_stale_line2dup_roi_shapes(tgt_img_path, recipe)
+    _delete_stale_line2dup_roi_shapes(tgt_img_path, active_recipe)
     jpath = ""
     for region in result.regions:
         if region.source_shape_type == "polygon":

@@ -8,8 +8,15 @@ from typing import Dict, List, Sequence, Tuple
 import cv2
 import numpy as np
 
-import algorithms.proxy as qr_core
 from algorithms.image_io import imread
+from algorithms.labelme import (
+    delete_labelme_shape,
+    delete_labelme_shapes,
+    labelme_json_of_image,
+    list_shapes_from_labelme,
+    polygon_points_to_labelme_shape,
+    upsert_labelme_shapes,
+)
 from domain import clearable_roi_labels
 
 from .model import NccMatchModel, NccReferenceRegion, load_model, save_model
@@ -166,13 +173,13 @@ def _project_reference_regions(model: NccMatchModel, match_quad: Sequence[Tuple[
 
 
 def _existing_shape_labels(tgt_img_path: str, current_labels: Sequence[str]) -> List[str]:
-    jpath = qr_core.labelme_json_of_image(tgt_img_path)
+    jpath = labelme_json_of_image(tgt_img_path)
     if not os.path.exists(jpath):
         return []
     current_set = {str(label).strip() for label in list(current_labels or []) if str(label).strip()}
     labels: List[str] = []
     seen: set[str] = set()
-    for shape in qr_core.list_shapes_from_labelme(jpath):
+    for shape in list_shapes_from_labelme(jpath):
         if not isinstance(shape, dict):
             continue
         label = str(shape.get("label", "")).strip()
@@ -198,11 +205,24 @@ def _delete_stale_ncc_roi_shapes(tgt_img_path: str, model: NccMatchModel) -> Lis
     removed: List[str] = []
     for label in labels_to_clear:
         try:
-            if qr_core.delete_labelme_shape(tgt_img_path, label_name=label):
+            if delete_labelme_shape(tgt_img_path, label_name=label):
                 removed.append(label)
         except Exception:
             continue
     return removed
+
+
+def _delete_current_ncc_roi_shapes(tgt_img_path: str, model: NccMatchModel) -> List[str]:
+    labels = [str(label).strip() for label in output_labels_from_ncc_model(model) if str(label).strip()]
+    if "roi" not in labels:
+        labels.append("roi")
+    if not labels:
+        return []
+    try:
+        removed_count = int(delete_labelme_shapes(tgt_img_path, labels))
+    except Exception:
+        return []
+    return labels[:removed_count] if removed_count > 0 else []
 
 
 def autogen_roi_json_from_ncc_timed(
@@ -210,44 +230,53 @@ def autogen_roi_json_from_ncc_timed(
     product_dir: str,
     *,
     camera_role: str = "cam1",
+    model_path: str | None = None,
+    model: NccMatchModel | None = None,
+    compiled_model: NccCompiledModel | None = None,
 ) -> NccAutogenRun:
     total_t0 = time.perf_counter()
-    model_path = resolved_model_path_for_product(product_dir, camera_role)
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(f"Missing NCC model: {model_path}")
+    active_model_path = model_path or resolved_model_path_for_product(product_dir, camera_role)
+    if not os.path.exists(active_model_path):
+        raise FileNotFoundError(f"Missing NCC model: {active_model_path}")
 
-    model = load_model(model_path).normalized()
+    active_model = (model or getattr(compiled_model, "model", None) or load_model(active_model_path)).normalized()
     scene = imread(tgt_img_path, cv2.IMREAD_COLOR)
     if scene is None:
         raise FileNotFoundError(tgt_img_path)
 
-    compiled = NccCompiledModel(model_path, model)
+    compiled = compiled_model or NccCompiledModel(active_model_path, active_model)
+    should_close = compiled_model is None
     try:
         locate_t0 = time.perf_counter()
         response = compiled.match(
             scene,
-            options=model.options,
-            search_roi=model.search_roi.to_xywh() if model.search_roi is not None else None,
+            options=active_model.options,
+            search_roi=active_model.search_roi.to_xywh() if active_model.search_roi is not None else None,
         )
         locate_ms = (time.perf_counter() - locate_t0) * 1000.0
     finally:
-        compiled.close()
+        if should_close:
+            compiled.close()
 
     if not response.matches:
+        _delete_current_ncc_roi_shapes(tgt_img_path, active_model)
         raise RuntimeError("NCC did not find any match.")
 
-    _delete_stale_ncc_roi_shapes(tgt_img_path, model)
+    _delete_stale_ncc_roi_shapes(tgt_img_path, active_model)
 
     top1 = response.matches[0]
-    projected = _project_reference_regions(model, top1.quad)
+    projected = _project_reference_regions(active_model, top1.quad)
     written_labels: List[str] = []
     jpath = ""
     if projected:
+        shapes: List[dict] = []
         for label_name, points in projected:
-            jpath = qr_core.upsert_labelme_polygon(tgt_img_path, points, label_name=label_name)
+            shapes.append(polygon_points_to_labelme_shape(points, label_name=label_name))
             written_labels.append(label_name)
+        jpath = upsert_labelme_shapes(tgt_img_path, shapes)
     else:
-        jpath = qr_core.upsert_labelme_polygon(tgt_img_path, list(top1.quad), label_name="roi")
+        shape = polygon_points_to_labelme_shape(list(top1.quad), label_name="roi")
+        jpath = upsert_labelme_shapes(tgt_img_path, [shape])
         written_labels.append("roi")
 
     total_ms = (time.perf_counter() - total_t0) * 1000.0

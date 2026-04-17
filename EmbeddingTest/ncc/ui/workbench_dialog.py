@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import cv2
 import numpy as np
@@ -188,6 +188,13 @@ def _region_polygon_points(region: NccReferenceRegion) -> List[Tuple[float, floa
     return []
 
 
+def _point_hits_polygon(points: Sequence[Tuple[float, float]], x: float, y: float, *, tolerance: float = 4.0) -> bool:
+    if len(points) < 3:
+        return False
+    contour = np.asarray(points, dtype=np.float32).reshape((-1, 1, 2))
+    return float(cv2.pointPolygonTest(contour, (float(x), float(y)), True)) >= -float(tolerance)
+
+
 def _region_info_text(region: NccReferenceRegion) -> str:
     if region.shape_type == "polygon":
         return f"Polygon · {len(region.points)} pts"
@@ -232,8 +239,14 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._reference_regions: List[NccReferenceRegion] = []
         self._find_result_cache: dict[str, dict[str, object]] = {}
         self._selected_reference_idx: Optional[int] = None
+        self._selected_reference_indices: Set[int] = set()
         self._syncing_roi = False
         self._syncing_reference_view = False
+        self._syncing_reference_table = False
+        self._moving_reference_regions = False
+        self._reference_move_start: Optional[Tuple[float, float]] = None
+        self._reference_move_original: Dict[int, List[Tuple[float, float]]] = {}
+        self._loading_model = False
 
         self._build_ui()
         self._load_model()
@@ -419,13 +432,14 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.table_reference_regions.setHorizontalHeaderLabels(["#", "Name", "ROI Label", "Info"])
         self.table_reference_regions.verticalHeader().setVisible(False)
         self.table_reference_regions.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table_reference_regions.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
+        self.table_reference_regions.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table_reference_regions.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table_reference_regions.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         self.table_reference_regions.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
         self.table_reference_regions.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Stretch)
         self.table_reference_regions.horizontalHeader().setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Stretch)
         self.table_reference_regions.currentCellChanged.connect(self._on_reference_region_selected)
+        self.table_reference_regions.itemSelectionChanged.connect(self._on_reference_region_selection_changed)
         region_layout.addWidget(self.table_reference_regions, 1)
 
         button_col = QtWidgets.QVBoxLayout()
@@ -463,7 +477,8 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.ref_canvas = RoiCanvas()
         self.ref_canvas.setMinimumSize(700, 560)
         self.ref_canvas.draw_shape = "rect"
-        self.ref_canvas.set_roi_style(roi_color=QtGui.QColor(255, 0, 255), roi_dash=False, roi_width=1.4)
+        self.ref_canvas.set_outside_image_events_enabled(True)
+        self.ref_canvas.set_roi_style(roi_color=QtGui.QColor(0, 140, 255), roi_dash=False, roi_width=2.0)
         ref_layout.addWidget(self.ref_canvas, 1)
         layout.addWidget(ref_box, 1)
 
@@ -474,6 +489,9 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.btn_clear_reference_rois.clicked.connect(self._clear_reference_roi)
         self.btn_load_reference_roi.clicked.connect(lambda: self._load_reference_roi_from_json(silent=False))
         self.btn_save_reference_roi.clicked.connect(self._save_reference_roi_to_json)
+        self.ref_canvas.imagePressed.connect(self._on_reference_canvas_pressed)
+        self.ref_canvas.imageMoved.connect(self._on_reference_canvas_moved)
+        self.ref_canvas.imageReleased.connect(self._on_reference_canvas_released)
         self.ref_canvas.shapesChanged.connect(self._on_reference_canvas_shape_changed)
         return page
 
@@ -530,7 +548,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         params_box = QtWidgets.QGroupBox("Find 参数")
         params_grid = QtWidgets.QGridLayout(params_box)
         self.spn_target_num = QtWidgets.QSpinBox()
-        self.spn_target_num.setRange(1, 20)
+        self.spn_target_num.setRange(1, 200)
         self.spn_score = QtWidgets.QDoubleSpinBox()
         self.spn_score.setRange(0.0, 1.0)
         self.spn_score.setDecimals(3)
@@ -621,6 +639,22 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.btn_writeback.clicked.connect(self._writeback_top1)
         self.btn_writeback_regions.clicked.connect(self._writeback_reference_regions)
         self.find_canvas.shapesChanged.connect(self._refresh_search_roi_status)
+        for spin in (
+            self.spn_target_num,
+            self.spn_score,
+            self.spn_overlap,
+            self.spn_min_area,
+            self.spn_angle_start,
+            self.spn_angle_end,
+        ):
+            spin.valueChanged.connect(self._save_find_options_to_model)
+        for checkbox in (
+            self.chk_use_simd,
+            self.chk_use_subpixel,
+            self.chk_bitwise_not,
+            self.chk_stop_layer1,
+        ):
+            checkbox.toggled.connect(self._save_find_options_to_model)
         return page
 
     def _finalize_ui(self) -> None:
@@ -652,22 +686,27 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
                 self.lbl_writeback_hint.hide()
 
     def _load_model(self) -> None:
-        self._model = load_model(self._model_path).normalized()
-        self._reference_regions = [region.normalized() for region in list(self._model.reference_regions or [])]
-        self._selected_reference_idx = None
-        ensure_default_assets(self._model_path, self._model)
-        self.edt_display_name.setText(self._model.display_name)
-        self.edt_source_path.setText(source_image_path(self._model_path, self._model))
-        self.edt_template_path.setText(template_image_path(self._model_path, self._model))
-        self.edt_preview_path.setText(preview_image_path(self._model_path, self._model))
-        self._set_roi_spin_values(self._model.template_roi.to_xywh())
-        self._apply_options_to_form(self._model.options)
-        self._reload_authoring_canvases(force_reference=True)
-        self._refresh_reference_region_list()
-        self._refresh_reference_region_fields()
-        self._refresh_reference_canvas()
-        self._refresh_model_summary()
-        self._refresh_search_roi_status()
+        self._loading_model = True
+        try:
+            self._model = load_model(self._model_path).normalized()
+            self._reference_regions = [region.normalized() for region in list(self._model.reference_regions or [])]
+            self._selected_reference_idx = None
+            self._selected_reference_indices = set()
+            ensure_default_assets(self._model_path, self._model)
+            self.edt_display_name.setText(self._model.display_name)
+            self.edt_source_path.setText(source_image_path(self._model_path, self._model))
+            self.edt_template_path.setText(template_image_path(self._model_path, self._model))
+            self.edt_preview_path.setText(preview_image_path(self._model_path, self._model))
+            self._set_roi_spin_values(self._model.template_roi.to_xywh())
+            self._apply_options_to_form(self._model.options)
+            self._reload_authoring_canvases(force_reference=True)
+            self._refresh_reference_region_list()
+            self._refresh_reference_region_fields()
+            self._refresh_reference_canvas()
+            self._refresh_model_summary()
+            self._refresh_search_roi_status()
+        finally:
+            self._loading_model = False
 
     def _load_initial_image(self) -> None:
         if not self._initial_image_path or not Path(self._initial_image_path).exists():
@@ -718,7 +757,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         if path and Path(path).exists():
             if force or current_path != path:
                 self.ref_canvas.set_image(path)
-                self.ref_canvas.set_roi_style(roi_color=QtGui.QColor(255, 0, 255), roi_dash=False, roi_width=1.4)
+                self.ref_canvas.set_roi_style(roi_color=QtGui.QColor(0, 140, 255), roi_dash=False, roi_width=2.0)
             self._refresh_reference_canvas()
             return
         self.ref_canvas.clear_image()
@@ -779,6 +818,19 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._model.options = self._current_find_options()
         self._model.reference_regions = [region.normalized() for region in self._reference_regions]
 
+    def _sync_model_without_template_roi_from_ui(self) -> None:
+        self._model.display_name = self.edt_display_name.text().strip() or self._model.display_name
+        self._model.options = self._current_find_options()
+        self._model.reference_regions = [region.normalized() for region in self._reference_regions]
+
+    def _save_find_options_to_model(self, *_args) -> None:
+        if getattr(self, "_loading_model", False):
+            return
+        self._sync_model_without_template_roi_from_ui()
+        save_model(self._model_path, self._model)
+        self._refresh_model_summary()
+        self.modelSaved.emit(self._model_path)
+
     def _stored_search_roi_xywh(self) -> Optional[Tuple[int, int, int, int]]:
         if self._model.search_roi is None:
             return None
@@ -787,13 +839,13 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
     def _update_search_roi(self, xywh: Optional[Tuple[int, int, int, int]], *, persist: bool) -> None:
         self._model.search_roi = None if xywh is None else NccMatchRect(*[int(v) for v in xywh]).normalized()
         if persist:
-            self._sync_model_from_ui()
+            self._sync_model_without_template_roi_from_ui()
             save_model(self._model_path, self._model)
             self._refresh_model_summary()
             self.modelSaved.emit(self._model_path)
 
     def _save_reference_regions_to_model(self) -> None:
-        self._sync_model_from_ui()
+        self._sync_model_without_template_roi_from_ui()
         save_model(self._model_path, self._model)
         self._refresh_model_summary()
         self.modelSaved.emit(self._model_path)
@@ -813,11 +865,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         if roi is None:
             QtWidgets.QMessageBox.information(self, "NCC", "请先在右侧参考图上框出 template ROI。")
             return
-        self._set_roi_spin_values(roi)
-        self._sync_model_from_ui()
-        save_model(self._model_path, self._model)
-        self._refresh_model_summary()
-        self._set_status("已应用当前 template ROI。")
+        self._save_template()
 
     def _sync_roi_from_canvas(self) -> None:
         if self._syncing_roi:
@@ -858,7 +906,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._set_status(f"已加载参考图：{path}")
 
     def _save_model_metadata(self) -> None:
-        self._sync_model_from_ui()
+        self._sync_model_without_template_roi_from_ui()
         save_model(self._model_path, self._model)
         self._refresh_model_summary()
 
@@ -887,6 +935,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
 
     def _refresh_reference_region_list(self) -> None:
         table = self.table_reference_regions
+        self._syncing_reference_table = True
         blocker = QtCore.QSignalBlocker(table)
         try:
             table.setRowCount(len(self._reference_regions))
@@ -904,6 +953,30 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
                         table.setItem(index, column, item)
                     item.setText(value)
                     item.setData(QtCore.Qt.ItemDataRole.UserRole, index)
+            selected_rows = {
+                index
+                for index in getattr(self, "_selected_reference_indices", set())
+                if 0 <= index < len(self._reference_regions)
+            }
+            self._selected_reference_indices = selected_rows
+            if selected_rows and self._selected_reference_idx not in selected_rows:
+                self._selected_reference_idx = min(selected_rows) if selected_rows else None
+            if not selected_rows:
+                self._selected_reference_idx = None
+            table.clearSelection()
+            selection_model = table.selectionModel()
+            if selection_model is not None:
+                model = table.model()
+                for row in sorted(selected_rows):
+                    selection = QtCore.QItemSelection(
+                        model.index(row, 0),
+                        model.index(row, max(0, table.columnCount() - 1)),
+                    )
+                    selection_model.select(
+                        selection,
+                        QtCore.QItemSelectionModel.SelectionFlag.Select
+                        | QtCore.QItemSelectionModel.SelectionFlag.Rows,
+                    )
             if self._selected_reference_idx is not None and 0 <= self._selected_reference_idx < len(self._reference_regions):
                 table.setCurrentCell(self._selected_reference_idx, 0)
             else:
@@ -911,6 +984,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
                 table.setCurrentIndex(QtCore.QModelIndex())
         finally:
             del blocker
+            self._syncing_reference_table = False
 
     def _refresh_reference_region_fields(self) -> None:
         selected = self._selected_reference_idx
@@ -928,17 +1002,19 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
 
     def _reference_region_overlay_shapes(self) -> List[OverlayShape]:
         overlays: List[OverlayShape] = []
+        selected_indices = getattr(self, "_selected_reference_indices", set())
         for index, region in enumerate(self._reference_regions):
             points = _region_polygon_points(region)
             if len(points) < 3:
                 continue
+            selected = index in selected_indices
             overlays.append(
                 OverlayShape(
                     shape_type="polygon",
                     points=points,
-                    color=QtGui.QColor(255, 0, 255),
-                    width=2.0 if index == self._selected_reference_idx else 1.2,
-                    dash=index != self._selected_reference_idx,
+                    color=QtGui.QColor(0, 140, 255) if selected else QtGui.QColor(255, 0, 255),
+                    width=2.4 if selected else 1.2,
+                    dash=not selected,
                 )
             )
         return overlays
@@ -946,12 +1022,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
     def _refresh_reference_canvas(self) -> None:
         if not self.ref_canvas.has_image():
             return
-        overlays = [
-            overlay
-            for index, overlay in enumerate(self._reference_region_overlay_shapes())
-            if index != self._selected_reference_idx
-        ]
-        self.ref_canvas.set_overlays(overlays)
+        self.ref_canvas.set_overlays(self._reference_region_overlay_shapes())
         self._syncing_reference_view = True
         try:
             if self._selected_reference_idx is None or not (0 <= self._selected_reference_idx < len(self._reference_regions)):
@@ -979,6 +1050,119 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         finally:
             self._syncing_reference_view = False
 
+    def _reference_region_at_point(self, x: float, y: float) -> Optional[int]:
+        for index in range(len(self._reference_regions) - 1, -1, -1):
+            points = _region_polygon_points(self._reference_regions[index])
+            if _point_hits_polygon(points, x, y):
+                return index
+        return None
+
+    def _set_reference_selection(self, indices: Sequence[int], *, primary: Optional[int] = None) -> None:
+        valid = {
+            int(index)
+            for index in indices
+            if 0 <= int(index) < len(self._reference_regions)
+        }
+        if primary is not None and primary not in valid:
+            primary = None
+        self._selected_reference_indices = valid
+        if primary is not None:
+            self._selected_reference_idx = int(primary)
+        elif valid:
+            self._selected_reference_idx = min(valid)
+        else:
+            self._selected_reference_idx = None
+        self._refresh_reference_region_list()
+        self._refresh_reference_region_fields()
+        self._refresh_reference_canvas()
+
+    def _begin_reference_region_move(self, x: float, y: float) -> None:
+        selected = {
+            index
+            for index in getattr(self, "_selected_reference_indices", set())
+            if 0 <= index < len(self._reference_regions)
+        }
+        if not selected:
+            return
+        self._moving_reference_regions = True
+        self._reference_move_start = (float(x), float(y))
+        self._reference_move_original = {
+            index: [(float(px), float(py)) for px, py in self._reference_regions[index].points]
+            for index in selected
+        }
+        self.ref_canvas.set_interaction_enabled(False)
+        self.ref_canvas.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
+
+    def _translate_reference_move_selection(self, dx: float, dy: float) -> None:
+        for index, original_points in self._reference_move_original.items():
+            if not (0 <= index < len(self._reference_regions)):
+                continue
+            self._reference_regions[index].points = [
+                (float(x) + dx, float(y) + dy)
+                for x, y in original_points
+            ]
+        self._refresh_reference_region_list()
+        self._refresh_reference_region_fields()
+        self._refresh_reference_canvas()
+
+    def _on_reference_canvas_pressed(self, button: int, x: int, y: int) -> None:
+        if button != int(QtCore.Qt.MouseButton.LeftButton.value):
+            return
+        selected = self._reference_region_at_point(float(x), float(y))
+        if selected is None:
+            modifiers = QtWidgets.QApplication.keyboardModifiers()
+            if not (
+                modifiers
+                & (
+                    QtCore.Qt.KeyboardModifier.ControlModifier
+                    | QtCore.Qt.KeyboardModifier.ShiftModifier
+                )
+            ):
+                self._set_reference_selection([])
+            return
+        modifiers = QtWidgets.QApplication.keyboardModifiers()
+        additive = bool(
+            modifiers
+            & (
+                QtCore.Qt.KeyboardModifier.ControlModifier
+                | QtCore.Qt.KeyboardModifier.ShiftModifier
+            )
+        )
+        selected_indices = set(getattr(self, "_selected_reference_indices", set()))
+        if additive:
+            selected_indices.add(selected)
+        else:
+            selected_indices = {selected}
+        self._set_reference_selection(selected_indices, primary=selected)
+        self._begin_reference_region_move(float(x), float(y))
+
+    def _on_reference_canvas_moved(self, buttons: int, x: int, y: int) -> None:
+        if not getattr(self, "_moving_reference_regions", False):
+            return
+        if not (int(buttons) & int(QtCore.Qt.MouseButton.LeftButton.value)):
+            return
+        if self._reference_move_start is None:
+            return
+        x0, y0 = self._reference_move_start
+        self._translate_reference_move_selection(float(x) - x0, float(y) - y0)
+
+    def _on_reference_canvas_released(self, button: int, _x: int, _y: int) -> None:
+        if button != int(QtCore.Qt.MouseButton.LeftButton.value):
+            return
+        if not getattr(self, "_moving_reference_regions", False):
+            return
+        self._moving_reference_regions = False
+        self._reference_move_start = None
+        self._reference_move_original = {}
+        self.ref_canvas.set_interaction_enabled(True)
+        self.ref_canvas.unsetCursor()
+        self._refresh_reference_region_list()
+        self._refresh_reference_region_fields()
+        self._refresh_reference_canvas()
+        self._save_reference_regions_to_model()
+        count = len(getattr(self, "_selected_reference_indices", set()))
+        self._set_reference_status(f"已平移 {count} 个参考 ROI。")
+
     def _next_reference_label(self) -> str:
         existing = {
             str(region.label_name or "").strip().lower()
@@ -999,15 +1183,36 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         _previous_row: int,
         _previous_column: int,
     ) -> None:
+        if getattr(self, "_syncing_reference_table", False):
+            return
         if current_row < 0 or current_row >= len(self._reference_regions):
-            self._selected_reference_idx = None
+            self._set_reference_selection([])
         else:
-            self._selected_reference_idx = current_row
-        self._refresh_reference_region_fields()
-        self._refresh_reference_canvas()
+            selected_rows = self._selected_rows_from_reference_table() or {current_row}
+            self._set_reference_selection(selected_rows, primary=current_row)
+
+    def _selected_rows_from_reference_table(self) -> Set[int]:
+        rows: Set[int] = set()
+        selection_model = self.table_reference_regions.selectionModel()
+        if selection_model is None:
+            return rows
+        for index in selection_model.selectedRows():
+            row = int(index.row())
+            if 0 <= row < len(self._reference_regions):
+                rows.add(row)
+        return rows
+
+    def _on_reference_region_selection_changed(self) -> None:
+        if getattr(self, "_syncing_reference_table", False):
+            return
+        rows = self._selected_rows_from_reference_table()
+        current_row = int(self.table_reference_regions.currentRow())
+        primary = current_row if current_row in rows else (min(rows) if rows else None)
+        self._set_reference_selection(rows, primary=primary)
 
     def _prepare_new_reference_roi(self) -> None:
         self._selected_reference_idx = None
+        self._selected_reference_indices = set()
         blocker = QtCore.QSignalBlocker(self.table_reference_regions)
         try:
             self.table_reference_regions.clearSelection()
@@ -1019,10 +1224,19 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._set_reference_status("已切换到新增 ROI 模式，请直接在右侧画布上继续画框。")
 
     def _remove_selected_reference_roi(self) -> None:
-        if self._selected_reference_idx is None or not (0 <= self._selected_reference_idx < len(self._reference_regions)):
+        selected = {
+            index
+            for index in getattr(self, "_selected_reference_indices", set())
+            if 0 <= index < len(self._reference_regions)
+        }
+        if not selected and self._selected_reference_idx is not None and 0 <= self._selected_reference_idx < len(self._reference_regions):
+            selected = {self._selected_reference_idx}
+        if not selected:
             return
-        del self._reference_regions[self._selected_reference_idx]
+        for index in sorted(selected, reverse=True):
+            del self._reference_regions[index]
         self._selected_reference_idx = None
+        self._selected_reference_indices = set()
         self._refresh_reference_region_list()
         self._refresh_reference_region_fields()
         self._refresh_reference_canvas()
@@ -1032,6 +1246,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
     def _clear_reference_roi(self) -> None:
         self._reference_regions = []
         self._selected_reference_idx = None
+        self._selected_reference_indices = set()
         self._refresh_reference_region_list()
         self._refresh_reference_region_fields()
         self._refresh_reference_canvas()
@@ -1079,6 +1294,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             ).normalized()
             self._reference_regions.append(region)
             self._selected_reference_idx = len(self._reference_regions) - 1
+            self._selected_reference_indices = {self._selected_reference_idx}
             self._refresh_reference_region_list()
             self._refresh_reference_region_fields()
             self._refresh_reference_canvas()
@@ -1139,6 +1355,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
                 raise RuntimeError("json 中没有 roi1/roi2/... 参考 ROI。")
             self._reference_regions = regions
             self._selected_reference_idx = None
+            self._selected_reference_indices = set()
             self._refresh_reference_region_list()
             self._refresh_reference_region_fields()
             self._refresh_reference_canvas()
@@ -1416,7 +1633,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         scene = imread(scene_path, cv2.IMREAD_COLOR)
         if scene is None:
             raise RuntimeError(f"无法读取场景图：{scene_path}")
-        self._sync_model_from_ui()
+        self._save_find_options_to_model()
         compiled: Optional[NccCompiledModel] = None
         try:
             compiled = NccCompiledModel(self._model_path, self._model)

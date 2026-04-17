@@ -300,6 +300,45 @@ class ToolPageToolConfigTest(unittest.TestCase):
         finally:
             harness.cleanup()
 
+    def test_group_column_hides_stale_roi_groups_when_reference_groups_exist(self) -> None:
+        harness = _ToolConfigHarness()
+        try:
+            harness.inspection_items[0].task_group = "roi1"
+            harness._refresh_inspection_items_table()
+
+            group_combo = harness.inspection_items_table.cellWidget(0, 4)
+
+            self.assertIsNotNone(group_combo)
+            values = [group_combo.itemData(index) for index in range(group_combo.count())]
+            self.assertEqual(values, ["", "hole", "pusher"])
+            self.assertLess(group_combo.findData("roi1"), 0)
+        finally:
+            harness.cleanup()
+
+    def test_ncc_group_column_uses_only_ncc_reference_names(self) -> None:
+        harness = _ToolConfigHarness()
+        old_model_is_ready = tool_config.ncc_locator.model_is_ready
+        old_display_names = tool_config.ncc_locator.display_names_by_label_for_product
+        try:
+            harness.loc_method = "ncc"
+            tool_config.ncc_locator.model_is_ready = lambda _product_dir, _role: True
+            tool_config.ncc_locator.display_names_by_label_for_product = (
+                lambda _product_dir, _role: {"roi1": "Hole", "roi9": "Pusher"}
+            )
+            harness._refresh_inspection_items_table()
+
+            group_combo = harness.inspection_items_table.cellWidget(0, 4)
+
+            self.assertIsNotNone(group_combo)
+            values = [group_combo.itemData(index) for index in range(group_combo.count())]
+            self.assertEqual(values, ["", "Hole", "Pusher"])
+            self.assertLess(group_combo.findData("roi1"), 0)
+            self.assertLess(group_combo.findData("pusher"), 0)
+        finally:
+            tool_config.ncc_locator.model_is_ready = old_model_is_ready
+            tool_config.ncc_locator.display_names_by_label_for_product = old_display_names
+            harness.cleanup()
+
     def test_group_dropdown_selection_persists_task_group(self) -> None:
         harness = _ToolConfigHarness()
         try:

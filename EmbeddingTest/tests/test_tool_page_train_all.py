@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from PySide6 import QtWidgets
@@ -239,6 +240,40 @@ class _TrainAllHarness:
 
     def _ensure_training_roi_reviewed(self, _camera_role, *, action_name: str, action_key: str = ""):
         return True
+
+
+class _TrainingConfirmHarness:
+    _ensure_training_roi_reviewed = ToolPage._ensure_training_roi_reviewed
+    _training_roi_ready_signature = ToolPage._training_roi_ready_signature
+    _sync_training_action_buttons = ToolPage._sync_training_action_buttons
+
+    def __init__(self, product_dir: str) -> None:
+        self.loc_method = "ncc"
+        self.current_camera = "cam1"
+        self.ref_image = ""
+        self.train_files = [str(Path(product_dir) / "cam1_ok.png")]
+        self.session = SimpleNamespace(product_dir=product_dir)
+        self.lbl_status = QtWidgets.QLabel("")
+        self._training_roi_ready_signatures = {}
+        self._training_roi_pending_actions = {}
+        self._train_action_btn_style = "default-all"
+        self._train_current_btn_style = "default-current"
+        self._train_confirm_btn_style = "confirm"
+        self.btn_train = QtWidgets.QPushButton("训练 / 标定全部启用工具")
+        self.btn_train_current = QtWidgets.QPushButton("标定当前工具")
+        self.btn_train_cancel = QtWidgets.QPushButton("×")
+        self.btn_train_current_cancel = QtWidgets.QPushButton("×")
+        self.update_count = 0
+
+    def current_camera_role(self) -> str:
+        return self.current_camera
+
+    def _train_sample_paths_for_role(self, camera_role=None):
+        return list(self.train_files)
+
+    def _update_runtime_widgets(self):
+        self.update_count += 1
+        self._sync_training_action_buttons()
 
 
 class ToolPageTrainAllTest(unittest.TestCase):
@@ -554,3 +589,25 @@ class ToolPageTrainAllTest(unittest.TestCase):
             self.assertEqual(len(harness.algo.train_calls), 2)
             self.assertTrue(info.called)
             self.assertFalse(warning.called)
+
+    def test_ncc_training_requires_second_click_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            harness = _TrainingConfirmHarness(tmpdir)
+
+            with mock.patch("PySide6.QtWidgets.QMessageBox.information") as info:
+                first = harness._ensure_training_roi_reviewed(
+                    "cam1",
+                    action_name="训练 / 标定全部启用工具",
+                    action_key="all",
+                )
+                second = harness._ensure_training_roi_reviewed(
+                    "cam1",
+                    action_name="训练 / 标定全部启用工具",
+                    action_key="all",
+                )
+
+            self.assertFalse(first)
+            self.assertTrue(second)
+            self.assertEqual(harness._training_roi_pending_actions, {})
+            self.assertEqual(harness.btn_train.text(), "训练 / 标定全部启用工具")
+            self.assertTrue(info.called)

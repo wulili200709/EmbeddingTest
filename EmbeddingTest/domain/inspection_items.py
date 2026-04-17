@@ -175,12 +175,18 @@ def build_default_item(
     )
 
 
+def _is_roi_like_group(value: object) -> bool:
+    text = str(value or "").strip()
+    return bool(re.fullmatch(r"roi(?:\d+)?(?:__\d+)?", text, flags=re.IGNORECASE))
+
+
 def sync_items_with_labels(
     existing_items: Iterable[InspectionItem],
     labels: Iterable[str],
     *,
     default_camera_id: str = "cam1",
     display_names_by_label: Mapping[str, str] | None = None,
+    task_groups_by_label: Mapping[str, str] | None = None,
 ) -> List[InspectionItem]:
     """
     以 labels 的顺序为准同步检测项。
@@ -196,6 +202,11 @@ def sync_items_with_labels(
         for label, name in dict(display_names_by_label or {}).items()
         if str(label).strip()
     }
+    task_groups_by_label = {
+        str(label).strip(): str(group).strip()
+        for label, group in dict(task_groups_by_label or {}).items()
+        if str(label).strip()
+    }
     existing_by_label = {
         item.roi_label: item
         for item in existing_items
@@ -205,27 +216,31 @@ def sync_items_with_labels(
     for label in normalized_labels:
         existing = existing_by_label.get(label)
         display_name = display_names_by_label.get(label, "")
+        default_group = task_groups_by_label.get(label, "")
         if existing is not None:
+            existing_group = str(existing.task_group or "").strip()
+            if default_group and (not existing_group or existing_group == label or _is_roi_like_group(existing_group)):
+                existing_group = default_group
             synced.append(
                 InspectionItem(
                     item_id=existing.item_id or label,
                     display_name=display_name or existing.display_name or label,
                     camera_id=existing.camera_id if existing.camera_id in SUPPORTED_CAMERA_IDS else default_camera_id,
                     roi_label=label,
-                    task_group=existing.task_group,
+                    task_group=existing_group,
                     algorithm_code=existing.algorithm_code or SHARED_BACKBONE_ALGORITHM_CODE,
                     enabled=bool(existing.enabled),
                     params=dict(existing.params or {}),
                 )
             )
         else:
-            synced.append(
-                build_default_item(
-                    label,
-                    camera_id=default_camera_id,
-                    display_name=display_name or label,
-                )
+            item = build_default_item(
+                label,
+                camera_id=default_camera_id,
+                display_name=display_name or label,
             )
+            item.task_group = default_group
+            synced.append(item)
     return synced
 
 

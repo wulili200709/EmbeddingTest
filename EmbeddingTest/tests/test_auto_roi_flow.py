@@ -57,6 +57,15 @@ class _DummyToolPage(QtCore.QObject):
         auto_roi_flow._flush_line2dup_reference_regions_sync(self)
 
 
+class _ResolveTargetsHarness:
+    def __init__(self, missing: list[str]) -> None:
+        self.missing = list(missing)
+        self._skip_empty_autogen_message = False
+
+    def _missing_roi_files(self, paths, camera_role=None):
+        return list(self.missing)
+
+
 class AutoRoiFlowTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -98,6 +107,33 @@ class AutoRoiFlowTest(unittest.TestCase):
             timer = getattr(page, "_line2dup_reference_regions_sync_timer", None)
             self.assertIsNotNone(timer)
             self.assertFalse(timer.isActive())
+
+    def test_resolve_autogen_targets_allows_silent_overwrite_when_roi_exists(self) -> None:
+        harness = _ResolveTargetsHarness(missing=[])
+        paths = ["a.png", "b.png"]
+
+        targets = auto_roi_flow._resolve_autogen_targets(
+            harness,
+            paths,
+            only_missing=False,
+            silent=True,
+            camera_role="cam1",
+        )
+
+        self.assertEqual(targets, paths)
+
+    def test_resolve_autogen_targets_skips_existing_roi_in_only_missing_mode(self) -> None:
+        harness = _ResolveTargetsHarness(missing=[])
+
+        targets = auto_roi_flow._resolve_autogen_targets(
+            harness,
+            ["a.png"],
+            only_missing=True,
+            silent=True,
+            camera_role="cam1",
+        )
+
+        self.assertEqual(targets, [])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,19 @@
+﻿  NK_IO_LC_TEST_Console.cpp
+e:\01_nodka\10_project\48_h1\02_workspace\20210415\h1\package\installedfiles_x86\sample\windows\cpp\nk_io_lc_test_console\nk_io_lc_test_console.cpp(260): warning C4477: “scanf”: 格式字符串“%d”需要类型“int *”的参数，但可变参数 1 拥有了类型“unsigned short *”
+  e:\01_nodka\10_project\48_h1\02_workspace\20210415\h1\package\installedfiles_x86\sample\windows\cpp\nk_io_lc_test_console\nk_io_lc_test_console.cpp(260): note: 请考虑在格式字符串中使用“%hd”
+e:\01_nodka\10_project\48_h1\02_workspace\20210415\h1\package\installedfiles_x86\sample\windows\cpp\nk_io_lc_test_console\nk_io_lc_test_console.cpp(269): warning C4477: “scanf”: 格式字符串“%x”需要类型“unsigned int *”的参数，但可变参数 1 拥有了类型“unsigned char *”
+  e:\01_nodka\10_project\48_h1\02_workspace\20210415\h1\package\installedfiles_x86\sample\windows\cpp\nk_io_lc_test_console\nk_io_lc_test_console.cpp(269): note: 请考虑在格式字符串中使用“%hhx”
+e:\01_nodka\10_project\48_h1\02_workspace\20210415\h1\package\installedfiles_x86\sample\windows\cpp\nk_io_lc_test_console\nk_io_lc_test_console.cpp(271): warning C4477: “scanf”: 格式字符串“%d”需要类型“int *”的参数，但可变参数 1 拥有了类型“unsigned char *”
+  e:\01_nodka\10_project\48_h1\02_workspace\20210415\h1\package\installedfiles_x86\sample\windows\cpp\nk_io_lc_test_console\nk_io_lc_test_console.cpp(271): note: 请考虑在格式字符串中使用“%hhd”
+e:\01_nodka\10_project\48_h1\02_workspace\20210415\h1\package\installedfiles_x86\sample\windows\cpp\nk_io_lc_test_console\nk_io_lc_test_console.cpp(279): warning C4477: “scanf”: 格式字符串“%d”需要类型“int *”的参数，但可变参数 1 拥有了类型“unsigned char *”
+  e:\01_nodka\10_project\48_h1\02_workspace\20210415\h1\package\installedfiles_x86\sample\windows\cpp\nk_io_lc_test_console\nk_io_lc_test_console.cpp(279): note: 请考虑在格式字符串中使用“%hhd”
+e:\01_nodka\10_project\48_h1\02_workspace\20210415\h1\package\installedfiles_x86\sample\windows\cpp\nk_io_lc_test_console\nk_io_lc_test_console.cpp(283): warning C4477: “scanf”: 格式字符串“%d”需要类型“int *”的参数，但可变参数 1 拥有了类型“unsigned char *”
+  e:\01_nodka\10_project\48_h1\02_workspace\20210415\h1\package\installedfiles_x86\sample\windows\cpp\nk_io_lc_test_console\nk_io_lc_test_console.cpp(283): note: 请考虑在格式字符串中使用“%hhd”
+e:\01_nodka\10_project\48_h1\02_workspace\20210415\h1\package\installedfiles_x86\sample\windows\cpp\nk_io_lc_test_console\nk_io_lc_test_console.cpp(286): warning C4477: “scanf”: 格式字符串“%d”需要类型“int *”的参数，但可变参数 1 拥有了类型“unsigned char *”
+  e:\01_nodka\10_project\48_h1\02_workspace\20210415\h1\package\installedfiles_x86\sample\windows\cpp\nk_io_lc_test_console\nk_io_lc_test_console.cpp(286): note: 请考虑在格式字符串中使用“%hhd”
+e:\01_nodka\10_project\48_h1\02_workspace\20210415\h1\package\installedfiles_x86\sample\windows\cpp\nk_io_lc_test_console\nk_io_lc_test_console.cpp(288): warning C4477: “scanf”: 格式字符串“%d”需要类型“int *”的参数，但可变参数 1 拥有了类型“unsigned char *”
+  e:\01_nodka\10_project\48_h1\02_workspace\20210415\h1\package\installedfiles_x86\sample\windows\cpp\nk_io_lc_test_console\nk_io_lc_test_console.cpp(288): note: 请考虑在格式字符串中使用“%hhd”
+  正在生成代码
+  All 19 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
+  已完成代码的生成
+  NK_IO_LC_TEST_Console.vcxproj -> E:\01_NODKA\10_Project\48_H1\02_Workspace\20210415\H1\Package\InstalledFiles_x86\Sample\Windows\CPP\NK_IO_LC_TEST_Console\Release\NK_IO_LC_TEST_Console.exe

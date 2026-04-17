@@ -13,6 +13,7 @@ from domain import (
     group_names_from_line2dup_recipe,
     save_inspection_items,
 )
+from ncc import locator as ncc_locator
 from .runtime_params import sync_item_runtime_params_to_controller
 
 
@@ -90,6 +91,33 @@ def _group_name_options_for_camera(tool_page, camera_role: object) -> list[str]:
     options: list[str] = []
     seen: set[str] = set()
 
+    def add_names(names) -> None:
+        for name in names:
+            normalized = str(name or "").strip()
+            if not normalized or normalized in seen:
+                continue
+            options.append(normalized)
+            seen.add(normalized)
+
+    loc_method = str(getattr(tool_page, "loc_method", "") or "line2dup").strip() or "line2dup"
+    product_dir = str(getattr(getattr(tool_page, "session", None), "product_dir", "") or "").strip()
+
+    if loc_method == "ncc":
+        if product_dir and ncc_locator.model_is_ready(product_dir, role):
+            add_names(ncc_locator.display_names_by_label_for_product(product_dir, role).values())
+        if options:
+            return options
+
+    if loc_method == "line2dup":
+        recipe_getter = getattr(tool_page, "line2dup_recipe_for_role", None)
+        recipe = recipe_getter(role, force_reload=False) if callable(recipe_getter) else None
+        add_names(group_names_from_line2dup_recipe(recipe))
+        if options:
+            return options
+
+    # Fallback for legacy sessions where loc_method was not saved.
+    if product_dir and ncc_locator.model_is_ready(product_dir, role):
+        add_names(ncc_locator.display_names_by_label_for_product(product_dir, role).values())
     recipe_getter = getattr(tool_page, "line2dup_recipe_for_role", None)
     recipe = recipe_getter(role, force_reload=False) if callable(recipe_getter) else None
     for name in group_names_from_line2dup_recipe(recipe):
@@ -98,6 +126,9 @@ def _group_name_options_for_camera(tool_page, camera_role: object) -> list[str]:
             continue
         options.append(normalized)
         seen.add(normalized)
+
+    if options:
+        return options
 
     for inspection_item in getattr(tool_page, "inspection_items", []) or []:
         item_role = str(getattr(inspection_item, "camera_id", "") or "").strip() or "cam1"
@@ -322,7 +353,7 @@ def _refresh_inspection_items_table(tool_page) -> None:
                 group_options_by_role[item_role] = list(group_options)
             for group_name in group_options:
                 group_combo.addItem(group_name, group_name)
-            if current_group and group_combo.findData(current_group) < 0:
+            if current_group and not group_options and group_combo.findData(current_group) < 0:
                 group_combo.addItem(current_group, current_group)
             group_index = max(0, group_combo.findData(current_group))
             group_combo.setCurrentIndex(group_index)

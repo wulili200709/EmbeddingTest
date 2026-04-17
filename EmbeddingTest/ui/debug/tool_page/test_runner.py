@@ -94,9 +94,12 @@ def _predict_image(
             match_ms = float(run.total_ms)
             tool_page._line2dup_match_ms_by_image[path] = match_ms
             tool_page._line2dup_autogen_ms_by_image[path] = float(run.total_ms)
-    elif tool_page.loc_method != "line2dup":
-        tool_page._autogen_roi_for_images([path], only_missing=True, silent=True)
-        match_ms = tool_page._line2dup_autogen_ms_by_image.get(path)
+    elif tool_page.loc_method == "ncc":
+        tool_page._autogen_roi_for_images([path], only_missing=False, silent=True)
+        invalidate_shape_cache = getattr(tool_page, "_invalidate_shape_lookup_cache", None)
+        if callable(invalidate_shape_cache):
+            invalidate_shape_cache(path)
+        match_ms = tool_page._line2dup_match_ms_by_image.get(path)
 
     labels = [str(label).strip() for label in (labels_override or []) if str(label).strip()]
     if not labels:

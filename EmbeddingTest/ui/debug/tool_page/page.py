@@ -104,6 +104,10 @@ except Exception:
 
 
 SUPPORTED_LOC_MODES = ["line2dup", "ncc"]
+LOC_METHOD_DISPLAY_NAMES = {
+    "line2dup": "位置修正工具",
+    "ncc": "NCC位置修正工具",
+}
 SUPPORTED_SHAPES = ["rect", "polygon"]
 ROI_OVERLAY_PALETTE = [
     QtGui.QColor(255, 215, 0),
@@ -379,6 +383,20 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
         self.lbl_scope.setStyleSheet("color:#d0d0d0;font-size:12px;")
         root.addWidget(self.lbl_scope)
 
+        loc_row = QtWidgets.QHBoxLayout()
+        loc_row.setSpacing(8)
+        loc_row.addWidget(QtWidgets.QLabel("定位方式："))
+        self.cmb_loc_method = QtWidgets.QComboBox()
+        for key in SUPPORTED_LOC_MODES:
+            self.cmb_loc_method.addItem(LOC_METHOD_DISPLAY_NAMES.get(key, key), key)
+        index = self.cmb_loc_method.findData(str(self._tool_page.loc_method or "line2dup"))
+        self.cmb_loc_method.setCurrentIndex(index if index >= 0 else 0)
+        self.cmb_loc_method.currentIndexChanged.connect(
+            lambda *_: self._on_loc_method_changed(str(self.cmb_loc_method.currentData() or "line2dup"))
+        )
+        loc_row.addWidget(self.cmb_loc_method, 1)
+        root.addLayout(loc_row)
+
         self.lbl_ref = QtWidgets.QLabel("")
         self.lbl_ref.setStyleSheet("color:#d0d0d0;font-size:12px;")
         root.addWidget(self.lbl_ref)
@@ -431,16 +449,39 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
             f"当前范围：{camera_role} / {sample_text} / 共 {len(paths)} 张"
             + (f" / 当前图：{os.path.basename(current_path)}" if current_path else "")
         )
-        recipe = self._tool_page.line2dup_recipe_for_role(camera_role, force_reload=False)
-        ref_image = ""
-        if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
-            ref_image = str(recipe.reference_image)
-        self.lbl_ref.setText(f"参考图：{os.path.basename(ref_image) if ref_image else '未设置'}")
-        self.lbl_ref.setToolTip(ref_image)
+        method = str(self._tool_page.loc_method or "line2dup").strip() or "line2dup"
+        index = self.cmb_loc_method.findData(method)
+        if index >= 0 and self.cmb_loc_method.currentIndex() != index:
+            blocker = QtCore.QSignalBlocker(self.cmb_loc_method)
+            self.cmb_loc_method.setCurrentIndex(index)
+            del blocker
+        can_autogen = True
+        if method == "ncc":
+            model_path = ncc_locator.resolved_model_path_for_product(self._tool_page.session.product_dir, camera_role)
+            has_model = os.path.exists(model_path)
+            self.lbl_ref.setText(f"NCC模型：{'已设置' if has_model else '未找到'}")
+            self.lbl_ref.setToolTip(model_path)
+            can_autogen = has_model
+        else:
+            recipe = self._tool_page.line2dup_recipe_for_role(camera_role, force_reload=False)
+            ref_image = ""
+            if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
+                ref_image = str(recipe.reference_image)
+            self.lbl_ref.setText(f"参考图：{os.path.basename(ref_image) if ref_image else '未设置'}")
+            self.lbl_ref.setToolTip(ref_image)
         has_scope = bool(paths)
-        self.btn_autogen_current.setEnabled(has_scope)
+        self.btn_autogen_current.setEnabled(has_scope and can_autogen)
         self.btn_clear_current.setEnabled(has_scope)
-        self.btn_autogen_current_image.setEnabled(bool(current_path))
+        self.btn_autogen_current_image.setEnabled(bool(current_path) and can_autogen)
+
+    def _on_loc_method_changed(self, method: str) -> None:
+        method = str(method or "").strip() or "line2dup"
+        if method not in SUPPORTED_LOC_MODES:
+            method = "line2dup"
+        if self._tool_page.loc_method != method:
+            self._tool_page._on_loc_method_changed(method)
+            self._preview_dialog._reload_samples(preferred_path=self._current_path())
+        self._refresh_scope()
 
     def _sync_tool_page_role(self) -> None:
         self._tool_page._set_current_camera_role(self._camera_role(), sync_debug_role=True)
@@ -457,6 +498,8 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
             silent=False,
             camera_role=self._camera_role(),
         )
+        self._preview_dialog._reload_samples(preferred_path=self._current_path())
+        self._refresh_scope()
 
     def _run_autogen_current_image(self) -> None:
         path = self._current_path()
@@ -470,6 +513,8 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
             silent=False,
             camera_role=self._camera_role(),
         )
+        self._preview_dialog._reload_samples(preferred_path=path)
+        self._refresh_scope()
 
     def _run_clear_current_list(self) -> None:
         paths = self._scope_paths()
@@ -1564,14 +1609,24 @@ class ToolPage(QtWidgets.QWidget):
 
     def _training_roi_ready_signature(self, camera_role: object = None) -> str:
         role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        loc_method = str(getattr(self, "loc_method", "") or "").strip().lower()
         candidate_paths = self._train_sample_paths_for_role(role)
-        recipe_path = self.line2dup_recipe_path_for_role(role)
-        model_path = self.line2dup_model_path_for_role(role)
+        recipe_path = ""
+        model_path = ""
+        if loc_method == "ncc":
+            try:
+                model_path = ncc_locator.resolved_model_path_for_product(self.session.product_dir, role)
+            except Exception:
+                model_path = ""
+        else:
+            recipe_path = self.line2dup_recipe_path_for_role(role)
+            model_path = self.line2dup_model_path_for_role(role)
         recipe_mtime = os.path.getmtime(recipe_path) if recipe_path and os.path.exists(recipe_path) else -1.0
         model_mtime = os.path.getmtime(model_path) if model_path and os.path.exists(model_path) else -1.0
         return "|".join(
             [
                 role,
+                loc_method,
                 str(recipe_mtime),
                 str(model_mtime),
                 str(self.ref_image or ""),
@@ -1649,7 +1704,8 @@ class ToolPage(QtWidgets.QWidget):
 
     def _ensure_training_roi_reviewed(self, camera_role: object, *, action_name: str, action_key: str) -> bool:
         role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
-        if self.loc_method != "line2dup":
+        loc_method = str(getattr(self, "loc_method", "") or "").strip().lower()
+        if loc_method not in {"line2dup", "ncc"}:
             return True
         candidate_paths = self._train_sample_paths_for_role(role)
         if not candidate_paths:
@@ -1664,6 +1720,19 @@ class ToolPage(QtWidgets.QWidget):
             self._training_roi_pending_actions.pop(role, None)
             self._update_runtime_widgets()
             return True
+
+        if loc_method == "ncc":
+            self._training_roi_ready_signatures[role] = signature
+            self._training_roi_pending_actions[role] = action_key
+            self._update_runtime_widgets()
+            self.lbl_status.setText(f"状态：NCC 模式已进入训练确认，请检查 ROI 后再次点击{action_name}")
+            QtWidgets.QMessageBox.information(
+                self,
+                "训练确认",
+                f"NCC 模式将使用当前训练图里已经生成并标注 OK/NG 的 ROI。\n"
+                f"请检查当前图片上的 ROI，确认无误后再次点击“{action_name}”。",
+            )
+            return False
 
         recipe = self.line2dup_recipe_for_role(role, force_reload=True)
         if recipe is None:
@@ -1896,12 +1965,28 @@ class ToolPage(QtWidgets.QWidget):
             initial_image_path=str(self.canvas.image_path() or ""),
             parent=self.window(),
         )
+        if hasattr(dialog, "modelSaved"):
+            dialog.modelSaved.connect(self._on_ncc_model_saved)
         dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
         dialog.destroyed.connect(lambda *_: setattr(self, "_ncc_workbench_dialog", None))
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
         self._ncc_workbench_dialog = dialog
+
+    def _on_ncc_model_saved(self, model_path: str) -> None:
+        self.loc_method = "ncc"
+        combo = getattr(self, "cmb_loc", None)
+        if combo is not None:
+            index = combo.findText("ncc")
+            if index >= 0 and combo.currentIndex() != index:
+                blocker = QtCore.QSignalBlocker(combo)
+                combo.setCurrentIndex(index)
+                del blocker
+        self._save_session()
+        self._reload_inspection_items()
+        self.roiGeometryChanged.emit()
+        self.lbl_status.setText(f"状态：已保存 NCC 模型，定位方式已切换为 ncc：{os.path.basename(str(model_path or 'model.json'))}")
 
     def runtime_controller(self):
         parent = self.parent()
@@ -3792,6 +3877,44 @@ class ToolPage(QtWidgets.QWidget):
                 self._show_selected_image_path(path)
                 return
 
+    def _sync_sample_selection_to_path(self, path: str, *, switch_tab: bool = False) -> bool:
+        target_path = os.path.normpath(str(path or ""))
+        if not target_path:
+            return False
+        current_role = _selected_image_list_camera_role(self)
+        current_kind = self._current_sample_tab_kind()
+        ordered_kinds = [current_kind, "test" if current_kind == "train" else "train"]
+        target: Optional[Tuple[str, int]] = None
+        for kind in ordered_kinds:
+            for row, sample_path in enumerate(self._sample_paths_for_kind(kind, current_role)):
+                if os.path.normpath(str(sample_path or "")) == target_path:
+                    target = (kind, row)
+                    break
+            if target is not None:
+                break
+        if target is None:
+            return False
+
+        target_kind, target_row = target
+        target_tab = 0 if target_kind == "train" else 1
+        if switch_tab and self.tabs.currentIndex() != target_tab:
+            tab_blocker = QtCore.QSignalBlocker(self.tabs)
+            self.tabs.setCurrentIndex(target_tab)
+            del tab_blocker
+
+        target_list = self.ok_list if target_kind == "train" else self.test_list
+        other_list = self.test_list if target_kind == "train" else self.ok_list
+        other_blocker = QtCore.QSignalBlocker(other_list)
+        other_list.clearSelection()
+        other_list.setCurrentItem(None)
+        del other_blocker
+
+        list_blocker = QtCore.QSignalBlocker(target_list)
+        target_list.setCurrentRow(target_row)
+        del list_blocker
+        self._update_sample_panel_widgets()
+        return True
+
     def _move_selected_sample_to(self, target_kind: str) -> None:
         path = self._current_selected_path()
         if not path:
@@ -4659,6 +4782,7 @@ class ToolPage(QtWidgets.QWidget):
             status_text += f"  log={log_names[-1]}"
         self.lbl_status.setText(status_text)
         self._load_canvas_image(p)
+        self._sync_sample_selection_to_path(p, switch_tab=True)
         self._update_sample_panel_widgets()
 
 
@@ -4715,6 +4839,7 @@ class ToolPage(QtWidgets.QWidget):
         p = it.data(QtCore.Qt.UserRole)
         if isinstance(p, str) and os.path.exists(p):
             self._load_canvas_image(p)
+            self._sync_sample_selection_to_path(p, switch_tab=True)
             self._set_status_for_current_image(p)
             self._update_sample_panel_widgets()
 
