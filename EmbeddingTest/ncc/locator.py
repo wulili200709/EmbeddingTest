@@ -40,6 +40,21 @@ class NccAutogenRun:
     total_ms: float
 
 
+@dataclass(frozen=True)
+class NccRuntimeDetectedShape:
+    label_name: str
+    shape_type: str
+    points: tuple[Tuple[float, float], ...]
+    bbox: Tuple[int, int, int, int]
+
+
+@dataclass(frozen=True)
+class NccRuntimeAutogenRun:
+    roi_shapes: tuple[NccRuntimeDetectedShape, ...]
+    locate_ms: float
+    total_ms: float
+
+
 def _normalize_camera_role(camera_role: str) -> str:
     role = str(camera_role or "").strip().lower()
     return role if role in {"cam1", "cam2"} else "cam1"
@@ -172,6 +187,48 @@ def _project_reference_regions(model: NccMatchModel, match_quad: Sequence[Tuple[
     return projected
 
 
+def _bbox_xywh_from_points(points: Sequence[Tuple[float, float]]) -> Tuple[int, int, int, int]:
+    pts = np.asarray(points, dtype=np.float32)
+    if pts.size == 0:
+        return (0, 0, 1, 1)
+    x_min = int(np.floor(float(np.min(pts[:, 0]))))
+    y_min = int(np.floor(float(np.min(pts[:, 1]))))
+    x_max = int(np.ceil(float(np.max(pts[:, 0]))))
+    y_max = int(np.ceil(float(np.max(pts[:, 1]))))
+    return (x_min, y_min, max(1, x_max - x_min), max(1, y_max - y_min))
+
+
+def _runtime_shapes_from_match(
+    model: NccMatchModel,
+    match_quad: Sequence[Tuple[float, float]],
+) -> tuple[NccRuntimeDetectedShape, ...]:
+    projected = _project_reference_regions(model, match_quad)
+    if not projected:
+        points = tuple((float(x), float(y)) for x, y in match_quad)
+        return (
+            NccRuntimeDetectedShape(
+                label_name="roi",
+                shape_type="polygon",
+                points=points,
+                bbox=_bbox_xywh_from_points(points),
+            ),
+        )
+    shapes: List[NccRuntimeDetectedShape] = []
+    for label_name, points_raw in projected:
+        points = tuple((float(x), float(y)) for x, y in points_raw)
+        if len(points) < 3:
+            continue
+        shapes.append(
+            NccRuntimeDetectedShape(
+                label_name=str(label_name or "").strip() or "roi",
+                shape_type="polygon",
+                points=points,
+                bbox=_bbox_xywh_from_points(points),
+            )
+        )
+    return tuple(shapes)
+
+
 def _existing_shape_labels(tgt_img_path: str, current_labels: Sequence[str]) -> List[str]:
     jpath = labelme_json_of_image(tgt_img_path)
     if not os.path.exists(jpath):
@@ -288,10 +345,55 @@ def autogen_roi_json_from_ncc_timed(
     )
 
 
+def autogen_runtime_roi_shapes_timed(
+    scene_bgr: np.ndarray,
+    product_dir: str,
+    *,
+    camera_role: str = "cam1",
+    model_path: str | None = None,
+    model: NccMatchModel | None = None,
+    compiled_model: NccCompiledModel | None = None,
+) -> NccRuntimeAutogenRun:
+    total_t0 = time.perf_counter()
+    active_model_path = model_path or resolved_model_path_for_product(product_dir, camera_role)
+    if not os.path.exists(active_model_path):
+        raise FileNotFoundError(f"Missing NCC model: {active_model_path}")
+    if scene_bgr is None:
+        raise ValueError("scene_bgr is required")
+
+    active_model = (model or getattr(compiled_model, "model", None) or load_model(active_model_path)).normalized()
+    compiled = compiled_model or NccCompiledModel(active_model_path, active_model)
+    should_close = compiled_model is None
+    try:
+        locate_t0 = time.perf_counter()
+        response = compiled.match(
+            np.asarray(scene_bgr),
+            options=active_model.options,
+            search_roi=active_model.search_roi.to_xywh() if active_model.search_roi is not None else None,
+        )
+        locate_ms = (time.perf_counter() - locate_t0) * 1000.0
+    finally:
+        if should_close:
+            compiled.close()
+
+    if not response.matches:
+        raise RuntimeError("NCC did not find any match.")
+
+    total_ms = (time.perf_counter() - total_t0) * 1000.0
+    return NccRuntimeAutogenRun(
+        roi_shapes=_runtime_shapes_from_match(active_model, response.matches[0].quad),
+        locate_ms=locate_ms,
+        total_ms=total_ms,
+    )
+
+
 __all__ = [
     "NccAutogenRun",
+    "NccRuntimeAutogenRun",
+    "NccRuntimeDetectedShape",
     "ProductNccPaths",
     "autogen_roi_json_from_ncc_timed",
+    "autogen_runtime_roi_shapes_timed",
     "display_names_by_label_for_product",
     "inspection_item_specs_for_product",
     "inspection_item_specs_from_ncc_model",

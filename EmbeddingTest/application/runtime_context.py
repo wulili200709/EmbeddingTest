@@ -138,12 +138,18 @@ def _predict_learning_items_batch_rows(
             raise RuntimeError("please choose a learning tool subtype first")
         group_infer_t0 = time.perf_counter()
         models: List[Any] = []
+        model_cache: Dict[str, Any] = {}
         for item in group:
-            load_embedding_model(algorithm, model_key=item.effective_model_key)
-            if algo.model is None:
-                raise RuntimeError(f"algorithm model not loaded: {algorithm}")
-            algo.apply_params_to_model()
-            models.append(algo.model)
+            model_key = str(item.effective_model_key or "").strip()
+            model = model_cache.get(model_key)
+            if model is None:
+                load_embedding_model(algorithm, model_key=model_key)
+                if algo.model is None:
+                    raise RuntimeError(f"algorithm model not loaded: {algorithm}")
+                algo.apply_params_to_model()
+                model = algo.model
+                model_cache[model_key] = model
+            models.append(model)
         group_feat_net = feat_net
         if group_feat_net is None or len(learning_groups) > 1:
             group_feat_net = algo.get_feat_net(
@@ -270,6 +276,28 @@ def _runtime_shape_by_label(
     return shape_by_label
 
 
+def _preview_shapes_from_detected_shapes(shapes: object) -> tuple[RuntimePreviewShape, ...]:
+    preview_shapes: list[RuntimePreviewShape] = []
+    for shape in tuple(shapes or ()):
+        label = str(getattr(shape, "label_name", "") or getattr(shape, "label", "") or "").strip()
+        if not label:
+            continue
+        points = tuple(
+            (float(x), float(y))
+            for x, y in tuple(getattr(shape, "points", ()) or ())
+        )
+        if not points:
+            continue
+        preview_shapes.append(
+            RuntimePreviewShape(
+                label=label,
+                shape_type=str(getattr(shape, "shape_type", "polygon") or "polygon"),
+                points=points,
+            )
+        )
+    return tuple(preview_shapes)
+
+
 def _predict_learning_items_batch_rows_from_frame(
     *,
     image_bgr: np.ndarray,
@@ -292,12 +320,18 @@ def _predict_learning_items_batch_rows_from_frame(
             raise RuntimeError("please choose a learning tool subtype first")
         group_infer_t0 = time.perf_counter()
         models: List[Any] = []
+        model_cache: Dict[str, Any] = {}
         for item in group:
-            load_embedding_model(algorithm, model_key=item.effective_model_key)
-            if algo.model is None:
-                raise RuntimeError(f"algorithm model not loaded: {algorithm}")
-            algo.apply_params_to_model()
-            models.append(algo.model)
+            model_key = str(item.effective_model_key or "").strip()
+            model = model_cache.get(model_key)
+            if model is None:
+                load_embedding_model(algorithm, model_key=model_key)
+                if algo.model is None:
+                    raise RuntimeError(f"algorithm model not loaded: {algorithm}")
+                algo.apply_params_to_model()
+                model = algo.model
+                model_cache[model_key] = model
+            models.append(model)
         group_feat_net = feat_net
         if group_feat_net is None or len(learning_groups) > 1:
             group_feat_net = algo.get_feat_net(
@@ -437,6 +471,119 @@ class ToolPageRuntimeContext:
         )
 
         return [dict(rows_by_key[item.model_key]) for item in enabled_items]
+
+    def predict_items_batch_from_frame(
+        self,
+        image_bgr,
+        *,
+        camera_role: str,
+        items: List[InspectionItem],
+        feat_net=None,
+    ) -> RuntimeFrameBatchPrediction:
+        image = np.asarray(image_bgr)
+        if image.ndim not in {2, 3}:
+            raise ValueError(f"unsupported image shape: {image.shape!r}")
+
+        tool_page = self.tool_page
+        enabled_items = [item for item in items if item.enabled]
+        learning_items = [item for item in enabled_items if tool_page.algo.is_learning_tool(item.algorithm_code)]
+        traditional_items = [item for item in enabled_items if not tool_page.algo.is_learning_tool(item.algorithm_code)]
+        role = str(camera_role or "").strip() or (
+            str(enabled_items[0].camera_id or "").strip() if enabled_items else str(tool_page.current_camera_role() or "cam1").strip()
+        ) or "cam1"
+
+        match_ms = 0.0
+        roi_shapes: tuple[RuntimePreviewShape, ...] = ()
+        if tool_page.loc_method == "ncc":
+            run = ncc_locator.autogen_runtime_roi_shapes_timed(
+                image,
+                product_dir=tool_page.session.product_dir,
+                camera_role=role,
+            )
+            match_ms = float(run.locate_ms)
+            image_path_getter = getattr(getattr(tool_page, "canvas", None), "image_path", None)
+            image_path = str(image_path_getter() if callable(image_path_getter) else "").strip()
+            if image_path:
+                tool_page._line2dup_match_ms_by_image[image_path] = match_ms
+            roi_shapes = _preview_shapes_from_detected_shapes(run.roi_shapes)
+        elif tool_page.loc_method == "line2dup":
+            recipe = tool_page.line2dup_recipe_for_role(role)
+            ref_image = tool_page.ref_image
+            if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
+                ref_image = recipe.reference_image
+            if ref_image and os.path.exists(ref_image):
+                run = line2dup_locator.autogen_runtime_roi_shapes_timed(
+                    scene_bgr=image,
+                    ref_img_path=ref_image,
+                    product_dir=tool_page.session.product_dir,
+                    camera_role=role,
+                )
+                match_ms = float(run.total_ms)
+                roi_shapes = _preview_shapes_from_detected_shapes(run.roi_shapes)
+
+        rows_by_key = _predict_learning_items_batch_rows_from_frame(
+            image_bgr=image,
+            roi_shapes=roi_shapes,
+            items=learning_items,
+            match_ms=match_ms,
+            algo=tool_page.algo,
+            load_embedding_model=tool_page.load_embedding_model,
+            feat_net=feat_net,
+        )
+        shape_by_label = _runtime_shape_by_label(roi_shapes)
+        traditional_algorithms: list[str] = []
+        threshold_models: list[TraditionalThresholdModel] = []
+        preferred_labels: list[str] = []
+        threshold_model_cache: dict[tuple[str, str], TraditionalThresholdModel] = {}
+        for item in traditional_items:
+            algorithm = tool_page.algo.resolve_tool_algorithm(item.algorithm_code)
+            traditional_algorithms.append(algorithm)
+            lookup_model_key = str(item.effective_model_key or "").strip()
+            cache_key = (algorithm, lookup_model_key)
+            threshold_model = threshold_model_cache.get(cache_key)
+            if threshold_model is None:
+                model_dict = tool_page.algo.get_traditional_model_dict(algorithm, model_key=lookup_model_key)
+                if not isinstance(model_dict, dict):
+                    raise RuntimeError(f"traditional algorithm {algorithm} is not trained yet")
+                threshold_model = TraditionalThresholdModel.from_dict(model_dict)
+                threshold_model_cache[cache_key] = threshold_model
+            threshold_models.append(threshold_model)
+            preferred_labels.append(
+                str(item.roi_label or "").strip()
+                or str(threshold_model.roi_label or "").strip()
+                or "roi"
+            )
+
+        traditional_metrics_rows = compute_roi_metrics_batch_from_array(
+            image,
+            shape_by_label=shape_by_label,
+            preferred_labels=preferred_labels,
+            required_algorithms=traditional_algorithms,
+        )
+        for item, algorithm, threshold_model, metrics in zip(
+            traditional_items,
+            traditional_algorithms,
+            threshold_models,
+            traditional_metrics_rows,
+        ):
+            value = metric_value(metrics, algorithm)
+            pred, diff = threshold_model.predict(value)
+            rows_by_key[item.model_key] = _runtime_prediction_row(
+                pred=pred,
+                diff=diff,
+                value=value,
+                threshold=threshold_model.threshold,
+                match_ms=match_ms,
+                infer_ms=0.0,
+                total_ms=0.0,
+                roi_label=str(metrics.get("roi_label", "") or ""),
+            )
+
+        return RuntimeFrameBatchPrediction(
+            rows=[dict(rows_by_key[item.model_key]) for item in enabled_items],
+            match_ms=float(match_ms),
+            roi_shapes=roi_shapes,
+        )
 
     def reload(self) -> None:
         return None
@@ -631,6 +778,15 @@ class ProductRuntimeContext:
                     )
                     for shape in tuple(run.roi_shapes or ())
                 )
+        elif self.loc_method == "ncc":
+            run = ncc_locator.autogen_runtime_roi_shapes_timed(
+                image,
+                product_dir=self.session.product_dir,
+                camera_role=role,
+            )
+            match_ms = float(run.locate_ms)
+            self._line2dup_match_ms_by_image[role] = match_ms
+            roi_shapes = _preview_shapes_from_detected_shapes(run.roi_shapes)
 
         rows_by_key = _predict_learning_items_batch_rows_from_frame(
             image_bgr=image,

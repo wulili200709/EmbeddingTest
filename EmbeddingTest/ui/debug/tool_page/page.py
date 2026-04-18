@@ -36,6 +36,7 @@ import numpy as np
 
 from PySide6 import QtCore, QtGui, QtWidgets
 import algorithms.proxy as qr_core
+from algorithms.image_io import imread
 
 from infrastructure.camera_settings_store import (
     CameraSettingsStore,
@@ -3877,6 +3878,24 @@ class ToolPage(QtWidgets.QWidget):
                 self._show_selected_image_path(path)
                 return
 
+    def _select_path_in_sample_list(self, kind: str, path: str) -> bool:
+        if not path:
+            return False
+        normalized_kind = str(kind or "").strip().lower()
+        list_widget = self.ok_list if normalized_kind == "train" else self.test_list
+        target_path = os.path.normpath(str(path))
+        for row in range(list_widget.count()):
+            item = list_widget.item(row)
+            if item is None:
+                continue
+            item_path = item.data(QtCore.Qt.UserRole) or item.toolTip()
+            if os.path.normpath(str(item_path or "")) == target_path:
+                blocker = QtCore.QSignalBlocker(list_widget)
+                list_widget.setCurrentRow(row)
+                del blocker
+                return True
+        return False
+
     def _sync_sample_selection_to_path(self, path: str, *, switch_tab: bool = False) -> bool:
         target_path = os.path.normpath(str(path or ""))
         if not target_path:
@@ -3919,6 +3938,9 @@ class ToolPage(QtWidgets.QWidget):
         path = self._current_selected_path()
         if not path:
             return
+        source_kind = self._current_sample_tab_kind()
+        source_list = self.ok_list if source_kind == "train" else self.test_list
+        source_row = source_list.currentRow()
         normalized_target = str(target_kind or "").strip().upper()
         for collection in (self.train_files, self.test_files, self.ok_files, self.ng_files):
             while path in collection:
@@ -3926,15 +3948,27 @@ class ToolPage(QtWidgets.QWidget):
         if normalized_target == "TRAIN":
             self.train_files.append(path)
             self.train_files = sorted(list(dict.fromkeys(self.train_files)))
-            self.tabs.setCurrentIndex(0)
+            target_tab = 0
         else:
             self.test_files.append(path)
             self.test_files = sorted(list(dict.fromkeys(self.test_files)))
-            self.tabs.setCurrentIndex(1)
+            target_tab = 1
+        source_paths = self._sample_paths_for_kind(source_kind, _selected_image_list_camera_role(self))
+        source_fallback_path = ""
+        if source_paths:
+            fallback_row = min(max(source_row, 0), len(source_paths) - 1)
+            source_fallback_path = str(source_paths[fallback_row])
         self._refresh_lists()
+        if source_fallback_path:
+            self._select_path_in_sample_list(source_kind, source_fallback_path)
+        if self.tabs.currentIndex() != target_tab:
+            tab_blocker = QtCore.QSignalBlocker(self.tabs)
+            self.tabs.setCurrentIndex(target_tab)
+            del tab_blocker
         self._clear_training_roi_review_state()
         self._save_session()
         self._select_path_in_current_tab(path)
+        self._update_sample_panel_widgets()
 
     def _open_sample_annotation_dialog(self) -> None:
         dialog = getattr(self, "_sample_annotation_preview_dialog", None)
@@ -4667,6 +4701,51 @@ class ToolPage(QtWidgets.QWidget):
             if item.enabled and _normalize_camera_role(getattr(item, "camera_id", "")) == current_role
         ]
 
+    def _apply_runtime_roi_overlays(self, path: str, roi_shapes: Tuple[object, ...]) -> None:
+        if not roi_shapes:
+            return
+        status_by_label = self._roi_results_by_image.get(path, {})
+        overlays: List[OverlayShape] = []
+        for shape in tuple(roi_shapes or ()):
+            label = str(getattr(shape, "label", "") or "").strip()
+            points: List[Tuple[float, float]] = []
+            for point in tuple(getattr(shape, "points", ()) or ()):
+                if not isinstance(point, (list, tuple)) or len(point) < 2:
+                    continue
+                points.append((float(point[0]), float(point[1])))
+            if not label or not points:
+                continue
+            color, width, dash = overlay_style_for_label(label, status=str(status_by_label.get(label, "") or ""))
+            shape_type = str(getattr(shape, "shape_type", "polygon") or "polygon")
+            if shape_type in {"rect", "rectangle"} and len(points) >= 2:
+                (x0, y0), (x1, y1) = points[:2]
+                overlays.append(
+                    OverlayShape(
+                        shape_type="rect",
+                        xywh=(
+                            int(round(min(x0, x1))),
+                            int(round(min(y0, y1))),
+                            max(1, int(round(abs(x1 - x0)))),
+                            max(1, int(round(abs(y1 - y0)))),
+                        ),
+                        color=color,
+                        width=width,
+                        dash=dash,
+                    )
+                )
+            elif len(points) >= 3:
+                overlays.append(
+                    OverlayShape(
+                        shape_type="polygon",
+                        points=list(points),
+                        color=color,
+                        width=width,
+                        dash=dash,
+                    )
+                )
+        if overlays:
+            self.canvas.set_overlays(overlays)
+
     def _run_test(self) -> None:
         p = self.canvas.image_path()
         if p is None or not os.path.exists(p):
@@ -4682,11 +4761,13 @@ class ToolPage(QtWidgets.QWidget):
         ) or "cam1"
 
         executor = InspectionExecutor(ToolPageRuntimeContext(self))
+        image_bgr = imread(p, cv2.IMREAD_COLOR) if self.loc_method == "ncc" else None
         try:
             response = executor.execute(
                 InspectionExecutionRequest(
                     camera_id=camera_id,
                     image_path=p,
+                    image_bgr=image_bgr,
                     items=target_items,
                 )
             )
@@ -4782,6 +4863,7 @@ class ToolPage(QtWidgets.QWidget):
             status_text += f"  log={log_names[-1]}"
         self.lbl_status.setText(status_text)
         self._load_canvas_image(p)
+        self._apply_runtime_roi_overlays(p, response.roi_shapes)
         self._sync_sample_selection_to_path(p, switch_tab=True)
         self._update_sample_panel_widgets()
 

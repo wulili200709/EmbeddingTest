@@ -36,6 +36,7 @@ class _ToolPageSelectionHarness:
     _on_select_test = ToolPage._on_select_test
     _on_tab_changed = ToolPage._on_tab_changed
     _remove_selected_from = ToolPage._remove_selected_from
+    _select_path_in_sample_list = ToolPage._select_path_in_sample_list
     _sync_sample_selection_to_path = ToolPage._sync_sample_selection_to_path
 
     def __init__(self) -> None:
@@ -78,6 +79,27 @@ class _ToolPageSelectionHarness:
 
     def _refresh_lists(self) -> None:
         self.refresh_calls += 1
+        current_train = self.ok_list.currentItem()
+        current_test = self.test_list.currentItem()
+        current_train_path = current_train.data(QtCore.Qt.UserRole) if current_train is not None else None
+        current_test_path = current_test.data(QtCore.Qt.UserRole) if current_test is not None else None
+
+        def fill(list_widget: QtWidgets.QListWidget, paths: list[str], current_path: object) -> None:
+            blocker = QtCore.QSignalBlocker(list_widget)
+            list_widget.clear()
+            selected_row = -1
+            for row, path in enumerate(paths):
+                item = QtWidgets.QListWidgetItem(path)
+                item.setData(QtCore.Qt.UserRole, path)
+                list_widget.addItem(item)
+                if current_path == path:
+                    selected_row = row
+            if selected_row >= 0:
+                list_widget.setCurrentRow(selected_row)
+            del blocker
+
+        fill(self.ok_list, self.train_files, current_train_path)
+        fill(self.test_list, self.test_files, current_test_path)
 
     def _clear_training_roi_review_state(self) -> None:
         return None
@@ -166,6 +188,25 @@ class ToolPageSelectionFlowTest(unittest.TestCase):
         self.assertEqual(harness.save_calls, 1)
         self.assertEqual(harness.refresh_calls, 1)
         self.assertEqual(harness.selection_calls, ["test_a.png"])
+
+    def test_move_test_sample_preserves_neighbor_selection_in_test_tab(self) -> None:
+        harness = _ToolPageSelectionHarness()
+        harness.test_files = ["test_a.png", "test_b.png", "test_c.png"]
+        for path in harness.test_files:
+            item = QtWidgets.QListWidgetItem(path)
+            item.setData(QtCore.Qt.UserRole, path)
+            harness.test_list.addItem(item)
+        harness.tabs.setCurrentIndex(1)
+        harness.test_list.setCurrentRow(1)
+
+        harness._move_selected_sample_to("TRAIN")
+
+        self.assertEqual(harness.test_files, ["test_a.png", "test_c.png"])
+        self.assertEqual(harness.test_list.currentRow(), 1)
+        self.assertEqual(
+            harness.test_list.currentItem().data(QtCore.Qt.UserRole),
+            "test_c.png",
+        )
 
     def test_sync_sample_selection_switches_to_test_path_after_test_run(self) -> None:
         harness = _ToolPageSelectionHarness()

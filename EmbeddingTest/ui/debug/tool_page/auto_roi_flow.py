@@ -387,13 +387,13 @@ def _autogen_roi_for_images(
         if callable(invalidate_shape_cache):
             for image_path in todo:
                 invalidate_shape_cache(image_path)
-    if ok:
+    if ok and not silent:
         self._reload_inspection_items()
     if ok or (errs and method == "ncc"):
         self.roiGeometryChanged.emit()
 
     cur = self.canvas.image_path()
-    if cur and cur in todo:
+    if not silent and cur and cur in todo:
         self._load_canvas_image(cur)
         self._set_status_for_current_image(cur)
 
