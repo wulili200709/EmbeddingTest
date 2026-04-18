@@ -78,12 +78,18 @@ def _sync_inspection_items_row_highlight(tool_page) -> None:
         selected_rows = selection_model.selectedRows()
         if selected_rows:
             selected_row = int(selected_rows[0].row())
-    for row in range(table.rowCount()):
+    previous_row = int(getattr(tool_page, "_inspection_items_last_highlight_row", -1))
+    target_rows = {row for row in (previous_row, selected_row) if 0 <= row < table.rowCount()}
+    if not target_rows and selected_row < 0:
+        tool_page._inspection_items_last_highlight_row = selected_row
+        return
+    for row in sorted(target_rows):
         is_selected = row == selected_row
         for column in (2, 3, 4):
             widget = table.cellWidget(row, column)
             if widget is not None:
                 widget.setStyleSheet(_inspection_combo_style(is_selected))
+    tool_page._inspection_items_last_highlight_row = selected_row
 
 
 def _group_name_options_for_camera(tool_page, camera_role: object) -> list[str]:
@@ -382,6 +388,7 @@ def _refresh_inspection_items_table(tool_page) -> None:
         table.setUpdatesEnabled(True)
         tool_page._inspection_items_table_loading = False
 
+    tool_page._inspection_items_last_highlight_row = -1
     if table.rowCount() > 0:
         restored_row = -1
         if selected_item_id:
@@ -397,7 +404,6 @@ def _refresh_inspection_items_table(tool_page) -> None:
             table.setCurrentItem(None)
     table.setColumnWidth(0, 52)
     table.setColumnWidth(2, 78)
-    _sync_inspection_items_row_highlight(tool_page)
     _on_inspection_items_selection_changed(tool_page)
 
     _update_learning_backbone_hint(tool_page)

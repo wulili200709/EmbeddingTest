@@ -36,6 +36,7 @@ import numpy as np
 
 from PySide6 import QtCore, QtGui, QtWidgets
 import algorithms.proxy as qr_core
+from algorithms import labelme as labelme_core
 from algorithms.image_io import imread
 
 from infrastructure.camera_settings_store import (
@@ -2169,7 +2170,9 @@ class ToolPage(QtWidgets.QWidget):
         self.loc_method = sd.loc_method
         self._line2dup_recipes_by_role = {}
         self._clear_training_roi_review_state()
+        loc_blocker = QtCore.QSignalBlocker(self.cmb_loc)
         self.cmb_loc.setCurrentText(self.loc_method)
+        del loc_blocker
         self._apply_current_role_recipe_state()
         if not self.ref_image and sd.ref_image and os.path.exists(sd.ref_image):
             self.ref_image = sd.ref_image
@@ -3445,7 +3448,7 @@ class ToolPage(QtWidgets.QWidget):
         normalized_path = self._normalized_sample_path(path)
         if not normalized_path:
             return {}
-        json_path = qr_core.labelme_json_of_image(normalized_path)
+        json_path = labelme_core.labelme_json_of_image(normalized_path)
         if not json_path or not os.path.exists(json_path):
             self._shape_lookup_cache_by_path.pop(normalized_path, None)
             return {}
@@ -4164,7 +4167,7 @@ class ToolPage(QtWidgets.QWidget):
         p = self.canvas.image_path()
         if p is not None:
             try:
-                deleted = qr_core.delete_labelme_shape(p, label_name=self._current_label())
+                deleted = labelme_core.delete_labelme_shape(p, label_name=self._current_label())
             except Exception:
                 deleted = False
             if deleted:
@@ -4190,12 +4193,12 @@ class ToolPage(QtWidgets.QWidget):
             if st.xywh is None:
                 QtWidgets.QMessageBox.warning(self, "提示", "请先拖拽画出矩形标注")
                 return
-            jpath = qr_core.upsert_labelme_rect(p, st.xywh, label_name=label_name)
+            jpath = labelme_core.upsert_labelme_rect(p, st.xywh, label_name=label_name)
         else:
             if not st.points or len(st.points) < 3:
                 QtWidgets.QMessageBox.warning(self, "Info", "Polygon needs at least 3 points.")
                 return
-            jpath = qr_core.upsert_labelme_polygon(p, st.points, label_name=label_name)
+            jpath = labelme_core.upsert_labelme_polygon(p, st.points, label_name=label_name)
 
         QtWidgets.QMessageBox.information(
             self, "已保存",
@@ -4421,19 +4424,19 @@ class ToolPage(QtWidgets.QWidget):
     def _missing_training_roi_paths(self, roi_label: str, candidate_paths: List[str]) -> List[str]:
         missing_paths: List[str] = []
         for path in candidate_paths:
-            json_path = qr_core.labelme_json_of_image(path)
+            json_path = labelme_core.labelme_json_of_image(path)
             if not os.path.exists(json_path):
                 missing_paths.append(path)
                 continue
-            if qr_core.read_shape_from_labelme(json_path, roi_label) is None:
+            if labelme_core.read_shape_from_labelme(json_path, roi_label) is None:
                 missing_paths.append(path)
         if missing_paths and self.loc_method in {"line2dup", "ncc"}:
             try:
                 self._autogen_roi_for_images(missing_paths, only_missing=False, silent=True)
                 refreshed_missing_paths: List[str] = []
                 for path in candidate_paths:
-                    json_path = qr_core.labelme_json_of_image(path)
-                    if not os.path.exists(json_path) or qr_core.read_shape_from_labelme(json_path, roi_label) is None:
+                    json_path = labelme_core.labelme_json_of_image(path)
+                    if not os.path.exists(json_path) or labelme_core.read_shape_from_labelme(json_path, roi_label) is None:
                         refreshed_missing_paths.append(path)
                 missing_paths = refreshed_missing_paths
             except Exception:

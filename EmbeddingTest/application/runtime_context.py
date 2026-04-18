@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any, Dict, List, Protocol
 
 import algorithms.proxy as qr_core
 import numpy as np
-from algorithms.embedding import embed_batch_from_array
 from algorithms.traditional import (
     TraditionalThresholdModel,
     compute_roi_metrics_batch,
@@ -339,6 +338,8 @@ def _predict_learning_items_batch_rows_from_frame(
                 getattr(models[0], "device", None),
             )
         roi_labels = [str(item.roi_label or "").strip() or "roi" for item in group]
+        from algorithms.embedding import embed_batch_from_array
+
         embeddings = embed_batch_from_array(
             image_bgr,
             group_feat_net,
