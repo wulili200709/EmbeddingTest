@@ -4045,6 +4045,44 @@ class ToolPage(QtWidgets.QWidget):
     def _on_select_test(self) -> None:
         self._show_selected_image_path(self._current_selected_path())
 
+    def _sample_basename_key(self, path: object) -> str:
+        name = os.path.basename(str(path or "").strip())
+        return os.path.normcase(name).lower()
+
+    def _existing_sample_basename_keys(self) -> set[str]:
+        keys: set[str] = set()
+        for collection in (self.train_files, self.test_files, self.ok_files, self.ng_files):
+            for path in list(collection or []):
+                key = self._sample_basename_key(path)
+                if key:
+                    keys.add(key)
+        return keys
+
+    def _add_image_paths_to_sample_list(self, kind: str, files: List[str]) -> Tuple[int, int]:
+        normalized_kind = str(kind or "").strip().upper()
+        existing_names = self._existing_sample_basename_keys()
+        added_files: List[str] = []
+        skipped_count = 0
+        for path in files:
+            normalized_path = str(path or "").strip()
+            name_key = self._sample_basename_key(normalized_path)
+            if not normalized_path or not name_key:
+                continue
+            if name_key in existing_names:
+                skipped_count += 1
+                continue
+            added_files.append(normalized_path)
+            existing_names.add(name_key)
+        if not added_files:
+            return 0, skipped_count
+        if normalized_kind in {"TRAIN", "OK", "NG", "TRAIN_OK", "TRAIN_NG"}:
+            self.train_files.extend(added_files)
+            self.train_files = sorted(list(dict.fromkeys(self.train_files)))
+        else:
+            self.test_files.extend(added_files)
+            self.test_files = sorted(list(dict.fromkeys(self.test_files)))
+        return len(added_files), skipped_count
+
     def _add_images_to(self, kind: str) -> None:
         files, _ = QtWidgets.QFileDialog.getOpenFileNames(
             self,
@@ -4054,16 +4092,19 @@ class ToolPage(QtWidgets.QWidget):
         )
         if not files:
             return
-        normalized_kind = str(kind or "").strip().upper()
-        if normalized_kind in {"TRAIN", "OK", "NG", "TRAIN_OK", "TRAIN_NG"}:
-            self.train_files.extend(files)
-            self.train_files = sorted(list(dict.fromkeys(self.train_files)))
-        else:
-            self.test_files.extend(files)
-            self.test_files = sorted(list(dict.fromkeys(self.test_files)))
+        added_count, skipped_count = self._add_image_paths_to_sample_list(kind, list(files))
+        if added_count <= 0 and skipped_count > 0:
+            self.lbl_status.setText(f"状态：已跳过 {skipped_count} 张同名图片，没有新增图片。")
+            return
+        if added_count <= 0:
+            return
         self._refresh_lists()
         self._clear_training_roi_review_state()
         self._save_session()
+        if skipped_count:
+            self.lbl_status.setText(f"状态：已添加 {added_count} 张图片，跳过 {skipped_count} 张同名图片。")
+        else:
+            self.lbl_status.setText(f"状态：已添加 {added_count} 张图片。")
 
     def _remove_selected_from(self, kind: str) -> None:
         normalized_kind = str(kind or "").strip().upper()

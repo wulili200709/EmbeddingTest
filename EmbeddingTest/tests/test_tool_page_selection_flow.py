@@ -38,6 +38,9 @@ class _ToolPageSelectionHarness:
     _remove_selected_from = ToolPage._remove_selected_from
     _select_path_in_sample_list = ToolPage._select_path_in_sample_list
     _sync_sample_selection_to_path = ToolPage._sync_sample_selection_to_path
+    _sample_basename_key = ToolPage._sample_basename_key
+    _existing_sample_basename_keys = ToolPage._existing_sample_basename_keys
+    _add_image_paths_to_sample_list = ToolPage._add_image_paths_to_sample_list
 
     def __init__(self) -> None:
         self.tabs = QtWidgets.QTabWidget()
@@ -58,6 +61,7 @@ class _ToolPageSelectionHarness:
         self.refresh_calls = 0
         self.save_calls = 0
         self.selection_calls: list[str] = []
+        self.lbl_status = QtWidgets.QLabel()
 
     def _load_canvas_image(self, path: str) -> None:
         self.load_calls.append(path)
@@ -170,6 +174,26 @@ class ToolPageSelectionFlowTest(unittest.TestCase):
         harness._remove_selected_from("TEST")
 
         self.assertEqual(harness.test_files, ["test_b.png"])
+
+    def test_add_images_skips_existing_basename(self) -> None:
+        harness = _ToolPageSelectionHarness()
+        harness.test_files = [r"C:\old\cam1_debug.png"]
+
+        added_count, skipped_count = harness._add_image_paths_to_sample_list(
+            "TEST",
+            [
+                r"D:\new\cam1_debug.png",
+                r"D:\new\cam1_new.png",
+                r"E:\other\cam1_new.png",
+            ],
+        )
+
+        self.assertEqual(added_count, 1)
+        self.assertEqual(skipped_count, 2)
+        self.assertEqual(
+            sorted(os.path.basename(path) for path in harness.test_files),
+            ["cam1_debug.png", "cam1_new.png"],
+        )
 
     def test_move_test_sample_into_training(self) -> None:
         harness = _ToolPageSelectionHarness()
