@@ -64,12 +64,45 @@ def _add_line_distance_tool(tool_page) -> None:
             type("_Selected", (), {"camera_id": camera_role, "item_id": ""})(),
         )
     ]
+    items_by_id = {
+        str(getattr(item, "item_id", "") or "").strip(): item
+        for item in list(getattr(tool_page, "inspection_items", []) or [])
+    }
+
+    selected_item = _selected_inspection_item(tool_page)
+    selected_params = dict(getattr(selected_item, "params", {}) or {}) if selected_item is not None else {}
+    line_param_candidates = [selected_params]
+    for item_id_ref in line_options[:2]:
+        line_param_candidates.append(dict(getattr(items_by_id.get(item_id_ref), "params", {}) or {}))
+
+    unit = str(selected_params.get("limit_unit", "") or "").strip().lower()
+    if unit not in {"px", "mm"}:
+        unit = "px"
+        for candidate in line_param_candidates:
+            candidate_unit = str(candidate.get("limit_unit", "") or "").strip().lower()
+            if candidate_unit in {"px", "mm"}:
+                unit = candidate_unit
+                break
+    pixel_size = 0.0
+    for candidate in line_param_candidates:
+        pixel_size = _optional_param_float(candidate, "pixel_size_mm") or 0.0
+        if pixel_size > 0.0:
+            break
+
     item_id = _unique_item_id(tool_page, "line_distance")
     params = {
         "line_a_item_id": line_options[0] if len(line_options) >= 1 else "",
         "line_b_item_id": line_options[1] if len(line_options) >= 2 else "",
-        "limit_unit": "px",
+        "limit_unit": unit,
     }
+    if pixel_size > 0.0:
+        params["pixel_size_mm"] = pixel_size
+    lower = _optional_param_float(selected_params, "lower_limit", f"lower_limit_{unit}")
+    upper = _optional_param_float(selected_params, "upper_limit", f"upper_limit_{unit}")
+    if lower is not None:
+        params["lower_limit"] = lower
+    if upper is not None:
+        params["upper_limit"] = upper
     tool_page.inspection_items.append(
         InspectionItem(
             item_id=item_id,
@@ -210,6 +243,16 @@ def _populate_line_tool_combo(combo: QtWidgets.QComboBox, options: list[tuple[st
         combo.blockSignals(False)
 
 
+def _set_measurement_row_visible(tool_page, field_widget: QtWidgets.QWidget, visible: bool) -> None:
+    frame = getattr(tool_page, "measurement_params_frame", None)
+    layout = frame.layout() if frame is not None else None
+    if isinstance(layout, QtWidgets.QFormLayout):
+        label_widget = layout.labelForField(field_widget)
+        if label_widget is not None:
+            label_widget.setVisible(visible)
+    field_widget.setVisible(visible)
+
+
 def _update_measurement_params_panel(tool_page) -> None:
     frame = getattr(tool_page, "measurement_params_frame", None)
     if frame is None:
@@ -255,6 +298,18 @@ def _update_measurement_params_panel(tool_page) -> None:
         _populate_line_tool_combo(tool_page.cmb_measurement_line_b_tool, line_options)
         _set_combo_current_data(tool_page.cmb_measurement_line_a_tool, params.get("line_a_item_id", ""))
         _set_combo_current_data(tool_page.cmb_measurement_line_b_tool, params.get("line_b_item_id", ""))
+        _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_line_a_tool, is_line_distance)
+        _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_line_b_tool, is_line_distance)
+        _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_line_a_direction, is_find_line)
+        _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_line_b_direction, False)
+        _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_polarity, is_find_line)
+        _set_measurement_row_visible(tool_page, tool_page.spin_measurement_edge_threshold, is_find_line)
+        _set_measurement_row_visible(tool_page, tool_page.spin_measurement_scan_step, is_find_line)
+        _set_measurement_row_visible(tool_page, tool_page.spin_measurement_min_points, is_find_line)
+        _set_measurement_row_visible(tool_page, tool_page.spin_measurement_lower, is_line_distance)
+        _set_measurement_row_visible(tool_page, tool_page.spin_measurement_upper, is_line_distance)
+        _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_unit, is_line_distance)
+        _set_measurement_row_visible(tool_page, tool_page.spin_measurement_pixel_size, is_line_distance)
         tool_page.cmb_measurement_line_a_tool.setEnabled(is_line_distance)
         tool_page.cmb_measurement_line_b_tool.setEnabled(is_line_distance)
         tool_page.cmb_measurement_line_a_direction.setCurrentText(line_a_direction)
@@ -272,8 +327,8 @@ def _update_measurement_params_panel(tool_page) -> None:
         tool_page.cmb_measurement_unit.setCurrentText(unit)
         tool_page.chk_measurement_lower.setChecked(lower is not None)
         tool_page.chk_measurement_upper.setChecked(upper is not None)
-        tool_page.spin_measurement_lower.setEnabled(lower is not None)
-        tool_page.spin_measurement_upper.setEnabled(upper is not None)
+        tool_page.spin_measurement_lower.setEnabled(is_line_distance and lower is not None)
+        tool_page.spin_measurement_upper.setEnabled(is_line_distance and upper is not None)
         tool_page.spin_measurement_lower.setValue(float(lower or 0.0))
         tool_page.spin_measurement_upper.setValue(float(upper or 0.0))
         tool_page.spin_measurement_pixel_size.setValue(float(pixel_size))
@@ -322,6 +377,8 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
         params.pop("line_b", None)
         params.pop("line_a_item_id", None)
         params.pop("line_b_item_id", None)
+        params.pop("limit_unit", None)
+        params.pop("pixel_size_mm", None)
     elif is_line_distance:
         params["line_a_item_id"] = str(tool_page.cmb_measurement_line_a_tool.currentData() or "").strip()
         params["line_b_item_id"] = str(tool_page.cmb_measurement_line_b_tool.currentData() or "").strip()
@@ -342,19 +399,23 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
             line["min_points"] = min_points
         params["line_a"] = line_a
         params["line_b"] = line_b
-    params["limit_unit"] = unit
-    pixel_size = float(tool_page.spin_measurement_pixel_size.value())
-    if pixel_size > 0.0:
-        params["pixel_size_mm"] = pixel_size
+    if is_line_distance:
+        params["limit_unit"] = unit
+        pixel_size = float(tool_page.spin_measurement_pixel_size.value())
+        if pixel_size > 0.0:
+            params["pixel_size_mm"] = pixel_size
+        else:
+            params.pop("pixel_size_mm", None)
+        if tool_page.chk_measurement_lower.isChecked():
+            params["lower_limit"] = float(tool_page.spin_measurement_lower.value())
+        if tool_page.chk_measurement_upper.isChecked():
+            params["upper_limit"] = float(tool_page.spin_measurement_upper.value())
     else:
+        params.pop("limit_unit", None)
         params.pop("pixel_size_mm", None)
-    if tool_page.chk_measurement_lower.isChecked():
-        params["lower_limit"] = float(tool_page.spin_measurement_lower.value())
-    if tool_page.chk_measurement_upper.isChecked():
-        params["upper_limit"] = float(tool_page.spin_measurement_upper.value())
     item.params = params
-    tool_page.spin_measurement_lower.setEnabled(tool_page.chk_measurement_lower.isChecked())
-    tool_page.spin_measurement_upper.setEnabled(tool_page.chk_measurement_upper.isChecked())
+    tool_page.spin_measurement_lower.setEnabled(is_line_distance and tool_page.chk_measurement_lower.isChecked())
+    tool_page.spin_measurement_upper.setEnabled(is_line_distance and tool_page.chk_measurement_upper.isChecked())
     _persist_inspection_items(tool_page)
     _update_learning_backbone_hint(tool_page)
 
@@ -410,11 +471,12 @@ def _inspection_item_status(tool_page, inspection_item):
             params = dict(getattr(inspection_item, "params", {}) or {})
             line_a = str(params.get("line_a_item_id", "") or "").strip() or "-"
             line_b = str(params.get("line_b_item_id", "") or "").strip() or "-"
+            ready = line_a != "-" and line_b != "-" and line_a != line_b
             tooltip = (
                 f"Algorithm: {tool_page.algo.algorithm_display_name(algorithm) or algorithm}\n"
                 f"Measures distance from {line_a} to {line_b} and judges OK/NG from lower/upper limits."
             )
-            return "Ready", tooltip, "#79d279"
+            return (f"{line_a} -> {line_b}" if ready else "Select lines"), tooltip, "#79d279" if ready else "#d98c8c"
         tooltip = (
             f"Algorithm: {tool_page.algo.algorithm_display_name(algorithm) or algorithm}\n"
             "Finds one fitted line inside the ROI for downstream distance measurement."

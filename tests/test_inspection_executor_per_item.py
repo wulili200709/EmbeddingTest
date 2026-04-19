@@ -281,6 +281,67 @@ class InspectionExecutorPerItemTest(unittest.TestCase):
         self.assertEqual(response.result, "NG")
         self.assertEqual(response.item_results[-1].result, "NG")
 
+    def test_line_distance_mm_can_use_bound_find_line_pixel_size(self) -> None:
+        class _FindLinePredictor:
+            def predict_image(self, path: str, **kwargs) -> dict:
+                label = kwargs.get("labels_override", [""])[0]
+                x = 10.0 if label == "left" else 52.0
+                return {
+                    "pred": "OK",
+                    "measurement": {
+                        "roi_label": label,
+                        "line_segment": [[x, 0.0], [x, 100.0]],
+                    },
+                }
+
+        executor = InspectionExecutor(_FindLinePredictor())
+        response = executor.execute(
+            InspectionExecutionRequest(
+                camera_id="cam1",
+                image_path="demo.png",
+                items=[
+                    InspectionItem(
+                        item_id="left",
+                        display_name="Left",
+                        camera_id="cam1",
+                        roi_label="left",
+                        algorithm_code="find_line",
+                        params={"pixel_size_mm": 0.05},
+                    ),
+                    InspectionItem(
+                        item_id="right",
+                        display_name="Right",
+                        camera_id="cam1",
+                        roi_label="right",
+                        algorithm_code="find_line",
+                        params={"pixel_size_mm": 0.05},
+                    ),
+                    InspectionItem(
+                        item_id="width",
+                        display_name="Width",
+                        camera_id="cam1",
+                        roi_label="",
+                        algorithm_code="line_distance",
+                        params={
+                            "line_a_item_id": "left",
+                            "line_b_item_id": "right",
+                            "limit_unit": "mm",
+                            "lower_limit": 2.0,
+                            "upper_limit": 2.2,
+                        },
+                    ),
+                ],
+            )
+        )
+
+        self.assertEqual(response.result, "OK")
+        assert response.raw_row is not None
+        distance_row = response.raw_row["item_rows"][-1]
+        self.assertAlmostEqual(distance_row["value"], 2.1)
+        self.assertEqual(distance_row["measurement"]["unit"], "mm")
+        self.assertAlmostEqual(distance_row["measurement"]["pixel_size_mm"], 0.05)
+        self.assertIn("distance=2.100mm", response.item_results[-1].detail)
+
 
 if __name__ == "__main__":
     unittest.main()

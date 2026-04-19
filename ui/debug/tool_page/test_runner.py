@@ -95,17 +95,28 @@ def _populate_results_table(tool_page, rows: List[Dict[str, object]]) -> None:
     tool_page.table.setRowCount(0)
     for row_idx, row in enumerate(rows):
         tool_page.table.insertRow(row_idx)
+        measurement = row.get("measurement")
+        unit = ""
+        if isinstance(measurement, dict):
+            unit = str(measurement.get("unit", "") or "").strip()
+
+        def _format_number(key: str, decimals: int = 4, *, with_unit: bool = False) -> str:
+            if row.get(key) is None:
+                return ""
+            text = f"{float(row.get(key, 0.0)):.{decimals}f}"
+            return f"{text}{unit}" if with_unit and unit else text
+
         values = [
             str(row.get("file_name", "")),
             str(row.get("gt", "")),
             str(row.get("pred", "")),
-            f"{float(row.get('diff', 0.0)):.4f}" if row.get("diff") is not None else "",
-            f"{float(row.get('sim_ok', 0.0)):.4f}" if row.get("sim_ok") is not None else "",
-            f"{float(row.get('sim_ng', 0.0)):.4f}" if row.get("sim_ng") is not None else "",
-            f"{float(row.get('value', 0.0)):.4f}" if row.get("value") is not None else "",
-            f"{float(row.get('threshold', 0.0)):.4f}" if row.get("threshold") is not None else "",
-            f"{float(row.get('match_ms', 0.0)):.1f}" if row.get("match_ms") is not None else "",
-            f"{float(row.get('total_ms', 0.0)):.1f}" if row.get("total_ms") is not None else "",
+            _format_number("diff"),
+            _format_number("sim_ok"),
+            _format_number("sim_ng"),
+            _format_number("value", with_unit=True),
+            _format_number("threshold", with_unit=True),
+            _format_number("match_ms", 1),
+            _format_number("total_ms", 1),
             str(row.get("json_name", "")),
         ]
         for col_idx, value in enumerate(values):

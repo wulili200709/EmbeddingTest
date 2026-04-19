@@ -281,6 +281,11 @@ class InspectionExecutor:
             return None
         return float(text)
 
+    @classmethod
+    def _item_param_float(cls, item: InspectionItem, key: str) -> float | None:
+        params = dict(getattr(item, "params", {}) or {})
+        return cls._optional_float(params.get(key))
+
     @staticmethod
     def _point_tuple(value: object) -> tuple[float, float] | None:
         if not isinstance(value, (list, tuple)) or len(value) < 2:
@@ -418,8 +423,12 @@ class InspectionExecutor:
         if unit not in {"px", "mm"}:
             unit = "px"
         value = float(distance_px)
+        pixel_size = cls._optional_float(params.get("pixel_size_mm")) or 0.0
         if unit == "mm":
-            pixel_size = float(params.get("pixel_size_mm", 0.0) or 0.0)
+            if pixel_size <= 0.0:
+                pixel_size = cls._item_param_float(item_a, "pixel_size_mm") or 0.0
+            if pixel_size <= 0.0:
+                pixel_size = cls._item_param_float(item_b, "pixel_size_mm") or 0.0
             if pixel_size <= 0.0:
                 raise RuntimeError("pixel_size_mm is required when line-distance limits use mm")
             value = float(distance_px * pixel_size)
@@ -475,6 +484,7 @@ class InspectionExecutor:
                 "distance_px": distance_px,
                 "distance": value,
                 "unit": unit,
+                "pixel_size_mm": pixel_size,
                 "angle_delta_deg": angle_delta,
                 "dimension_segment": [[float(x), float(y)] for x, y in dimension_segment],
                 "label": f"{value:.3f}{unit}",

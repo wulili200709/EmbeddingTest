@@ -2479,7 +2479,7 @@ class ToolPage(QtWidgets.QWidget):
         tool_vbox.addWidget(self.measurement_params_frame)
 
         self.btn_add_line_distance_tool = QtWidgets.QPushButton("添加距离测量")
-        self.btn_add_line_distance_tool.setStyleSheet(_btn_style)
+        self.btn_add_line_distance_tool.setStyleSheet(_compact_btn)
         self.btn_add_line_distance_tool.clicked.connect(self._add_line_distance_tool)
         tool_vbox.addWidget(self.btn_add_line_distance_tool)
 
