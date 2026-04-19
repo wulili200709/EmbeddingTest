@@ -146,11 +146,13 @@ class _ItemIndicator(QtWidgets.QFrame):
             "ng": _NG_RED,
             "pending": _PENDING_GRAY,
             "running": _RUNNING_YELLOW,
+            "measured": "#2563eb",
             "disabled": "#444444",
             "inactive": "#444444",
         }
         bg = color_map.get(status_kind, _PENDING_GRAY)
         display = tr_status_text(status_text.split("(")[0].strip()) if status_text else ""
+        self.lbl_result.setFixedWidth(128 if status_kind == "measured" else 56)
         self.lbl_result.setText(display)
         self.lbl_result.setStyleSheet(
             f"background:{bg};color:white;font-size:14px;font-weight:bold;border-radius:4px;"

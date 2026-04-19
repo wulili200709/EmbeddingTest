@@ -71,7 +71,7 @@ def build_main_window_ui(window) -> None:
     title_row = QtWidgets.QWidget()
     title_row_layout = QtWidgets.QHBoxLayout(title_row)
     title_row_layout.setContentsMargins(0, 0, 0, 0)
-    title_row_layout.setSpacing(4)
+    title_row_layout.setSpacing(2)
     title_row_layout.addStretch(1)
 
     window.lbl_sidebar_runtime_result_title_icon = QtWidgets.QLabel()
@@ -82,8 +82,9 @@ def build_main_window_ui(window) -> None:
     window.lbl_sidebar_runtime_result_title = QtWidgets.QLabel(tr("sidebar.final_result"))
     window.lbl_sidebar_runtime_result_title.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
     window.lbl_sidebar_runtime_result_title.setFont(window.btn_workspace_debug.font())
+    window.lbl_sidebar_runtime_result_title.setMinimumWidth(0)
     window.lbl_sidebar_runtime_result_title.setStyleSheet(
-        "color:rgba(255,255,255,0.92);font-weight:bold;"
+        "color:rgba(255,255,255,0.92);font-weight:bold;font-size:11px;"
     )
     title_row_layout.addWidget(window.lbl_sidebar_runtime_result_title, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
     title_row_layout.addStretch(1)

@@ -545,7 +545,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "status.engine_failed": "Algorithm engine: Load failed",
         "status.runtime_switched": "Switched to runtime",
         "status.inspection_items_synced": "Inspection item configuration synchronized",
-        "sidebar.final_result": "Final Result",
+        "sidebar.final_result": "TotalResult",
         "runtime.unlocked": "Unlocked",
         "runtime.locked": "Locked",
         "runtime.not_ready": "Not Ready",

@@ -19,6 +19,10 @@ from ui.roi_overlay_colors import (
 )
 
 _SELECTED_TOOL_COLOR = QtGui.QColor("#00C8C8")
+_MEASUREMENT_POINT_COLOR = QtGui.QColor("#FFD54F")
+_MEASUREMENT_LINE_OK_COLOR = QtGui.QColor("#00E676")
+_MEASUREMENT_LINE_NG_COLOR = QtGui.QColor("#FF5252")
+_MEASUREMENT_LINE_COLOR = QtGui.QColor("#40C4FF")
 
 
 def _selected_tool_roi_label(tool_page) -> str:
@@ -43,6 +47,108 @@ def _overlay_style_for_tool_label(tool_page, img_path: str, label: str) -> tuple
 def _roi_overlay_color(tool_page, img_path: str, label: str) -> QtGui.QColor:
     color, _width, _dash = _overlay_style_for_tool_label(tool_page, img_path, label)
     return color
+
+
+def _is_same_image_path(left: object, right: object) -> bool:
+    left_text = str(left or "").strip()
+    right_text = str(right or "").strip()
+    if not left_text or not right_text:
+        return False
+    try:
+        return os.path.normcase(os.path.abspath(left_text)) == os.path.normcase(os.path.abspath(right_text))
+    except Exception:
+        return os.path.normcase(left_text) == os.path.normcase(right_text)
+
+
+def _point_tuple(value: object) -> Optional[Tuple[float, float]]:
+    if not isinstance(value, (list, tuple)) or len(value) < 2:
+        return None
+    try:
+        return float(value[0]), float(value[1])
+    except (TypeError, ValueError):
+        return None
+
+
+def _measurement_overlays_for_path(tool_page, img_path: str) -> List[OverlayShape]:
+    overlays: List[OverlayShape] = []
+    for row in list(getattr(tool_page, "_current_result_rows", []) or []):
+        if not isinstance(row, dict):
+            continue
+        row_path = row.get("file_path")
+        if row_path:
+            if not _is_same_image_path(row_path, img_path):
+                continue
+        else:
+            image_name = os.path.basename(str(img_path or ""))
+            row_name = str(row.get("file_name", "") or "")
+            if image_name and not row_name.startswith(image_name):
+                continue
+        measurement = row.get("measurement")
+        if not isinstance(measurement, dict):
+            continue
+        pred = str(row.get("pred", "") or "").strip().upper()
+        line_color = (
+            _MEASUREMENT_LINE_OK_COLOR
+            if pred == "OK"
+            else _MEASUREMENT_LINE_NG_COLOR
+            if pred == "NG"
+            else _MEASUREMENT_LINE_COLOR
+        )
+        if str(measurement.get("type", "") or "") == "line_distance":
+            raw_dimension = measurement.get("dimension_segment")
+            dimension: Optional[Tuple[Tuple[float, float], Tuple[float, float]]] = None
+            if isinstance(raw_dimension, (list, tuple)) and len(raw_dimension) >= 2:
+                p0 = _point_tuple(raw_dimension[0])
+                p1 = _point_tuple(raw_dimension[1])
+                if p0 is not None and p1 is not None:
+                    dimension = (p0, p1)
+            if dimension is not None:
+                overlays.append(
+                    OverlayShape(
+                        shape_type="dimension",
+                        segments=[dimension],
+                        text=str(measurement.get("label", "") or ""),
+                        color=QtGui.QColor(line_color),
+                        width=3.0,
+                        dash=False,
+                    )
+                )
+            continue
+        raw_points = measurement.get("edge_points")
+        points = []
+        if isinstance(raw_points, list):
+            for point in raw_points:
+                parsed = _point_tuple(point)
+                if parsed is not None:
+                    points.append(parsed)
+        if points:
+            overlays.append(
+                OverlayShape(
+                    shape_type="points",
+                    points=points,
+                    color=QtGui.QColor(_MEASUREMENT_POINT_COLOR),
+                    width=4.0,
+                    dash=False,
+                )
+            )
+        raw_segment = measurement.get("line_segment")
+        segment: Optional[Tuple[Tuple[float, float], Tuple[float, float]]] = None
+        if isinstance(raw_segment, (list, tuple)) and len(raw_segment) >= 2:
+            p0 = _point_tuple(raw_segment[0])
+            p1 = _point_tuple(raw_segment[1])
+            if p0 is not None and p1 is not None:
+                segment = (p0, p1)
+        if segment is not None:
+            overlays.append(
+                OverlayShape(
+                    shape_type="segments",
+                    segments=[segment],
+                    color=QtGui.QColor(line_color),
+                    width=3.0,
+                    dash=False,
+                )
+            )
+    return overlays
 
 
 def _canvas_roi_style_for_label(tool_page, img_path: str, label_name: str) -> tuple[QtGui.QColor, bool, float]:
@@ -127,6 +233,7 @@ def _set_overlay_shapes(tool_page, img_path: str, current_label: str) -> None:
                 )
 
     if not os.path.exists(j):
+        overlays.extend(_measurement_overlays_for_path(tool_page, img_path))
         tool_page.canvas.set_overlays(overlays)
         return
 
@@ -155,6 +262,7 @@ def _set_overlay_shapes(tool_page, img_path: str, current_label: str) -> None:
         color, width, dash = _overlay_style_for_tool_label(tool_page, img_path, label)
         add_shape(label, color, width=width, dash=dash)
 
+    overlays.extend(_measurement_overlays_for_path(tool_page, img_path))
     tool_page.canvas.set_overlays(overlays)
 
 

@@ -8,6 +8,11 @@ from typing import TYPE_CHECKING, Any, Dict, List, Protocol
 
 import algorithms.proxy as qr_core
 import numpy as np
+from algorithms.measurement import (
+    judge_edge_distance,
+    measure_edge_distance_from_array,
+    measure_find_line_from_array,
+)
 from algorithms.traditional import TraditionalThresholdModel, compute_roi_metrics_from_array, metric_value
 from application.runtime.preview_frame import RuntimePreviewShape
 from domain import (
@@ -44,6 +49,7 @@ class RuntimePredictorProtocol(Protocol):
         labels_override: List[str] | None = None,
         algorithm_override: str | None = None,
         model_key_override: str | None = None,
+        params_override: dict | None = None,
     ) -> Dict[str, object]: ...
 
     def predict_items_batch(
@@ -88,6 +94,7 @@ def _runtime_prediction_row(
     infer_ms: object = 0.0,
     total_ms: object = 0.0,
     roi_label: str = "",
+    detail: str = "",
 ) -> Dict[str, object]:
     row: Dict[str, object] = {
         "pred": str(pred or "NG"),
@@ -107,7 +114,18 @@ def _runtime_prediction_row(
         row["threshold"] = float(threshold)
     if str(roi_label or "").strip():
         row["roi_label"] = str(roi_label).strip()
+    if str(detail or "").strip():
+        row["detail"] = str(detail).strip()
     return row
+
+
+def _is_measurement_item(algo, item: InspectionItem) -> bool:
+    checker = getattr(algo, "is_measurement_tool", None)
+    return bool(callable(checker) and checker(item.algorithm_code))
+
+
+def _is_line_distance_item(item: InspectionItem) -> bool:
+    return str(getattr(item, "algorithm_code", "") or "").strip() == "line_distance"
 
 
 def _predict_learning_items_batch_rows(
@@ -290,6 +308,7 @@ class ToolPageRuntimeContext:
         labels_override: List[str] | None = None,
         algorithm_override: str | None = None,
         model_key_override: str | None = None,
+        params_override: dict | None = None,
     ) -> Dict[str, object]:
         return self.tool_page.predict_image(
             path,
@@ -297,6 +316,7 @@ class ToolPageRuntimeContext:
             labels_override=labels_override,
             algorithm_override=algorithm_override,
             model_key_override=model_key_override,
+            params_override=params_override,
         )
 
     def predict_items_batch(
@@ -312,7 +332,17 @@ class ToolPageRuntimeContext:
         tool_page = self.tool_page
         enabled_items = [item for item in items if item.enabled]
         learning_items = [item for item in enabled_items if tool_page.algo.is_learning_tool(item.algorithm_code)]
-        traditional_items = [item for item in enabled_items if not tool_page.algo.is_learning_tool(item.algorithm_code)]
+        measurement_items = [
+            item
+            for item in enabled_items
+            if _is_measurement_item(tool_page.algo, item) and not _is_line_distance_item(item)
+        ]
+        traditional_items = [
+            item
+            for item in enabled_items
+            if not tool_page.algo.is_learning_tool(item.algorithm_code)
+            and not _is_measurement_item(tool_page.algo, item)
+        ]
         camera_role = (
             str(enabled_items[0].camera_id or "").strip()
             if enabled_items
@@ -355,6 +385,16 @@ class ToolPageRuntimeContext:
                 labels_override=labels_override,
                 algorithm_override=item.algorithm_code,
                 model_key_override=item.model_key,
+            )
+        for item in measurement_items:
+            roi_label = str(item.roi_label or "").strip()
+            rows_by_key[item.model_key] = self.predict_image(
+                path,
+                feat_net=feat_net,
+                labels_override=[roi_label] if roi_label else None,
+                algorithm_override=item.algorithm_code,
+                model_key_override=item.model_key,
+                params_override=dict(item.params or {}),
             )
 
         return [dict(rows_by_key[item.model_key]) for item in enabled_items]
@@ -399,6 +439,7 @@ class ProductRuntimeContext:
         labels_override: List[str] | None = None,
         algorithm_override: str | None = None,
         model_key_override: str | None = None,
+        params_override: dict | None = None,
     ) -> Dict[str, object]:
         if not os.path.exists(path):
             raise FileNotFoundError(path)
@@ -441,6 +482,7 @@ class ProductRuntimeContext:
             match_ms=match_ms,
             algorithm_override=algorithm_override,
             model_key_override=model_key_override,
+            params_override=params_override,
         )
         payload = result.to_dict()
         payload["infer_ms"] = (
@@ -463,7 +505,17 @@ class ProductRuntimeContext:
 
         enabled_items = [item for item in items if item.enabled]
         learning_items = [item for item in enabled_items if self.algo.is_learning_tool(item.algorithm_code)]
-        traditional_items = [item for item in enabled_items if not self.algo.is_learning_tool(item.algorithm_code)]
+        measurement_items = [
+            item
+            for item in enabled_items
+            if _is_measurement_item(self.algo, item) and not _is_line_distance_item(item)
+        ]
+        traditional_items = [
+            item
+            for item in enabled_items
+            if not self.algo.is_learning_tool(item.algorithm_code)
+            and not _is_measurement_item(self.algo, item)
+        ]
 
         match_ms = None
         camera_role = str(enabled_items[0].camera_id or "cam1").strip() if enabled_items else "cam1"
@@ -498,6 +550,16 @@ class ProductRuntimeContext:
                 algorithm_override=item.algorithm_code,
                 model_key_override=item.model_key,
             )
+        for item in measurement_items:
+            roi_label = str(item.roi_label or "").strip()
+            rows_by_key[item.model_key] = self.predict_image(
+                path,
+                feat_net=feat_net,
+                labels_override=[roi_label] if roi_label else None,
+                algorithm_override=item.algorithm_code,
+                model_key_override=item.model_key,
+                params_override=dict(item.params or {}),
+            )
 
         return [dict(rows_by_key[item.model_key]) for item in enabled_items]
 
@@ -514,7 +576,17 @@ class ProductRuntimeContext:
             raise ValueError(f"unsupported image shape: {image.shape!r}")
         enabled_items = [item for item in items if item.enabled]
         learning_items = [item for item in enabled_items if self.algo.is_learning_tool(item.algorithm_code)]
-        traditional_items = [item for item in enabled_items if not self.algo.is_learning_tool(item.algorithm_code)]
+        measurement_items = [
+            item
+            for item in enabled_items
+            if _is_measurement_item(self.algo, item) and not _is_line_distance_item(item)
+        ]
+        traditional_items = [
+            item
+            for item in enabled_items
+            if not self.algo.is_learning_tool(item.algorithm_code)
+            and not _is_measurement_item(self.algo, item)
+        ]
 
         role = str(camera_role or "cam1").strip() or "cam1"
         match_ms = 0.0
@@ -572,6 +644,57 @@ class ProductRuntimeContext:
                 total_ms=0.0,
                 roi_label=str(metrics.get("roi_label", "") or ""),
             )
+        for item in measurement_items:
+            params = dict(item.params or {})
+            algorithm = self.algo.resolve_tool_algorithm(item.algorithm_code)
+            if algorithm == "find_line":
+                measurement = measure_find_line_from_array(
+                    image,
+                    shape_by_label=shape_by_label,
+                    preferred_label=str(item.roi_label or "").strip() or "roi",
+                    params=params,
+                )
+                pred = "OK"
+                judged_value = None
+                lower = None
+                upper = None
+                residual = float(measurement.line.residual)
+                detail = (
+                    f"line_found pts={measurement.line.point_count}"
+                    f" pos={measurement.position_px:.3f}px"
+                    f" angle={measurement.angle_deg:.3f}deg"
+                    f" residual={residual:.3f}"
+                )
+            else:
+                measurement = measure_edge_distance_from_array(
+                    image,
+                    shape_by_label=shape_by_label,
+                    preferred_label=str(item.roi_label or "").strip() or "roi",
+                    params=params,
+                )
+                pred, judged_value, lower, upper, unit = judge_edge_distance(measurement, params)
+                residual = float(max(measurement.line_a.residual, measurement.line_b.residual))
+                detail = f"distance={judged_value:.3f}{unit}"
+                if measurement.distance_mm is not None:
+                    detail += f" raw={measurement.distance_px:.3f}px/{measurement.distance_mm:.4f}mm"
+                detail += (
+                    f" pts={measurement.line_a.point_count}/{measurement.line_b.point_count}"
+                    f" residual={residual:.3f}"
+                )
+            if lower is not None or upper is not None:
+                detail += f" spec={lower if lower is not None else '-'}..{upper if upper is not None else '-'}{unit}"
+            rows_by_key[item.model_key] = _runtime_prediction_row(
+                pred=pred,
+                diff=residual,
+                value=judged_value,
+                threshold=upper,
+                match_ms=match_ms,
+                infer_ms=0.0,
+                total_ms=0.0,
+                roi_label=measurement.roi_label,
+                detail=detail,
+            )
+            rows_by_key[item.model_key]["measurement"] = measurement.to_dict()
 
         return RuntimeFrameBatchPrediction(
             rows=[dict(rows_by_key[item.model_key]) for item in enabled_items],

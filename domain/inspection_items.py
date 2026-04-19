@@ -121,7 +121,7 @@ def load_inspection_items(path: str) -> List[InspectionItem]:
         if not isinstance(entry, dict):
             continue
         item = InspectionItem.from_dict(entry)
-        if item.roi_label:
+        if item.roi_label or item.algorithm_code == "line_distance":
             items.append(item)
     return items
 
@@ -201,6 +201,25 @@ def sync_items_with_labels(
                     display_name=display_name or label,
                 )
             )
+    existing_distance_items = [
+        item
+        for item in existing_items
+        if isinstance(item, InspectionItem)
+        and item.algorithm_code == "line_distance"
+        and item.item_id not in {synced_item.item_id for synced_item in synced}
+    ]
+    for existing in existing_distance_items:
+        synced.append(
+            InspectionItem(
+                item_id=existing.item_id or existing.display_name or "line_distance",
+                display_name=existing.display_name or existing.item_id or "Line Distance",
+                camera_id=existing.camera_id if existing.camera_id in SUPPORTED_CAMERA_IDS else default_camera_id,
+                roi_label=existing.roi_label,
+                algorithm_code=existing.algorithm_code,
+                enabled=bool(existing.enabled),
+                params=dict(existing.params or {}),
+            )
+        )
     return synced
 
 

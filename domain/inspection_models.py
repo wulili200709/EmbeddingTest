@@ -20,7 +20,7 @@ class InspectionItemResult:
     algorithm_code: str = ""
     enabled: bool = True
     params: Dict[str, object] = field(default_factory=dict)
-    result: str = "PENDING"  # PENDING/RUNNING/OK/NG/INACTIVE/DISABLED
+    result: str = "PENDING"  # PENDING/RUNNING/OK/NG/MEASURED/INACTIVE/DISABLED
     detail: str = ""
 
     def to_runtime_row(self) -> dict:
@@ -29,11 +29,12 @@ class InspectionItemResult:
             "RUNNING": ("running", "检测中"),
             "OK": ("ok", "OK"),
             "NG": ("ng", "NG"),
+            "MEASURED": ("measured", self.detail or "MEASURED"),
             "INACTIVE": ("inactive", "相机未接入"),
             "DISABLED": ("disabled", "已禁用"),
         }
         kind, text = status_map.get(self.result, ("pending", self.result or "未检测"))
-        if self.detail:
+        if self.detail and self.result != "MEASURED":
             text = f"{text} ({self.detail})"
         return {
             "item_id": self.item_id,

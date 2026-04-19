@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from typing import List, Optional, Tuple
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -29,6 +30,8 @@ class OverlayShape:
     xywh: Optional[Tuple[int, int, int, int]] = None
     points: Optional[List[Tuple[float, float]]] = None
     segments: Optional[List[Tuple[Tuple[float, float], Tuple[float, float]]]] = None
+    text: str = ""
+    text_pos: Optional[Tuple[float, float]] = None
     color: QtGui.QColor = field(default_factory=lambda: QtGui.QColor(0, 128, 255))
     width: float = 1.0
     dash: bool = True
@@ -413,6 +416,71 @@ class RoiCanvas(QtWidgets.QLabel):
                 sy1 = int(round(p1[1] * self._scale)) + self._offset.y()
                 painter.drawLine(sx0, sy0, sx1, sy1)
 
+        def draw_dimension(
+            segment: Tuple[Tuple[float, float], Tuple[float, float]],
+            color: QtGui.QColor,
+            text: str = "",
+            width: float = 2.0,
+            text_pos: Optional[Tuple[float, float]] = None,
+        ) -> None:
+            p0, p1 = segment
+            sx0 = float(p0[0] * self._scale) + self._offset.x()
+            sy0 = float(p0[1] * self._scale) + self._offset.y()
+            sx1 = float(p1[0] * self._scale) + self._offset.x()
+            sy1 = float(p1[1] * self._scale) + self._offset.y()
+            pen = QtGui.QPen(color)
+            pen.setWidthF(float(width))
+            pen.setStyle(QtCore.Qt.SolidLine)
+            painter.setPen(pen)
+            painter.drawLine(QtCore.QPointF(sx0, sy0), QtCore.QPointF(sx1, sy1))
+
+            dx = sx1 - sx0
+            dy = sy1 - sy0
+            length = max(1.0, math.hypot(dx, dy))
+            ux = dx / length
+            uy = dy / length
+            nx = -uy
+            ny = ux
+            head = max(7.0, min(14.0, length * 0.2))
+            for sx, sy, sign in ((sx0, sy0, 1.0), (sx1, sy1, -1.0)):
+                tip = QtCore.QPointF(sx, sy)
+                back_x = sx + sign * ux * head
+                back_y = sy + sign * uy * head
+                poly = QtGui.QPolygonF(
+                    [
+                        tip,
+                        QtCore.QPointF(back_x + nx * head * 0.45, back_y + ny * head * 0.45),
+                        QtCore.QPointF(back_x - nx * head * 0.45, back_y - ny * head * 0.45),
+                    ]
+                )
+                painter.setBrush(QtGui.QBrush(color))
+                painter.drawPolygon(poly)
+
+            if text:
+                if text_pos is None:
+                    tx = (sx0 + sx1) * 0.5 + nx * 10.0
+                    ty = (sy0 + sy1) * 0.5 + ny * 10.0
+                else:
+                    tx = float(text_pos[0] * self._scale) + self._offset.x()
+                    ty = float(text_pos[1] * self._scale) + self._offset.y()
+                font = painter.font()
+                font.setPointSize(max(8, int(round(10 * max(1.0, min(self._scale, 1.4))))))
+                painter.setFont(font)
+                metrics = QtGui.QFontMetrics(font)
+                rect = metrics.boundingRect(text)
+                box = QtCore.QRectF(
+                    tx - rect.width() / 2 - 5,
+                    ty - rect.height() / 2 - 3,
+                    rect.width() + 10,
+                    rect.height() + 6,
+                )
+                bg = QtGui.QColor(0, 0, 0, 170)
+                painter.setPen(QtCore.Qt.NoPen)
+                painter.setBrush(QtGui.QBrush(bg))
+                painter.drawRoundedRect(box, 3, 3)
+                painter.setPen(QtGui.QPen(color))
+                painter.drawText(box, QtCore.Qt.AlignCenter, text)
+
         if self._scaled_pm is not None and self._overlays:
             for overlay in self._overlays:
                 if overlay.shape_type == "rect" and overlay.xywh is not None:
@@ -423,6 +491,14 @@ class RoiCanvas(QtWidgets.QLabel):
                     draw_points(overlay.points, overlay.color, size=overlay.width)
                 elif overlay.shape_type == "segments" and overlay.segments is not None:
                     draw_segments(overlay.segments, overlay.color, width=overlay.width, dash=overlay.dash)
+                elif overlay.shape_type == "dimension" and overlay.segments:
+                    draw_dimension(
+                        overlay.segments[0],
+                        overlay.color,
+                        text=overlay.text,
+                        width=overlay.width,
+                        text_pos=overlay.text_pos,
+                    )
 
         if self._scaled_pm is not None:
             if self.roi.shape_type == "rect" and self.roi.xywh is not None:

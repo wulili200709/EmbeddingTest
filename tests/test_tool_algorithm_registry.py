@@ -15,6 +15,7 @@ from algorithms.registry import (
     SHARED_BACKBONE_ALGORITHM_CODE,
     get_tool_algorithm_spec,
     is_learning_tool_algorithm,
+    is_measurement_tool_algorithm,
     is_traditional_tool_algorithm,
     normalize_tool_algorithm_code,
 )
@@ -37,6 +38,10 @@ class ToolAlgorithmRegistryTest(unittest.TestCase):
         self.assertTrue(is_learning_tool_algorithm(SHARED_BACKBONE_ALGORITHM_CODE))
         self.assertTrue(is_traditional_tool_algorithm("meanintensity"))
         self.assertEqual(get_tool_algorithm_spec("meanhsv_h").family, "traditional")
+        self.assertTrue(is_measurement_tool_algorithm("find_line"))
+        self.assertEqual(get_tool_algorithm_spec("find_line").family, "measurement")
+        self.assertTrue(is_measurement_tool_algorithm("line_distance"))
+        self.assertEqual(get_tool_algorithm_spec("line_distance").family, "measurement")
 
     def test_product_params_accept_learning_backbone_field(self) -> None:
         params = ProductRuntimeParams.from_dict(

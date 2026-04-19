@@ -8,7 +8,7 @@ from datetime import datetime
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from algorithms.registry import list_tool_algorithm_specs, normalize_tool_algorithm_code
-from domain import SUPPORTED_CAMERA_IDS, save_inspection_items
+from domain import InspectionItem, SUPPORTED_CAMERA_IDS, save_inspection_items
 from ui.i18n import tr
 
 
@@ -39,6 +39,57 @@ def _actual_inspection_item_index(tool_page, visible_row: int) -> int:
 def _persist_inspection_items(tool_page) -> None:
     save_inspection_items(tool_page.inspection_items, tool_page.session.inspection_items_path)
     tool_page.inspectionItemsChanged.emit()
+
+
+def _unique_item_id(tool_page, base: str) -> str:
+    existing = {
+        str(getattr(item, "item_id", "") or "").strip()
+        for item in list(getattr(tool_page, "inspection_items", []) or [])
+    }
+    candidate = str(base or "tool").strip() or "tool"
+    if candidate not in existing:
+        return candidate
+    index = 2
+    while f"{candidate}_{index}" in existing:
+        index += 1
+    return f"{candidate}_{index}"
+
+
+def _add_line_distance_tool(tool_page) -> None:
+    camera_role = _current_camera_role(tool_page)
+    line_options = [
+        item_id
+        for _display, item_id in _line_item_options(
+            tool_page,
+            type("_Selected", (), {"camera_id": camera_role, "item_id": ""})(),
+        )
+    ]
+    item_id = _unique_item_id(tool_page, "line_distance")
+    params = {
+        "line_a_item_id": line_options[0] if len(line_options) >= 1 else "",
+        "line_b_item_id": line_options[1] if len(line_options) >= 2 else "",
+        "limit_unit": "px",
+    }
+    tool_page.inspection_items.append(
+        InspectionItem(
+            item_id=item_id,
+            display_name="Line Distance",
+            camera_id=camera_role,
+            roi_label="",
+            algorithm_code="line_distance",
+            enabled=True,
+            params=params,
+        )
+    )
+    _persist_inspection_items(tool_page)
+    _refresh_inspection_items_table(tool_page)
+    table = getattr(tool_page, "inspection_items_table", None)
+    if table is not None:
+        for visible_row, actual_index in enumerate(getattr(tool_page, "_visible_inspection_item_indexes", []) or []):
+            item = tool_page.inspection_items[actual_index]
+            if str(getattr(item, "item_id", "") or "") == item_id:
+                table.setCurrentCell(visible_row, 1)
+                break
 
 
 def _inspection_combo_style(selected: bool) -> str:
@@ -93,6 +144,221 @@ def _update_learning_backbone_hint(tool_page) -> None:
     label.show()
 
 
+def _optional_param_float(params: dict, *keys: str):
+    for key in keys:
+        if key not in params:
+            continue
+        value = params.get(key)
+        if value is None or str(value).strip() == "":
+            continue
+        try:
+            return float(value)
+        except Exception:
+            continue
+    return None
+
+
+def _line_direction(params: dict, key: str, fallback: str) -> str:
+    line_params = params.get(key)
+    if not isinstance(line_params, dict):
+        line_params = {}
+    direction = str(line_params.get("direction", fallback) or fallback).strip()
+    if direction not in {"left_right", "right_left", "top_down", "bottom_up"}:
+        direction = fallback
+    return direction
+
+
+def _line_params(params: dict, key: str) -> dict:
+    value = params.get(key)
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _line_item_options(tool_page, selected_item) -> list[tuple[str, str]]:
+    current_role = str(getattr(selected_item, "camera_id", "") or _current_camera_role(tool_page)).strip() or "cam1"
+    current_id = str(getattr(selected_item, "item_id", "") or "").strip()
+    options: list[tuple[str, str]] = []
+    for item in list(getattr(tool_page, "inspection_items", []) or []):
+        if str(getattr(item, "camera_id", "") or "").strip() != current_role:
+            continue
+        item_id = str(getattr(item, "item_id", "") or "").strip()
+        if not item_id or item_id == current_id:
+            continue
+        algorithm = str(tool_page.algo.resolve_tool_algorithm(getattr(item, "algorithm_code", "")) or "").strip()
+        if algorithm != "find_line":
+            continue
+        display = str(getattr(item, "display_name", "") or getattr(item, "roi_label", "") or item_id).strip()
+        options.append((display, item_id))
+    return options
+
+
+def _set_combo_current_data(combo: QtWidgets.QComboBox, value: object) -> None:
+    target = str(value or "").strip()
+    index = combo.findData(target)
+    if index < 0 and combo.count() > 0:
+        index = 0
+    if index >= 0:
+        combo.setCurrentIndex(index)
+
+
+def _populate_line_tool_combo(combo: QtWidgets.QComboBox, options: list[tuple[str, str]]) -> None:
+    combo.blockSignals(True)
+    try:
+        combo.clear()
+        for display, item_id in options:
+            combo.addItem(display, item_id)
+    finally:
+        combo.blockSignals(False)
+
+
+def _update_measurement_params_panel(tool_page) -> None:
+    frame = getattr(tool_page, "measurement_params_frame", None)
+    if frame is None:
+        return
+    item = _selected_inspection_item(tool_page)
+    is_measurement = bool(
+        item is not None
+        and getattr(tool_page.algo, "is_measurement_tool", lambda _code: False)(item.algorithm_code)
+    )
+    frame.setVisible(is_measurement)
+    if not is_measurement:
+        return
+
+    params = dict(getattr(item, "params", {}) or {})
+    algorithm = str(tool_page.algo.resolve_tool_algorithm(item.algorithm_code) or "").strip()
+    is_find_line = algorithm == "find_line"
+    is_line_distance = algorithm == "line_distance"
+    unit = str(params.get("limit_unit", "") or "").strip().lower()
+    if unit not in {"px", "mm"}:
+        unit = "mm" if ("lower_limit_mm" in params or "upper_limit_mm" in params) else "px"
+    lower = _optional_param_float(params, "lower_limit", f"lower_limit_{unit}")
+    upper = _optional_param_float(params, "upper_limit", f"upper_limit_{unit}")
+    pixel_size = _optional_param_float(params, "pixel_size_mm") or 0.0
+    line_a_direction = _line_direction(params, "line" if is_find_line else "line_a", "left_right")
+    line_b_direction = _line_direction(params, "line_b", "right_left")
+    line_a = _line_params(params, "line" if is_find_line else "line_a")
+    line_b = _line_params(params, "line_b")
+    polarity = str(line_a.get("polarity", line_b.get("polarity", "any")) or "any").strip()
+    if polarity not in {"any", "dark_to_bright", "bright_to_dark"}:
+        polarity = "any"
+    edge_threshold = _optional_param_float(line_a, "edge_threshold")
+    if edge_threshold is None:
+        edge_threshold = _optional_param_float(line_b, "edge_threshold")
+    if edge_threshold is None:
+        edge_threshold = 10.0
+    scan_step = int(_optional_param_float(line_a, "scan_step") or _optional_param_float(line_b, "scan_step") or 2)
+    min_points = int(_optional_param_float(line_a, "min_points") or _optional_param_float(line_b, "min_points") or 10)
+    line_options = _line_item_options(tool_page, item)
+
+    tool_page._measurement_params_loading = True
+    try:
+        _populate_line_tool_combo(tool_page.cmb_measurement_line_a_tool, line_options)
+        _populate_line_tool_combo(tool_page.cmb_measurement_line_b_tool, line_options)
+        _set_combo_current_data(tool_page.cmb_measurement_line_a_tool, params.get("line_a_item_id", ""))
+        _set_combo_current_data(tool_page.cmb_measurement_line_b_tool, params.get("line_b_item_id", ""))
+        tool_page.cmb_measurement_line_a_tool.setEnabled(is_line_distance)
+        tool_page.cmb_measurement_line_b_tool.setEnabled(is_line_distance)
+        tool_page.cmb_measurement_line_a_direction.setCurrentText(line_a_direction)
+        tool_page.cmb_measurement_line_b_direction.setCurrentText(line_b_direction)
+        tool_page.cmb_measurement_line_a_direction.setEnabled(is_find_line)
+        tool_page.cmb_measurement_line_b_direction.setEnabled(not is_find_line and not is_line_distance)
+        tool_page.cmb_measurement_polarity.setCurrentText(polarity)
+        tool_page.cmb_measurement_polarity.setEnabled(is_find_line)
+        tool_page.spin_measurement_edge_threshold.setValue(float(edge_threshold))
+        tool_page.spin_measurement_edge_threshold.setEnabled(is_find_line)
+        tool_page.spin_measurement_scan_step.setValue(max(1, int(scan_step)))
+        tool_page.spin_measurement_scan_step.setEnabled(is_find_line)
+        tool_page.spin_measurement_min_points.setValue(max(2, int(min_points)))
+        tool_page.spin_measurement_min_points.setEnabled(is_find_line)
+        tool_page.cmb_measurement_unit.setCurrentText(unit)
+        tool_page.chk_measurement_lower.setChecked(lower is not None)
+        tool_page.chk_measurement_upper.setChecked(upper is not None)
+        tool_page.spin_measurement_lower.setEnabled(lower is not None)
+        tool_page.spin_measurement_upper.setEnabled(upper is not None)
+        tool_page.spin_measurement_lower.setValue(float(lower or 0.0))
+        tool_page.spin_measurement_upper.setValue(float(upper or 0.0))
+        tool_page.spin_measurement_pixel_size.setValue(float(pixel_size))
+    finally:
+        tool_page._measurement_params_loading = False
+
+
+def _on_measurement_params_changed(tool_page, *args) -> None:
+    if getattr(tool_page, "_measurement_params_loading", False):
+        return
+    item = _selected_inspection_item(tool_page)
+    if item is None:
+        return
+    if not getattr(tool_page.algo, "is_measurement_tool", lambda _code: False)(item.algorithm_code):
+        return
+    params = dict(item.params or {})
+    for key in (
+        "lower_limit",
+        "upper_limit",
+        "lower_limit_px",
+        "upper_limit_px",
+        "lower_limit_mm",
+        "upper_limit_mm",
+    ):
+        params.pop(key, None)
+    unit = str(tool_page.cmb_measurement_unit.currentText() or "px").strip().lower()
+    if unit not in {"px", "mm"}:
+        unit = "px"
+    algorithm = str(tool_page.algo.resolve_tool_algorithm(item.algorithm_code) or "").strip()
+    is_find_line = algorithm == "find_line"
+    is_line_distance = algorithm == "line_distance"
+    line_a = dict(params.get("line" if is_find_line else "line_a") or {})
+    line_b = dict(params.get("line_b") or {})
+    if is_find_line:
+        line_a["direction"] = str(tool_page.cmb_measurement_line_a_direction.currentText() or "left_right").strip()
+        polarity = str(tool_page.cmb_measurement_polarity.currentText() or "any").strip()
+        edge_threshold = float(tool_page.spin_measurement_edge_threshold.value())
+        scan_step = int(tool_page.spin_measurement_scan_step.value())
+        min_points = int(tool_page.spin_measurement_min_points.value())
+        line_a["polarity"] = polarity
+        line_a["edge_threshold"] = edge_threshold
+        line_a["scan_step"] = scan_step
+        line_a["min_points"] = min_points
+        params["line"] = line_a
+        params.pop("line_a", None)
+        params.pop("line_b", None)
+        params.pop("line_a_item_id", None)
+        params.pop("line_b_item_id", None)
+    elif is_line_distance:
+        params["line_a_item_id"] = str(tool_page.cmb_measurement_line_a_tool.currentData() or "").strip()
+        params["line_b_item_id"] = str(tool_page.cmb_measurement_line_b_tool.currentData() or "").strip()
+        params.pop("line", None)
+        params.pop("line_a", None)
+        params.pop("line_b", None)
+    else:
+        line_a["direction"] = str(tool_page.cmb_measurement_line_a_direction.currentText() or "left_right").strip()
+        line_b["direction"] = str(tool_page.cmb_measurement_line_b_direction.currentText() or "right_left").strip()
+        polarity = str(tool_page.cmb_measurement_polarity.currentText() or "any").strip()
+        edge_threshold = float(tool_page.spin_measurement_edge_threshold.value())
+        scan_step = int(tool_page.spin_measurement_scan_step.value())
+        min_points = int(tool_page.spin_measurement_min_points.value())
+        for line in (line_a, line_b):
+            line["polarity"] = polarity
+            line["edge_threshold"] = edge_threshold
+            line["scan_step"] = scan_step
+            line["min_points"] = min_points
+        params["line_a"] = line_a
+        params["line_b"] = line_b
+    params["limit_unit"] = unit
+    pixel_size = float(tool_page.spin_measurement_pixel_size.value())
+    if pixel_size > 0.0:
+        params["pixel_size_mm"] = pixel_size
+    else:
+        params.pop("pixel_size_mm", None)
+    if tool_page.chk_measurement_lower.isChecked():
+        params["lower_limit"] = float(tool_page.spin_measurement_lower.value())
+    if tool_page.chk_measurement_upper.isChecked():
+        params["upper_limit"] = float(tool_page.spin_measurement_upper.value())
+    item.params = params
+    tool_page.spin_measurement_lower.setEnabled(tool_page.chk_measurement_lower.isChecked())
+    tool_page.spin_measurement_upper.setEnabled(tool_page.chk_measurement_upper.isChecked())
+    _persist_inspection_items(tool_page)
+    _update_learning_backbone_hint(tool_page)
+
+
 def _format_timestamp(path: str) -> str:
     try:
         stamp = datetime.fromtimestamp(os.path.getmtime(path))
@@ -137,6 +403,23 @@ def _inspection_item_status(tool_page, inspection_item):
             backbone=tool_page.algo.algorithm_display_name(backbone) or backbone,
         )
         return tr("debug.status.untrained"), tooltip, "#d98c8c"
+
+    if getattr(tool_page.algo, "is_measurement_tool", lambda _code: False)(inspection_item.algorithm_code):
+        algorithm = tool_page.algo.resolve_tool_algorithm(inspection_item.algorithm_code)
+        if algorithm == "line_distance":
+            params = dict(getattr(inspection_item, "params", {}) or {})
+            line_a = str(params.get("line_a_item_id", "") or "").strip() or "-"
+            line_b = str(params.get("line_b_item_id", "") or "").strip() or "-"
+            tooltip = (
+                f"Algorithm: {tool_page.algo.algorithm_display_name(algorithm) or algorithm}\n"
+                f"Measures distance from {line_a} to {line_b} and judges OK/NG from lower/upper limits."
+            )
+            return "Ready", tooltip, "#79d279"
+        tooltip = (
+            f"Algorithm: {tool_page.algo.algorithm_display_name(algorithm) or algorithm}\n"
+            "Finds one fitted line inside the ROI for downstream distance measurement."
+        )
+        return "Ready", tooltip, "#79d279"
 
     algorithm = tool_page.algo.resolve_tool_algorithm(inspection_item.algorithm_code)
     model_dict = tool_page.algo.get_traditional_model_dict(algorithm, model_key=inspection_item.model_key)
@@ -305,6 +588,7 @@ def _on_inspection_items_selection_changed(tool_page) -> None:
         tool_page._refresh_lists()
         tool_page._update_runtime_widgets()
         tool_page._update_learning_backbone_hint()
+        tool_page._update_measurement_params_panel()
         return
     if tool_page.algo.is_learning_tool(item.algorithm_code):
         algorithm = tool_page.algo.current_learning_backbone()
@@ -319,6 +603,7 @@ def _on_inspection_items_selection_changed(tool_page) -> None:
     tool_page._refresh_lists()
     tool_page._update_runtime_widgets()
     tool_page._update_learning_backbone_hint()
+    tool_page._update_measurement_params_panel()
     image_path = tool_page.canvas.image_path()
     if image_path:
         tool_page._load_shape_for_label(image_path, tool_page._current_label())
@@ -371,6 +656,9 @@ def _on_inspection_item_algorithm_changed(tool_page, row: int, algorithm_code: o
         return
     normalized = normalize_tool_algorithm_code(algorithm_code)
     tool_page.inspection_items[row].algorithm_code = normalized
+    spec = tool_page.algo.tool_algorithm_spec(normalized)
+    if spec is not None and not dict(tool_page.inspection_items[row].params or {}):
+        tool_page.inspection_items[row].params = dict(spec.default_params or {})
     if row == _selected_inspection_item_row(tool_page):
         if tool_page.algo.is_learning_tool(normalized):
             tool_page.algo.product_params.algorithm = tool_page.algo.current_learning_backbone()
@@ -397,8 +685,11 @@ __all__ = [
     "_on_inspection_item_camera_changed",
     "_on_inspection_items_table_item_changed",
     "_persist_inspection_items",
+    "_add_line_distance_tool",
     "_refresh_inspection_items_table",
     "_selected_inspection_item",
     "_selected_inspection_item_row",
     "_update_learning_backbone_hint",
+    "_update_measurement_params_panel",
+    "_on_measurement_params_changed",
 ]

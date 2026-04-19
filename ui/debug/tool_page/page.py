@@ -988,8 +988,9 @@ ALGORITHM_GROUPS = [
     (
         "measurement",
         [
+            ("Find Line", "find_line", True),
+            ("Line Distance", "line_distance", True),
             ("Find Circle", "find_circle", False),
-            ("Find Line", "find_line", False),
         ],
     ),
 ]
@@ -1941,6 +1942,7 @@ class ToolPage(QtWidgets.QWidget):
         labels_override: Optional[List[str]] = None,
         algorithm_override: Optional[str] = None,
         model_key_override: Optional[str] = None,
+        params_override: Optional[Dict[str, object]] = None,
     ) -> Dict[str, object]:
         # Used by MainWindow runtime callback.
         return self._predict_image(
@@ -1949,6 +1951,7 @@ class ToolPage(QtWidgets.QWidget):
             labels_override=labels_override,
             algorithm_override=algorithm_override,
             model_key_override=model_key_override,
+            params_override=params_override,
         )
 
     def load_session(self) -> None:
@@ -2395,6 +2398,90 @@ class ToolPage(QtWidgets.QWidget):
         self.lbl_tool_config_hint = QtWidgets.QLabel("")
         self.lbl_tool_config_hint.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
         tool_vbox.addWidget(self.lbl_tool_config_hint)
+
+        self.measurement_params_frame = QtWidgets.QWidget()
+        measurement_form = QtWidgets.QFormLayout(self.measurement_params_frame)
+        measurement_form.setContentsMargins(8, 6, 8, 6)
+        measurement_form.setSpacing(6)
+        self._measurement_params_loading = False
+        self.chk_measurement_lower = QtWidgets.QCheckBox("Use lower")
+        self.chk_measurement_upper = QtWidgets.QCheckBox("Use upper")
+        self.spin_measurement_lower = QtWidgets.QDoubleSpinBox()
+        self.spin_measurement_upper = QtWidgets.QDoubleSpinBox()
+        self.spin_measurement_pixel_size = QtWidgets.QDoubleSpinBox()
+        self.cmb_measurement_line_a_tool = QtWidgets.QComboBox()
+        self.cmb_measurement_line_b_tool = QtWidgets.QComboBox()
+        for combo in (self.cmb_measurement_line_a_tool, self.cmb_measurement_line_b_tool):
+            combo.setStyleSheet(_input_style)
+            combo.currentIndexChanged.connect(self._on_measurement_params_changed)
+        self.cmb_measurement_line_a_direction = QtWidgets.QComboBox()
+        self.cmb_measurement_line_b_direction = QtWidgets.QComboBox()
+        for combo in (self.cmb_measurement_line_a_direction, self.cmb_measurement_line_b_direction):
+            combo.addItems(["left_right", "right_left", "top_down", "bottom_up"])
+            combo.setStyleSheet(_input_style)
+            combo.currentTextChanged.connect(self._on_measurement_params_changed)
+        self.cmb_measurement_polarity = QtWidgets.QComboBox()
+        self.cmb_measurement_polarity.addItems(["any", "dark_to_bright", "bright_to_dark"])
+        self.cmb_measurement_polarity.setStyleSheet(_input_style)
+        self.cmb_measurement_polarity.currentTextChanged.connect(self._on_measurement_params_changed)
+        self.spin_measurement_edge_threshold = QtWidgets.QDoubleSpinBox()
+        self.spin_measurement_edge_threshold.setDecimals(3)
+        self.spin_measurement_edge_threshold.setRange(0.0, 255.0)
+        self.spin_measurement_edge_threshold.setSingleStep(1.0)
+        self.spin_measurement_edge_threshold.setValue(10.0)
+        self.spin_measurement_scan_step = QtWidgets.QSpinBox()
+        self.spin_measurement_scan_step.setRange(1, 1000)
+        self.spin_measurement_scan_step.setValue(2)
+        self.spin_measurement_min_points = QtWidgets.QSpinBox()
+        self.spin_measurement_min_points.setRange(2, 100000)
+        self.spin_measurement_min_points.setValue(10)
+        for spin in (
+            self.spin_measurement_edge_threshold,
+            self.spin_measurement_scan_step,
+            self.spin_measurement_min_points,
+        ):
+            spin.setKeyboardTracking(False)
+            spin.setStyleSheet(_input_style)
+            spin.valueChanged.connect(self._on_measurement_params_changed)
+        for spin in (self.spin_measurement_lower, self.spin_measurement_upper):
+            spin.setDecimals(4)
+            spin.setRange(-1000000.0, 1000000.0)
+            spin.setSingleStep(0.01)
+            spin.setKeyboardTracking(False)
+            spin.setStyleSheet(_input_style)
+            spin.valueChanged.connect(self._on_measurement_params_changed)
+        for checkbox in (self.chk_measurement_lower, self.chk_measurement_upper):
+            checkbox.setStyleSheet(f"color:{_TEXT_LIGHT};font-size:12px;")
+            checkbox.toggled.connect(self._on_measurement_params_changed)
+        self.spin_measurement_pixel_size.setDecimals(6)
+        self.spin_measurement_pixel_size.setRange(0.0, 1000000.0)
+        self.spin_measurement_pixel_size.setSingleStep(0.001)
+        self.spin_measurement_pixel_size.setKeyboardTracking(False)
+        self.spin_measurement_pixel_size.setStyleSheet(_input_style)
+        self.spin_measurement_pixel_size.valueChanged.connect(self._on_measurement_params_changed)
+        self.cmb_measurement_unit = QtWidgets.QComboBox()
+        self.cmb_measurement_unit.addItems(["px", "mm"])
+        self.cmb_measurement_unit.setStyleSheet(_input_style)
+        self.cmb_measurement_unit.currentTextChanged.connect(self._on_measurement_params_changed)
+        measurement_form.addRow("Line A tool", self.cmb_measurement_line_a_tool)
+        measurement_form.addRow("Line B tool", self.cmb_measurement_line_b_tool)
+        measurement_form.addRow("Line A direction", self.cmb_measurement_line_a_direction)
+        measurement_form.addRow("Line B direction", self.cmb_measurement_line_b_direction)
+        measurement_form.addRow("Polarity", self.cmb_measurement_polarity)
+        measurement_form.addRow("Edge threshold", self.spin_measurement_edge_threshold)
+        measurement_form.addRow("Scan step", self.spin_measurement_scan_step)
+        measurement_form.addRow("Min points", self.spin_measurement_min_points)
+        measurement_form.addRow(self.chk_measurement_lower, self.spin_measurement_lower)
+        measurement_form.addRow(self.chk_measurement_upper, self.spin_measurement_upper)
+        measurement_form.addRow("Unit", self.cmb_measurement_unit)
+        measurement_form.addRow("Pixel size mm/px", self.spin_measurement_pixel_size)
+        self.measurement_params_frame.hide()
+        tool_vbox.addWidget(self.measurement_params_frame)
+
+        self.btn_add_line_distance_tool = QtWidgets.QPushButton("添加距离测量")
+        self.btn_add_line_distance_tool.setStyleSheet(_btn_style)
+        self.btn_add_line_distance_tool.clicked.connect(self._add_line_distance_tool)
+        tool_vbox.addWidget(self.btn_add_line_distance_tool)
 
         self.tool_config_frame = tool_frame
         self.inspection_items_table = QtWidgets.QTableWidget(0, 5)

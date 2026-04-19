@@ -22,6 +22,7 @@ def _predict_image(
     labels_override: Optional[List[str]] = None,
     algorithm_override: Optional[str] = None,
     model_key_override: Optional[str] = None,
+    params_override: Optional[Dict[str, object]] = None,
 ) -> Dict[str, object]:
     if not os.path.exists(path):
         raise FileNotFoundError(path)
@@ -77,6 +78,7 @@ def _predict_image(
         match_ms=match_ms,
         algorithm_override=algorithm_override,
         model_key_override=model_key_override,
+        params_override=params_override,
     )
     payload = result.to_dict()
     payload["infer_ms"] = (

@@ -32,6 +32,13 @@ from algorithms.traditional import (
     metric_value,
     train_threshold_model,
 )
+from algorithms.measurement import (
+    MEASUREMENT_ALGORITHMS,
+    is_measurement_algorithm,
+    judge_edge_distance,
+    measure_edge_distance,
+    measure_find_line,
+)
 from algorithms.registry import (
     DEFAULT_LEARNING_BACKBONE,
     LEARNING_BACKBONES,
@@ -39,6 +46,7 @@ from algorithms.registry import (
     algorithm_display_name,
     get_tool_algorithm_spec,
     is_learning_tool_algorithm,
+    is_measurement_tool_algorithm,
     is_traditional_tool_algorithm,
     learning_backbone_storage_code,
     normalize_tool_algorithm_code,
@@ -52,7 +60,7 @@ import algorithms.proxy as qr_core
 
 
 SUPPORTED_EMBEDDING_ALGORITHMS = list(LEARNING_BACKBONES)
-SUPPORTED_ALGORITHMS = SUPPORTED_EMBEDDING_ALGORITHMS + TRADITIONAL_ALGORITHMS
+SUPPORTED_ALGORITHMS = SUPPORTED_EMBEDDING_ALGORITHMS + TRADITIONAL_ALGORITHMS + MEASUREMENT_ALGORITHMS
 SUPPORTED_SCORE_MODES = ["proto", "topk"]
 
 
@@ -91,9 +99,11 @@ class PredictResult:
     match_ms: Optional[float]
     total_ms: float
     json_name: str
+    detail: str = ""
+    measurement: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        payload = {
             "file_path": self.file_path,
             "file_name": self.file_name,
             "gt": self.gt,
@@ -106,7 +116,11 @@ class PredictResult:
             "match_ms": self.match_ms,
             "total_ms": self.total_ms,
             "json_name": self.json_name,
+            "detail": self.detail,
         }
+        if self.measurement is not None:
+            payload["measurement"] = dict(self.measurement)
+        return payload
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +181,11 @@ class AlgorithmController:
         normalized = self.resolve_learning_algorithm(algorithm or str(self.product_params.algorithm or ""))
         if not normalized:
             return False
-        return not is_traditional_algorithm(normalized)
+        return normalized in SUPPORTED_EMBEDDING_ALGORITHMS
+
+    def is_measurement_algorithm(self, algorithm: Optional[str] = None) -> bool:
+        normalized = str(algorithm or self.product_params.algorithm or "").strip()
+        return is_measurement_algorithm(normalized)
 
     def current_learning_backbone(self) -> str:
         backbone = str(self.product_params.learning_backbone or "").strip()
@@ -212,6 +230,9 @@ class AlgorithmController:
 
     def is_traditional_tool(self, algorithm_code: object) -> bool:
         return is_traditional_tool_algorithm(algorithm_code)
+
+    def is_measurement_tool(self, algorithm_code: object) -> bool:
+        return is_measurement_tool_algorithm(algorithm_code)
 
     @staticmethod
     def _normalize_model_key(model_key: object) -> str:
@@ -421,7 +442,7 @@ class AlgorithmController:
                 model=model,
                 saved_model_path=saved_path,
             )
-        else:
+        elif is_traditional_algorithm(algorithm):
             threshold_model, train_rows = train_threshold_model(
                 ok_files,
                 ng_files,
@@ -463,6 +484,8 @@ class AlgorithmController:
                 traditional_model_dict=threshold_model.to_dict(),
                 result_rows=result_rows,
             )
+        else:
+            raise RuntimeError(f"{display_name or algorithm} does not need OK/NG training")
 
     # ------------------------------------------------------------------
     # 预测
@@ -478,6 +501,7 @@ class AlgorithmController:
         match_ms: Optional[float] = None,
         algorithm_override: Optional[str] = None,
         model_key_override: Optional[str] = None,
+        params_override: Optional[Dict[str, Any]] = None,
     ) -> PredictResult:
         """
         对单张已定位好 ROI 的图做推理。
@@ -497,6 +521,7 @@ class AlgorithmController:
         if not algorithm.strip():
             raise RuntimeError("请先选择工具")
         total_t0 = time.perf_counter()
+        measurement_payload: Optional[Dict[str, Any]] = None
 
         if self.is_embedding_algorithm(algorithm):
             if not self._loaded_embedding_matches(algorithm, labels=labels, model_key=model_key):
@@ -526,7 +551,7 @@ class AlgorithmController:
             pred, diff, sim_ok, sim_ng = qr_core.predict_one_with_model(e, self.model)
             value: Optional[float] = None
             threshold: Optional[float] = None
-        else:
+        elif is_traditional_algorithm(algorithm):
             model_dict = self.get_traditional_model_dict(algorithm, model_key=model_key)
             if not isinstance(model_dict, dict):
                 raise RuntimeError(f"{self.algorithm_display_name(algorithm) or algorithm} 尚未训练")
@@ -537,6 +562,45 @@ class AlgorithmController:
             sim_ok = None
             sim_ng = None
             threshold = float(threshold_model.threshold)
+        elif is_measurement_algorithm(algorithm):
+            params = dict(params_override or {})
+            if algorithm == "find_line":
+                measurement = measure_find_line(
+                    path,
+                    preferred_label=labels[0] if labels else "roi1",
+                    params=params,
+                )
+                pred = "OK"
+                diff = float(measurement.line.residual)
+                detail = (
+                    f"line_found pts={measurement.line.point_count}"
+                    f" pos={measurement.position_px:.3f}px"
+                    f" angle={measurement.angle_deg:.3f}deg"
+                    f" residual={measurement.line.residual:.3f}"
+                )
+                measurement_payload = measurement.to_dict()
+                value = None
+                threshold = None
+            elif algorithm == "line_distance":
+                raise RuntimeError("Line Distance must be run with paired Find Line tools")
+            else:
+                measurement = measure_edge_distance(
+                    path,
+                    preferred_label=labels[0] if labels else "roi1",
+                    params=params,
+                )
+                pred, judged_value, lower, upper, unit = judge_edge_distance(measurement, params)
+                diff = float(measurement.line_a.residual + measurement.line_b.residual) * 0.5
+                detail = f"distance={judged_value:.3f}{unit}"
+                measurement_payload = measurement.to_dict()
+                value = judged_value
+                threshold = float(upper) if upper is not None else None
+                if lower is not None or upper is not None:
+                    detail += f" spec={lower if lower is not None else '-'}..{upper if upper is not None else '-'}{unit}"
+            sim_ok = None
+            sim_ng = None
+        else:
+            raise RuntimeError(f"unsupported inspection algorithm: {algorithm}")
 
         total_ms = (time.perf_counter() - total_t0) * 1000.0
         return PredictResult(
@@ -552,4 +616,6 @@ class AlgorithmController:
             match_ms=match_ms,
             total_ms=float(total_ms),
             json_name=os.path.basename(qr_core.labelme_json_of_image(path)),
+            detail=locals().get("detail", ""),
+            measurement=measurement_payload,
         )

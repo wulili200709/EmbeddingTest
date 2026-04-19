@@ -120,6 +120,167 @@ class InspectionExecutorPerItemTest(unittest.TestCase):
         self.assertEqual(item_results["roi3"].result, "DISABLED")
         self.assertEqual(item_results["roi2"].algorithm_code, "meanintensity")
 
+    def test_measurement_item_result_participates_in_ok_ng(self) -> None:
+        class _MeasurementPredictor:
+            def predict_image(self, path: str, **kwargs) -> dict:
+                params = dict(kwargs.get("params_override") or {})
+                value = 41.0
+                lower = float(params.get("lower_limit", 0.0))
+                upper = float(params.get("upper_limit", 999.0))
+                return {
+                    "pred": "OK" if lower <= value <= upper else "NG",
+                    "value": value,
+                    "threshold": upper,
+                    "detail": f"distance={value:.3f}px spec={lower:.1f}..{upper:.1f}px",
+                }
+
+        executor = InspectionExecutor(_MeasurementPredictor())
+        response = executor.execute(
+            InspectionExecutionRequest(
+                camera_id="cam1",
+                image_path="demo.png",
+                items=[
+                    InspectionItem(
+                        item_id="width",
+                        display_name="Width",
+                        camera_id="cam1",
+                        roi_label="roi1",
+                        algorithm_code="edge_distance",
+                        params={"lower_limit": 40.0, "upper_limit": 42.0},
+                    )
+                ],
+            )
+        )
+
+        self.assertEqual(response.result, "OK")
+        self.assertEqual(response.item_results[0].result, "OK")
+        self.assertIn("distance=41.000px", response.item_results[0].detail)
+
+        response = executor.execute(
+            InspectionExecutionRequest(
+                camera_id="cam1",
+                image_path="demo.png",
+                items=[
+                    InspectionItem(
+                        item_id="width",
+                        display_name="Width",
+                        camera_id="cam1",
+                        roi_label="roi1",
+                        algorithm_code="edge_distance",
+                        params={"lower_limit": 45.0, "upper_limit": 50.0},
+                    )
+                ],
+            )
+        )
+
+        self.assertEqual(response.result, "NG")
+        self.assertEqual(response.item_results[0].result, "NG")
+
+    def test_line_distance_item_uses_explicit_find_line_pair(self) -> None:
+        class _FindLinePredictor:
+            def predict_image(self, path: str, **kwargs) -> dict:
+                label = kwargs.get("labels_override", [""])[0]
+                x = 10.0 if label == "left" else 52.0
+                return {
+                    "pred": "OK",
+                    "diff": 0.1,
+                    "measurement": {
+                        "roi_label": label,
+                        "line_segment": [[x, 0.0], [x, 100.0]],
+                        "edge_points": [[x, 0.0], [x, 50.0], [x, 100.0]],
+                    },
+                }
+
+        executor = InspectionExecutor(_FindLinePredictor())
+        response = executor.execute(
+            InspectionExecutionRequest(
+                camera_id="cam1",
+                image_path="demo.png",
+                items=[
+                    InspectionItem(
+                        item_id="left",
+                        display_name="Left",
+                        camera_id="cam1",
+                        roi_label="left",
+                        algorithm_code="find_line",
+                    ),
+                    InspectionItem(
+                        item_id="right",
+                        display_name="Right",
+                        camera_id="cam1",
+                        roi_label="right",
+                        algorithm_code="find_line",
+                    ),
+                    InspectionItem(
+                        item_id="width",
+                        display_name="Width",
+                        camera_id="cam1",
+                        roi_label="",
+                        algorithm_code="line_distance",
+                        params={
+                            "line_a_item_id": "left",
+                            "line_b_item_id": "right",
+                            "lower_limit": 40.0,
+                            "upper_limit": 44.0,
+                        },
+                    ),
+                ],
+            )
+        )
+
+        self.assertEqual(response.result, "OK")
+        self.assertEqual(len(response.item_results), 3)
+        distance_result = response.item_results[-1]
+        self.assertEqual(distance_result.item_id, "width")
+        self.assertEqual(distance_result.result, "OK")
+        self.assertIn("distance=42.000px", distance_result.detail)
+        assert response.raw_row is not None
+        distance_row = response.raw_row["item_rows"][-1]
+        self.assertEqual(distance_row["tool_name"], "Width")
+        self.assertAlmostEqual(distance_row["value"], 42.0)
+        self.assertEqual(distance_row["measurement"]["line_a_item_id"], "left")
+        self.assertEqual(distance_row["measurement"]["line_b_item_id"], "right")
+        self.assertIn("dimension_segment", distance_row["measurement"])
+
+        response = executor.execute(
+            InspectionExecutionRequest(
+                camera_id="cam1",
+                image_path="demo.png",
+                items=[
+                    InspectionItem(
+                        item_id="left",
+                        display_name="Left",
+                        camera_id="cam1",
+                        roi_label="left",
+                        algorithm_code="find_line",
+                    ),
+                    InspectionItem(
+                        item_id="right",
+                        display_name="Right",
+                        camera_id="cam1",
+                        roi_label="right",
+                        algorithm_code="find_line",
+                    ),
+                    InspectionItem(
+                        item_id="width",
+                        display_name="Width",
+                        camera_id="cam1",
+                        roi_label="",
+                        algorithm_code="line_distance",
+                        params={
+                            "line_a_item_id": "left",
+                            "line_b_item_id": "right",
+                            "lower_limit": 45.0,
+                            "upper_limit": 50.0,
+                        },
+                    ),
+                ],
+            )
+        )
+
+        self.assertEqual(response.result, "NG")
+        self.assertEqual(response.item_results[-1].result, "NG")
+
 
 if __name__ == "__main__":
     unittest.main()
