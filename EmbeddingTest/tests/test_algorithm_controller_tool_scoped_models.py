@@ -30,6 +30,50 @@ class AlgorithmControllerToolScopedModelsTest(unittest.TestCase):
         )
         self.assertTrue(path.endswith("cam1__roi1_register_model_lt01.npz"))
 
+    def test_load_embedding_model_reuses_unchanged_model_file(self) -> None:
+        controller = AlgorithmController()
+        controller.set_learning_backbone("efficientnet_b0")
+        fake_model = SimpleNamespace(
+            backbone="efficientnet_b0",
+            device="cpu",
+            score_mode="proto",
+            margin=0.1,
+            topk=1,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            product_dir = Path(tmpdir)
+            model_path = Path(
+                controller.embedding_model_path(
+                    "efficientnet_b0",
+                    str(product_dir),
+                    model_key="cam1__roi1",
+                )
+            )
+            model_path.write_bytes(b"model-v1")
+
+            load_mock = mock.Mock(return_value=fake_model)
+            with mock.patch.dict(
+                algorithm_controller.qr_core.__dict__,
+                {"load_register_model_npz": load_mock},
+            ):
+                first_model, _first_msg = controller.load_model_for_algorithm(
+                    "efficientnet_b0",
+                    str(product_dir),
+                    model_key="cam1__roi1",
+                )
+                controller.product_params.margin = 0.6
+                second_model, _second_msg = controller.load_model_for_algorithm(
+                    "efficientnet_b0",
+                    str(product_dir),
+                    model_key="cam1__roi1",
+                )
+
+        self.assertIs(first_model, fake_model)
+        self.assertIs(second_model, fake_model)
+        self.assertEqual(load_mock.call_count, 1)
+        self.assertAlmostEqual(fake_model.margin, 0.6)
+
     def test_train_stores_traditional_model_by_tool_key(self) -> None:
         controller = AlgorithmController()
         fake_model = TraditionalThresholdModel(

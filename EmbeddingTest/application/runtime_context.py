@@ -126,6 +126,9 @@ def _predict_learning_items_batch_rows(
     feat_net=None,
 ) -> Dict[str, Dict[str, object]]:
     rows_by_key: Dict[str, Dict[str, object]] = {}
+    if not items:
+        return rows_by_key
+
     learning_groups: Dict[str, List[InspectionItem]] = {}
     for item in items:
         algorithm = algo.resolve_tool_algorithm(item.algorithm_code)
@@ -308,6 +311,9 @@ def _predict_learning_items_batch_rows_from_frame(
     feat_net=None,
 ) -> Dict[str, Dict[str, object]]:
     rows_by_key: Dict[str, Dict[str, object]] = {}
+    if not items:
+        return rows_by_key
+
     learning_groups: Dict[str, List[InspectionItem]] = {}
     shape_by_label = _runtime_shape_by_label(roi_shapes)
     for item in items:
@@ -864,15 +870,32 @@ class ProductRuntimeContext:
         synced_items: List[InspectionItem] = []
         remaining_items: List[InspectionItem] = []
         for role in ("cam1", "cam2"):
-            recipe = self._load_recipe_if_available(role)
-            self._recipes_by_role[role] = recipe
             role_items = [
                 item for item in items
                 if str(getattr(item, "camera_id", "") or "").strip() == role
             ]
-            if recipe is None and not role_items:
-                continue
-            specs = inspection_item_specs_from_line2dup_recipe(recipe)
+            if self.loc_method == "ncc":
+                self._recipes_by_role[role] = None
+                model_ready = ncc_locator.model_is_ready(self.session.product_dir, role)
+                if not model_ready and not role_items:
+                    continue
+                if model_ready:
+                    specs = ncc_locator.inspection_item_specs_for_product(self.session.product_dir, role)
+                else:
+                    specs = [
+                        {
+                            "roi_label": str(item.roi_label or "").strip(),
+                            "display_name": str(item.display_name or item.roi_label or "").strip(),
+                        }
+                        for item in role_items
+                        if str(item.roi_label or "").strip()
+                    ]
+            else:
+                recipe = self._load_recipe_if_available(role)
+                self._recipes_by_role[role] = recipe
+                if recipe is None and not role_items:
+                    continue
+                specs = inspection_item_specs_from_line2dup_recipe(recipe)
             labels = [
                 str(spec.get("roi_label", "")).strip()
                 for spec in specs

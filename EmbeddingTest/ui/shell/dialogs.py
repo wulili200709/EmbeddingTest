@@ -381,7 +381,7 @@ def prompt_trigger_timing_settings(
     layout.setContentsMargins(16, 14, 16, 14)
     layout.setSpacing(10)
 
-    tip_label = QtWidgets.QLabel("收到脚踏信号后，等待设定时间再开始拍照。")
+    tip_label = QtWidgets.QLabel("收到感应信号后，等待设定时间再开始拍照。")
     tip_label.setStyleSheet("color:#b8b8b8;")
     tip_label.setWordWrap(True)
     layout.addRow(tip_label)

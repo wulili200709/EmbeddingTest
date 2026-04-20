@@ -185,6 +185,7 @@ class RuntimeController(QtCore.QObject):
     statusMessageChanged    = QtCore.Signal(str)   # → runtime_page.set_runtime_status
     recordPathChanged       = QtCore.Signal(str)   # → runtime_page.set_record_path
     ioStatusChanged         = QtCore.Signal(bool, str, object)  # (ready, detail, io_controller)
+    conveyorRunStateChanged = QtCore.Signal(bool, bool, str)  # (available, running, detail)
 
     # ── 动作类 Signal ─────────────────────────────────────────────────────
     camerasEnumerated = QtCore.Signal(list)        # → runtime_page.set_available_cameras
@@ -247,6 +248,7 @@ class RuntimeController(QtCore.QObject):
         self._io_controller = None
         self._io_ready = False
         self._io_status_detail = "IO not initialized"
+        self._conveyor_running = False
         self._di_poller = None
         self._inspection_executor = InspectionExecutor(self._runtime_context)
         self._last_item_results_by_camera: Dict[str, list] = {}
@@ -738,6 +740,7 @@ class RuntimeController(QtCore.QObject):
             return
 
         if self._scheduler.try_release_ng_lock(password):
+            self._set_conveyor_run(True, reason="release granted")
             self.logAppended.emit("[放行] 密码正确，已放行一次，等待下一次有效检测消耗")
             self._write_release_log(
                 event_type="release_request",

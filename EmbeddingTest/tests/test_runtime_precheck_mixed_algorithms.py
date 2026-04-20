@@ -18,6 +18,7 @@ from algorithms.registry import (
     is_learning_tool_algorithm,
     is_traditional_tool_algorithm,
 )
+from application.runtime import execution as execution_module
 from application.runtime.execution import _precheck
 from application.runtime import controller as runtime_controller_module
 from domain.inspection_items import InspectionItem
@@ -29,8 +30,8 @@ class _FakeFrameGrabService:
 
 
 class _FakeRuntimeContext:
-    def __init__(self, items) -> None:
-        self.loc_method = "line2dup"
+    def __init__(self, items, *, loc_method: str = "line2dup") -> None:
+        self.loc_method = loc_method
         self.inspection_items = list(items)
         self.loaded_algorithms: list[tuple[str, str | None]] = []
 
@@ -117,6 +118,39 @@ class RuntimePrecheckMixedAlgorithmsTest(unittest.TestCase):
         self.assertEqual(message, "")
         self.assertEqual(runtime_context.loaded_algorithms, [("efficientnet_b0", "cam1__roi1")])
         self.assertEqual(algo.feat_net_requests, ["efficientnet_b0"])
+
+    def test_precheck_accepts_ncc_localization_when_model_exists(self) -> None:
+        items = [
+            InspectionItem(
+                item_id="roi2",
+                display_name="ROI2",
+                camera_id="cam1",
+                roi_label="roi2",
+                algorithm_code="meanintensity",
+            ),
+        ]
+        runtime_context = _FakeRuntimeContext(items, loc_method="ncc")
+        algo = _FakeAlgo()
+        runtime = SimpleNamespace(
+            _frame_grab_service=_FakeFrameGrabService(),
+            _runtime_context=runtime_context,
+            _session=SimpleNamespace(product_dir="demo-product"),
+            _algo=algo,
+            _connected_roles=lambda: ["cam1"],
+        )
+
+        original_frame_to_bgr = runtime_controller_module.frame_to_bgr_image
+        original_model_path = execution_module.ncc_locator.resolved_model_path_for_product
+        runtime_controller_module.frame_to_bgr_image = object()
+        execution_module.ncc_locator.resolved_model_path_for_product = lambda _product_dir, _role: __file__
+        try:
+            ok, message = _precheck(runtime)
+        finally:
+            runtime_controller_module.frame_to_bgr_image = original_frame_to_bgr
+            execution_module.ncc_locator.resolved_model_path_for_product = original_model_path
+
+        self.assertTrue(ok)
+        self.assertEqual(message, "")
 
 
 if __name__ == "__main__":

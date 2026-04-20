@@ -14,12 +14,14 @@ from app_paths import packaged_embedding_test_root, packaged_repo_root
 from .capture_policy import DEFAULT_LIGHT_STABLE_MS
 
 
+_CONVEYOR_RUN_OUTPUT = "reserved_out_1"
+
 _STARTUP_OUTPUT_DEFAULTS: dict[str, bool] = {
-    "reserved_out_1": True,
+    _CONVEYOR_RUN_OUTPUT: True,
 }
 
 _SHUTDOWN_OUTPUT_DEFAULTS: dict[str, bool] = {
-    "reserved_out_1": False,
+    _CONVEYOR_RUN_OUTPUT: False,
 }
 
 
@@ -41,10 +43,29 @@ def _load_nkio_runtime_options(mapping_path: Path) -> dict[str, str]:
     return result
 
 
+def _emit_conveyor_run_state(runtime, *, available: bool, running: bool, detail: str = "") -> None:
+    runtime._conveyor_running = bool(running)
+    signal = getattr(runtime, "conveyorRunStateChanged", None)
+    if signal is not None:
+        signal.emit(bool(available), bool(running), str(detail or ""))
+
+
 def _emit_io_status(runtime, ready: bool, detail: str, controller=None) -> None:
     runtime._io_ready = bool(ready)
     runtime._io_status_detail = str(detail or "")
     runtime.ioStatusChanged.emit(runtime._io_ready, runtime._io_status_detail, controller)
+    running = bool(getattr(runtime, "_conveyor_running", False))
+    if runtime._io_ready and controller is not None:
+        try:
+            running = bool(controller.read_output(_CONVEYOR_RUN_OUTPUT))
+        except Exception:
+            pass
+    _emit_conveyor_run_state(
+        runtime,
+        available=runtime._io_ready,
+        running=running if runtime._io_ready else False,
+        detail=runtime._io_status_detail,
+    )
 
 
 def _apply_output_defaults(runtime, controller, defaults: dict[str, bool], *, phase: str) -> None:
@@ -57,6 +78,13 @@ def _apply_output_defaults(runtime, controller, defaults: dict[str, bool], *, ph
             )
             continue
         runtime.logAppended.emit(f"[IO] {phase} output default applied: {name}={'ON' if on else 'OFF'}")
+        if name == _CONVEYOR_RUN_OUTPUT:
+            _emit_conveyor_run_state(
+                runtime,
+                available=True,
+                running=bool(on),
+                detail=f"{phase} output default",
+            )
 
 
 def _apply_startup_output_defaults(runtime, controller) -> None:
@@ -65,6 +93,45 @@ def _apply_startup_output_defaults(runtime, controller) -> None:
 
 def _apply_shutdown_output_defaults(runtime, controller) -> None:
     _apply_output_defaults(runtime, controller, _SHUTDOWN_OUTPUT_DEFAULTS, phase="shutdown")
+
+
+def _set_conveyor_run(runtime, running: bool, *, reason: str = "") -> bool:
+    controller = getattr(runtime, "_io_controller", None)
+    if controller is None or not getattr(controller, "is_open", False):
+        return False
+    try:
+        controller.set_output(_CONVEYOR_RUN_OUTPUT, bool(running))
+    except Exception as exc:
+        runtime.logAppended.emit(
+            f"[IO] failed to set conveyor output: {_CONVEYOR_RUN_OUTPUT}="
+            f"{'ON' if running else 'OFF'}: {exc}"
+        )
+        return False
+    detail = f" ({reason})" if str(reason or "").strip() else ""
+    runtime.logAppended.emit(
+        f"[IO] conveyor output applied: {_CONVEYOR_RUN_OUTPUT}="
+        f"{'ON' if running else 'OFF'}{detail}"
+    )
+    _emit_conveyor_run_state(
+        runtime,
+        available=True,
+        running=bool(running),
+        detail=str(reason or "").strip(),
+    )
+    return True
+
+
+def set_conveyor_run(runtime, running: bool) -> None:
+    if _set_conveyor_run(runtime, bool(running), reason="manual UI"):
+        runtime._update_status("皮带已启动" if running else "皮带已停止")
+        return
+    runtime.warningOccurred.emit("IO未就绪，无法控制皮带")
+    _emit_conveyor_run_state(
+        runtime,
+        available=False,
+        running=False,
+        detail="IO未就绪，无法控制皮带",
+    )
 
 
 def _rebuild_runner(runtime) -> bool:

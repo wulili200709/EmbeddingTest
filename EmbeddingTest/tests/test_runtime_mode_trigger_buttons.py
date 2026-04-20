@@ -103,7 +103,53 @@ class RuntimeModeTriggerButtonsTest(unittest.TestCase):
         page.clear_camera_views()
 
         self.assertTrue(page.view_cam2.isHidden())
+        self.assertTrue(page.btn_trigger_cam2.isHidden())
         self.assertFalse(page.btn_trigger_cam2.isEnabled())
+
+    def test_single_active_camera_hides_cam2_detection_section(self) -> None:
+        page = RuntimeModePage()
+        page.set_inspection_items(
+            [
+                {
+                    "item_id": "roi1",
+                    "display_name": "ROI1",
+                    "camera_id": "cam1",
+                    "enabled": True,
+                    "status_kind": "pending",
+                    "status_text": "PENDING",
+                },
+                {
+                    "item_id": "roi2",
+                    "display_name": "ROI2",
+                    "camera_id": "cam2",
+                    "enabled": True,
+                    "status_kind": "inactive",
+                    "status_text": "INACTIVE",
+                },
+            ]
+        )
+
+        page.set_active_camera_roles(["cam1"])
+
+        self.assertIn("cam1", page._camera_section_headers)
+        self.assertNotIn("cam2", page._camera_section_headers)
+
+    def test_conveyor_button_follows_runtime_state_and_emits_requested_state(self) -> None:
+        page = RuntimeModePage()
+        requested: list[bool] = []
+        page.conveyorRunRequested.connect(requested.append)
+
+        page.set_conveyor_run_state(False, False, "IO not ready")
+        self.assertFalse(page.btn_conveyor_toggle.isEnabled())
+
+        page.set_conveyor_run_state(True, False, "stopped")
+        self.assertTrue(page.btn_conveyor_toggle.isEnabled())
+        page.btn_conveyor_toggle.click()
+        self.assertEqual(requested, [True])
+
+        page.set_conveyor_run_state(True, True, "running")
+        page.btn_conveyor_toggle.click()
+        self.assertEqual(requested, [True, False])
 
 
 if __name__ == "__main__":

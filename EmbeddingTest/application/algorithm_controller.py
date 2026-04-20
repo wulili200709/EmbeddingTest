@@ -144,6 +144,7 @@ class AlgorithmController:
         self.product_params: ProductRuntimeParams = ProductRuntimeParams()
         self.model: Optional[Any] = None          # qr_core.RegisterModel | None
         self._feat_net_cache: Dict[Tuple[str, str], Any] = {}
+        self._embedding_model_cache: Dict[Tuple[str, str, str], Tuple[Any, Tuple[int, int]]] = {}
         self._active_product_dir: str = ""
         self._loaded_embedding_model_key: Tuple[str, str] = ("", "")
 
@@ -336,6 +337,49 @@ class AlgorithmController:
         self._feat_net_cache.clear()
 
     @staticmethod
+    def _normalized_model_file(path: str) -> str:
+        return os.path.normcase(os.path.abspath(str(path or "")))
+
+    @staticmethod
+    def _model_file_signature(path: str) -> Tuple[int, int]:
+        try:
+            stat_result = os.stat(path)
+        except OSError:
+            return (-1, -1)
+        return (int(getattr(stat_result, "st_mtime_ns", int(stat_result.st_mtime * 1_000_000_000))), int(stat_result.st_size))
+
+    def _model_cache_key(self, kind: str, algorithm: str, model_file: str) -> Tuple[str, str, str]:
+        return (
+            str(kind or "").strip(),
+            str(algorithm or "").strip(),
+            self._normalized_model_file(model_file),
+        )
+
+    def _cached_embedding_model(self, kind: str, algorithm: str, model_file: str) -> Optional[Any]:
+        key = self._model_cache_key(kind, algorithm, model_file)
+        cached = self._embedding_model_cache.get(key)
+        if cached is None:
+            return None
+        model, signature = cached
+        current_signature = self._model_file_signature(model_file)
+        if current_signature == signature and current_signature != (-1, -1):
+            return model
+        self._embedding_model_cache.pop(key, None)
+        return None
+
+    def _remember_embedding_model(self, kind: str, algorithm: str, model_file: str, model: Any) -> None:
+        signature = self._model_file_signature(model_file)
+        if signature == (-1, -1):
+            return
+        self._embedding_model_cache[self._model_cache_key(kind, algorithm, model_file)] = (model, signature)
+
+    def _forget_cached_model_file(self, model_file: str) -> None:
+        normalized = self._normalized_model_file(model_file)
+        stale_keys = [key for key in self._embedding_model_cache if key[2] == normalized]
+        for key in stale_keys:
+            self._embedding_model_cache.pop(key, None)
+
+    @staticmethod
     def _remove_file_if_exists(path: str) -> bool:
         if not path or not os.path.exists(path):
             return False
@@ -357,9 +401,9 @@ class AlgorithmController:
         changed = False
 
         if self.is_anomaly_algorithm(normalized_algorithm):
-            changed = self._remove_file_if_exists(
-                self.anomaly_model_path(normalized_algorithm, product_dir, model_key=normalized_model_key)
-            ) or changed
+            model_path = self.anomaly_model_path(normalized_algorithm, product_dir, model_key=normalized_model_key)
+            changed = self._remove_file_if_exists(model_path) or changed
+            self._forget_cached_model_file(model_path)
             if self._loaded_embedding_model_key == (normalized_algorithm, normalized_model_key):
                 self.model = None
                 self._loaded_embedding_model_key = ("", "")
@@ -377,6 +421,7 @@ class AlgorithmController:
                     continue
                 seen_paths.add(normalized_path)
                 changed = self._remove_file_if_exists(candidate_path) or changed
+                self._forget_cached_model_file(candidate_path)
             if self._loaded_embedding_model_key == (normalized_algorithm, normalized_model_key):
                 self.model = None
                 self._loaded_embedding_model_key = ("", "")
@@ -462,7 +507,10 @@ class AlgorithmController:
                 self.model = None
                 self._loaded_embedding_model_key = ("", "")
                 return None, f"Status: {display_name or algorithm} is not trained yet"
-            model = load_anomaly_model_npz(model_file)
+            model = self._cached_embedding_model("anomaly", algorithm, model_file)
+            if model is None:
+                model = load_anomaly_model_npz(model_file)
+                self._remember_embedding_model("anomaly", algorithm, model_file, model)
             model.threshold = float(self.product_params.margin)
             model.topk = int(self.product_params.topk)
             self.model = model
@@ -502,7 +550,10 @@ class AlgorithmController:
             self._loaded_embedding_model_key = ("", "")
             return None, f"Status: {display_name or algorithm} is not trained yet"
 
-        model = qr_core.load_register_model_npz(model_file)
+        model = self._cached_embedding_model("register", algorithm, model_file)
+        if model is None:
+            model = qr_core.load_register_model_npz(model_file)
+            self._remember_embedding_model("register", algorithm, model_file, model)
         model.score_mode = self.product_params.score_mode
         model.margin = float(self.product_params.margin)
         model.topk = int(self.product_params.topk)
@@ -586,6 +637,7 @@ class AlgorithmController:
             save_anomaly_model_npz(model, saved_path)
             self.model = model
             self._loaded_embedding_model_key = (algorithm, normalized_model_key)
+            self._remember_embedding_model("anomaly", algorithm, saved_path, model)
             return TrainResult(
                 algorithm=algorithm,
                 is_embedding=True,
@@ -626,6 +678,7 @@ class AlgorithmController:
             qr_core.save_register_model_npz(model, saved_path)
             self.model = model
             self._loaded_embedding_model_key = (algorithm, normalized_model_key)
+            self._remember_embedding_model("register", algorithm, saved_path, model)
             return TrainResult(
                 algorithm=algorithm,
                 is_embedding=True,

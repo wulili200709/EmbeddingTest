@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from domain import build_pending_result, recipe_name_from_path
+from ncc import locator as ncc_locator
 
 _RUN_STATE_ZH_FOR_STATUS = {
     "WaitingTrigger": "等待触发",
@@ -31,12 +32,26 @@ def _recipe_path_for_role(runtime, role: str) -> str:
     return str(getattr(runtime._session, "line2dup_recipe_path", "") or "")
 
 
+def _loc_method(runtime) -> str:
+    method = str(getattr(runtime._runtime_context, "loc_method", "") or "line2dup").strip().lower()
+    return method if method in {"line2dup", "ncc"} else "line2dup"
+
+
+def _localization_path_for_role(runtime, role: str) -> str:
+    if _loc_method(runtime) == "ncc":
+        product_dir = str(getattr(runtime._session, "product_dir", "") or "").strip()
+        if not product_dir:
+            return ""
+        return ncc_locator.resolved_model_path_for_product(product_dir, role)
+    return _recipe_path_for_role(runtime, role)
+
+
 def _runtime_recipe_name(runtime) -> str:
     for role in _connected_roles(runtime):
-        path = _recipe_path_for_role(runtime, role)
+        path = _localization_path_for_role(runtime, role)
         if path:
             return recipe_name_from_path(path)
-    return recipe_name_from_path(str(getattr(runtime._session, "line2dup_recipe_path", "") or ""))
+    return recipe_name_from_path(str(_localization_path_for_role(runtime, "cam1") or ""))
 
 
 def _update_status(runtime, message=None) -> None:

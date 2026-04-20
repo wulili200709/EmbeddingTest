@@ -166,7 +166,7 @@ class _SampleAnnotationCanvas(QtWidgets.QWidget):
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
         self.setMouseTracking(True)
-        self.setMinimumSize(480, 360)
+        self.setMinimumSize(420, 260)
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
         self._pixmap = QtGui.QPixmap()
         self._scaled_pixmap = QtGui.QPixmap()
@@ -542,8 +542,9 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         super().__init__(parent or tool_page)
         self._tool_page = tool_page
         self.setWindowTitle("样本标注")
-        self.resize(1100, 720)
+        self.resize(1080, 640)
         self.setModal(False)
+        self._screen_fit_applied = False
 
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(10, 10, 10, 10)
@@ -670,6 +671,19 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         self.cmb_sample_kind.currentIndexChanged.connect(lambda *_: self._reload_samples())
         self.sample_list.itemSelectionChanged.connect(self._on_sample_selected)
         self._reload_samples()
+
+    def showEvent(self, event: QtGui.QShowEvent) -> None:
+        super().showEvent(event)
+        if self._screen_fit_applied:
+            return
+        self._screen_fit_applied = True
+        screen = self.screen()
+        if screen is None:
+            return
+        available = screen.availableGeometry()
+        max_width = max(900, available.width() - 40)
+        max_height = max(560, available.height() - 80)
+        self.resize(min(self.width(), max_width), min(self.height(), max_height))
 
     def sync_camera_roles(self, roles: List[str]) -> None:
         normalized: List[str] = []

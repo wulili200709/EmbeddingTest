@@ -118,10 +118,6 @@ class InspectionRuntime:
             duration_ms = int((time.perf_counter() - started_at) * 1000.0)
 
             self.scheduler.on_completed(final_ok=final_ok)
-            if final_ok:
-                self.tower_light_controller.show_ok()
-            else:
-                self.tower_light_controller.show_ng()
 
             final_outcome = FinalInspectionOutcome(
                 final_result="OK" if final_ok else "NG",
@@ -132,7 +128,6 @@ class InspectionRuntime:
         except Exception as exc:
             duration_ms = int((time.perf_counter() - started_at) * 1000.0)
             self.scheduler.on_error(lock_as_ng=True)
-            self.tower_light_controller.show_ng()
             final_outcome = FinalInspectionOutcome(
                 final_result="NG",
                 camera_outcomes={},

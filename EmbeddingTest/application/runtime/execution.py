@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from domain import aggregate_runtime_outcome, recipe_name_from_path
+from ncc import locator as ncc_locator
 
 from .capture_policy import normalize_capture_retention_policy
 from .preview_frame import RuntimePreviewFrame, build_runtime_preview_frame, export_runtime_preview_frame
@@ -28,13 +29,31 @@ def _recipe_path_for_role(runtime, role: str) -> str:
     return str(getattr(runtime._session, "line2dup_recipe_path", "") or "")
 
 
+def _loc_method(runtime) -> str:
+    method = str(getattr(runtime._runtime_context, "loc_method", "") or "line2dup").strip().lower()
+    return method if method in {"line2dup", "ncc"} else "line2dup"
+
+
+def _ncc_model_path_for_role(runtime, role: str) -> str:
+    product_dir = str(getattr(runtime._session, "product_dir", "") or "").strip()
+    if not product_dir:
+        return ""
+    return ncc_locator.resolved_model_path_for_product(product_dir, role)
+
+
+def _localization_path_for_role(runtime, role: str) -> str:
+    if _loc_method(runtime) == "ncc":
+        return _ncc_model_path_for_role(runtime, role)
+    return _recipe_path_for_role(runtime, role)
+
+
 def _recipe_name_for_roles(runtime, roles) -> str:
     role_list = [str(role).strip() for role in roles if str(role).strip()]
     for role in role_list:
-        path = _recipe_path_for_role(runtime, role)
+        path = _localization_path_for_role(runtime, role)
         if path:
             return recipe_name_from_path(path)
-    return recipe_name_from_path(str(getattr(runtime._session, "line2dup_recipe_path", "") or ""))
+    return recipe_name_from_path(str(_localization_path_for_role(runtime, "cam1") or ""))
 
 
 def _outcome_roles(outcome) -> tuple[str, ...]:
@@ -52,6 +71,18 @@ def _outcome_roles(outcome) -> tuple[str, ...]:
 def _should_export_captures(runtime, final_result: str) -> bool:
     policy = normalize_capture_retention_policy(runtime._capture_retention_policy)
     return policy == "all" or str(final_result or "").strip().upper() == "NG"
+
+
+def _show_final_tower_light(runtime, final_result: str) -> None:
+    controller = getattr(runtime, "_tower_light_controller", None)
+    result_text = str(final_result or "").strip().upper()
+    try:
+        if result_text == "OK" and hasattr(controller, "show_ok"):
+            controller.show_ok()
+        elif result_text == "NG" and hasattr(controller, "show_ng"):
+            controller.show_ng()
+    except Exception as exc:
+        runtime.logAppended.emit(f"[tower-light] failed to show final result: {exc}")
 
 
 def _capture_root_directory(runtime) -> Path:
@@ -125,6 +156,10 @@ def _ensure_capture_free_space(runtime, target_dir: str | Path) -> None:
 
 def _finalize_trigger_outcome(runtime, outcome, release_status_before) -> None:
     runtime._last_record_path = ""
+    if outcome.final_result == "NG" and hasattr(runtime, "_set_conveyor_run"):
+        runtime._set_conveyor_run(False, reason="NG result")
+        _show_final_tower_light(runtime, outcome.final_result)
+
     if runtime._record_service is not None:
         runtime._last_record_path = str(runtime._record_service.writer.file_path_for_date())
     current_preview_frames = dict(runtime._last_preview_frames)
@@ -171,6 +206,8 @@ def _finalize_trigger_outcome(runtime, outcome, release_status_before) -> None:
         runtime._last_record_path = str(runtime._record_service.writer.file_path_for_date())
         runtime.recordPathChanged.emit(runtime._last_record_path or "-")
     detail_text = runtime._last_runtime_result.summary_text()
+    if outcome.final_result != "NG":
+        _show_final_tower_light(runtime, outcome.final_result)
 
     if (
         release_status_before is not None
@@ -211,9 +248,6 @@ def _precheck_for_roles(runtime, roles) -> tuple[bool, str]:
     if runtime._frame_grab_service is None or not runtime._frame_grab_service.roles():
         return False, "camera not connected"
 
-    if runtime._runtime_context.loc_method != "line2dup":
-        return False, "runtime currently only supports line2dup localization"
-
     active_roles = {
         str(role).strip()
         for role in runtime._connected_roles()
@@ -228,13 +262,19 @@ def _precheck_for_roles(runtime, roles) -> tuple[bool, str]:
         active_roles &= requested_roles
     if not active_roles:
         return False, "requested camera is not connected"
-    missing_recipe_roles = [
+
+    loc_method = _loc_method(runtime)
+    missing_localization_roles = [
         role for role in sorted(active_roles)
-        if not os.path.exists(_recipe_path_for_role(runtime, role))
+        if not os.path.exists(_localization_path_for_role(runtime, role))
     ]
-    if missing_recipe_roles:
-        if len(missing_recipe_roles) == 1:
-            return False, f"please generate and save a line2dup template first for {missing_recipe_roles[0]}"
+    if missing_localization_roles:
+        if loc_method == "ncc":
+            if len(missing_localization_roles) == 1:
+                return False, f"please generate and save an NCC model first for {missing_localization_roles[0]}"
+            return False, "please generate and save NCC models first for connected cameras"
+        if len(missing_localization_roles) == 1:
+            return False, f"please generate and save a line2dup template first for {missing_localization_roles[0]}"
         return False, "please generate and save line2dup templates first for connected cameras"
     enabled_items = [
         item

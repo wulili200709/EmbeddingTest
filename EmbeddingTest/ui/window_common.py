@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Optional
 import re
@@ -11,6 +12,7 @@ from app_paths import packaged_embedding_test_root, writable_embedding_test_root
 from application import AlgorithmController, ProductSession
 from application.runtime.preview_frame import RuntimePreviewFrame, RuntimePreviewShape
 from line2dup.core import locator as line2dup_locator
+from ncc import locator as ncc_locator
 import algorithms.proxy as qr_core
 from ui.roi_overlay_colors import overlay_style_for_label, search_region_style
 
@@ -68,6 +70,7 @@ def connect_runtime_page(runtime_page, runtime_ctrl) -> None:
     runtime_page.disconnectCamerasRequested.connect(runtime_ctrl.disconnect)
     runtime_page.triggerRequested.connect(runtime_ctrl.trigger)
     runtime_page.triggerCameraRequested.connect(runtime_ctrl.trigger_camera)
+    runtime_page.conveyorRunRequested.connect(runtime_ctrl.set_conveyor_run)
     runtime_page.releaseRequested.connect(runtime_ctrl.release)
 
     runtime_ctrl.runtimeStateChanged.connect(runtime_page.set_runtime_state)
@@ -75,6 +78,7 @@ def connect_runtime_page(runtime_page, runtime_ctrl) -> None:
     runtime_ctrl.permissionStatusChanged.connect(runtime_page.set_permission_status)
     runtime_ctrl.connectionStatusChanged.connect(runtime_page.set_connection_status)
     runtime_ctrl.towerLightStatusChanged.connect(runtime_page.set_tower_light_status)
+    runtime_ctrl.conveyorRunStateChanged.connect(runtime_page.set_conveyor_run_state)
     runtime_ctrl.statusMessageChanged.connect(runtime_page.set_runtime_status)
     runtime_ctrl.recordPathChanged.connect(runtime_page.set_record_path)
     runtime_ctrl.camerasEnumerated.connect(runtime_page.set_available_cameras)
@@ -186,6 +190,9 @@ def _draw_runtime_search_region(painter: QtGui.QPainter, source: str | RuntimePr
         camera_role = _camera_role_from_path(path)
     if not product_dir:
         return
+    if _runtime_loc_method_for_product(product_dir) == "ncc":
+        _draw_runtime_ncc_search_region(painter, product_dir, camera_role)
+        return
     try:
         recipe = line2dup_locator.load_recipe_for_product(product_dir, camera_role)
     except Exception:
@@ -219,6 +226,36 @@ def _draw_runtime_search_region(painter: QtGui.QPainter, source: str | RuntimePr
 
     polygon = QtGui.QPolygonF([QtCore.QPointF(x, y) for x, y in points])
     painter.drawPolygon(polygon)
+
+
+def _runtime_loc_method_for_product(product_dir: str) -> str:
+    session_path = Path(str(product_dir or "")) / "session.json"
+    try:
+        with session_path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception:
+        payload = {}
+    method = str(payload.get("loc_method", "line2dup") or "line2dup").strip().lower()
+    return method if method in {"line2dup", "ncc"} else "line2dup"
+
+
+def _draw_runtime_ncc_search_region(painter: QtGui.QPainter, product_dir: str, camera_role: str) -> None:
+    try:
+        model = ncc_locator.load_model_for_product(product_dir, camera_role).normalized()
+    except Exception:
+        return
+    search_roi = model.search_roi
+    if search_roi is None:
+        return
+
+    x, y, w, h = search_roi.to_xywh()
+    color, width, dash = search_region_style()
+    pen = QtGui.QPen(color)
+    pen.setWidthF(width)
+    pen.setStyle(QtCore.Qt.DashLine if dash else QtCore.Qt.SolidLine)
+    painter.setPen(pen)
+    painter.setBrush(QtCore.Qt.NoBrush)
+    painter.drawRect(QtCore.QRectF(float(x), float(y), float(w), float(h)))
 
 
 def _draw_runtime_roi_shapes(

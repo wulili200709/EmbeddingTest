@@ -217,6 +217,7 @@ class RuntimeModePage(QtWidgets.QWidget):
     disconnectCamerasRequested = QtCore.Signal()
     triggerRequested = QtCore.Signal()
     triggerCameraRequested = QtCore.Signal(int)
+    conveyorRunRequested = QtCore.Signal(bool)
     releaseRequested = QtCore.Signal(str)
 
 
@@ -231,6 +232,8 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._configured_role_set: set[str] = {"cam1", "cam2"}
         self._active_role_set: set[str] = set()
         self._busy = False
+        self._conveyor_available = False
+        self._conveyor_running = False
         self._inspection_rows: list[dict] = []
         self._camera_preview_sources: dict[str, object | None] = {"cam1": None, "cam2": None}
         self._current_product_name = ""
@@ -299,6 +302,20 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.btn_trigger_cam2.setEnabled(False)
         self.btn_trigger_cam2.clicked.connect(lambda: self.triggerCameraRequested.emit(2))
         header_layout.addWidget(self.btn_trigger_cam2)
+
+        self.lbl_conveyor_state = QtWidgets.QLabel("● 皮带: 未就绪")
+        self.lbl_conveyor_state.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;font-weight:bold;")
+        header_layout.addWidget(self.lbl_conveyor_state)
+
+        self.btn_conveyor_toggle = QtWidgets.QPushButton("启动皮带")
+        self.btn_conveyor_toggle.setStyleSheet(_trigger_btn_css)
+        self.btn_conveyor_toggle.setAutoDefault(False)
+        self.btn_conveyor_toggle.setDefault(False)
+        self.btn_conveyor_toggle.setFocusPolicy(QtCore.Qt.NoFocus)
+        self.btn_conveyor_toggle.setEnabled(False)
+        self.btn_conveyor_toggle.setToolTip("控制皮带线运行输出")
+        self.btn_conveyor_toggle.clicked.connect(self._emit_conveyor_toggle_requested)
+        header_layout.addWidget(self.btn_conveyor_toggle)
 
         header_layout.addStretch(1)
 
@@ -584,6 +601,31 @@ class RuntimeModePage(QtWidgets.QWidget):
     def set_tower_light_status(self, status_text: str) -> None:
         pass
 
+    def set_conveyor_run_state(self, available: bool, running: bool, detail: str = "") -> None:
+        self._conveyor_available = bool(available)
+        self._conveyor_running = bool(running)
+        if not self._conveyor_available:
+            text = "● 皮带: 未就绪"
+            color = _TEXT_DIM
+            button_text = "启动皮带"
+            tooltip = str(detail or "IO 未就绪")
+        elif self._conveyor_running:
+            text = "● 皮带: 运行"
+            color = _OK_GREEN
+            button_text = "停止皮带"
+            tooltip = str(detail or "皮带正在运行")
+        else:
+            text = "● 皮带: 停止"
+            color = _NG_RED
+            button_text = "启动皮带"
+            tooltip = str(detail or "皮带已停止")
+        self.lbl_conveyor_state.setText(text)
+        self.lbl_conveyor_state.setStyleSheet(f"color:{color};font-size:12px;font-weight:bold;")
+        self.lbl_conveyor_state.setToolTip(tooltip)
+        self.btn_conveyor_toggle.setText(button_text)
+        self.btn_conveyor_toggle.setToolTip(tooltip)
+        self._refresh_trigger_buttons()
+
     def set_runtime_status(self, status_text: str) -> None:
         clean_text = self._sanitize_runtime_status_text_v3(status_text)
         self.lbl_footer_state.setText(f"状态: {clean_text}" if clean_text else "状态: -")
@@ -623,6 +665,7 @@ class RuntimeModePage(QtWidgets.QWidget):
             configured = {"cam1"}
         self._configured_role_set = configured
         self._refresh_camera_role_layout()
+        self._rebuild_inspection_item_widgets()
         self._refresh_trigger_buttons()
 
     def set_active_camera_roles(self, roles: list[str]) -> None:
@@ -636,10 +679,14 @@ class RuntimeModePage(QtWidgets.QWidget):
         )
         self._refresh_camera_role_layout()
         self._refresh_camera_timing_visibility()
+        self._rebuild_inspection_item_widgets()
         self._refresh_trigger_buttons()
 
     def set_inspection_items(self, rows: list[dict]) -> None:
         self._inspection_rows = list(rows or [])
+        self._rebuild_inspection_item_widgets()
+
+    def _rebuild_inspection_item_widgets(self) -> None:
         while self._items_vbox.count():
             item = self._items_vbox.takeAt(0)
             widget = item.widget()
@@ -652,9 +699,12 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._item_indicators_by_item_id.clear()
         self._camera_section_headers.clear()
 
+        visible_roles = self._display_role_set()
         grouped_rows: dict[str, list[dict]] = {"cam1": [], "cam2": []}
-        for row in rows:
+        for row in self._inspection_rows:
             camera_id = str(row.get("camera_id", "cam1")).strip() or "cam1"
+            if camera_id not in visible_roles:
+                continue
             if camera_id not in grouped_rows:
                 grouped_rows[camera_id] = []
             grouped_rows[camera_id].append(row)
@@ -843,7 +893,11 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.lbl_cam2_timing.setVisible("cam2" in self._active_role_set)
 
     def _display_role_set(self) -> set[str]:
-        return set(self._active_role_set or self._configured_role_set)
+        if self._active_role_set:
+            configured = set(self._configured_role_set or {"cam1"})
+            visible = set(self._active_role_set) & configured
+            return visible or set(self._active_role_set)
+        return set(self._configured_role_set)
 
     def _refresh_camera_role_layout(self) -> None:
         show_cam2 = "cam2" in self._display_role_set()
@@ -881,7 +935,9 @@ class RuntimeModePage(QtWidgets.QWidget):
         )
         self.btn_simulate_foot.setEnabled(allow_full_trigger)
         self.btn_trigger_cam1.setEnabled(allow_cam1)
+        self.btn_trigger_cam2.setVisible(("cam2" in self._configured_role_set) or ("cam2" in self._active_role_set))
         self.btn_trigger_cam2.setEnabled(allow_cam2)
+        self.btn_conveyor_toggle.setEnabled((not self._busy) and self._conveyor_available)
 
     def _has_enabled_items(self, camera_id: str) -> bool:
         camera_text = str(camera_id or "").strip()
@@ -895,6 +951,9 @@ class RuntimeModePage(QtWidgets.QWidget):
 
     def _emit_release_requested(self) -> None:
         self.releaseRequested.emit(self.release_password())
+
+    def _emit_conveyor_toggle_requested(self) -> None:
+        self.conveyorRunRequested.emit(not self._conveyor_running)
 
     def _refresh_count_labels(self) -> None:
         self.lbl_ok_count.setText(f"OK: {int(self._ok_count_total)}")

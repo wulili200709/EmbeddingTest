@@ -2850,6 +2850,8 @@ torchvision
 matplotlib
 
 pip install opencv-python
+pip install onnxruntime
+
 ## vs code安装python
 打开 VS Code → 左边扩展（Extensions）搜索：
 Python
@@ -3422,3 +3424,128 @@ OpenCV 主要在这些地方会用到：
 NCC / 模板匹配相关逻辑
 ROI 图像区域处理
 训练样本、测试样本的图像预处理
+
+# 皮带线测试流程
+现在执行链路是这样：
+
+触发
+→ 取相机图
+→ 定位 1 次
+→ 找到当前相机启用的 32 个 ROI
+→ 按学习算法/backbone 分组
+→ 每个 ROI 找自己的 model_key
+→ 调用 load_embedding_model(...)
+→ AlgorithmController.load_model_for_algorithm(...)
+→ 先查内存缓存
+→ 命中缓存就直接复用模型
+→ 没命中才从磁盘读 npz
+→ 32 个 ROI batch 推理
+→ 每个 ROI 判分
+关键点是：现在每次触发仍然会走到“加载模型”的函数，但不等于每次都读磁盘。
+
+现在的模型加载逻辑是：
+
+第一次用某个模型文件时，磁盘读取：
+qr_core.load_register_model_npz(model_file)
+或者异常检测模型：
+
+load_anomaly_model_npz(model_file)
+读完以后，把模型对象放到内存缓存：
+_embedding_model_cache
+位置在 algorithm_controller.py (line 147)。
+
+后面再次触发时，会先查缓存：
+model = self._cached_embedding_model("register", algorithm, model_file)
+位置在 algorithm_controller.py (line 553)。
+
+如果缓存命中，就不再读磁盘，直接复用内存里的模型。
+
+复用前会检查模型文件有没有变：
+mtime_ns + 文件大小
+也就是文件修改时间和文件大小都没变，才认为缓存可用。缓存检查逻辑在 algorithm_controller.py (line 358)。
+
+所以现在的行为可以理解成：
+
+第一次触发：读磁盘模型文件
+第二次触发：直接用内存模型
+第三次触发：直接用内存模型
+...
+模型文件重新训练/被替换：重新读磁盘
+但还有一个细节：32 个 ROI 不一定是同一个模型文件。
+
+如果 32 个 ROI 都共用同一个模型文件：
+
+第一次触发：读 1 次模型文件
+后面触发：读 0 次模型文件
+如果 32 个 ROI 每个都有自己的模型文件：
+
+第一次触发：最多读 32 个模型文件
+后面触发：读 0 个模型文件，除非文件变了
+在一次触发内部，还有一个临时缓存：
+
+model_cache: Dict[str, Any] = {}
+它在 runtime_context.py (line 326) 附近使用。作用是：同一次触发里，同一个 model_key 不重复调用加载。
+
+所以现在是两层缓存：
+
+单次触发内缓存：避免同一次触发重复加载同 model_key
+全局模型缓存：避免每次触发重复从磁盘读同一个模型文件
+要注意：即使模型走了缓存，每次触发还是会重新做这几件事：
+
+定位/配准
+ROI 裁剪和缩放
+batch 推理
+ROI 判分
+
+那万一模型变了怎么知道模型改变了 然后重新加载呢
+1:10 PM
+
+
+
+现在是靠 模型文件的“修改时间 + 文件大小” 判断模型有没有变。
+
+缓存里保存的不只是模型对象，还保存这个模型文件当时的签名：
+
+(model_object, (mtime_ns, file_size))
+位置在 algorithm_controller.py (line 370)。
+
+每次要用模型时，会重新 os.stat(model_file) 读取当前文件信息：
+
+当前修改时间 mtime_ns
+当前文件大小 size
+然后和缓存里的签名比较。逻辑在 algorithm_controller.py (line 358)。
+
+如果一样：
+
+说明模型文件没变
+→ 直接用缓存里的模型
+如果不一样：
+
+说明模型文件变了
+→ 删除旧缓存
+→ 重新从磁盘加载 npz
+→ 再把新模型放进缓存
+所以流程是：
+
+第一次加载 model.npz
+→ 记录 mtime_ns 和 size
+→ 下次触发前检查 model.npz 当前 mtime_ns 和 size
+→ 一样就复用
+→ 不一样就重读
+另外，如果是在软件里重新训练模型，训练完成后会直接把新模型对象写进缓存：
+
+异常模型训练后缓存： algorithm_controller.py (line 640)
+普通注册模型训练后缓存： algorithm_controller.py (line 681)
+也就是说：
+
+外部替换模型文件：靠 mtime_ns + size 发现变化
+软件内部重新训练：训练完直接更新缓存
+这个判断方式够快，也比较稳。极端情况下，如果有人手动替换模型文件，但刚好文件大小一样、修改时间也被保留成一样，那它可能识别不出来。不过正常保存、重新训练、复制覆盖，修改时间都会变。
+
+皮带线的检测时间影响到皮带的速度，收到传感器的延时时间，还有皮带的停止 都有影响
+如果不是ORT 检测时间800ms，ORT的时候检测时间是450ms
+backbone=mobilenet_v3_large backend=onnxruntime--ORT backbone=mobilenet_v3_large backend=torch source=load_backbone--还是torch
+
+![alt text](image-3.png)
+对应的编码器速度是610rpm
+![](rpm.jpg)

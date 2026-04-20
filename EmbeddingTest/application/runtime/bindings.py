@@ -13,6 +13,8 @@ _RUNTIME_CONTROLLER_BINDINGS = (
             "_try_create_io_controller",
             "_initialize_startup_io",
             "_close_io_controller",
+            "_set_conveyor_run",
+            "set_conveyor_run",
             "_start_di_poller_if_available",
             "_stop_di_poller",
             "_on_foot_switch_rising",

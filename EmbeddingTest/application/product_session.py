@@ -56,7 +56,7 @@ class SessionData:
     runtime_cam1_serial: Optional[str] = None
     runtime_cam2_serial: Optional[str] = None
     runtime_capture_policy: str = "ng_only"
-    foot_trigger_delay_ms: int = 0
+    foot_trigger_delay_ms: Optional[int] = None
 
 
 PRODUCT_NAME_RE = re.compile(r"^[a-zA-Z0-9_\u4e00-\u9fa5]+$")

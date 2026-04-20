@@ -95,23 +95,23 @@ QTableWidget {
     background: #333333;
     color: #e0e0e0;
     border: 1px solid #5a5a5a;
-    selection-background-color: #566170;
-    selection-color: #f2f4f7;
+    selection-background-color: #6ec0ff;
+    selection-color: #1a1a1a;
 }
 QAbstractItemView {
     background: #333333;
     color: #e0e0e0;
     alternate-background-color: #383838;
-    selection-background-color: #566170;
-    selection-color: #f2f4f7;
+    selection-background-color: #6ec0ff;
+    selection-color: #1a1a1a;
 }
 QListWidget::item {
     padding: 6px 8px;
     min-height: 26px;
 }
 QListWidget::item:selected {
-    background: #566170;
-    color: #f2f4f7;
+    background: #6ec0ff;
+    color: #1a1a1a;
 }
 QHeaderView::section {
     background: #3a3a3a;
@@ -122,6 +122,12 @@ QHeaderView::section {
 QLabel {
     color: #e0e0e0;
 }
+QWidget#nccTabPage {
+    background: #2d2d2d;
+}
+QWidget#nccLeftScrollHost {
+    background: #2f2f2f;
+}
 QSplitter::handle {
     background: #343434;
 }
@@ -131,15 +137,56 @@ QSplitter::handle:hover {
 """
 
 
+_LEFT_SCROLL_STYLESHEET = (
+    "QScrollArea{background:#2f2f2f;border:none;}"
+    "QScrollArea > QWidget > QWidget{background:#2f2f2f;}"
+    "QScrollBar:vertical{background:#2f2f2f;width:10px;margin:0;}"
+    "QScrollBar::handle:vertical{background:#5a5a5a;min-height:28px;border-radius:5px;}"
+    "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}"
+)
+
+
 def _image_file_filter() -> str:
     return "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff);;All Files (*)"
+
+
+def _make_tab_page() -> QtWidgets.QWidget:
+    page = QtWidgets.QWidget()
+    page.setObjectName("nccTabPage")
+    page.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+    return page
 
 
 def _make_horizontal_splitter() -> QtWidgets.QSplitter:
     splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
     splitter.setChildrenCollapsible(False)
-    splitter.setHandleWidth(6)
+    splitter.setHandleWidth(10)
     return splitter
+
+
+def _make_scrollable_side_panel(
+    panel: QtWidgets.QWidget,
+    *,
+    min_width: int,
+    max_width: int,
+) -> QtWidgets.QScrollArea:
+    scroll = QtWidgets.QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+    scroll.setStyleSheet(_LEFT_SCROLL_STYLESHEET)
+    scroll.setMinimumWidth(min_width)
+    scroll.setMaximumWidth(max_width)
+    scroll.setSizePolicy(
+        QtWidgets.QSizePolicy.Policy.Preferred,
+        QtWidgets.QSizePolicy.Policy.Expanding,
+    )
+    panel.setObjectName("nccLeftScrollHost")
+    panel.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+    panel.setMinimumWidth(max(0, min_width - 20))
+    panel.setMaximumWidth(max_width)
+    scroll.setWidget(panel)
+    return scroll
 
 
 def _same_xywh(a: Optional[Tuple[int, int, int, int]], b: Optional[Tuple[int, int, int, int]]) -> bool:
@@ -221,10 +268,10 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         super().__init__(parent)
         available = QtGui.QGuiApplication.primaryScreen().availableGeometry()
         self.resize(
-            min(1450, max(1180, available.width() - 40)),
-            min(920, max(700, available.height() - 60)),
+            min(1450, max(1100, available.width() - 40)),
+            min(920, max(620, available.height() - 60)),
         )
-        self.setMinimumSize(980, 640)
+        self.setMinimumSize(900, 560)
         self.setWindowTitle(f"NCC位置修正工具 - {product_name or '未命名产品'}")
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(_DIALOG_STYLESHEET)
@@ -280,16 +327,17 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         root.addWidget(self.lbl_status)
 
     def _build_create_tab(self) -> QtWidgets.QWidget:
-        page = QtWidgets.QWidget()
+        page = _make_tab_page()
         layout = QtWidgets.QVBoxLayout(page)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(8)
 
         splitter = _make_horizontal_splitter()
         layout.addWidget(splitter, 1)
 
         left_panel = QtWidgets.QWidget()
-        left_panel.setMinimumWidth(360)
-        left_panel.setMaximumWidth(430)
         left_layout = QtWidgets.QVBoxLayout(left_panel)
+        left_layout.setSpacing(8)
 
         file_box = QtWidgets.QGroupBox("参考图")
         file_layout = QtWidgets.QVBoxLayout(file_box)
@@ -350,7 +398,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         summary_layout.addWidget(self.txt_model_summary)
         left_layout.addWidget(summary_box, 1)
 
-        splitter.addWidget(left_panel)
+        splitter.addWidget(_make_scrollable_side_panel(left_panel, min_width=360, max_width=450))
 
         right_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
         right_splitter.setChildrenCollapsible(False)
@@ -359,7 +407,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         source_box = QtWidgets.QGroupBox("参考图")
         source_layout = QtWidgets.QVBoxLayout(source_box)
         self.source_canvas = RoiCanvas()
-        self.source_canvas.setMinimumSize(700, 450)
+        self.source_canvas.setMinimumSize(520, 320)
         source_layout.addWidget(self.source_canvas, 1)
         right_splitter.addWidget(source_box)
 
@@ -369,7 +417,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         template_layout = QtWidgets.QVBoxLayout(template_box)
         self.template_canvas = RoiCanvas()
         self.template_canvas.set_interaction_enabled(False)
-        self.template_canvas.setMinimumSize(320, 220)
+        self.template_canvas.setMinimumSize(260, 160)
         template_layout.addWidget(self.template_canvas, 1)
         preview_splitter.addWidget(template_box)
 
@@ -377,7 +425,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         marked_layout = QtWidgets.QVBoxLayout(marked_box)
         self.preview_canvas = RoiCanvas()
         self.preview_canvas.set_interaction_enabled(False)
-        self.preview_canvas.setMinimumSize(320, 220)
+        self.preview_canvas.setMinimumSize(260, 160)
         marked_layout.addWidget(self.preview_canvas, 1)
         preview_splitter.addWidget(marked_box)
 
@@ -399,13 +447,14 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         return page
 
     def _build_reference_tab(self) -> QtWidgets.QWidget:
-        page = QtWidgets.QWidget()
+        page = _make_tab_page()
         layout = QtWidgets.QHBoxLayout(page)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(8)
 
         left_panel = QtWidgets.QWidget()
-        left_panel.setMinimumWidth(400)
-        left_panel.setMaximumWidth(460)
         left_layout = QtWidgets.QVBoxLayout(left_panel)
+        left_layout.setSpacing(8)
 
         info_box = QtWidgets.QGroupBox("选中 ROI 属性")
         info_form = QtWidgets.QFormLayout(info_box)
@@ -438,6 +487,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.table_reference_regions.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
         self.table_reference_regions.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Stretch)
         self.table_reference_regions.horizontalHeader().setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.table_reference_regions.setMinimumHeight(180)
         self.table_reference_regions.currentCellChanged.connect(self._on_reference_region_selected)
         self.table_reference_regions.itemSelectionChanged.connect(self._on_reference_region_selection_changed)
         region_layout.addWidget(self.table_reference_regions, 1)
@@ -470,12 +520,12 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.lbl_reference_status.setWordWrap(True)
         left_layout.addWidget(self.lbl_reference_status)
 
-        layout.addWidget(left_panel)
+        layout.addWidget(_make_scrollable_side_panel(left_panel, min_width=400, max_width=480))
 
         ref_box = QtWidgets.QGroupBox("参考区域编辑")
         ref_layout = QtWidgets.QVBoxLayout(ref_box)
         self.ref_canvas = RoiCanvas()
-        self.ref_canvas.setMinimumSize(700, 560)
+        self.ref_canvas.setMinimumSize(520, 360)
         self.ref_canvas.draw_shape = "rect"
         self.ref_canvas.set_outside_image_events_enabled(True)
         self.ref_canvas.set_roi_style(roi_color=QtGui.QColor(0, 140, 255), roi_dash=False, roi_width=2.0)
@@ -496,13 +546,14 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         return page
 
     def _build_find_tab(self) -> QtWidgets.QWidget:
-        page = QtWidgets.QWidget()
+        page = _make_tab_page()
         layout = QtWidgets.QHBoxLayout(page)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(8)
 
         left_panel = QtWidgets.QWidget()
-        left_panel.setMinimumWidth(340)
-        left_panel.setMaximumWidth(430)
         left_layout = QtWidgets.QVBoxLayout(left_panel)
+        left_layout.setSpacing(8)
 
         scene_box = QtWidgets.QGroupBox("场景图")
         scene_form = QtWidgets.QFormLayout(scene_box)
@@ -525,7 +576,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.list_find_images = QtWidgets.QListWidget()
         self.list_find_images.setAlternatingRowColors(True)
         self.list_find_images.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.list_find_images.setMinimumHeight(210)
+        self.list_find_images.setMinimumHeight(130)
         self.list_find_images.itemDoubleClicked.connect(self._run_find_for_item)
         self.list_find_images.currentItemChanged.connect(self._on_find_item_selected)
         list_layout.addWidget(self.list_find_images, 1)
@@ -614,17 +665,17 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         result_layout = QtWidgets.QVBoxLayout(result_box)
         self.txt_find_summary = QtWidgets.QPlainTextEdit()
         self.txt_find_summary.setReadOnly(True)
-        self.txt_find_summary.setMinimumHeight(130)
-        self.txt_find_summary.setMaximumHeight(170)
+        self.txt_find_summary.setMinimumHeight(90)
+        self.txt_find_summary.setMaximumHeight(140)
         result_layout.addWidget(self.txt_find_summary)
         left_layout.addWidget(result_box, 0)
 
-        layout.addWidget(left_panel)
+        layout.addWidget(_make_scrollable_side_panel(left_panel, min_width=340, max_width=450))
 
         canvas_box = QtWidgets.QGroupBox("场景图预览")
         canvas_layout = QtWidgets.QVBoxLayout(canvas_box)
         self.find_canvas = RoiCanvas()
-        self.find_canvas.setMinimumSize(720, 580)
+        self.find_canvas.setMinimumSize(520, 360)
         self.find_canvas.set_roi_style(roi_color=QtGui.QColor(0, 140, 255), roi_dash=False, roi_width=1.0)
         canvas_layout.addWidget(self.find_canvas, 1)
         layout.addWidget(canvas_box, 1)
