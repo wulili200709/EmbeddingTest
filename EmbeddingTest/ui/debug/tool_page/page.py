@@ -1966,29 +1966,38 @@ class ToolPage(QtWidgets.QWidget):
         self._open_line2dup_template_page()
 
     def open_ncc_match_dialog(self) -> None:
-        dialog = self._ncc_workbench_dialog
-        if dialog is not None and dialog.isVisible():
+        try:
+            dialog = self._ncc_workbench_dialog
+            if dialog is not None and dialog.isVisible():
+                dialog.raise_()
+                dialog.activateWindow()
+                return
+
+            from ui.debug import NccMatchWorkbenchDialog
+
+            dialog = NccMatchWorkbenchDialog(
+                product_name=self.session.current_product,
+                product_dir=self.session.product_dir,
+                camera_role=self.current_camera_role(),
+                initial_image_path=str(self.canvas.image_path() or ""),
+                parent=self.window(),
+            )
+            if hasattr(dialog, "modelSaved"):
+                dialog.modelSaved.connect(self._on_ncc_model_saved)
+            dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
+            dialog.destroyed.connect(lambda *_: setattr(self, "_ncc_workbench_dialog", None))
+            dialog.show()
             dialog.raise_()
             dialog.activateWindow()
-            return
-
-        from ui.debug import NccMatchWorkbenchDialog
-
-        dialog = NccMatchWorkbenchDialog(
-            product_name=self.session.current_product,
-            product_dir=self.session.product_dir,
-            camera_role=self.current_camera_role(),
-            initial_image_path=str(self.canvas.image_path() or ""),
-            parent=self.window(),
-        )
-        if hasattr(dialog, "modelSaved"):
-            dialog.modelSaved.connect(self._on_ncc_model_saved)
-        dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
-        dialog.destroyed.connect(lambda *_: setattr(self, "_ncc_workbench_dialog", None))
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
-        self._ncc_workbench_dialog = dialog
+            self._ncc_workbench_dialog = dialog
+        except Exception as exc:
+            detail = traceback.format_exc()
+            self.lbl_status.setText(f"状态：NCC位置修正工具打开失败：{exc}")
+            QtWidgets.QMessageBox.critical(
+                self,
+                "NCC位置修正工具打开失败",
+                f"{exc}\n\n{detail}",
+            )
 
     def _on_ncc_model_saved(self, model_path: str) -> None:
         self.loc_method = "ncc"

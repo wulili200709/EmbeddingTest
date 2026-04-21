@@ -166,6 +166,7 @@ hiddenimports = sorted(
         + collect_submodules("domain")
         + collect_submodules("infrastructure")
         + collect_submodules("line2dup")
+        + collect_submodules("ncc")
         + collect_submodules("services")
         + _torch_polyfill_hiddenimports()
         + collect_submodules("ui")
@@ -196,6 +197,7 @@ hiddenimports = sorted(
             "ui.runtime.runtime_mode_pyside6",
             "ui.runtime.run_main_window",
             "line2dup.ui.template_page_pyside6",
+            "ncc.ui.workbench_dialog",
             "torch._dynamo.polyfills.loader",
             "CameraParams_const",
             "CameraParams_header",
