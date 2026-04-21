@@ -54,10 +54,16 @@ class StartupOutputDefaultsTest(unittest.TestCase):
 
         _apply_startup_output_defaults(runtime, controller)
 
-        self.assertEqual(controller.calls, [("reserved_out_1", True)])
+        self.assertEqual(
+            controller.calls,
+            [("reserved_out_1", True), ("reserved_out_2", False)],
+        )
         self.assertEqual(
             runtime.logAppended.messages,
-            ["[IO] startup output default applied: reserved_out_1=ON"],
+            [
+                "[IO] startup output default applied: reserved_out_1=ON",
+                "[IO] startup output default applied: reserved_out_2=OFF",
+            ],
         )
 
     def test_reserved_output_is_disabled_on_shutdown(self) -> None:
@@ -66,10 +72,16 @@ class StartupOutputDefaultsTest(unittest.TestCase):
 
         _apply_shutdown_output_defaults(runtime, controller)
 
-        self.assertEqual(controller.calls, [("reserved_out_1", False)])
+        self.assertEqual(
+            controller.calls,
+            [("reserved_out_1", False), ("reserved_out_2", False)],
+        )
         self.assertEqual(
             runtime.logAppended.messages,
-            ["[IO] shutdown output default applied: reserved_out_1=OFF"],
+            [
+                "[IO] shutdown output default applied: reserved_out_1=OFF",
+                "[IO] shutdown output default applied: reserved_out_2=OFF",
+            ],
         )
 
     def test_startup_output_failure_is_logged_without_raising(self) -> None:
@@ -77,18 +89,22 @@ class StartupOutputDefaultsTest(unittest.TestCase):
 
         _apply_startup_output_defaults(runtime, _FailingController())
 
-        self.assertEqual(len(runtime.logAppended.messages), 1)
+        self.assertEqual(len(runtime.logAppended.messages), 2)
         self.assertIn("failed to apply startup output default", runtime.logAppended.messages[0])
         self.assertIn("reserved_out_1=True", runtime.logAppended.messages[0])
+        self.assertIn("failed to apply startup output default", runtime.logAppended.messages[1])
+        self.assertIn("reserved_out_2=False", runtime.logAppended.messages[1])
 
     def test_shutdown_output_failure_is_logged_without_raising(self) -> None:
         runtime = _FakeRuntime()
 
         _apply_shutdown_output_defaults(runtime, _FailingController())
 
-        self.assertEqual(len(runtime.logAppended.messages), 1)
+        self.assertEqual(len(runtime.logAppended.messages), 2)
         self.assertIn("failed to apply shutdown output default", runtime.logAppended.messages[0])
         self.assertIn("reserved_out_1=False", runtime.logAppended.messages[0])
+        self.assertIn("failed to apply shutdown output default", runtime.logAppended.messages[1])
+        self.assertIn("reserved_out_2=False", runtime.logAppended.messages[1])
 
     def test_conveyor_output_is_disabled_for_ng_stop(self) -> None:
         runtime = _FakeRuntime()
@@ -112,10 +128,16 @@ class StartupOutputDefaultsTest(unittest.TestCase):
         changed = _set_conveyor_run(runtime, True, reason="release granted")
 
         self.assertTrue(changed)
-        self.assertEqual(controller.calls, [("reserved_out_1", True)])
+        self.assertEqual(
+            controller.calls,
+            [("reserved_out_1", True), ("reserved_out_2", False)],
+        )
         self.assertEqual(
             runtime.logAppended.messages,
-            ["[IO] conveyor output applied: reserved_out_1=ON (release granted)"],
+            [
+                "[IO] conveyor output applied: reserved_out_1=ON (release granted)",
+                "[IO] buzzer output applied: reserved_out_2=OFF (conveyor running: release granted)",
+            ],
         )
 
 

@@ -14,6 +14,10 @@
       "channel": 2,
       "active_high": true
     },
+    "conveyor_toggle": {
+      "channel": 2,
+      "active_high": true
+    },
     "reserved_in_2": {
       "channel": 3,
       "active_high": true
@@ -52,11 +56,15 @@
       "channel": 3,
       "active_high": false
     },
-    "light_cam2": {
+    "buzzer": {
       "channel": 5,
       "active_high": false
     },
     "reserved_out_1": {
+      "channel": 4,
+      "active_high": false
+    },
+    "conveyor_run": {
       "channel": 4,
       "active_high": false
     },

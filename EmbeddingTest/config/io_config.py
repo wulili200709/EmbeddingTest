@@ -36,6 +36,7 @@ def default_io_config() -> IoConfig:
             "foot_switch": IoChannelConfig(channel=0, active_high=True),
             "reject_signal": IoChannelConfig(channel=1, active_high=True),
             "reserved_in_1": IoChannelConfig(channel=2, active_high=True),
+            "conveyor_toggle": IoChannelConfig(channel=2, active_high=True),
             "reserved_in_2": IoChannelConfig(channel=3, active_high=True),
         },
         do={
@@ -44,7 +45,9 @@ def default_io_config() -> IoConfig:
             "tower_blue": IoChannelConfig(channel=2, active_high=False),
             "light_cam1": IoChannelConfig(channel=3, active_high=False),
             "light_cam2": IoChannelConfig(channel=4, active_high=False),
+            "buzzer": IoChannelConfig(channel=4, active_high=False),
             "reserved_out_1": IoChannelConfig(channel=5, active_high=False),
+            "conveyor_run": IoChannelConfig(channel=5, active_high=False),
             "reserved_out_2": IoChannelConfig(channel=6, active_high=False),
         },
     )

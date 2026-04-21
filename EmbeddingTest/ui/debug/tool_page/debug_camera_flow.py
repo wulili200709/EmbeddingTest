@@ -25,6 +25,7 @@ _DEBUG_IO_NAME_LABELS = {
     "foot_switch": "脚踏触发\nDI_FOOT_SWITCH",
     "reject_signal": "废品信号\nDI_REJECT_SIGNAL",
     "reserved_in_1": "预留输入1\nDI_RESERVED_1",
+    "conveyor_toggle": "皮带启停\nDI_CONVEYOR_TOGGLE",
     "reserved_in_2": "预留输入2\nDI_RESERVED_2",
     "reserved_in_3": "预留输入3\nDI_RESERVED_3",
     "reserved_in_4": "预留输入4\nDI_RESERVED_4",
@@ -35,7 +36,9 @@ _DEBUG_IO_NAME_LABELS = {
     "tower_blue": "三色灯蓝\nDO_TOWER_BLUE",
     "light_cam1": "相机1光源\nDO_LIGHT_CAM1",
     "light_cam2": "相机2光源\nDO_LIGHT_CAM2",
+    "buzzer": "蜂鸣器\nDO_BUZZER",
     "reserved_out_1": "预留输出1\nDO_RESERVED_1",
+    "conveyor_run": "皮带运行\nDO_CONVEYOR_RUN",
     "reserved_out_2": "预留输出2\nDO_RESERVED_2",
 }
 

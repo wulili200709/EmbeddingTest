@@ -60,6 +60,10 @@ class _Runtime:
         self.events.append(f"conveyor_{'run' if running else 'stop'}")
         return True
 
+    def _set_buzzer(self, on: bool, *, reason: str = "") -> bool:
+        self.events.append(f"buzzer_{'on' if on else 'off'}")
+        return True
+
     def _write_runtime_record(self, runtime_result) -> None:
         self.events.append("write_record")
 
@@ -74,7 +78,7 @@ class _Runtime:
 
 
 class RuntimeFinalizeOrderTest(unittest.TestCase):
-    def test_ng_stops_conveyor_and_shows_tower_light_before_record(self) -> None:
+    def test_ng_stops_conveyor_turns_on_buzzer_and_shows_tower_light_before_record(self) -> None:
         runtime = _Runtime()
         outcome = SimpleNamespace(
             final_result="NG",
@@ -94,7 +98,9 @@ class RuntimeFinalizeOrderTest(unittest.TestCase):
         _finalize_trigger_outcome(runtime, outcome, release_status_before=None)
 
         self.assertEqual(runtime.events.count("conveyor_stop"), 1)
+        self.assertEqual(runtime.events.count("buzzer_on"), 1)
         self.assertLess(runtime.events.index("conveyor_stop"), runtime.events.index("tower_ng"))
+        self.assertLess(runtime.events.index("buzzer_on"), runtime.events.index("tower_ng"))
         self.assertLess(runtime.events.index("tower_ng"), runtime.events.index("write_record"))
 
 

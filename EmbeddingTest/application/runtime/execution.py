@@ -158,6 +158,8 @@ def _finalize_trigger_outcome(runtime, outcome, release_status_before) -> None:
     runtime._last_record_path = ""
     if outcome.final_result == "NG" and hasattr(runtime, "_set_conveyor_run"):
         runtime._set_conveyor_run(False, reason="NG result")
+        if hasattr(runtime, "_set_buzzer"):
+            runtime._set_buzzer(True, reason="NG result")
         _show_final_tower_light(runtime, outcome.final_result)
 
     if runtime._record_service is not None:

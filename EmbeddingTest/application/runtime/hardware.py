@@ -14,15 +14,10 @@ from app_paths import packaged_embedding_test_root, packaged_repo_root
 from .capture_policy import DEFAULT_LIGHT_STABLE_MS
 
 
-_CONVEYOR_RUN_OUTPUT = "reserved_out_1"
-
-_STARTUP_OUTPUT_DEFAULTS: dict[str, bool] = {
-    _CONVEYOR_RUN_OUTPUT: True,
-}
-
-_SHUTDOWN_OUTPUT_DEFAULTS: dict[str, bool] = {
-    _CONVEYOR_RUN_OUTPUT: False,
-}
+_CONVEYOR_RUN_OUTPUT_CANDIDATES = ("conveyor_run", "reserved_out_1")
+_BUZZER_OUTPUT_CANDIDATES = ("buzzer", "light_cam2", "reserved_out_2")
+_CONVEYOR_TOGGLE_INPUT_CANDIDATES = ("conveyor_toggle", "reserved_in_1")
+_FOOT_SWITCH_INPUT_CANDIDATES = ("foot_switch",)
 
 
 def _load_nkio_runtime_options(mapping_path: Path) -> dict[str, str]:
@@ -43,6 +38,28 @@ def _load_nkio_runtime_options(mapping_path: Path) -> dict[str, str]:
     return result
 
 
+def _resolve_input_name(runtime, controller, *candidates: str) -> str | None:
+    mapping = getattr(controller, "mapping", None)
+    if mapping is None:
+        return candidates[-1] if candidates else None
+    available = set(mapping.di_names())
+    for candidate in candidates:
+        if candidate in available:
+            return candidate
+    return None
+
+
+def _resolve_output_name(runtime, controller, *candidates: str) -> str | None:
+    mapping = getattr(controller, "mapping", None)
+    if mapping is None:
+        return candidates[-1] if candidates else None
+    available = set(mapping.do_names())
+    for candidate in candidates:
+        if candidate in available:
+            return candidate
+    return None
+
+
 def _emit_conveyor_run_state(runtime, *, available: bool, running: bool, detail: str = "") -> None:
     runtime._conveyor_running = bool(running)
     signal = getattr(runtime, "conveyorRunStateChanged", None)
@@ -57,7 +74,9 @@ def _emit_io_status(runtime, ready: bool, detail: str, controller=None) -> None:
     running = bool(getattr(runtime, "_conveyor_running", False))
     if runtime._io_ready and controller is not None:
         try:
-            running = bool(controller.read_output(_CONVEYOR_RUN_OUTPUT))
+            output_name = _resolve_output_name(runtime, controller, *_CONVEYOR_RUN_OUTPUT_CANDIDATES)
+            if output_name:
+                running = bool(controller.read_output(output_name))
         except Exception:
             pass
     _emit_conveyor_run_state(
@@ -68,8 +87,20 @@ def _emit_io_status(runtime, ready: bool, detail: str, controller=None) -> None:
     )
 
 
-def _apply_output_defaults(runtime, controller, defaults: dict[str, bool], *, phase: str) -> None:
-    for name, on in defaults.items():
+def _apply_output_defaults(
+    runtime,
+    controller,
+    defaults: tuple[tuple[tuple[str, ...], bool, str], ...],
+    *,
+    phase: str,
+) -> None:
+    for candidates, on, label in defaults:
+        name = _resolve_output_name(runtime, controller, *candidates)
+        if not name:
+            runtime.logAppended.emit(
+                f"[IO] skipped {phase} output default for {label}: no mapping found among {list(candidates)}"
+            )
+            continue
         try:
             controller.set_output(name, on)
         except Exception as exc:
@@ -78,7 +109,7 @@ def _apply_output_defaults(runtime, controller, defaults: dict[str, bool], *, ph
             )
             continue
         runtime.logAppended.emit(f"[IO] {phase} output default applied: {name}={'ON' if on else 'OFF'}")
-        if name == _CONVEYOR_RUN_OUTPUT:
+        if candidates == _CONVEYOR_RUN_OUTPUT_CANDIDATES:
             _emit_conveyor_run_state(
                 runtime,
                 available=True,
@@ -88,28 +119,74 @@ def _apply_output_defaults(runtime, controller, defaults: dict[str, bool], *, ph
 
 
 def _apply_startup_output_defaults(runtime, controller) -> None:
-    _apply_output_defaults(runtime, controller, _STARTUP_OUTPUT_DEFAULTS, phase="startup")
+    _apply_output_defaults(
+        runtime,
+        controller,
+        (
+            (_CONVEYOR_RUN_OUTPUT_CANDIDATES, True, "conveyor"),
+            (_BUZZER_OUTPUT_CANDIDATES, False, "buzzer"),
+        ),
+        phase="startup",
+    )
 
 
 def _apply_shutdown_output_defaults(runtime, controller) -> None:
-    _apply_output_defaults(runtime, controller, _SHUTDOWN_OUTPUT_DEFAULTS, phase="shutdown")
+    _apply_output_defaults(
+        runtime,
+        controller,
+        (
+            (_CONVEYOR_RUN_OUTPUT_CANDIDATES, False, "conveyor"),
+            (_BUZZER_OUTPUT_CANDIDATES, False, "buzzer"),
+        ),
+        phase="shutdown",
+    )
+
+
+def _set_buzzer(runtime, on: bool, *, reason: str = "") -> bool:
+    controller = getattr(runtime, "_io_controller", None)
+    if controller is None or not getattr(controller, "is_open", False):
+        return False
+    output_name = _resolve_output_name(runtime, controller, *_BUZZER_OUTPUT_CANDIDATES)
+    if not output_name:
+        runtime.logAppended.emit(
+            f"[IO] missing buzzer output mapping; expected one of {list(_BUZZER_OUTPUT_CANDIDATES)}"
+        )
+        return False
+    try:
+        controller.set_output(output_name, bool(on))
+    except Exception as exc:
+        runtime.logAppended.emit(
+            f"[IO] failed to set buzzer output: {output_name}={'ON' if on else 'OFF'}: {exc}"
+        )
+        return False
+    detail = f" ({reason})" if str(reason or "").strip() else ""
+    runtime.logAppended.emit(
+        f"[IO] buzzer output applied: {output_name}={'ON' if on else 'OFF'}{detail}"
+    )
+    return True
 
 
 def _set_conveyor_run(runtime, running: bool, *, reason: str = "") -> bool:
     controller = getattr(runtime, "_io_controller", None)
     if controller is None or not getattr(controller, "is_open", False):
         return False
+    output_name = _resolve_output_name(runtime, controller, *_CONVEYOR_RUN_OUTPUT_CANDIDATES)
+    if not output_name:
+        runtime.logAppended.emit(
+            f"[IO] missing conveyor output mapping; expected one of {list(_CONVEYOR_RUN_OUTPUT_CANDIDATES)}"
+        )
+        return False
     try:
-        controller.set_output(_CONVEYOR_RUN_OUTPUT, bool(running))
+        controller.set_output(output_name, bool(running))
     except Exception as exc:
         runtime.logAppended.emit(
-            f"[IO] failed to set conveyor output: {_CONVEYOR_RUN_OUTPUT}="
+            f"[IO] failed to set conveyor output: {output_name}="
             f"{'ON' if running else 'OFF'}: {exc}"
         )
         return False
     detail = f" ({reason})" if str(reason or "").strip() else ""
     runtime.logAppended.emit(
-        f"[IO] conveyor output applied: {_CONVEYOR_RUN_OUTPUT}="
+        f"[IO] conveyor output applied: {output_name}="
         f"{'ON' if running else 'OFF'}{detail}"
     )
     _emit_conveyor_run_state(
@@ -118,6 +195,8 @@ def _set_conveyor_run(runtime, running: bool, *, reason: str = "") -> bool:
         running=bool(running),
         detail=str(reason or "").strip(),
     )
+    if running:
+        _set_buzzer(runtime, False, reason=f"conveyor running: {reason or 'run'}")
     return True
 
 
@@ -294,20 +373,29 @@ def _start_di_poller_if_available(runtime) -> None:
     runtime._stop_di_poller()
     if runtime._io_controller is None or runtime_controller_module.DiMonitor is None:
         return
+    foot_switch_name = _resolve_input_name(runtime, runtime._io_controller, *_FOOT_SWITCH_INPUT_CANDIDATES)
+    conveyor_toggle_name = _resolve_input_name(
+        runtime, runtime._io_controller, *_CONVEYOR_TOGGLE_INPUT_CANDIDATES
+    )
+    input_names = [name for name in (foot_switch_name, conveyor_toggle_name) if name]
+    if not input_names:
+        runtime.logAppended.emit("[IO] skipped DI monitor start: no mapped DI inputs for trigger/toggle")
+        return
     try:
         poller = runtime_controller_module.DiMonitor(
             runtime._io_controller,
-            input_names=["foot_switch"],
+            input_names=input_names,
             poll_interval_ms=20,
             debounce_ms=50,
         )
         poller.add_rising_callback(runtime._on_foot_switch_rising)
+        poller.add_rising_callback(runtime._on_conveyor_toggle_rising)
         poller.start()
     except Exception as exc:
-        runtime.logAppended.emit(f"[IO] failed to start foot-switch DI monitor: {exc}")
+        runtime.logAppended.emit(f"[IO] failed to start DI monitor: {exc}")
         return
     runtime._di_poller = poller
-    runtime.logAppended.emit("[IO] foot-switch DI monitor started")
+    runtime.logAppended.emit(f"[IO] DI monitor started for: {', '.join(input_names)}")
 
 
 def _stop_di_poller(runtime) -> None:
@@ -321,6 +409,8 @@ def _stop_di_poller(runtime) -> None:
 
 
 def _on_foot_switch_rising(runtime, event) -> None:
+    if str(getattr(event, "name", "") or "") not in _FOOT_SWITCH_INPUT_CANDIDATES:
+        return
     runtime.logAppended.emit(f"[foot-switch] rising edge detected: {event.name}")
     delay_ms = max(0, int(getattr(runtime, "_foot_trigger_delay_ms", 0) or 0))
     if delay_ms <= 0:
@@ -332,6 +422,13 @@ def _on_foot_switch_rising(runtime, event) -> None:
     runtime._pending_di_trigger_delay_ms = delay_ms
     runtime._di_trigger_delay_pending = True
     QtCore.QMetaObject.invokeMethod(runtime, "_schedule_trigger_from_di", QtCore.Qt.QueuedConnection)
+
+
+def _on_conveyor_toggle_rising(runtime, event) -> None:
+    if str(getattr(event, "name", "") or "") not in _CONVEYOR_TOGGLE_INPUT_CANDIDATES:
+        return
+    runtime.logAppended.emit(f"[conveyor-toggle] rising edge detected: {event.name}")
+    QtCore.QMetaObject.invokeMethod(runtime, "_toggle_conveyor_run_from_di", QtCore.Qt.QueuedConnection)
 
 
 @QtCore.Slot()
@@ -359,6 +456,24 @@ def _fire_delayed_trigger_from_di(runtime) -> None:
 @QtCore.Slot()
 def _trigger_from_di(runtime) -> None:
     runtime.trigger()
+
+
+@QtCore.Slot()
+def _toggle_conveyor_run_from_di(runtime) -> None:
+    controller = getattr(runtime, "_io_controller", None)
+    current_running = bool(getattr(runtime, "_conveyor_running", False))
+    if controller is not None and getattr(controller, "is_open", False):
+        output_name = _resolve_output_name(runtime, controller, *_CONVEYOR_RUN_OUTPUT_CANDIDATES)
+        if output_name:
+            try:
+                current_running = bool(controller.read_output(output_name))
+            except Exception:
+                pass
+    target_running = not current_running
+    if _set_conveyor_run(runtime, target_running, reason="DI2 toggle"):
+        runtime._update_status("DI2 started conveyor" if target_running else "DI2 stopped conveyor")
+        return
+    runtime.warningOccurred.emit("IO未就绪，无法响应DI2皮带启停")
 
 
 def _find_nkio_config_path(runtime) -> Optional[Path]:

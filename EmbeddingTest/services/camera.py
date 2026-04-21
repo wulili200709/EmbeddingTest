@@ -32,6 +32,8 @@ _MVS_RUNTIME_CANDIDATES = (
     ]
 )
 _DLL_SEARCH_HANDLES: list[object] = []
+_SDK_LIFECYCLE_LOCK = threading.RLock()
+_SDK_INIT_REFCOUNT = 0
 
 
 def _existing_mvs_runtime_dirs() -> list[Path]:
@@ -155,6 +157,25 @@ class HikCameraError(RuntimeError):
 def _raise_for_code(code: int, operation: str) -> None:
     if int(code) != SDK_OK:
         raise HikCameraError(f"{operation} failed with sdk code=0x{int(code):08X}")
+
+
+def _acquire_sdk_runtime() -> None:
+    global _SDK_INIT_REFCOUNT
+    with _SDK_LIFECYCLE_LOCK:
+        if _SDK_INIT_REFCOUNT == 0:
+            _raise_for_code(MvCamera.MV_CC_Initialize(), "MV_CC_Initialize")
+        _SDK_INIT_REFCOUNT += 1
+
+
+def _release_sdk_runtime() -> None:
+    global _SDK_INIT_REFCOUNT
+    with _SDK_LIFECYCLE_LOCK:
+        if _SDK_INIT_REFCOUNT <= 0:
+            _SDK_INIT_REFCOUNT = 0
+            return
+        _SDK_INIT_REFCOUNT -= 1
+        if _SDK_INIT_REFCOUNT == 0:
+            _raise_for_code(MvCamera.MV_CC_Finalize(), "MV_CC_Finalize")
 
 
 def _decode_bytes(raw: Any) -> str:
@@ -539,7 +560,7 @@ class HikCameraManager:
         with self._lock:
             if self._initialized:
                 return
-            _raise_for_code(MvCamera.MV_CC_Initialize(), "MV_CC_Initialize")
+            _acquire_sdk_runtime()
             self._initialized = True
 
     def close(self) -> None:
@@ -553,7 +574,7 @@ class HikCameraManager:
             self._device_info_by_serial.clear()
             self._camera_info_by_serial.clear()
             if self._initialized:
-                _raise_for_code(MvCamera.MV_CC_Finalize(), "MV_CC_Finalize")
+                _release_sdk_runtime()
                 self._initialized = False
 
     def enumerate_cameras(self) -> list[HikCameraInfo]:

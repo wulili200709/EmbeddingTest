@@ -2471,9 +2471,10 @@ class ToolPage(QtWidgets.QWidget):
         self.btn_del_test = QtWidgets.QPushButton(_si(SP.SP_DialogDiscardButton), "移除")
         self.btn_del_test.setStyleSheet(_compact_btn)
         self.btn_del_test.clicked.connect(lambda: self._remove_selected_from("TEST"))
-        self.btn_sample_annotation_test = QtWidgets.QPushButton("样本标注...")
+        self.btn_sample_annotation_test = QtWidgets.QPushButton("一键清空")
         self.btn_sample_annotation_test.setStyleSheet(_compact_btn)
-        self.btn_sample_annotation_test.clicked.connect(self._open_sample_annotation_dialog)
+        self.btn_sample_annotation_test.setToolTip("清空当前相机角色下的测试样本列表，不删除磁盘原图")
+        self.btn_sample_annotation_test.clicked.connect(self._clear_visible_test_samples)
         test_actions.addWidget(self.btn_test_to_train, 0, 0)
         test_actions.addWidget(self.btn_add_test, 0, 1)
         test_actions.addWidget(self.btn_sample_annotation_test, 1, 0)
@@ -3883,6 +3884,7 @@ class ToolPage(QtWidgets.QWidget):
             ("btn_del_ok", current_tab_kind == "train" and bool(selected_path)),
             ("btn_test_to_train", current_tab_kind == "test" and bool(selected_path)),
             ("btn_del_test", current_tab_kind == "test" and bool(selected_path)),
+            ("btn_sample_annotation_test", current_tab_kind == "test" and test_count > 0),
         ):
             button = getattr(self, attr_name, None)
             if button is not None:
@@ -4152,6 +4154,45 @@ class ToolPage(QtWidgets.QWidget):
         self._refresh_lists()
         self._clear_training_roi_review_state()
         self._save_session()
+
+    def _clear_visible_test_samples(self) -> None:
+        current_role = _selected_image_list_camera_role(self)
+        visible_paths = list(self._sample_paths_for_kind("test", current_role))
+        if not visible_paths:
+            QtWidgets.QMessageBox.information(self, "提示", "当前测试样本列表为空。")
+            return
+
+        role_text = str(current_role or "cam1").upper()
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            "清空测试样本",
+            (
+                f"确定清空当前 {role_text} 的测试样本列表吗？\n"
+                f"共 {len(visible_paths)} 张图片。\n\n"
+                "只会从测试样本列表移除，不删除磁盘原图。"
+            ),
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.Cancel,
+            QtWidgets.QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+
+        removed_paths = {str(path) for path in visible_paths}
+        current_canvas_path = str(self.canvas.image_path() or "").strip()
+        before_count = len(self.test_files)
+        self.test_files = [str(path) for path in self.test_files if str(path) not in removed_paths]
+        removed_count = max(0, before_count - len(self.test_files))
+
+        self._refresh_lists()
+        self._clear_training_roi_review_state()
+        self._save_session()
+
+        if current_canvas_path and current_canvas_path in removed_paths and self._current_sample_tab_kind() == "test":
+            self.canvas.clear_image()
+            self._current_result_rows = []
+
+        self._update_sample_panel_widgets()
+        self.lbl_status.setText(f"状态：已清空 {role_text} 的测试样本，共移除 {removed_count} 张。")
 
     def _on_tab_changed(self, index: int) -> None:
         if index == 0:
