@@ -1,0 +1,211 @@
+{
+  "startup": [
+    {
+      "type": "set_output",
+      "name": "conveyor_run",
+      "value": true,
+      "reason": "startup default"
+    },
+    {
+      "type": "set_output",
+      "name": "buzzer",
+      "value": false,
+      "reason": "startup default"
+    },
+    {
+      "type": "set_output",
+      "name": "button_green",
+      "value": true,
+      "reason": "startup default"
+    },
+    {
+      "type": "set_output",
+      "name": "button_red",
+      "value": false,
+      "reason": "startup default"
+    },
+    {
+      "type": "set_output",
+      "name": "button_blue",
+      "value": false,
+      "reason": "startup default"
+    }
+  ],
+  "shutdown": [
+    {
+      "type": "set_output",
+      "name": "conveyor_run",
+      "value": false,
+      "reason": "shutdown default"
+    },
+    {
+      "type": "set_output",
+      "name": "buzzer",
+      "value": false,
+      "reason": "shutdown default"
+    },
+    {
+      "type": "set_output",
+      "name": "button_green",
+      "value": false,
+      "reason": "shutdown default"
+    },
+    {
+      "type": "set_output",
+      "name": "button_red",
+      "value": true,
+      "reason": "shutdown default"
+    },
+    {
+      "type": "set_output",
+      "name": "button_blue",
+      "value": false,
+      "reason": "shutdown default"
+    }
+  ],
+  "ng": [
+    {
+      "type": "set_conveyor_run",
+      "value": false,
+      "reason": "NG result"
+    },
+    {
+      "type": "set_buzzer",
+      "value": true,
+      "reason": "NG result"
+    },
+    {
+      "type": "set_output",
+      "name": "button_green",
+      "value": false,
+      "reason": "NG result"
+    },
+    {
+      "type": "set_output",
+      "name": "button_red",
+      "value": true,
+      "reason": "NG result"
+    },
+    {
+      "type": "set_output",
+      "name": "button_blue",
+      "value": false,
+      "reason": "NG result"
+    }
+  ],
+  "ok": [],
+  "precheck_failed": [],
+  "release_granted": [
+    {
+      "type": "set_conveyor_run",
+      "value": true,
+      "reason": "release granted"
+    },
+    {
+      "type": "set_buzzer",
+      "value": false,
+      "reason": "release granted"
+    },
+    {
+      "type": "set_output",
+      "name": "button_green",
+      "value": true,
+      "reason": "release granted"
+    },
+    {
+      "type": "set_output",
+      "name": "button_red",
+      "value": false,
+      "reason": "release granted"
+    },
+    {
+      "type": "set_output",
+      "name": "button_blue",
+      "value": false,
+      "reason": "release granted"
+    }
+  ],
+  "start_button_pressed": [
+    {
+      "type": "set_conveyor_run",
+      "value": true,
+      "reason": "DI2 start"
+    },
+    {
+      "type": "set_buzzer",
+      "value": false,
+      "reason": "DI2 start"
+    },
+    {
+      "type": "set_output",
+      "name": "button_green",
+      "value": true,
+      "reason": "DI2 start"
+    },
+    {
+      "type": "set_output",
+      "name": "button_red",
+      "value": false,
+      "reason": "DI2 start"
+    },
+    {
+      "type": "set_output",
+      "name": "button_blue",
+      "value": false,
+      "reason": "DI2 start"
+    }
+  ],
+  "stop_button_pressed": [
+    {
+      "type": "set_conveyor_run",
+      "value": false,
+      "reason": "DI3 stop"
+    },
+    {
+      "type": "set_output",
+      "name": "button_green",
+      "value": false,
+      "reason": "DI3 stop"
+    },
+    {
+      "type": "set_output",
+      "name": "button_red",
+      "value": true,
+      "reason": "DI3 stop"
+    },
+    {
+      "type": "set_output",
+      "name": "button_blue",
+      "value": false,
+      "reason": "DI3 stop"
+    }
+  ],
+  "reset_button_pressed": [
+    {
+      "type": "set_output",
+      "name": "button_green",
+      "value": false,
+      "reason": "DI4 reset"
+    },
+    {
+      "type": "set_output",
+      "name": "button_red",
+      "value": false,
+      "reason": "DI4 reset"
+    },
+    {
+      "type": "set_output",
+      "name": "button_blue",
+      "value": true,
+      "reason": "DI4 reset"
+    }
+  ],
+  "reset_button_released": [
+    {
+      "type": "set_output",
+      "name": "button_blue",
+      "value": false,
+      "reason": "DI4 reset release"
+    }
+  ]
+}

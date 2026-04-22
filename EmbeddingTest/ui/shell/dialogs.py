@@ -206,6 +206,13 @@ def prompt_password_dialog(
     edit_password.setEchoMode(QtWidgets.QLineEdit.Password)
     layout.addWidget(edit_password)
 
+    ng_stop_delay_spin = QtWidgets.QSpinBox()
+    ng_stop_delay_spin.setRange(0, 600000)
+    ng_stop_delay_spin.setSingleStep(10)
+    ng_stop_delay_spin.setSuffix(" ms")
+    ng_stop_delay_spin.setValue(max(0, int(current_ng_stop_delay_ms or 0)))
+    layout.addRow("NG停皮带延时", ng_stop_delay_spin)
+
     button_box = QtWidgets.QDialogButtonBox(
         QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
     )
@@ -371,7 +378,8 @@ def prompt_trigger_timing_settings(
     parent: QtWidgets.QWidget,
     *,
     current_delay_ms: int,
-) -> int | None:
+    current_ng_stop_delay_ms: int,
+) -> dict[str, int] | None:
     dialog = QtWidgets.QDialog(parent)
     dialog.setWindowTitle("触发时序设置")
     dialog.setMinimumWidth(380)
@@ -403,4 +411,94 @@ def prompt_trigger_timing_settings(
     if dialog.exec() != QtWidgets.QDialog.Accepted:
         return None
 
-    return int(delay_spin.value())
+    return {
+        "foot_trigger_delay_ms": int(delay_spin.value()),
+        "ng_stop_delay_ms": int(ng_stop_delay_spin.value()),
+    }
+
+
+def prompt_password_dialog(
+    parent: QtWidgets.QWidget,
+    *,
+    title: str,
+    label: str,
+) -> tuple[str, bool]:
+    dialog = QtWidgets.QDialog(parent)
+    dialog.setWindowTitle(title)
+    dialog.setMinimumWidth(320)
+    _apply_dialog_theme(dialog)
+
+    layout = QtWidgets.QVBoxLayout(dialog)
+    layout.setContentsMargins(16, 14, 16, 14)
+    layout.setSpacing(10)
+
+    prompt_label = QtWidgets.QLabel(label)
+    layout.addWidget(prompt_label)
+
+    edit_password = QtWidgets.QLineEdit()
+    edit_password.setEchoMode(QtWidgets.QLineEdit.Password)
+    layout.addWidget(edit_password)
+
+    button_box = QtWidgets.QDialogButtonBox(
+        QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+    )
+    button_box.accepted.connect(dialog.accept)
+    button_box.rejected.connect(dialog.reject)
+    layout.addWidget(button_box)
+
+    edit_password.returnPressed.connect(dialog.accept)
+    edit_password.setFocus()
+
+    if dialog.exec() != QtWidgets.QDialog.Accepted:
+        return "", False
+    return edit_password.text(), True
+
+
+def prompt_trigger_timing_settings(
+    parent: QtWidgets.QWidget,
+    *,
+    current_delay_ms: int,
+    current_ng_stop_delay_ms: int,
+) -> dict[str, int] | None:
+    dialog = QtWidgets.QDialog(parent)
+    dialog.setWindowTitle("触发时序设置")
+    dialog.setMinimumWidth(380)
+    _apply_dialog_theme(dialog)
+
+    layout = QtWidgets.QFormLayout(dialog)
+    layout.setContentsMargins(16, 14, 16, 14)
+    layout.setSpacing(10)
+
+    tip_label = QtWidgets.QLabel("收到感应信号后可延时拍照；收到NG结果后也可延时停皮带。")
+    tip_label.setStyleSheet("color:#b8b8b8;")
+    tip_label.setWordWrap(True)
+    layout.addRow(tip_label)
+
+    delay_spin = QtWidgets.QSpinBox()
+    delay_spin.setRange(0, 600000)
+    delay_spin.setSingleStep(10)
+    delay_spin.setSuffix(" ms")
+    delay_spin.setValue(max(0, int(current_delay_ms or 0)))
+    layout.addRow("脚踏触发延时", delay_spin)
+
+    ng_stop_delay_spin = QtWidgets.QSpinBox()
+    ng_stop_delay_spin.setRange(0, 600000)
+    ng_stop_delay_spin.setSingleStep(10)
+    ng_stop_delay_spin.setSuffix(" ms")
+    ng_stop_delay_spin.setValue(max(0, int(current_ng_stop_delay_ms or 0)))
+    layout.addRow("NG停皮带延时", ng_stop_delay_spin)
+
+    button_box = QtWidgets.QDialogButtonBox(
+        QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+    )
+    button_box.accepted.connect(dialog.accept)
+    button_box.rejected.connect(dialog.reject)
+    layout.addRow(button_box)
+
+    if dialog.exec() != QtWidgets.QDialog.Accepted:
+        return None
+
+    return {
+        "foot_trigger_delay_ms": int(delay_spin.value()),
+        "ng_stop_delay_ms": int(ng_stop_delay_spin.value()),
+    }

@@ -16,6 +16,7 @@ from algorithms.labelme import (
 )
 from ncc.authoring import (
     ensure_default_assets,
+    mask_image_path,
     preview_image_path,
     set_source_from_image_file,
     set_template_from_roi,
@@ -288,6 +289,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._selected_reference_idx: Optional[int] = None
         self._selected_reference_indices: Set[int] = set()
         self._syncing_roi = False
+        self._syncing_mask_view = False
         self._syncing_reference_view = False
         self._syncing_reference_table = False
         self._moving_reference_regions = False
@@ -318,6 +320,8 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
 
         self.tabs = QtWidgets.QTabWidget()
         self.tabs.addTab(self._build_create_tab(), "Create")
+        self._mask_tab_page = self._build_mask_tab()
+        self._mask_tab_index = self.tabs.addTab(self._mask_tab_page, "Template Mask")
         self.tabs.addTab(self._build_reference_tab(), "Reference ROI")
         self.tabs.addTab(self._build_find_tab(), "Find")
         root.addWidget(self.tabs, 1)
@@ -363,6 +367,9 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         form.addRow("模板", self.edt_template_path)
         form.addRow("预览", self.edt_preview_path)
         select_layout.addLayout(form)
+        self.chk_enable_template_mask = QtWidgets.QCheckBox("启用 Template Mask")
+        self.chk_enable_template_mask.setToolTip("打开后显示 Template Mask 页签，并在保存模板和匹配时启用 mask。")
+        select_layout.addWidget(self.chk_enable_template_mask)
 
         roi_row = QtWidgets.QHBoxLayout()
         self.spn_roi_x = QtWidgets.QSpinBox()
@@ -441,9 +448,68 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.btn_clear_source_roi.clicked.connect(self._clear_source_roi)
         self.btn_save_template.clicked.connect(self._save_template)
         self.edt_display_name.editingFinished.connect(self._save_model_metadata)
+        self.chk_enable_template_mask.toggled.connect(self._on_template_mask_enabled_toggled)
         self.source_canvas.shapesChanged.connect(self._sync_roi_from_canvas)
         for spin in (self.spn_roi_x, self.spn_roi_y, self.spn_roi_w, self.spn_roi_h):
             spin.valueChanged.connect(self._sync_roi_to_canvas)
+        return page
+
+    def _build_mask_tab(self) -> QtWidgets.QWidget:
+        page = _make_tab_page()
+        layout = QtWidgets.QHBoxLayout(page)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(8)
+
+        left_panel = QtWidgets.QWidget()
+        left_layout = QtWidgets.QVBoxLayout(left_panel)
+        left_layout.setSpacing(8)
+
+        mask_box = QtWidgets.QGroupBox("Template Mask")
+        mask_form = QtWidgets.QFormLayout(mask_box)
+        self.edt_mask_path = QtWidgets.QLineEdit()
+        self.edt_mask_path.setReadOnly(True)
+        self.cmb_mask_shape = QtWidgets.QComboBox()
+        self.cmb_mask_shape.addItem("rectangle", "rectangle")
+        self.cmb_mask_shape.addItem("polygon", "polygon")
+        self.btn_apply_template_mask = QtWidgets.QPushButton("保存当前 Mask")
+        self.btn_clear_template_mask = QtWidgets.QPushButton("清空 Mask")
+        self.lbl_mask_status = QtWidgets.QLabel("状态：未启用 Template Mask。")
+        self.lbl_mask_status.setWordWrap(True)
+        self.lbl_mask_hint = QtWidgets.QLabel(
+            "说明：矩形直接拖框；多边形模式下左键逐点，右键闭合。"
+            "Mask 只保留选中区域参与 NCC 匹配。"
+        )
+        self.lbl_mask_hint.setWordWrap(True)
+        mask_form.addRow("Mask 文件", self.edt_mask_path)
+        mask_form.addRow("Mask 形状", self.cmb_mask_shape)
+        mask_form.addRow("", self.btn_apply_template_mask)
+        mask_form.addRow("", self.btn_clear_template_mask)
+        mask_form.addRow("", self.lbl_mask_status)
+        mask_form.addRow("", self.lbl_mask_hint)
+        left_layout.addWidget(mask_box)
+        left_layout.addStretch(1)
+
+        layout.addWidget(_make_scrollable_side_panel(left_panel, min_width=340, max_width=420))
+
+        canvas_box = QtWidgets.QGroupBox("参考图 Mask 编辑")
+        canvas_layout = QtWidgets.QVBoxLayout(canvas_box)
+        self.mask_canvas = RoiCanvas()
+        self.mask_canvas.setMinimumSize(520, 360)
+        self.mask_canvas.set_roi_style(
+            roi_color=QtGui.QColor(255, 165, 0),
+            roi_dash=False,
+            roi_width=2.0,
+            preview_color=QtGui.QColor(255, 220, 120),
+            preview_dash=True,
+            preview_width=1.4,
+        )
+        canvas_layout.addWidget(self.mask_canvas, 1)
+        layout.addWidget(canvas_box, 1)
+
+        self.cmb_mask_shape.currentIndexChanged.connect(self._on_mask_shape_changed)
+        self.btn_apply_template_mask.clicked.connect(self._save_template_mask)
+        self.btn_clear_template_mask.clicked.connect(self._clear_template_mask)
+        self.mask_canvas.shapesChanged.connect(self._on_mask_canvas_shape_changed)
         return page
 
     def _build_reference_tab(self) -> QtWidgets.QWidget:
@@ -748,6 +814,10 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             self.edt_source_path.setText(source_image_path(self._model_path, self._model))
             self.edt_template_path.setText(template_image_path(self._model_path, self._model))
             self.edt_preview_path.setText(preview_image_path(self._model_path, self._model))
+            if hasattr(self, "edt_mask_path"):
+                self.edt_mask_path.setText(mask_image_path(self._model_path, self._model))
+            if hasattr(self, "chk_enable_template_mask"):
+                self.chk_enable_template_mask.setChecked(bool(getattr(self._model, "template_mask_enabled", False)))
             self._set_roi_spin_values(self._model.template_roi.to_xywh())
             self._apply_options_to_form(self._model.options)
             self._reload_authoring_canvases(force_reference=True)
@@ -756,6 +826,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             self._refresh_reference_canvas()
             self._refresh_model_summary()
             self._refresh_search_roi_status()
+            self._refresh_template_mask_visibility()
         finally:
             self._loading_model = False
 
@@ -787,6 +858,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         if source_path and Path(source_path).exists():
             self.source_canvas.set_image(source_path)
             self.source_canvas.set_roi_rect(self._model.template_roi.to_xywh())
+            self._refresh_source_canvas_overlays()
         elif self.source_canvas.image_path() is None:
             self.source_canvas.clear_image()
 
@@ -800,6 +872,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         else:
             self.preview_canvas.clear_image()
 
+        self._refresh_mask_canvas()
         self._refresh_reference_image(force=force_reference)
 
     def _refresh_reference_image(self, *, force: bool = False) -> None:
@@ -812,6 +885,189 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             self._refresh_reference_canvas()
             return
         self.ref_canvas.clear_image()
+
+    def _template_mask_enabled(self) -> bool:
+        if hasattr(self, "chk_enable_template_mask"):
+            return bool(self.chk_enable_template_mask.isChecked())
+        return bool(getattr(self._model, "template_mask_enabled", False))
+
+    def _set_mask_tab_visible(self, visible: bool) -> None:
+        if not hasattr(self, "tabs"):
+            return
+        if (not visible) and self.tabs.currentWidget() is getattr(self, "_mask_tab_page", None):
+            self.tabs.setCurrentIndex(0)
+        if hasattr(self.tabs, "setTabVisible"):
+            self.tabs.setTabVisible(int(self._mask_tab_index), bool(visible))
+            return
+        current_index = self.tabs.indexOf(self._mask_tab_page)
+        if visible and current_index < 0:
+            self.tabs.insertTab(int(self._mask_tab_index), self._mask_tab_page, "Template Mask")
+            return
+        if (not visible) and current_index >= 0:
+            if self.tabs.currentWidget() is self._mask_tab_page:
+                self.tabs.setCurrentIndex(0)
+            self.tabs.removeTab(current_index)
+
+    def _refresh_template_mask_visibility(self) -> None:
+        enabled = self._template_mask_enabled()
+        self._set_mask_tab_visible(enabled)
+        self._refresh_source_canvas_overlays()
+        if enabled:
+            self._refresh_mask_canvas()
+        elif hasattr(self, "mask_canvas"):
+            self.mask_canvas.clear_roi(emit_signal=False)
+            self.mask_canvas.set_overlays([])
+
+    def _on_template_mask_enabled_toggled(self, checked: bool) -> None:
+        self._model.template_mask_enabled = bool(checked)
+        self._refresh_template_mask_visibility()
+        if getattr(self, "_loading_model", False):
+            return
+        save_model(self._model_path, self._model)
+        self._refresh_model_summary()
+        self.modelSaved.emit(self._model_path)
+        if checked:
+            self._set_status("已启用 Template Mask。")
+        else:
+            self._set_status("已关闭 Template Mask。")
+
+    def _mask_shape_name(self) -> str:
+        if not self._template_mask_enabled() or not hasattr(self, "cmb_mask_shape"):
+            return "disabled"
+        value = str(self.cmb_mask_shape.currentData() or "").strip().lower()
+        if value in {"rectangle", "polygon"}:
+            return value
+        return "rectangle"
+
+    def _mask_overlay_shape(self, region: NccReferenceRegion | None) -> Optional[OverlayShape]:
+        if not isinstance(region, NccReferenceRegion):
+            return None
+        points = _region_polygon_points(region)
+        if len(points) < 3:
+            return None
+        return OverlayShape(
+            shape_type="polygon",
+            points=points,
+            color=QtGui.QColor(255, 165, 0),
+            width=1.8,
+            dash=False,
+        )
+
+    def _refresh_source_canvas_overlays(self) -> None:
+        if not hasattr(self, "source_canvas") or not self.source_canvas.has_image():
+            return
+        overlays: List[OverlayShape] = []
+        overlay = None
+        if self._template_mask_enabled():
+            overlay = self._mask_overlay_shape(getattr(self._model, "template_mask", None))
+        if overlay is not None:
+            overlays.append(overlay)
+        self.source_canvas.set_overlays(overlays)
+
+    def _apply_mask_edit_mode(self) -> None:
+        if not hasattr(self, "mask_canvas"):
+            return
+        shape_name = self._mask_shape_name()
+        enabled = shape_name != "disabled"
+        self.mask_canvas.set_interaction_enabled(enabled)
+        self.mask_canvas.draw_shape = "polygon" if shape_name == "polygon" else "rect"
+
+    def _template_mask_from_canvas(self) -> NccReferenceRegion | None:
+        if not hasattr(self, "mask_canvas") or not self.mask_canvas.has_image():
+            return self._model.template_mask
+        shape_name = self._mask_shape_name()
+        if shape_name == "disabled":
+            return None
+        if shape_name == "polygon" and self.mask_canvas.roi.points and len(self.mask_canvas.roi.points) >= 3:
+            return NccReferenceRegion(
+                label_name="template_mask",
+                display_name="template_mask",
+                shape_type="polygon",
+                points=[(float(x), float(y)) for x, y in self.mask_canvas.roi.points],
+            ).normalized()
+        xywh = self.mask_canvas.roi_xywh()
+        if xywh is None:
+            return None
+        x, y, w, h = [int(v) for v in xywh]
+        return NccReferenceRegion(
+            label_name="template_mask",
+            display_name="template_mask",
+            shape_type="rectangle",
+            points=[(float(x), float(y)), (float(x + w), float(y + h))],
+        ).normalized()
+
+    def _refresh_mask_canvas(self) -> None:
+        if not hasattr(self, "mask_canvas"):
+            return
+        if not self._template_mask_enabled():
+            self.mask_canvas.clear_roi(emit_signal=False)
+            self.mask_canvas.set_overlays([])
+            self.lbl_mask_status.setText("状态：Template Mask 已关闭。")
+            self._apply_mask_edit_mode()
+            return
+        source_path = self._reference_image_path()
+        if source_path and Path(source_path).exists():
+            current_path = str(self.mask_canvas.image_path() or "").strip()
+            if current_path != source_path:
+                self.mask_canvas.set_image(source_path)
+                self.mask_canvas.set_roi_style(
+                    roi_color=QtGui.QColor(255, 165, 0),
+                    roi_dash=False,
+                    roi_width=2.0,
+                    preview_color=QtGui.QColor(255, 220, 120),
+                    preview_dash=True,
+                    preview_width=1.4,
+                )
+        else:
+            self.mask_canvas.clear_image()
+            self.lbl_mask_status.setText("状态：请先加载参考图。")
+            return
+
+        overlay_items: List[OverlayShape] = []
+        roi = self._model.template_roi.normalized()
+        if roi.width > 0 and roi.height > 0:
+            overlay_items.append(
+                OverlayShape(
+                    shape_type="rect",
+                    xywh=roi.to_xywh(),
+                    color=QtGui.QColor(0, 255, 0),
+                    width=1.4,
+                    dash=True,
+                )
+            )
+        self.mask_canvas.set_overlays(overlay_items)
+
+        region = getattr(self._model, "template_mask", None)
+        self._syncing_mask_view = True
+        try:
+            if isinstance(region, NccReferenceRegion):
+                shape_name = "polygon" if region.shape_type == "polygon" else "rectangle"
+                index = self.cmb_mask_shape.findData(shape_name)
+                if index >= 0:
+                    self.cmb_mask_shape.setCurrentIndex(index)
+                if region.shape_type == "polygon" and len(region.points) >= 3:
+                    self.mask_canvas.set_roi_polygon([(float(x), float(y)) for x, y in region.points], emit_signal=False)
+                elif len(region.points) >= 2:
+                    (x0, y0), (x1, y1) = region.points[:2]
+                    self.mask_canvas.set_roi_rect(
+                        (
+                            int(round(min(float(x0), float(x1)))),
+                            int(round(min(float(y0), float(y1)))),
+                            max(1, int(round(abs(float(x1) - float(x0))))),
+                            max(1, int(round(abs(float(y1) - float(y0))))),
+                        ),
+                        emit_signal=False,
+                    )
+                self.lbl_mask_status.setText("状态：当前 Template Mask 已加载。")
+            else:
+                index = self.cmb_mask_shape.findData("disabled")
+                if index >= 0:
+                    self.cmb_mask_shape.setCurrentIndex(index)
+                self.mask_canvas.clear_roi(emit_signal=False)
+                self.lbl_mask_status.setText("状态：未启用 Template Mask。")
+        finally:
+            self._syncing_mask_view = False
+        self._apply_mask_edit_mode()
 
     def _apply_options_to_form(self, options: NccMatchOptions) -> None:
         normalized = options.normalized()
@@ -860,17 +1116,21 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
 
     def _sync_model_from_ui(self) -> None:
         self._model.display_name = self.edt_display_name.text().strip() or self._model.display_name
+        self._model.template_mask_enabled = self._template_mask_enabled()
         self._model.template_roi = NccMatchRect(
             x=self.spn_roi_x.value(),
             y=self.spn_roi_y.value(),
             width=max(1, self.spn_roi_w.value()),
             height=max(1, self.spn_roi_h.value()),
         ).normalized()
+        self._model.template_mask = self._template_mask_from_canvas()
         self._model.options = self._current_find_options()
         self._model.reference_regions = [region.normalized() for region in self._reference_regions]
 
     def _sync_model_without_template_roi_from_ui(self) -> None:
         self._model.display_name = self.edt_display_name.text().strip() or self._model.display_name
+        self._model.template_mask_enabled = self._template_mask_enabled()
+        self._model.template_mask = self._template_mask_from_canvas()
         self._model.options = self._current_find_options()
         self._model.reference_regions = [region.normalized() for region in self._reference_regions]
 
@@ -1817,6 +2077,253 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         preview = ", ".join(written_labels[:6])
         suffix = " ..." if len(written_labels) > 6 else ""
         self._set_status(f"已写回 {len(written_labels)} 个参考ROI：{preview}{suffix}")
+
+    def _sync_roi_to_canvas(self) -> None:
+        if self._syncing_roi:
+            return
+        self.source_canvas.set_roi_rect(
+            (
+                self.spn_roi_x.value(),
+                self.spn_roi_y.value(),
+                max(1, self.spn_roi_w.value()),
+                max(1, self.spn_roi_h.value()),
+            )
+        )
+        self._refresh_mask_canvas()
+
+    def _clear_source_roi(self) -> None:
+        self.source_canvas.clear_roi()
+        self._set_roi_spin_values((0, 0, 1, 1))
+        self._refresh_mask_canvas()
+        self._set_status("已清空模板 ROI。")
+
+    def _pick_source_image(self) -> None:
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "选择参考图",
+            self.source_canvas.image_path() or self._initial_image_path or self._product_dir,
+            _image_file_filter(),
+        )
+        if not path:
+            return
+        self.source_canvas.set_image(path)
+        self._refresh_source_canvas_overlays()
+        self._refresh_mask_canvas()
+        self._refresh_reference_image(force=True)
+        self._set_status(f"已加载参考图：{path}")
+
+    def _on_mask_shape_changed(self, _index: int) -> None:
+        self._apply_mask_edit_mode()
+        if getattr(self, "_syncing_mask_view", False):
+            return
+        if self._mask_shape_name() == "disabled":
+            self.mask_canvas.clear_roi(emit_signal=False)
+            self._model.template_mask = None
+            self._refresh_source_canvas_overlays()
+            self.lbl_mask_status.setText("状态：未启用 Template Mask。")
+        else:
+            self.lbl_mask_status.setText("状态：请在右侧参考图上绘制 Template Mask。")
+
+    def _on_mask_canvas_shape_changed(self) -> None:
+        if getattr(self, "_syncing_mask_view", False) or self._mask_shape_name() == "disabled":
+            return
+        region = self._template_mask_from_canvas()
+        if region is None:
+            self.lbl_mask_status.setText("状态：请先绘制一个有效的 Mask。")
+            return
+        self._model.template_mask = region
+        self._refresh_source_canvas_overlays()
+        self.lbl_mask_status.setText("状态：Mask 已更新，点击“保存当前 Mask”或直接“保存模板”即可生效。")
+
+    def _save_template_mask(self) -> None:
+        source_path = str(self.mask_canvas.image_path() or "").strip()
+        if not source_path:
+            QtWidgets.QMessageBox.warning(self, "NCC", "请先加载参考图。")
+            return
+        self._sync_model_without_template_roi_from_ui()
+        save_model(self._model_path, self._model)
+        self._refresh_source_canvas_overlays()
+        self._refresh_model_summary()
+        self.modelSaved.emit(self._model_path)
+        if self._model.template_mask is None:
+            self.lbl_mask_status.setText("状态：Template Mask 已关闭。")
+            self._set_status("已关闭 Template Mask。")
+        else:
+            self.lbl_mask_status.setText("状态：Template Mask 已保存到模型，保存模板后会生成 mask 图。")
+            self._set_status("Template Mask 已保存，保存模板后生效。")
+
+    def _clear_template_mask(self) -> None:
+        self.mask_canvas.clear_roi(emit_signal=False)
+        index = self.cmb_mask_shape.findData("disabled")
+        if index >= 0:
+            self.cmb_mask_shape.setCurrentIndex(index)
+        self._model.template_mask = None
+        save_model(self._model_path, self._model)
+        self._refresh_source_canvas_overlays()
+        self._refresh_model_summary()
+        self.modelSaved.emit(self._model_path)
+        self.lbl_mask_status.setText("状态：Template Mask 已清空。")
+        self._set_status("已清空 Template Mask。")
+
+    def _refresh_source_canvas_overlays(self) -> None:
+        if not hasattr(self, "source_canvas") or not self.source_canvas.has_image():
+            return
+        overlays: List[OverlayShape] = []
+        if self._template_mask_enabled():
+            overlay = self._mask_overlay_shape(getattr(self._model, "template_mask", None))
+            if overlay is not None:
+                overlays.append(overlay)
+        self.source_canvas.set_overlays(overlays)
+
+    def _apply_mask_edit_mode(self) -> None:
+        if not hasattr(self, "mask_canvas"):
+            return
+        enabled = self._template_mask_enabled()
+        self.mask_canvas.set_interaction_enabled(enabled)
+        shape_name = self._mask_shape_name()
+        self.mask_canvas.draw_shape = "polygon" if shape_name == "polygon" else "rect"
+
+    def _template_mask_from_canvas(self) -> NccReferenceRegion | None:
+        if not self._template_mask_enabled():
+            return getattr(self._model, "template_mask", None)
+        if not hasattr(self, "mask_canvas") or not self.mask_canvas.has_image():
+            return getattr(self._model, "template_mask", None)
+        shape_name = self._mask_shape_name()
+        if shape_name == "polygon" and self.mask_canvas.roi.points and len(self.mask_canvas.roi.points) >= 3:
+            return NccReferenceRegion(
+                label_name="template_mask",
+                display_name="template_mask",
+                shape_type="polygon",
+                points=[(float(x), float(y)) for x, y in self.mask_canvas.roi.points],
+            ).normalized()
+        xywh = self.mask_canvas.roi_xywh()
+        if xywh is None:
+            return None
+        x, y, w, h = [int(v) for v in xywh]
+        return NccReferenceRegion(
+            label_name="template_mask",
+            display_name="template_mask",
+            shape_type="rectangle",
+            points=[(float(x), float(y)), (float(x + w), float(y + h))],
+        ).normalized()
+
+    def _refresh_mask_canvas(self) -> None:
+        if not hasattr(self, "mask_canvas"):
+            return
+        if not self._template_mask_enabled():
+            self.mask_canvas.clear_roi(emit_signal=False)
+            self.mask_canvas.set_overlays([])
+            self.lbl_mask_status.setText("状态：Template Mask 已关闭。")
+            self._apply_mask_edit_mode()
+            return
+        source_path = self._reference_image_path()
+        if source_path and Path(source_path).exists():
+            current_path = str(self.mask_canvas.image_path() or "").strip()
+            if current_path != source_path:
+                self.mask_canvas.set_image(source_path)
+                self.mask_canvas.set_roi_style(
+                    roi_color=QtGui.QColor(255, 165, 0),
+                    roi_dash=False,
+                    roi_width=2.0,
+                    preview_color=QtGui.QColor(255, 220, 120),
+                    preview_dash=True,
+                    preview_width=1.4,
+                )
+        else:
+            self.mask_canvas.clear_image()
+            self.lbl_mask_status.setText("状态：请先加载参考图。")
+            return
+
+        overlay_items: List[OverlayShape] = []
+        roi = self._model.template_roi.normalized()
+        if roi.width > 0 and roi.height > 0:
+            overlay_items.append(
+                OverlayShape(
+                    shape_type="rect",
+                    xywh=roi.to_xywh(),
+                    color=QtGui.QColor(0, 255, 0),
+                    width=1.4,
+                    dash=True,
+                )
+            )
+        self.mask_canvas.set_overlays(overlay_items)
+
+        region = getattr(self._model, "template_mask", None)
+        self._syncing_mask_view = True
+        try:
+            if isinstance(region, NccReferenceRegion):
+                shape_name = "polygon" if region.shape_type == "polygon" else "rectangle"
+                index = self.cmb_mask_shape.findData(shape_name)
+                if index >= 0:
+                    self.cmb_mask_shape.setCurrentIndex(index)
+                if region.shape_type == "polygon" and len(region.points) >= 3:
+                    self.mask_canvas.set_roi_polygon([(float(x), float(y)) for x, y in region.points], emit_signal=False)
+                elif len(region.points) >= 2:
+                    (x0, y0), (x1, y1) = region.points[:2]
+                    self.mask_canvas.set_roi_rect(
+                        (
+                            int(round(min(float(x0), float(x1)))),
+                            int(round(min(float(y0), float(y1)))),
+                            max(1, int(round(abs(float(x1) - float(x0))))),
+                            max(1, int(round(abs(float(y1) - float(y0))))),
+                        ),
+                        emit_signal=False,
+                    )
+                self.lbl_mask_status.setText("状态：当前 Template Mask 已加载。")
+            else:
+                if self.cmb_mask_shape.count() > 0:
+                    self.cmb_mask_shape.setCurrentIndex(0)
+                self.mask_canvas.clear_roi(emit_signal=False)
+                self.lbl_mask_status.setText("状态：请在右侧参考图上绘制 Template Mask。")
+        finally:
+            self._syncing_mask_view = False
+        self._apply_mask_edit_mode()
+
+    def _on_mask_shape_changed(self, _index: int) -> None:
+        self._apply_mask_edit_mode()
+        if getattr(self, "_syncing_mask_view", False):
+            return
+        if not self._template_mask_enabled():
+            self.lbl_mask_status.setText("状态：Template Mask 已关闭。")
+            return
+        self.lbl_mask_status.setText("状态：请在右侧参考图上绘制 Template Mask。")
+
+    def _on_mask_canvas_shape_changed(self) -> None:
+        if getattr(self, "_syncing_mask_view", False) or not self._template_mask_enabled():
+            return
+        region = self._template_mask_from_canvas()
+        if region is None:
+            self.lbl_mask_status.setText("状态：请先绘制一个有效的 Mask。")
+            return
+        self._model.template_mask = region
+        self._refresh_source_canvas_overlays()
+        self.lbl_mask_status.setText("状态：Mask 已更新，点击“保存当前 Mask”或直接“保存模板”即可生效。")
+
+    def _save_template_mask(self) -> None:
+        if not self._template_mask_enabled():
+            QtWidgets.QMessageBox.information(self, "NCC", "请先打开“启用 Template Mask”。")
+            return
+        source_path = str(self.mask_canvas.image_path() or "").strip()
+        if not source_path:
+            QtWidgets.QMessageBox.warning(self, "NCC", "请先加载参考图。")
+            return
+        self._sync_model_without_template_roi_from_ui()
+        save_model(self._model_path, self._model)
+        self._refresh_source_canvas_overlays()
+        self._refresh_model_summary()
+        self.modelSaved.emit(self._model_path)
+        self.lbl_mask_status.setText("状态：Template Mask 已保存到模型，保存模板后会生成 mask 图。")
+        self._set_status("Template Mask 已保存，保存模板后生效。")
+
+    def _clear_template_mask(self) -> None:
+        self.mask_canvas.clear_roi(emit_signal=False)
+        self._model.template_mask = None
+        save_model(self._model_path, self._model)
+        self._refresh_source_canvas_overlays()
+        self._refresh_model_summary()
+        self.modelSaved.emit(self._model_path)
+        self.lbl_mask_status.setText("状态：Template Mask 已清空。")
+        self._set_status("已清空 Template Mask。")
 
 
 __all__ = ["NccMatchWorkbenchDialog"]

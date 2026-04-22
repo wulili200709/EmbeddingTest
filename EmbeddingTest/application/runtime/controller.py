@@ -261,9 +261,15 @@ class RuntimeController(QtCore.QObject):
             "ng_flash_ms": DEFAULT_TOWER_LIGHT_NG_FLASH_MS,
             "idle_blue_delay_ms": DEFAULT_TOWER_LIGHT_IDLE_BLUE_DELAY_MS,
         }
+        self._io_logic_pulse_timers: Dict[str, threading.Timer] = {}
+        self._io_logic_pulse_timer_lock = threading.RLock()
         self._foot_trigger_delay_ms = 0
+        self._ng_stop_delay_ms = 0
         self._pending_di_trigger_delay_ms = 0
         self._di_trigger_delay_pending = False
+        self._pending_ng_stop_delay_ms = 0
+        self._ng_stop_delay_pending = False
+        self._ng_stop_delay_sequence = 0
 
     def set_capture_retention_policy(self, policy: object) -> None:
         self._capture_retention_policy = normalize_capture_retention_policy(policy)
@@ -279,6 +285,9 @@ class RuntimeController(QtCore.QObject):
 
     def foot_trigger_delay_ms(self) -> int:
         return max(0, int(getattr(self, "_foot_trigger_delay_ms", 0) or 0))
+
+    def ng_stop_delay_ms(self) -> int:
+        return max(0, int(getattr(self, "_ng_stop_delay_ms", 0) or 0))
 
     def runtime_records_directory(self) -> str:
         return str(self._runtime_records_dir)
@@ -360,6 +369,16 @@ class RuntimeController(QtCore.QObject):
         except Exception:
             normalized = 0
         self._foot_trigger_delay_ms = normalized
+
+    def update_ng_stop_delay_ms(self, delay_ms: object) -> None:
+        try:
+            normalized = max(0, int(delay_ms or 0))
+        except Exception:
+            normalized = 0
+        self._ng_stop_delay_ms = normalized
+        self._pending_ng_stop_delay_ms = 0
+        self._ng_stop_delay_pending = False
+        self._ng_stop_delay_sequence = int(getattr(self, "_ng_stop_delay_sequence", 0) or 0) + 1
 
     def _sync_camera_settings_store_path(self) -> None:
         self._camera_settings_store.set_path(self._session.camera_settings_path)
@@ -515,6 +534,7 @@ class RuntimeController(QtCore.QObject):
     def disconnect(self, *, silent: bool = False, close_io: bool = True) -> None:
         """断开所有相机并释放运行链路资源。"""
         self._stop_di_poller()
+        self._cancel_all_io_logic_pulse_timers()
         if close_io:
             self._close_io_controller()
         if self._frame_grab_service is not None:
@@ -549,6 +569,9 @@ class RuntimeController(QtCore.QObject):
         self._pending_camera_settings_by_serial = {}
         self._pending_di_trigger_delay_ms = 0
         self._di_trigger_delay_pending = False
+        self._pending_ng_stop_delay_ms = 0
+        self._ng_stop_delay_pending = False
+        self._ng_stop_delay_sequence = int(getattr(self, "_ng_stop_delay_sequence", 0) or 0) + 1
 
         self.cameraViewsCleared.emit()
         if not silent:
@@ -740,7 +763,8 @@ class RuntimeController(QtCore.QObject):
             return
 
         if self._scheduler.try_release_ng_lock(password):
-            self._set_conveyor_run(True, reason="release granted")
+            if not self._apply_io_logic_event("release_granted"):
+                self._set_conveyor_run(True, reason="release granted")
             self.logAppended.emit("[放行] 密码正确，已放行一次，等待下一次有效检测消耗")
             self._write_release_log(
                 event_type="release_request",

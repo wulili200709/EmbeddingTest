@@ -61,9 +61,11 @@ from ui.shell.runtime_bridge import (
     activate_runtime_workspace as _activate_runtime_workspace_impl,
     activate_runtime_workspace_legacy as _activate_runtime_workspace_legacy_impl,
     apply_foot_trigger_delay as _apply_foot_trigger_delay_impl,
+    apply_ng_stop_delay as _apply_ng_stop_delay_impl,
     apply_runtime_capture_policy as _apply_runtime_capture_policy_impl,
     ensure_runtime_camera_connection as _ensure_runtime_camera_connection_impl,
     load_foot_trigger_delay_from_session as _load_foot_trigger_delay_from_session_impl,
+    load_ng_stop_delay_from_session as _load_ng_stop_delay_from_session_impl,
     load_runtime_capture_policy_from_session as _load_runtime_capture_policy_from_session_impl,
     normalize_runtime_capture_policy as _normalize_runtime_capture_policy_impl,
     on_debug_camera_connected as _on_debug_camera_connected_impl,
@@ -72,10 +74,12 @@ from ui.shell.runtime_bridge import (
     on_runtime_preview_updated as _on_runtime_preview_updated_impl,
     on_session_clear_request as _on_session_clear_request_impl,
     persist_foot_trigger_delay as _persist_foot_trigger_delay_impl,
+    persist_ng_stop_delay as _persist_ng_stop_delay_impl,
     persist_runtime_camera_bindings as _persist_runtime_camera_bindings_impl,
     persist_runtime_capture_policy as _persist_runtime_capture_policy_impl,
     prepare_runtime_for_debug_camera as _prepare_runtime_for_debug_camera_impl,
     restore_foot_trigger_delay_from_session as _restore_foot_trigger_delay_from_session_impl,
+    restore_ng_stop_delay_from_session as _restore_ng_stop_delay_from_session_impl,
     restore_runtime_camera_bindings_from_session as _restore_runtime_camera_bindings_from_session_impl,
     restore_runtime_capture_policy_from_session as _restore_runtime_capture_policy_from_session_impl,
     runtime_capture_policy_text as _runtime_capture_policy_text_impl,
@@ -154,6 +158,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._brand_banner_source = QtGui.QPixmap(str(_resource_path("logo2.png")))
         self._startup_runtime_auto_connect_done = False
         self._foot_trigger_delay_ms = self._load_foot_trigger_delay_from_session()
+        self._ng_stop_delay_ms = self._load_ng_stop_delay_from_session()
         self._runtime_capture_policy = self._load_runtime_capture_policy_from_session()
 
         # ── UI 组装 ────────────────────────────────────────────────────
@@ -172,6 +177,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.runtime_ctrl.set_capture_retention_policy(self._runtime_capture_policy)
         self.runtime_ctrl.update_foot_trigger_delay_ms(self._foot_trigger_delay_ms)
+        self.runtime_ctrl.update_ng_stop_delay_ms(self._ng_stop_delay_ms)
         self._apply_runtime_records_directory_setting()
         self._apply_runtime_capture_directory_setting()
         self.runtime_ctrl.update_tower_light_settings(self._tower_light_settings)
@@ -209,8 +215,14 @@ class MainWindow(QtWidgets.QMainWindow):
     def _load_foot_trigger_delay_from_session(self) -> int:
         return _load_foot_trigger_delay_from_session_impl(self)
 
+    def _load_ng_stop_delay_from_session(self) -> int:
+        return _load_ng_stop_delay_from_session_impl(self)
+
     def _persist_foot_trigger_delay(self, delay_ms: int) -> None:
         _persist_foot_trigger_delay_impl(self, delay_ms)
+
+    def _persist_ng_stop_delay(self, delay_ms: int) -> None:
+        _persist_ng_stop_delay_impl(self, delay_ms)
 
     def _apply_foot_trigger_delay(
         self,
@@ -220,6 +232,20 @@ class MainWindow(QtWidgets.QMainWindow):
         show_message: bool,
     ) -> None:
         _apply_foot_trigger_delay_impl(
+            self,
+            delay_ms,
+            persist=persist,
+            show_message=show_message,
+        )
+
+    def _apply_ng_stop_delay(
+        self,
+        delay_ms: object,
+        *,
+        persist: bool,
+        show_message: bool,
+    ) -> None:
+        _apply_ng_stop_delay_impl(
             self,
             delay_ms,
             persist=persist,
@@ -257,6 +283,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _restore_foot_trigger_delay_from_session(self) -> None:
         _restore_foot_trigger_delay_from_session_impl(self)
+
+    def _restore_ng_stop_delay_from_session(self) -> None:
+        _restore_ng_stop_delay_from_session_impl(self)
 
     def _startup_auto_connect_runtime_cameras(self) -> None:
         _startup_auto_connect_runtime_cameras_impl(self, import_error=_RUNTIME_IMPORT_ERROR)
@@ -340,16 +369,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self._bottom_status_bar.showMessage("\u5854\u706f\u65f6\u5e8f\u53c2\u6570\u5df2\u66f4\u65b0", 3000)
 
     def _show_trigger_timing_settings_dialog(self) -> None:
-        new_delay_ms = prompt_trigger_timing_settings(
+        timing_settings = prompt_trigger_timing_settings(
             self,
             current_delay_ms=self._foot_trigger_delay_ms,
+            current_ng_stop_delay_ms=self._ng_stop_delay_ms,
         )
-        if new_delay_ms is None:
+        if timing_settings is None:
             return
         self._apply_foot_trigger_delay(
-            new_delay_ms,
+            timing_settings.get("foot_trigger_delay_ms", 0),
             persist=True,
-            show_message=True,
+            show_message=False,
+        )
+        self._apply_ng_stop_delay(
+            timing_settings.get("ng_stop_delay_ms", 0),
+            persist=True,
+            show_message=False,
+        )
+        self._bottom_status_bar.showMessage(
+            f"触发时序已更新：脚踏 {self._foot_trigger_delay_ms} ms，NG停带 {self._ng_stop_delay_ms} ms",
+            3000,
         )
 
     def _connect_signals(self) -> None:
@@ -359,6 +398,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tool_page.sessionLoaded.connect(self._sync_shell_status)
         self.tool_page.sessionLoaded.connect(self._restore_runtime_camera_bindings_from_session)
         self.tool_page.sessionLoaded.connect(self._restore_foot_trigger_delay_from_session)
+        self.tool_page.sessionLoaded.connect(self._restore_ng_stop_delay_from_session)
         self.tool_page.sessionLoaded.connect(self._restore_runtime_capture_policy_from_session)
         connect_runtime_refresh_sources(
             self.tool_page,

@@ -3727,3 +3727,40 @@ DI2 启动皮带 -> 蜂鸣器立刻关闭
 人工启动皮带时不叫
 NG 才叫
 NG 叫完后，再次启动皮带会把蜂鸣器清掉
+
+
+
+脉冲定时复位逻辑在 hardware.py (line 275)。控制器里也加了脉冲定时器管理，断开/关闭时会取消未完成脉冲，位置在 controller.py (line 264)。
+
+你现在可以这样配剔除输出。
+
+先在 IO 映射里加一个 DO 名字，比如产品现场用 7 号输出做剔除：
+
+"reject_output": {
+  "channel": 7,
+  "active_high": false
+}
+这个配置加在 io_mapping.json (line 42) 的 do 下面，或者你后面做产品级 mapping 也可以。
+
+然后在产品目录的 runtime_io_logic.json 里写：
+
+{
+  "ng": [
+    { "type": "set_conveyor_run", "value": false, "reason": "NG result" },
+    { "type": "set_buzzer", "value": true, "reason": "NG result" },
+    { "type": "pulse_output", "name": "reject_output", "duration_ms": 200, "reason": "NG reject pulse" }
+  ],
+  "release_granted": [
+    { "type": "set_conveyor_run", "value": true, "reason": "release granted" }
+  ]
+}
+说明是：
+
+pulse_output：先开，再自动关
+name：你在 do 里定义的业务名
+duration_ms：脉冲持续时间，单位毫秒
+默认是“开 -> 关”
+如果你要反向脉冲，也支持加 value 和 reset_value
+例如：
+
+{ "type": "pulse_output", "name": "reject_output", "value": true, "reset_value": false, "duration_ms": 200 }

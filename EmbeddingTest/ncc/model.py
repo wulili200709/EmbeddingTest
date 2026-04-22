@@ -130,24 +130,30 @@ class NccMatchOptions:
 
 @dataclass
 class NccMatchModel:
-    schema: str = "ncc_match_model/2"
+    schema: str = "ncc_match_model/3"
     display_name: str = "NCC Position Correction"
     source_image_path: str = "Source/source.png"
     template_image_path: str = "Template/template.png"
     preview_image_path: str = "Preview/template_preview.png"
+    mask_image_path: str = "Mask/template_mask.png"
+    template_mask_enabled: bool = False
     template_roi: NccMatchRect = field(default_factory=NccMatchRect)
+    template_mask: NccReferenceRegion | None = None
     search_roi: NccMatchRect | None = None
     reference_regions: List[NccReferenceRegion] = field(default_factory=list)
     options: NccMatchOptions = field(default_factory=NccMatchOptions)
 
     def normalized(self) -> "NccMatchModel":
         return NccMatchModel(
-            schema=str(self.schema or "ncc_match_model/2"),
+            schema=str(self.schema or "ncc_match_model/3"),
             display_name=str(self.display_name or "NCC Position Correction"),
             source_image_path=str(self.source_image_path or "Source/source.png"),
             template_image_path=str(self.template_image_path or "Template/template.png"),
             preview_image_path=str(self.preview_image_path or "Preview/template_preview.png"),
+            mask_image_path=str(self.mask_image_path or "Mask/template_mask.png"),
+            template_mask_enabled=bool(self.template_mask_enabled),
             template_roi=self.template_roi.normalized(),
+            template_mask=self.template_mask.normalized() if isinstance(self.template_mask, NccReferenceRegion) else None,
             search_roi=self.search_roi.normalized() if isinstance(self.search_roi, NccMatchRect) else None,
             reference_regions=[region.normalized() for region in list(self.reference_regions or [])],
             options=self.options.normalized(),
@@ -207,6 +213,21 @@ def _optional_rect_from_any(value: Any) -> NccMatchRect | None:
         return None
     rect = _rect_from_any(value)
     return rect.normalized()
+
+
+def _bool_from_any(value: Any, *, default: bool = False) -> bool:
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "off", "disabled"}:
+        return False
+    return bool(default)
 
 
 def _reference_region_from_any(value: Any) -> NccReferenceRegion | None:
@@ -300,13 +321,26 @@ def load_model(model_path: str | Path) -> NccMatchModel:
         return create_default_model()
     with path.open("r", encoding="utf-8") as handle:
         data = json.load(handle)
+    template_mask = _reference_region_from_any(_get_value(data, "template_mask", "templateMask", default=None))
+    raw_template_mask_enabled = _get_value(
+        data,
+        "template_mask_enabled",
+        "templateMaskEnabled",
+        default=None,
+    )
     model = NccMatchModel(
-        schema=str(_get_value(data, "schema", default="ncc_match_model/2")),
+        schema=str(_get_value(data, "schema", default="ncc_match_model/3")),
         display_name=str(_get_value(data, "display_name", "displayName", default="NCC Position Correction")),
         source_image_path=str(_get_value(data, "source_image_path", "sourceImagePath", default="Source/source.png")),
         template_image_path=str(_get_value(data, "template_image_path", "templateImagePath", default="Template/template.png")),
         preview_image_path=str(_get_value(data, "preview_image_path", "previewImagePath", default="Preview/template_preview.png")),
+        mask_image_path=str(_get_value(data, "mask_image_path", "maskImagePath", default="Mask/template_mask.png")),
+        template_mask_enabled=_bool_from_any(
+            raw_template_mask_enabled,
+            default=template_mask is not None,
+        ),
         template_roi=_rect_from_any(_get_value(data, "template_roi", "templateRoi", default={})),
+        template_mask=template_mask,
         search_roi=_optional_rect_from_any(_get_value(data, "search_roi", "searchRoi", default=None)),
         reference_regions=_reference_regions_from_any(_get_value(data, "reference_regions", "referenceRegions", default=[])),
         options=_options_from_any(_get_value(data, "options", default={})),
@@ -342,6 +376,11 @@ def model_summary(model: NccMatchModel) -> str:
         [
             f"Name: {normalized.display_name}",
             f"Template ROI: x={rect.x}, y={rect.y}, w={rect.width}, h={rect.height}",
+            (
+                f"Template Mask: enabled ({normalized.template_mask.shape_type})"
+            )
+            if normalized.template_mask_enabled and isinstance(normalized.template_mask, NccReferenceRegion)
+            else ("Template Mask: enabled" if normalized.template_mask_enabled else "Template Mask: disabled"),
             (
                 f"Search ROI: x={normalized.search_roi.x}, y={normalized.search_roi.y}, "
                 f"w={normalized.search_roi.width}, h={normalized.search_roi.height}"

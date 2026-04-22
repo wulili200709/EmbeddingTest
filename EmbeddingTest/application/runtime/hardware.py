@@ -5,6 +5,7 @@ from __future__ import annotations
 import configparser
 import json
 import os
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -16,8 +17,46 @@ from .capture_policy import DEFAULT_LIGHT_STABLE_MS
 
 _CONVEYOR_RUN_OUTPUT_CANDIDATES = ("conveyor_run", "reserved_out_1")
 _BUZZER_OUTPUT_CANDIDATES = ("buzzer", "light_cam2", "reserved_out_2")
+_START_BUTTON_LIGHT_OUTPUT_CANDIDATES = ("button_green", "start_button_light")
+_STOP_BUTTON_LIGHT_OUTPUT_CANDIDATES = ("button_red", "stop_button_light")
+_RESET_BUTTON_LIGHT_OUTPUT_CANDIDATES = ("button_blue", "reset_button_light")
+_CONVEYOR_START_INPUT_CANDIDATES = ("conveyor_start", "reserved_in_1")
+_CONVEYOR_STOP_INPUT_CANDIDATES = ("conveyor_stop", "reserved_in_2")
+_RESET_BUTTON_INPUT_CANDIDATES = ("reset_button", "release_button", "reserved_in_3")
 _CONVEYOR_TOGGLE_INPUT_CANDIDATES = ("conveyor_toggle", "reserved_in_1")
 _FOOT_SWITCH_INPUT_CANDIDATES = ("foot_switch",)
+_SPLIT_BUTTON_BOX_INPUT_NAMES = {"conveyor_start", "conveyor_stop", "reset_button", "release_button"}
+_RUNTIME_IO_LOGIC_FILENAME = "runtime_io_logic.json"
+_BUILTIN_RUNTIME_IO_LOGIC_DEFAULTS = {
+    "startup": [
+        {"type": "set_conveyor_run", "value": True, "reason": "startup default"},
+        {"type": "set_buzzer", "value": False, "reason": "startup default"},
+        {"type": "set_output", "name": "button_green", "value": True, "reason": "startup default"},
+        {"type": "set_output", "name": "button_red", "value": False, "reason": "startup default"},
+        {"type": "set_output", "name": "button_blue", "value": False, "reason": "startup default"},
+    ],
+    "shutdown": [
+        {"type": "set_conveyor_run", "value": False, "reason": "shutdown default"},
+        {"type": "set_buzzer", "value": False, "reason": "shutdown default"},
+        {"type": "set_output", "name": "button_green", "value": False, "reason": "shutdown default"},
+        {"type": "set_output", "name": "button_red", "value": True, "reason": "shutdown default"},
+        {"type": "set_output", "name": "button_blue", "value": False, "reason": "shutdown default"},
+    ],
+    "ng": [
+        {"type": "set_conveyor_run", "value": False, "reason": "NG result"},
+        {"type": "set_buzzer", "value": True, "reason": "NG result"},
+        {"type": "set_output", "name": "button_green", "value": False, "reason": "NG result"},
+        {"type": "set_output", "name": "button_red", "value": True, "reason": "NG result"},
+        {"type": "set_output", "name": "button_blue", "value": False, "reason": "NG result"},
+    ],
+    "release_granted": [
+        {"type": "set_conveyor_run", "value": True, "reason": "release granted"},
+        {"type": "set_buzzer", "value": False, "reason": "release granted"},
+        {"type": "set_output", "name": "button_green", "value": True, "reason": "release granted"},
+        {"type": "set_output", "name": "button_red", "value": False, "reason": "release granted"},
+        {"type": "set_output", "name": "button_blue", "value": False, "reason": "release granted"},
+    ],
+}
 
 
 def _load_nkio_runtime_options(mapping_path: Path) -> dict[str, str]:
@@ -87,6 +126,415 @@ def _emit_io_status(runtime, ready: bool, detail: str, controller=None) -> None:
     )
 
 
+def _coerce_logic_bool(value: object, *, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value or "").strip().lower()
+    if text in {"1", "true", "on", "yes"}:
+        return True
+    if text in {"0", "false", "off", "no"}:
+        return False
+    return bool(default)
+
+
+def _coerce_logic_int(value: object, *, default: int = 0, minimum: int = 0) -> int:
+    try:
+        normalized = int(value)
+    except Exception:
+        normalized = int(default)
+    return max(int(minimum), normalized)
+
+
+def _normalize_io_logic_action(raw_action: object) -> dict[str, object] | None:
+    if not isinstance(raw_action, dict):
+        return None
+    action_type = str(raw_action.get("type", "") or "").strip().lower()
+    if not action_type:
+        return None
+    action: dict[str, object] = {"type": action_type}
+    if action_type in {"set_conveyor_run", "set_buzzer", "set_output", "pulse_output"}:
+        action["value"] = _coerce_logic_bool(raw_action.get("value"), default=False)
+    if action_type == "pulse_output":
+        action["value"] = _coerce_logic_bool(raw_action.get("value"), default=True)
+        action["reset_value"] = _coerce_logic_bool(raw_action.get("reset_value"), default=False)
+        action["duration_ms"] = _coerce_logic_int(raw_action.get("duration_ms", 200), default=200, minimum=1)
+    if action_type in {"set_output", "pulse_output"}:
+        name = str(raw_action.get("name", "") or "").strip()
+        if not name:
+            return None
+        action["name"] = name
+    for key in ("reason", "message"):
+        if key not in raw_action:
+            continue
+        text = str(raw_action.get(key, "") or "").strip()
+        if text:
+            action[key] = text
+    return action
+
+
+def _load_runtime_io_logic_file(path: Path) -> dict[str, list[dict[str, object]]]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    events_payload = payload.get("events") if isinstance(payload.get("events"), dict) else payload
+    if not isinstance(events_payload, dict):
+        return {}
+
+    result: dict[str, list[dict[str, object]]] = {}
+    for raw_event_name, raw_actions in events_payload.items():
+        event_name = str(raw_event_name or "").strip().lower()
+        if not event_name:
+            continue
+        if raw_actions is None:
+            result[event_name] = []
+            continue
+        if not isinstance(raw_actions, list):
+            continue
+        actions: list[dict[str, object]] = []
+        for raw_action in raw_actions:
+            normalized = _normalize_io_logic_action(raw_action)
+            if normalized is not None:
+                actions.append(normalized)
+        result[event_name] = actions
+    return result
+
+
+def _default_runtime_io_logic_path() -> Path:
+    return packaged_embedding_test_root(__file__) / "config" / "defaults" / _RUNTIME_IO_LOGIC_FILENAME
+
+
+def _product_runtime_io_logic_path(runtime) -> Path | None:
+    product_dir = str(getattr(getattr(runtime, "_session", None), "product_dir", "") or "").strip()
+    if not product_dir:
+        return None
+    return Path(product_dir) / _RUNTIME_IO_LOGIC_FILENAME
+
+
+def _runtime_io_logic_for_event(runtime, event_name: str) -> tuple[bool, list[dict[str, object]]]:
+    normalized_event = str(event_name or "").strip().lower()
+    if not normalized_event:
+        return False, []
+
+    merged: dict[str, list[dict[str, object]]] = {
+        key: [dict(action) for action in actions]
+        for key, actions in _BUILTIN_RUNTIME_IO_LOGIC_DEFAULTS.items()
+    }
+    default_path = _default_runtime_io_logic_path()
+    if default_path.exists():
+        merged.update(_load_runtime_io_logic_file(default_path))
+    product_path = _product_runtime_io_logic_path(runtime)
+    if product_path is not None and product_path.exists():
+        merged.update(_load_runtime_io_logic_file(product_path))
+
+    if normalized_event not in merged:
+        return False, []
+    return True, [dict(action) for action in merged.get(normalized_event, [])]
+
+
+def _format_io_logic_text(template: object, context: dict[str, object] | None) -> str:
+    text = str(template or "").strip()
+    if not text:
+        return ""
+    if not context:
+        return text
+    try:
+        return text.format(**context)
+    except Exception:
+        return text
+
+
+def _resolve_runtime_output_name(runtime, controller, name: str) -> str:
+    resolved_name = str(name or "").strip()
+    if resolved_name == "conveyor_run":
+        return _resolve_output_name(runtime, controller, *_CONVEYOR_RUN_OUTPUT_CANDIDATES) or resolved_name
+    if resolved_name == "buzzer":
+        return _resolve_output_name(runtime, controller, *_BUZZER_OUTPUT_CANDIDATES) or resolved_name
+    return resolved_name
+
+
+def _set_button_box_lights(
+    runtime,
+    active_button: str,
+    *,
+    controller=None,
+    reason: str = "",
+) -> bool:
+    active_controller = controller if controller is not None else getattr(runtime, "_io_controller", None)
+    if active_controller is None or not getattr(active_controller, "is_open", False):
+        return False
+
+    states_by_button = {
+        "start": (
+            (_START_BUTTON_LIGHT_OUTPUT_CANDIDATES, True),
+            (_STOP_BUTTON_LIGHT_OUTPUT_CANDIDATES, False),
+            (_RESET_BUTTON_LIGHT_OUTPUT_CANDIDATES, False),
+        ),
+        "stop": (
+            (_START_BUTTON_LIGHT_OUTPUT_CANDIDATES, False),
+            (_STOP_BUTTON_LIGHT_OUTPUT_CANDIDATES, True),
+            (_RESET_BUTTON_LIGHT_OUTPUT_CANDIDATES, False),
+        ),
+        "reset": (
+            (_START_BUTTON_LIGHT_OUTPUT_CANDIDATES, False),
+            (_STOP_BUTTON_LIGHT_OUTPUT_CANDIDATES, False),
+            (_RESET_BUTTON_LIGHT_OUTPUT_CANDIDATES, True),
+        ),
+        "all_off": (
+            (_START_BUTTON_LIGHT_OUTPUT_CANDIDATES, False),
+            (_STOP_BUTTON_LIGHT_OUTPUT_CANDIDATES, False),
+            (_RESET_BUTTON_LIGHT_OUTPUT_CANDIDATES, False),
+        ),
+    }
+    plans = states_by_button.get(str(active_button or "").strip().lower())
+    if plans is None:
+        return False
+
+    applied_any = False
+    for candidates, on in plans:
+        output_name = _resolve_output_name(runtime, active_controller, *candidates)
+        if not output_name:
+            continue
+        changed = _set_named_output(
+            runtime,
+            output_name,
+            bool(on),
+            controller=active_controller,
+            reason=reason,
+        )
+        applied_any = changed or applied_any
+    return applied_any
+
+
+def _io_logic_timer_lock(runtime):
+    lock = getattr(runtime, "_io_logic_pulse_timer_lock", None)
+    if lock is None:
+        lock = threading.RLock()
+        runtime._io_logic_pulse_timer_lock = lock
+    return lock
+
+
+def _cancel_io_logic_pulse_timer(runtime, name: str) -> None:
+    timers = getattr(runtime, "_io_logic_pulse_timers", None)
+    if not isinstance(timers, dict):
+        return
+    with _io_logic_timer_lock(runtime):
+        timer = timers.pop(str(name or "").strip(), None)
+    if timer is not None:
+        try:
+            timer.cancel()
+        except Exception:
+            pass
+
+
+def _cancel_all_io_logic_pulse_timers(runtime) -> None:
+    timers = getattr(runtime, "_io_logic_pulse_timers", None)
+    if not isinstance(timers, dict):
+        runtime._io_logic_pulse_timers = {}
+        return
+    with _io_logic_timer_lock(runtime):
+        active_timers = list(timers.values())
+        timers.clear()
+    for timer in active_timers:
+        try:
+            timer.cancel()
+        except Exception:
+            pass
+
+
+def _schedule_io_logic_pulse_reset(
+    runtime,
+    *,
+    name: str,
+    reset_value: bool,
+    duration_ms: int,
+    controller=None,
+    reason: str = "",
+) -> None:
+    active_controller = controller if controller is not None else getattr(runtime, "_io_controller", None)
+    if active_controller is None:
+        return
+    resolved_name = _resolve_runtime_output_name(runtime, active_controller, name)
+    _cancel_io_logic_pulse_timer(runtime, resolved_name)
+
+    def _reset_output() -> None:
+        try:
+            _set_named_output(
+                runtime,
+                resolved_name,
+                bool(reset_value),
+                controller=active_controller,
+                reason=reason or "pulse reset",
+            )
+        finally:
+            timers = getattr(runtime, "_io_logic_pulse_timers", None)
+            if isinstance(timers, dict):
+                with _io_logic_timer_lock(runtime):
+                    current = timers.get(resolved_name)
+                    if current is timer:
+                        timers.pop(resolved_name, None)
+
+    timer = threading.Timer(max(0.001, float(duration_ms) / 1000.0), _reset_output)
+    timer.daemon = True
+    with _io_logic_timer_lock(runtime):
+        timers = getattr(runtime, "_io_logic_pulse_timers", None)
+        if not isinstance(timers, dict):
+            timers = {}
+            runtime._io_logic_pulse_timers = timers
+        timers[resolved_name] = timer
+    timer.start()
+
+
+def _set_named_output(
+    runtime,
+    name: str,
+    on: bool,
+    *,
+    controller=None,
+    reason: str = "",
+    phase: str = "",
+) -> bool:
+    active_controller = controller if controller is not None else getattr(runtime, "_io_controller", None)
+    if active_controller is None or not getattr(active_controller, "is_open", False):
+        return False
+    resolved_name = _resolve_runtime_output_name(runtime, active_controller, name)
+    try:
+        active_controller.set_output(resolved_name, bool(on))
+    except Exception as exc:
+        prefix = f"{phase} output default" if phase else "io logic output"
+        runtime.logAppended.emit(f"[IO] failed to apply {prefix}: {resolved_name}={on}: {exc}")
+        return False
+    if phase:
+        runtime.logAppended.emit(f"[IO] {phase} output default applied: {resolved_name}={'ON' if on else 'OFF'}")
+    else:
+        detail = f" ({reason})" if str(reason or "").strip() else ""
+        runtime.logAppended.emit(
+            f"[IO] io logic output applied: {resolved_name}={'ON' if on else 'OFF'}{detail}"
+        )
+    conveyor_name = _resolve_output_name(runtime, active_controller, *_CONVEYOR_RUN_OUTPUT_CANDIDATES)
+    if conveyor_name and resolved_name == conveyor_name:
+        _emit_conveyor_run_state(
+            runtime,
+            available=True,
+            running=bool(on),
+            detail=reason or (f"{phase} output default" if phase else ""),
+        )
+    return True
+
+
+def _execute_io_logic_action(
+    runtime,
+    action: dict[str, object],
+    *,
+    controller=None,
+    event_name: str,
+    context: dict[str, object] | None = None,
+) -> None:
+    action_type = str(action.get("type", "") or "").strip().lower()
+    reason = _format_io_logic_text(action.get("reason", event_name), context)
+    if action_type == "set_conveyor_run":
+        if controller is not None:
+            _set_conveyor_run(
+                runtime,
+                _coerce_logic_bool(action.get("value"), default=False),
+                reason=reason,
+                controller=controller,
+            )
+            return
+        setter = getattr(runtime, "_set_conveyor_run", None)
+        if callable(setter):
+            setter(_coerce_logic_bool(action.get("value"), default=False), reason=reason)
+        return
+    if action_type == "set_buzzer":
+        if controller is not None:
+            _set_buzzer(
+                runtime,
+                _coerce_logic_bool(action.get("value"), default=False),
+                reason=reason,
+                controller=controller,
+            )
+            return
+        setter = getattr(runtime, "_set_buzzer", None)
+        if callable(setter):
+            setter(_coerce_logic_bool(action.get("value"), default=False), reason=reason)
+        return
+    if action_type == "set_output":
+        name = str(action.get("name", "") or "").strip()
+        if not name:
+            return
+        phase = event_name if event_name in {"startup", "shutdown"} else ""
+        _set_named_output(
+            runtime,
+            name,
+            _coerce_logic_bool(action.get("value"), default=False),
+            controller=controller,
+            reason=reason,
+            phase=phase,
+        )
+        return
+    if action_type == "pulse_output":
+        name = str(action.get("name", "") or "").strip()
+        if not name:
+            return
+        pulse_value = _coerce_logic_bool(action.get("value"), default=True)
+        reset_value = _coerce_logic_bool(action.get("reset_value"), default=False)
+        duration_ms = _coerce_logic_int(action.get("duration_ms", 200), default=200, minimum=1)
+        if not _set_named_output(
+            runtime,
+            name,
+            pulse_value,
+            controller=controller,
+            reason=reason or f"{event_name} pulse",
+        ):
+            return
+        _schedule_io_logic_pulse_reset(
+            runtime,
+            name=name,
+            reset_value=reset_value,
+            duration_ms=duration_ms,
+            controller=controller,
+            reason=f"{reason or event_name} pulse reset",
+        )
+        return
+    if action_type == "log":
+        message = _format_io_logic_text(action.get("message", ""), context)
+        if message:
+            runtime.logAppended.emit(message)
+        return
+    if action_type == "status":
+        message = _format_io_logic_text(action.get("message", ""), context)
+        if message and hasattr(runtime, "_update_status"):
+            runtime._update_status(message)
+        return
+    runtime.logAppended.emit(f"[IO] unsupported io logic action: {action_type} (event={event_name})")
+
+
+def _apply_io_logic_event(
+    runtime,
+    event_name: str,
+    *,
+    controller=None,
+    context: dict[str, object] | None = None,
+) -> bool:
+    configured, actions = _runtime_io_logic_for_event(runtime, event_name)
+    if not configured:
+        return False
+    normalized_event = str(event_name or "").strip().lower()
+    for action in actions:
+        _execute_io_logic_action(
+            runtime,
+            action,
+            controller=controller,
+            event_name=normalized_event,
+            context=context,
+        )
+    return True
+
+
 def _apply_output_defaults(
     runtime,
     controller,
@@ -119,6 +567,8 @@ def _apply_output_defaults(
 
 
 def _apply_startup_output_defaults(runtime, controller) -> None:
+    if _apply_io_logic_event(runtime, "startup", controller=controller):
+        return
     _apply_output_defaults(
         runtime,
         controller,
@@ -131,6 +581,8 @@ def _apply_startup_output_defaults(runtime, controller) -> None:
 
 
 def _apply_shutdown_output_defaults(runtime, controller) -> None:
+    if _apply_io_logic_event(runtime, "shutdown", controller=controller):
+        return
     _apply_output_defaults(
         runtime,
         controller,
@@ -142,8 +594,8 @@ def _apply_shutdown_output_defaults(runtime, controller) -> None:
     )
 
 
-def _set_buzzer(runtime, on: bool, *, reason: str = "") -> bool:
-    controller = getattr(runtime, "_io_controller", None)
+def _set_buzzer(runtime, on: bool, *, reason: str = "", controller=None) -> bool:
+    controller = controller if controller is not None else getattr(runtime, "_io_controller", None)
     if controller is None or not getattr(controller, "is_open", False):
         return False
     output_name = _resolve_output_name(runtime, controller, *_BUZZER_OUTPUT_CANDIDATES)
@@ -166,10 +618,13 @@ def _set_buzzer(runtime, on: bool, *, reason: str = "") -> bool:
     return True
 
 
-def _set_conveyor_run(runtime, running: bool, *, reason: str = "") -> bool:
-    controller = getattr(runtime, "_io_controller", None)
+def _set_conveyor_run(runtime, running: bool, *, reason: str = "", controller=None) -> bool:
+    controller = controller if controller is not None else getattr(runtime, "_io_controller", None)
     if controller is None or not getattr(controller, "is_open", False):
         return False
+    runtime._pending_ng_stop_delay_ms = 0
+    runtime._ng_stop_delay_pending = False
+    runtime._ng_stop_delay_sequence = int(getattr(runtime, "_ng_stop_delay_sequence", 0) or 0) + 1
     output_name = _resolve_output_name(runtime, controller, *_CONVEYOR_RUN_OUTPUT_CANDIDATES)
     if not output_name:
         runtime.logAppended.emit(
@@ -195,13 +650,16 @@ def _set_conveyor_run(runtime, running: bool, *, reason: str = "") -> bool:
         running=bool(running),
         detail=str(reason or "").strip(),
     )
-    if running:
-        _set_buzzer(runtime, False, reason=f"conveyor running: {reason or 'run'}")
     return True
 
 
 def set_conveyor_run(runtime, running: bool) -> None:
     if _set_conveyor_run(runtime, bool(running), reason="manual UI"):
+        if bool(running):
+            _set_buzzer(runtime, False, reason="manual UI")
+            _set_button_box_lights(runtime, "start", reason="manual UI")
+        else:
+            _set_button_box_lights(runtime, "stop", reason="manual UI")
         runtime._update_status("皮带已启动" if running else "皮带已停止")
         return
     runtime.warningOccurred.emit("IO未就绪，无法控制皮带")
@@ -340,6 +798,7 @@ def _initialize_startup_io(runtime, force: bool = False) -> bool:
 
 
 def _close_io_controller(runtime) -> None:
+    _cancel_all_io_logic_pulse_timers(runtime)
     if hasattr(runtime._tower_light_controller, "close"):
         try:
             runtime._tower_light_controller.close()
@@ -374,12 +833,43 @@ def _start_di_poller_if_available(runtime) -> None:
     if runtime._io_controller is None or runtime_controller_module.DiMonitor is None:
         return
     foot_switch_name = _resolve_input_name(runtime, runtime._io_controller, *_FOOT_SWITCH_INPUT_CANDIDATES)
-    conveyor_toggle_name = _resolve_input_name(
-        runtime, runtime._io_controller, *_CONVEYOR_TOGGLE_INPUT_CANDIDATES
+    mapping = getattr(runtime._io_controller, "mapping", None)
+    available_inputs = set(mapping.di_names()) if mapping is not None else set()
+    split_button_box_mode = bool(available_inputs.intersection(_SPLIT_BUTTON_BOX_INPUT_NAMES))
+
+    conveyor_start_name = None
+    conveyor_stop_name = None
+    reset_button_name = None
+    conveyor_toggle_name = None
+    if split_button_box_mode:
+        conveyor_start_name = _resolve_input_name(
+            runtime, runtime._io_controller, *_CONVEYOR_START_INPUT_CANDIDATES
+        )
+        conveyor_stop_name = _resolve_input_name(
+            runtime, runtime._io_controller, *_CONVEYOR_STOP_INPUT_CANDIDATES
+        )
+        reset_button_name = _resolve_input_name(
+            runtime, runtime._io_controller, *_RESET_BUTTON_INPUT_CANDIDATES
+        )
+    else:
+        conveyor_toggle_name = _resolve_input_name(
+            runtime, runtime._io_controller, *_CONVEYOR_TOGGLE_INPUT_CANDIDATES
+        )
+    input_names = list(
+        dict.fromkeys(
+            name
+            for name in (
+                foot_switch_name,
+                conveyor_start_name,
+                conveyor_stop_name,
+                reset_button_name,
+                conveyor_toggle_name,
+            )
+            if name
+        )
     )
-    input_names = [name for name in (foot_switch_name, conveyor_toggle_name) if name]
     if not input_names:
-        runtime.logAppended.emit("[IO] skipped DI monitor start: no mapped DI inputs for trigger/toggle")
+        runtime.logAppended.emit("[IO] skipped DI monitor start: no mapped DI inputs for trigger/control")
         return
     try:
         poller = runtime_controller_module.DiMonitor(
@@ -389,7 +879,13 @@ def _start_di_poller_if_available(runtime) -> None:
             debounce_ms=50,
         )
         poller.add_rising_callback(runtime._on_foot_switch_rising)
-        poller.add_rising_callback(runtime._on_conveyor_toggle_rising)
+        if split_button_box_mode:
+            poller.add_rising_callback(runtime._on_conveyor_start_rising)
+            poller.add_falling_callback(runtime._on_conveyor_stop_falling)
+            poller.add_rising_callback(runtime._on_reset_button_rising)
+            poller.add_falling_callback(runtime._on_reset_button_falling)
+        else:
+            poller.add_rising_callback(runtime._on_conveyor_toggle_rising)
         poller.start()
     except Exception as exc:
         runtime.logAppended.emit(f"[IO] failed to start DI monitor: {exc}")
@@ -431,6 +927,38 @@ def _on_conveyor_toggle_rising(runtime, event) -> None:
     QtCore.QMetaObject.invokeMethod(runtime, "_toggle_conveyor_run_from_di", QtCore.Qt.QueuedConnection)
 
 
+def _on_conveyor_start_rising(runtime, event) -> None:
+    if str(getattr(event, "name", "") or "") not in _CONVEYOR_START_INPUT_CANDIDATES:
+        return
+    runtime.logAppended.emit(f"[conveyor-start] rising edge detected: {event.name}")
+    QtCore.QMetaObject.invokeMethod(runtime, "_start_conveyor_from_di", QtCore.Qt.QueuedConnection)
+
+
+def _on_conveyor_stop_falling(runtime, event) -> None:
+    if str(getattr(event, "name", "") or "") not in _CONVEYOR_STOP_INPUT_CANDIDATES:
+        return
+    runtime.logAppended.emit(f"[conveyor-stop] falling edge detected: {event.name}")
+    QtCore.QMetaObject.invokeMethod(runtime, "_stop_conveyor_from_di", QtCore.Qt.QueuedConnection)
+
+
+def _on_reset_button_rising(runtime, event) -> None:
+    if str(getattr(event, "name", "") or "") not in _RESET_BUTTON_INPUT_CANDIDATES:
+        return
+    runtime.logAppended.emit(f"[reset-button] rising edge detected: {event.name}")
+    QtCore.QMetaObject.invokeMethod(runtime, "_handle_reset_button_from_di", QtCore.Qt.QueuedConnection)
+
+
+def _on_reset_button_falling(runtime, event) -> None:
+    if str(getattr(event, "name", "") or "") not in _RESET_BUTTON_INPUT_CANDIDATES:
+        return
+    runtime.logAppended.emit(f"[reset-button] falling edge detected: {event.name}")
+    QtCore.QMetaObject.invokeMethod(
+        runtime,
+        "_handle_reset_button_release_from_di",
+        QtCore.Qt.QueuedConnection,
+    )
+
+
 @QtCore.Slot()
 def _schedule_trigger_from_di(runtime) -> None:
     delay_ms = max(0, int(getattr(runtime, "_pending_di_trigger_delay_ms", 0) or 0))
@@ -459,6 +987,57 @@ def _trigger_from_di(runtime) -> None:
 
 
 @QtCore.Slot()
+def _start_conveyor_from_di(runtime) -> None:
+    controller = getattr(runtime, "_io_controller", None)
+    if _apply_io_logic_event(runtime, "start_button_pressed", controller=controller):
+        runtime._update_status("DI2 started conveyor")
+        return
+    if _set_conveyor_run(runtime, True, reason="DI2 start"):
+        _set_buzzer(runtime, False, reason="DI2 start")
+        _set_button_box_lights(runtime, "start", reason="DI2 start")
+        runtime._update_status("DI2 started conveyor")
+        return
+    runtime.warningOccurred.emit("IO未就绪，无法响应DI2启动皮带")
+
+
+@QtCore.Slot()
+def _stop_conveyor_from_di(runtime) -> None:
+    controller = getattr(runtime, "_io_controller", None)
+    if _apply_io_logic_event(runtime, "stop_button_pressed", controller=controller):
+        runtime._update_status("DI3 stopped conveyor")
+        return
+    if _set_conveyor_run(runtime, False, reason="DI3 stop"):
+        _set_button_box_lights(runtime, "stop", reason="DI3 stop")
+        runtime._update_status("DI3 stopped conveyor")
+        return
+    runtime.warningOccurred.emit("IO未就绪，无法响应DI3停止皮带")
+
+
+@QtCore.Slot()
+def _handle_reset_button_from_di(runtime) -> None:
+    controller = getattr(runtime, "_io_controller", None)
+    if _apply_io_logic_event(runtime, "reset_button_pressed", controller=controller):
+        runtime._update_status("DI4 reset button pressed")
+        return
+    if _set_button_box_lights(runtime, "reset", reason="DI4 reset"):
+        runtime._update_status("DI4 reset button pressed")
+        return
+    runtime.warningOccurred.emit("IO未就绪，无法响应DI4复位按钮")
+
+
+@QtCore.Slot()
+def _handle_reset_button_release_from_di(runtime) -> None:
+    controller = getattr(runtime, "_io_controller", None)
+    if _apply_io_logic_event(runtime, "reset_button_released", controller=controller):
+        runtime._update_status("DI4 reset button released")
+        return
+    if _set_named_output(runtime, "button_blue", False, controller=controller, reason="DI4 reset release"):
+        runtime._update_status("DI4 reset button released")
+        return
+    runtime.warningOccurred.emit("IO未就绪，无法响应DI4复位按钮释放")
+
+
+@QtCore.Slot()
 def _toggle_conveyor_run_from_di(runtime) -> None:
     controller = getattr(runtime, "_io_controller", None)
     current_running = bool(getattr(runtime, "_conveyor_running", False))
@@ -471,6 +1050,11 @@ def _toggle_conveyor_run_from_di(runtime) -> None:
                 pass
     target_running = not current_running
     if _set_conveyor_run(runtime, target_running, reason="DI2 toggle"):
+        if target_running:
+            _set_buzzer(runtime, False, reason="DI2 toggle")
+            _set_button_box_lights(runtime, "start", reason="DI2 toggle")
+        else:
+            _set_button_box_lights(runtime, "stop", reason="DI2 toggle")
         runtime._update_status("DI2 started conveyor" if target_running else "DI2 stopped conveyor")
         return
     runtime.warningOccurred.emit("IO未就绪，无法响应DI2皮带启停")

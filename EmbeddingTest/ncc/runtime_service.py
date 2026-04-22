@@ -146,6 +146,63 @@ def _rotate_template(template_gray: np.ndarray, angle_deg: float) -> Tuple[np.nd
     return rotated, transformed.astype(np.float32)
 
 
+def _rotate_template_with_mask(
+    template_gray: np.ndarray,
+    mask_gray: np.ndarray,
+    angle_deg: float,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    height, width = template_gray.shape[:2]
+    if abs(float(angle_deg)) < 1e-6:
+        quad = np.array(
+            [
+                [0.0, 0.0],
+                [float(width - 1), 0.0],
+                [float(width - 1), float(height - 1)],
+                [0.0, float(height - 1)],
+            ],
+            dtype=np.float32,
+        )
+        return template_gray, mask_gray, quad
+
+    center = (width / 2.0, height / 2.0)
+    matrix = cv2.getRotationMatrix2D(center, angle_deg, 1.0)
+    abs_cos = abs(matrix[0, 0])
+    abs_sin = abs(matrix[0, 1])
+    bound_w = int(math.ceil(height * abs_sin + width * abs_cos))
+    bound_h = int(math.ceil(height * abs_cos + width * abs_sin))
+    matrix[0, 2] += bound_w / 2.0 - center[0]
+    matrix[1, 2] += bound_h / 2.0 - center[1]
+
+    border_value = 255 if float(template_gray.mean()) < 128.0 else 0
+    rotated = cv2.warpAffine(
+        template_gray,
+        matrix,
+        (bound_w, bound_h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=border_value,
+    )
+    rotated_mask = cv2.warpAffine(
+        mask_gray,
+        matrix,
+        (bound_w, bound_h),
+        flags=cv2.INTER_NEAREST,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0,
+    )
+    corners = np.array(
+        [
+            [0.0, 0.0, 1.0],
+            [float(width - 1), 0.0, 1.0],
+            [float(width - 1), float(height - 1), 1.0],
+            [0.0, float(height - 1), 1.0],
+        ],
+        dtype=np.float32,
+    )
+    transformed = corners @ matrix.T
+    return rotated, rotated_mask, transformed.astype(np.float32)
+
+
 def _bounding_box_from_quad(quad: Sequence[Tuple[float, float]] | np.ndarray) -> NccMatchBoundingBox:
     pts = np.asarray(quad, dtype=np.float32)
     x_min = float(np.min(pts[:, 0]))
@@ -263,15 +320,34 @@ def _parse_native_response(payload: dict) -> Tuple[NccMatchResult, ...]:
     return tuple(matches)
 
 
-def _match_python(scene_gray: np.ndarray, template_gray: np.ndarray, options: NccMatchOptions) -> Tuple[NccMatchResult, ...]:
+def _match_python(
+    scene_gray: np.ndarray,
+    template_gray: np.ndarray,
+    options: NccMatchOptions,
+    *,
+    mask_gray: Optional[np.ndarray] = None,
+) -> Tuple[NccMatchResult, ...]:
     prepared_scene = _prepare_gray_image(scene_gray, bitwise_not=options.bitwise_not)
     prepared_template = _prepare_gray_image(template_gray, bitwise_not=options.bitwise_not)
     if prepared_scene.shape[0] < prepared_template.shape[0] or prepared_scene.shape[1] < prepared_template.shape[1]:
         return tuple()
+    prepared_mask: Optional[np.ndarray] = None
+    if mask_gray is not None:
+        prepared_mask = np.ascontiguousarray(mask_gray.astype(np.uint8, copy=False))
+        if prepared_mask.shape[:2] != prepared_template.shape[:2]:
+            raise ValueError("template mask shape must match template image")
+        if int(cv2.countNonZero(prepared_mask)) <= 0:
+            prepared_mask = None
 
     candidates: List[NccMatchResult] = []
     for angle in _build_angle_candidates(options.angle_search):
-        rotated_template, quad_local = _rotate_template(prepared_template, angle)
+        rotated_mask: Optional[np.ndarray] = None
+        if prepared_mask is not None:
+            rotated_template, rotated_mask, quad_local = _rotate_template_with_mask(prepared_template, prepared_mask, angle)
+            if int(cv2.countNonZero(rotated_mask)) <= 0:
+                continue
+        else:
+            rotated_template, quad_local = _rotate_template(prepared_template, angle)
         if (
             rotated_template.shape[0] < 2
             or rotated_template.shape[1] < 2
@@ -279,7 +355,15 @@ def _match_python(scene_gray: np.ndarray, template_gray: np.ndarray, options: Nc
             or rotated_template.shape[1] > prepared_scene.shape[1]
         ):
             continue
-        response = cv2.matchTemplate(prepared_scene, rotated_template, cv2.TM_CCOEFF_NORMED)
+        if rotated_mask is not None:
+            response = cv2.matchTemplate(
+                prepared_scene,
+                rotated_template,
+                cv2.TM_CCORR_NORMED,
+                mask=rotated_mask,
+            )
+        else:
+            response = cv2.matchTemplate(prepared_scene, rotated_template, cv2.TM_CCOEFF_NORMED)
         work = response.copy()
         per_angle_limit = max(options.target_num * 4, options.target_num)
         for _ in range(per_angle_limit):
@@ -318,6 +402,8 @@ class NccCompiledModel:
         self.model = (model or load_model(model_path)).normalized()
         self._template_last_write_ns: int = -1
         self._template_gray: Optional[np.ndarray] = None
+        self._template_mask_last_write_ns: int = -2
+        self._template_mask_gray: Optional[np.ndarray] = None
         self._native_matcher_cache: Dict[int, NccNativeMatcher] = {}
 
     def close(self) -> None:
@@ -334,6 +420,9 @@ class NccCompiledModel:
     def _template_file(self) -> Path:
         return resolve_asset_path(self.model_path, self.model.template_image_path)
 
+    def _template_mask_file(self) -> Path:
+        return resolve_asset_path(self.model_path, self.model.mask_image_path)
+
     def _load_template_gray(self) -> np.ndarray:
         template_path = self._template_file()
         if not template_path.exists():
@@ -349,6 +438,26 @@ class NccCompiledModel:
         if self._native_matcher_cache:
             self.close()
         return self._template_gray
+
+    def _load_template_mask_gray(self) -> Optional[np.ndarray]:
+        if not bool(getattr(self.model, "template_mask_enabled", False)):
+            self._template_mask_last_write_ns = -1
+            self._template_mask_gray = None
+            return None
+        mask_path = self._template_mask_file()
+        if not mask_path.exists():
+            self._template_mask_last_write_ns = -1
+            self._template_mask_gray = None
+            return None
+        last_write_ns = mask_path.stat().st_mtime_ns
+        if self._template_mask_gray is not None and self._template_mask_last_write_ns == last_write_ns:
+            return self._template_mask_gray
+        image = imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+        if image is None:
+            raise RuntimeError(f"Failed to read template mask image: {mask_path}")
+        self._template_mask_gray = np.ascontiguousarray(image.astype(np.uint8, copy=False))
+        self._template_mask_last_write_ns = last_write_ns
+        return self._template_mask_gray
 
     def _get_native_matcher(self, min_reduced_area: int) -> NccNativeMatcher:
         template_gray = self._load_template_gray()
@@ -373,12 +482,13 @@ class NccCompiledModel:
         normalized_options = (options or self.model.options).normalized()
         scene_crop, crop_xywh = _crop_bgr(scene_bgr, search_roi)
         template_gray = self._load_template_gray()
+        template_mask_gray = self._load_template_mask_gray()
 
         t0 = time.perf_counter()
-        backend_name = "python-ncc"
+        backend_name = "python-ncc-mask" if template_mask_gray is not None else "python-ncc"
         matches: Tuple[NccMatchResult, ...]
 
-        if prefer_native and NccNativeApi.is_available():
+        if template_mask_gray is None and prefer_native and NccNativeApi.is_available():
             try:
                 matcher = self._get_native_matcher(normalized_options.min_reduced_area)
                 source_gray = _prepare_gray_image(scene_crop, bitwise_not=normalized_options.bitwise_not)
@@ -388,7 +498,12 @@ class NccCompiledModel:
             except Exception:
                 matches = _match_python(scene_crop, template_gray, normalized_options)
         else:
-            matches = _match_python(scene_crop, template_gray, normalized_options)
+            matches = _match_python(
+                scene_crop,
+                template_gray,
+                normalized_options,
+                mask_gray=template_mask_gray,
+            )
 
         if crop_xywh[0] or crop_xywh[1]:
             matches = tuple(_offset_match(item, crop_xywh[0], crop_xywh[1]) for item in matches)

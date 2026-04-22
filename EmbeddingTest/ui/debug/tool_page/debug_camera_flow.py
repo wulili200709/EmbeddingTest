@@ -22,6 +22,19 @@ _DebugCameraPreviewThread = page_module._DebugCameraPreviewThread
 _qimage_from_hik_frame = page_module._qimage_from_hik_frame
 
 _DEBUG_IO_NAME_LABELS = {
+    "conveyor_start": "启动按钮\nDI_CONVEYOR_START",
+    "conveyor_stop": "停止按钮\nDI_CONVEYOR_STOP",
+    "reset_button": "复位按钮\nDI_RESET_BUTTON",
+    "button_green": "绿色按钮灯\nDO_BUTTON_GREEN",
+    "button_red": "红色按钮灯\nDO_BUTTON_RED",
+    "button_blue": "蓝色按钮灯\nDO_BUTTON_BLUE",
+    "reserved_out_3": "预留输出3\nDO_RESERVED_3",
+    "reserved_out_4": "预留输出4\nDO_RESERVED_4",
+    "reserved_out_5": "预留输出5\nDO_RESERVED_5",
+    "reserved_out_6": "预留输出6\nDO_RESERVED_6",
+    "reserved_out_7": "预留输出7\nDO_RESERVED_7",
+    "reserved_out_8": "预留输出8\nDO_RESERVED_8",
+    "reserved_out_9": "预留输出9\nDO_RESERVED_9",
     "foot_switch": "脚踏触发\nDI_FOOT_SWITCH",
     "reject_signal": "废品信号\nDI_REJECT_SIGNAL",
     "reserved_in_1": "预留输入1\nDI_RESERVED_1",
@@ -398,6 +411,18 @@ def _debug_io_display_name(name: str) -> str:
     return _DEBUG_IO_NAME_LABELS.get(str(name), str(name))
 
 
+def _debug_io_name_priority(name: str) -> tuple[int, int, str]:
+    text = str(name or "").strip()
+    is_reserved_alias = text.startswith("reserved_in_") or text.startswith("reserved_out_")
+    return (1 if is_reserved_alias else 0, len(text), text)
+
+
+def _debug_io_assign_channel_name(channel_map, channel: int, name: str, cfg) -> None:
+    existing = channel_map.get(int(channel))
+    if existing is None or _debug_io_name_priority(name) < _debug_io_name_priority(existing[0]):
+        channel_map[int(channel)] = (name, cfg)
+
+
 def _debug_io_channel_maps(io_controller):
     di_map = {}
     do_map = {}
@@ -406,10 +431,10 @@ def _debug_io_channel_maps(io_controller):
         return di_map, do_map
     for name in mapping.di_names():
         cfg = mapping.get_input(name)
-        di_map[int(cfg.channel)] = (name, cfg)
+        _debug_io_assign_channel_name(di_map, int(cfg.channel), name, cfg)
     for name in mapping.do_names():
         cfg = mapping.get_output(name)
-        do_map[int(cfg.channel)] = (name, cfg)
+        _debug_io_assign_channel_name(do_map, int(cfg.channel), name, cfg)
     return di_map, do_map
 
 

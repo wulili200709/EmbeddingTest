@@ -10,19 +10,27 @@
       "channel": 0,
       "active_high": false
     },
+    "conveyor_start": {
+      "channel": 2,
+      "active_high": true
+    },
     "reserved_in_1": {
       "channel": 2,
       "active_high": true
     },
-    "conveyor_toggle": {
-      "channel": 2,
-      "active_high": true
+    "conveyor_stop": {
+      "channel": 3,
+      "active_high": false
     },
     "reserved_in_2": {
       "channel": 3,
+      "active_high": false
+    },
+    "reset_button": {
+      "channel": 4,
       "active_high": true
     },
-     "reserved_in_3": {
+    "reserved_in_3": {
       "channel": 4,
       "active_high": true
     },
@@ -56,10 +64,6 @@
       "channel": 3,
       "active_high": false
     },
-    "buzzer": {
-      "channel": 5,
-      "active_high": false
-    },
     "reserved_out_1": {
       "channel": 4,
       "active_high": false
@@ -68,8 +72,52 @@
       "channel": 4,
       "active_high": false
     },
+    "button_green": {
+      "channel": 5,
+      "active_high": false
+    },
+    "button_red": {
+      "channel": 9,
+      "active_high": false
+    },
+    "button_blue": {
+      "channel": 7,
+      "active_high": false
+    },
     "reserved_out_2": {
-      "channel": 6,
+      "channel": 8,
+      "active_high": false
+    },
+    "buzzer": {
+      "channel": 8,
+      "active_high": false
+    },
+    "reserved_out_3": {
+      "channel": 9,
+      "active_high": false
+    },
+    "reserved_out_4": {
+      "channel": 10,
+      "active_high": false
+    },
+    "reserved_out_5": {
+      "channel": 11,
+      "active_high": false
+    },
+    "reserved_out_6": {
+      "channel": 12,
+      "active_high": false
+    },
+    "reserved_out_7": {
+      "channel": 13,
+      "active_high": false
+    },
+    "reserved_out_8": {
+      "channel": 14,
+      "active_high": false
+    },
+    "reserved_out_9": {
+      "channel": 15,
       "active_high": false
     }
   }

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import json
 import sys
 import threading
 import unittest
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+from unittest.mock import patch
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -15,7 +14,6 @@ if str(PROJECT_DIR) not in sys.path:
 
 
 from application.runtime.execution import _finalize_trigger_outcome
-from application.runtime.hardware import _apply_io_logic_event
 
 
 class _Signal:
@@ -38,8 +36,12 @@ class _TowerLight:
 
 
 class _Runtime:
-    def __init__(self) -> None:
+    def __init__(self, *, ng_stop_delay_ms: int) -> None:
         self.events: list[str] = []
+        self._ng_stop_delay_ms = ng_stop_delay_ms
+        self._pending_ng_stop_delay_ms = 0
+        self._ng_stop_delay_pending = False
+        self._ng_stop_delay_sequence = 0
         self._last_record_path = ""
         self._record_service = None
         self._last_preview_frames = {}
@@ -59,12 +61,19 @@ class _Runtime:
     def _connected_roles(self) -> list[str]:
         return ["cam1"]
 
+    def ng_stop_delay_ms(self) -> int:
+        return int(self._ng_stop_delay_ms)
+
+    def _apply_io_logic_event(self, event_name: str, **_kwargs) -> bool:
+        self.events.append(f"io_{event_name}")
+        return event_name in {"ng", "ng_stop_delay_elapsed"}
+
     def _set_conveyor_run(self, running: bool, *, reason: str = "") -> bool:
-        self.events.append(f"conveyor_{'run' if running else 'stop'}")
+        self.events.append(f"conveyor_{'run' if running else 'stop'}:{reason}")
         return True
 
     def _set_buzzer(self, on: bool, *, reason: str = "") -> bool:
-        self.events.append(f"buzzer_{'on' if on else 'off'}")
+        self.events.append(f"buzzer_{'on' if on else 'off'}:{reason}")
         return True
 
     def _write_runtime_record(self, runtime_result) -> None:
@@ -80,9 +89,9 @@ class _Runtime:
         self.events.append("update_status")
 
 
-class RuntimeFinalizeOrderTest(unittest.TestCase):
-    def test_ng_stops_conveyor_turns_on_buzzer_and_shows_tower_light_before_record(self) -> None:
-        runtime = _Runtime()
+class RuntimeNgStopDelayTest(unittest.TestCase):
+    def test_ng_stop_delay_schedules_stop_after_delay(self) -> None:
+        runtime = _Runtime(ng_stop_delay_ms=250)
         outcome = SimpleNamespace(
             final_result="NG",
             camera_outcomes={
@@ -97,50 +106,31 @@ class RuntimeFinalizeOrderTest(unittest.TestCase):
             duration_ms=10,
             error_message="",
         )
+        captured: dict[str, object] = {}
 
-        _finalize_trigger_outcome(runtime, outcome, release_status_before=None)
+        def _capture_single_shot(delay_ms: int, callback) -> None:
+            captured["delay_ms"] = delay_ms
+            captured["callback"] = callback
 
-        self.assertEqual(runtime.events.count("conveyor_stop"), 1)
-        self.assertEqual(runtime.events.count("buzzer_on"), 1)
-        self.assertLess(runtime.events.index("conveyor_stop"), runtime.events.index("tower_ng"))
-        self.assertLess(runtime.events.index("buzzer_on"), runtime.events.index("tower_ng"))
-        self.assertLess(runtime.events.index("tower_ng"), runtime.events.index("write_record"))
-
-    def test_empty_ng_override_disables_default_io_fallback(self) -> None:
-        runtime = _Runtime()
-        outcome = SimpleNamespace(
-            final_result="NG",
-            camera_outcomes={
-                "cam1": SimpleNamespace(
-                    result="NG",
-                    message="cam1 pred=NG",
-                    capture_ms=1.0,
-                    match_ms=2.0,
-                    infer_ms=3.0,
-                )
-            },
-            duration_ms=10,
-            error_message="",
-        )
-
-        with TemporaryDirectory() as tmp:
-            runtime._session.product_dir = tmp
-            (Path(tmp) / "runtime_io_logic.json").write_text(
-                json.dumps({"ng": []}, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            runtime._apply_io_logic_event = lambda event_name, **kwargs: _apply_io_logic_event(
-                runtime,
-                event_name,
-                **kwargs,
-            )
-
+        with patch("application.runtime.execution.QtCore.QTimer.singleShot", side_effect=_capture_single_shot):
             _finalize_trigger_outcome(runtime, outcome, release_status_before=None)
 
-        self.assertNotIn("conveyor_stop", runtime.events)
-        self.assertNotIn("buzzer_on", runtime.events)
+        self.assertEqual(captured["delay_ms"], 250)
+        self.assertIn("buzzer_on:NG result", runtime.events)
+        self.assertNotIn("conveyor_stop:NG result", runtime.events)
+        self.assertNotIn("conveyor_stop:NG delayed stop", runtime.events)
         self.assertIn("tower_ng", runtime.events)
-        self.assertIn("write_record", runtime.events)
+        self.assertTrue(runtime._ng_stop_delay_pending)
+        self.assertEqual(runtime._pending_ng_stop_delay_ms, 250)
+
+        callback = captured.get("callback")
+        self.assertTrue(callable(callback))
+        assert callable(callback)
+        callback()
+
+        self.assertIn("conveyor_stop:NG result", runtime.events)
+        self.assertFalse(runtime._ng_stop_delay_pending)
+        self.assertEqual(runtime._pending_ng_stop_delay_ms, 0)
 
 
 if __name__ == "__main__":

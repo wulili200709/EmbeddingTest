@@ -51,6 +51,13 @@ def normalize_foot_trigger_delay_ms(value: object) -> int:
         return 0
 
 
+def normalize_ng_stop_delay_ms(value: object) -> int:
+    try:
+        return max(0, int(value or 0))
+    except Exception:
+        return 0
+
+
 def runtime_capture_policy_text(policy: str) -> str:
     return "全部保留" if normalize_runtime_capture_policy(policy) == "all" else "仅保留NG"
 
@@ -63,6 +70,17 @@ def load_foot_trigger_delay_from_session(window) -> int:
 def persist_foot_trigger_delay(window, delay_ms: int) -> None:
     session_data = window.session.load_session()
     session_data.foot_trigger_delay_ms = normalize_foot_trigger_delay_ms(delay_ms)
+    window.session.save_session(session_data)
+
+
+def load_ng_stop_delay_from_session(window) -> int:
+    session_data = window.session.load_session()
+    return normalize_ng_stop_delay_ms(session_data.ng_stop_delay_ms)
+
+
+def persist_ng_stop_delay(window, delay_ms: int) -> None:
+    session_data = window.session.load_session()
+    session_data.ng_stop_delay_ms = normalize_ng_stop_delay_ms(delay_ms)
     window.session.save_session(session_data)
 
 
@@ -86,10 +104,39 @@ def apply_foot_trigger_delay(
         )
 
 
+def apply_ng_stop_delay(
+    window,
+    delay_ms: object,
+    *,
+    persist: bool,
+    show_message: bool,
+) -> None:
+    normalized = normalize_ng_stop_delay_ms(delay_ms)
+    window._ng_stop_delay_ms = normalized
+    if hasattr(window, "runtime_ctrl") and window.runtime_ctrl is not None:
+        window.runtime_ctrl.update_ng_stop_delay_ms(normalized)
+    if persist:
+        persist_ng_stop_delay(window, normalized)
+    if show_message:
+        window._bottom_status_bar.showMessage(
+            f"NG停皮带延时已更新：{normalized} ms",
+            3000,
+        )
+
+
 def restore_foot_trigger_delay_from_session(window) -> None:
     apply_foot_trigger_delay(
         window,
         load_foot_trigger_delay_from_session(window),
+        persist=False,
+        show_message=False,
+    )
+
+
+def restore_ng_stop_delay_from_session(window) -> None:
+    apply_ng_stop_delay(
+        window,
+        load_ng_stop_delay_from_session(window),
         persist=False,
         show_message=False,
     )
