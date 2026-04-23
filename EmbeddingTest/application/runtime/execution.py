@@ -184,6 +184,43 @@ def _outcome_roles(outcome) -> tuple[str, ...]:
     return tuple(sorted(set(roles)))
 
 
+def _capture_export_roles(runtime, outcome, current_preview_frames: dict[str, object]) -> tuple[str, ...]:
+    outcome_roles = _outcome_roles(outcome)
+    if outcome_roles:
+        return outcome_roles
+
+    error_text = str(getattr(outcome, "error_message", "") or "").strip()
+    if not error_text:
+        return ()
+
+    connected_roles_getter = getattr(runtime, "_connected_roles", None)
+    connected_roles = (
+        {
+            str(role).strip()
+            for role in connected_roles_getter()
+            if str(role).strip()
+        }
+        if callable(connected_roles_getter)
+        else set()
+    )
+    fallback_roles = tuple(
+        sorted(
+            role
+            for role, source in dict(current_preview_frames or {}).items()
+            if isinstance(source, RuntimePreviewFrame)
+            and str(role).strip()
+            and (not connected_roles or str(role).strip() in connected_roles)
+        )
+    )
+    if fallback_roles:
+        runtime.logAppended.emit(
+            "[runtime-capture] fallback export from preview frame for error outcome: "
+            + ", ".join(fallback_roles)
+            + f" ({error_text})"
+        )
+    return fallback_roles
+
+
 def _should_export_captures(runtime, final_result: str) -> bool:
     policy = normalize_capture_retention_policy(runtime._capture_retention_policy)
     return policy == "all" or str(final_result or "").strip().upper() == "NG"
@@ -311,7 +348,7 @@ def _finalize_trigger_outcome(runtime, outcome, release_status_before) -> None:
     if runtime._record_service is not None:
         runtime._last_record_path = str(runtime._record_service.writer.file_path_for_date())
     current_preview_frames = dict(runtime._last_preview_frames)
-    current_roles = _outcome_roles(outcome)
+    current_roles = _capture_export_roles(runtime, outcome, current_preview_frames)
     retained_capture_paths: dict[str, str] = {}
     if _should_export_captures(runtime, outcome.final_result):
         capture_dt = datetime.now()

@@ -102,11 +102,6 @@
       "reason": "release granted"
     },
     {
-      "type": "set_buzzer",
-      "value": false,
-      "reason": "release granted"
-    },
-    {
       "type": "set_output",
       "name": "button_green",
       "value": true,
@@ -129,11 +124,6 @@
     {
       "type": "set_conveyor_run",
       "value": true,
-      "reason": "DI2 start"
-    },
-    {
-      "type": "set_buzzer",
-      "value": false,
       "reason": "DI2 start"
     },
     {
@@ -181,6 +171,11 @@
     }
   ],
   "reset_button_pressed": [
+    {
+      "type": "set_buzzer",
+      "value": false,
+      "reason": "DI4 reset"
+    },
     {
       "type": "set_output",
       "name": "button_green",

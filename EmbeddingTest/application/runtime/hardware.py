@@ -51,7 +51,6 @@ _BUILTIN_RUNTIME_IO_LOGIC_DEFAULTS = {
     ],
     "release_granted": [
         {"type": "set_conveyor_run", "value": True, "reason": "release granted"},
-        {"type": "set_buzzer", "value": False, "reason": "release granted"},
         {"type": "set_output", "name": "button_green", "value": True, "reason": "release granted"},
         {"type": "set_output", "name": "button_red", "value": False, "reason": "release granted"},
         {"type": "set_output", "name": "button_blue", "value": False, "reason": "release granted"},
@@ -656,7 +655,6 @@ def _set_conveyor_run(runtime, running: bool, *, reason: str = "", controller=No
 def set_conveyor_run(runtime, running: bool) -> None:
     if _set_conveyor_run(runtime, bool(running), reason="manual UI"):
         if bool(running):
-            _set_buzzer(runtime, False, reason="manual UI")
             _set_button_box_lights(runtime, "start", reason="manual UI")
         else:
             _set_button_box_lights(runtime, "stop", reason="manual UI")
@@ -990,12 +988,11 @@ def _trigger_from_di(runtime) -> None:
 def _start_conveyor_from_di(runtime) -> None:
     controller = getattr(runtime, "_io_controller", None)
     if _apply_io_logic_event(runtime, "start_button_pressed", controller=controller):
-        runtime._update_status("DI2 started conveyor")
+        runtime._update_status("DI2 启动皮带")
         return
     if _set_conveyor_run(runtime, True, reason="DI2 start"):
-        _set_buzzer(runtime, False, reason="DI2 start")
         _set_button_box_lights(runtime, "start", reason="DI2 start")
-        runtime._update_status("DI2 started conveyor")
+        runtime._update_status("DI2 启动皮带")
         return
     runtime.warningOccurred.emit("IO未就绪，无法响应DI2启动皮带")
 
@@ -1004,11 +1001,11 @@ def _start_conveyor_from_di(runtime) -> None:
 def _stop_conveyor_from_di(runtime) -> None:
     controller = getattr(runtime, "_io_controller", None)
     if _apply_io_logic_event(runtime, "stop_button_pressed", controller=controller):
-        runtime._update_status("DI3 stopped conveyor")
+        runtime._update_status("DI3 停止皮带")
         return
     if _set_conveyor_run(runtime, False, reason="DI3 stop"):
         _set_button_box_lights(runtime, "stop", reason="DI3 stop")
-        runtime._update_status("DI3 stopped conveyor")
+        runtime._update_status("DI3 停止皮带")
         return
     runtime.warningOccurred.emit("IO未就绪，无法响应DI3停止皮带")
 
@@ -1017,10 +1014,12 @@ def _stop_conveyor_from_di(runtime) -> None:
 def _handle_reset_button_from_di(runtime) -> None:
     controller = getattr(runtime, "_io_controller", None)
     if _apply_io_logic_event(runtime, "reset_button_pressed", controller=controller):
-        runtime._update_status("DI4 reset button pressed")
+        runtime._update_status("DI4 复位按钮按下")
         return
-    if _set_button_box_lights(runtime, "reset", reason="DI4 reset"):
-        runtime._update_status("DI4 reset button pressed")
+    buzzer_changed = _set_buzzer(runtime, False, reason="DI4 reset")
+    lights_changed = _set_button_box_lights(runtime, "reset", reason="DI4 reset")
+    if buzzer_changed or lights_changed:
+        runtime._update_status("DI4 复位按钮按下")
         return
     runtime.warningOccurred.emit("IO未就绪，无法响应DI4复位按钮")
 
@@ -1029,10 +1028,10 @@ def _handle_reset_button_from_di(runtime) -> None:
 def _handle_reset_button_release_from_di(runtime) -> None:
     controller = getattr(runtime, "_io_controller", None)
     if _apply_io_logic_event(runtime, "reset_button_released", controller=controller):
-        runtime._update_status("DI4 reset button released")
+        runtime._update_status("DI4 复位按钮松开")
         return
     if _set_named_output(runtime, "button_blue", False, controller=controller, reason="DI4 reset release"):
-        runtime._update_status("DI4 reset button released")
+        runtime._update_status("DI4 复位按钮松开")
         return
     runtime.warningOccurred.emit("IO未就绪，无法响应DI4复位按钮释放")
 
@@ -1051,11 +1050,10 @@ def _toggle_conveyor_run_from_di(runtime) -> None:
     target_running = not current_running
     if _set_conveyor_run(runtime, target_running, reason="DI2 toggle"):
         if target_running:
-            _set_buzzer(runtime, False, reason="DI2 toggle")
             _set_button_box_lights(runtime, "start", reason="DI2 toggle")
         else:
             _set_button_box_lights(runtime, "stop", reason="DI2 toggle")
-        runtime._update_status("DI2 started conveyor" if target_running else "DI2 stopped conveyor")
+        runtime._update_status("DI2 启动皮带" if target_running else "DI2 停止皮带")
         return
     runtime.warningOccurred.emit("IO未就绪，无法响应DI2皮带启停")
 

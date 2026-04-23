@@ -126,17 +126,17 @@ class RuntimeButtonBoxIoTest(unittest.TestCase):
             QtCore.Qt.QueuedConnection,
         )
 
-    def test_di2_start_turns_on_conveyor_and_green_button_light(self) -> None:
+    def test_di2_start_turns_on_conveyor_and_green_button_light_without_silencing_buzzer(self) -> None:
         runtime = _FakeRuntime()
 
         _start_conveyor_from_di(runtime)
 
         self.assertTrue(runtime._io_controller.outputs["conveyor_run"])
-        self.assertFalse(runtime._io_controller.outputs["buzzer"])
+        self.assertTrue(runtime._io_controller.outputs["buzzer"])
         self.assertTrue(runtime._io_controller.outputs["button_green"])
         self.assertFalse(runtime._io_controller.outputs["button_red"])
         self.assertFalse(runtime._io_controller.outputs["button_blue"])
-        self.assertIn("DI2 started conveyor", runtime.status_messages)
+        self.assertIn("DI2 启动皮带", runtime.status_messages)
 
     def test_di3_stop_turns_on_red_button_light(self) -> None:
         runtime = _FakeRuntime()
@@ -150,9 +150,9 @@ class RuntimeButtonBoxIoTest(unittest.TestCase):
         self.assertFalse(runtime._io_controller.outputs["button_green"])
         self.assertTrue(runtime._io_controller.outputs["button_red"])
         self.assertFalse(runtime._io_controller.outputs["button_blue"])
-        self.assertIn("DI3 stopped conveyor", runtime.status_messages)
+        self.assertIn("DI3 停止皮带", runtime.status_messages)
 
-    def test_di4_reset_turns_on_blue_button_light_only(self) -> None:
+    def test_di4_reset_turns_on_blue_button_light_and_silences_buzzer(self) -> None:
         runtime = _FakeRuntime()
         runtime._io_controller.outputs["conveyor_run"] = True
         runtime._io_controller.outputs["button_green"] = True
@@ -160,10 +160,11 @@ class RuntimeButtonBoxIoTest(unittest.TestCase):
         _handle_reset_button_from_di(runtime)
 
         self.assertTrue(runtime._io_controller.outputs["conveyor_run"])
+        self.assertFalse(runtime._io_controller.outputs["buzzer"])
         self.assertFalse(runtime._io_controller.outputs["button_green"])
         self.assertFalse(runtime._io_controller.outputs["button_red"])
         self.assertTrue(runtime._io_controller.outputs["button_blue"])
-        self.assertIn("DI4 reset button pressed", runtime.status_messages)
+        self.assertIn("DI4 复位按钮按下", runtime.status_messages)
 
     def test_di4_reset_release_turns_off_blue_button_light(self) -> None:
         runtime = _FakeRuntime()
@@ -172,7 +173,7 @@ class RuntimeButtonBoxIoTest(unittest.TestCase):
         _handle_reset_button_release_from_di(runtime)
 
         self.assertFalse(runtime._io_controller.outputs["button_blue"])
-        self.assertIn("DI4 reset button released", runtime.status_messages)
+        self.assertIn("DI4 复位按钮松开", runtime.status_messages)
 
 
 if __name__ == "__main__":

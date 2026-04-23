@@ -250,7 +250,7 @@ class StartupOutputDefaultsTest(unittest.TestCase):
             ["[IO] conveyor output applied: reserved_out_1=ON (release granted)"],
         )
 
-    def test_release_granted_logic_turns_on_conveyor_and_turns_off_buzzer(self) -> None:
+    def test_release_granted_logic_turns_on_conveyor_without_silencing_buzzer(self) -> None:
         runtime = _FakeRuntime()
         controller = _FakeController()
         runtime._io_controller = controller
@@ -262,7 +262,6 @@ class StartupOutputDefaultsTest(unittest.TestCase):
             controller.calls,
             [
                 ("reserved_out_1", True),
-                ("reserved_out_2", False),
                 ("button_green", True),
                 ("button_red", False),
                 ("button_blue", False),
@@ -272,7 +271,6 @@ class StartupOutputDefaultsTest(unittest.TestCase):
             runtime.logAppended.messages,
             [
                 "[IO] conveyor output applied: reserved_out_1=ON (release granted)",
-                "[IO] buzzer output applied: reserved_out_2=OFF (release granted)",
                 "[IO] io logic output applied: button_green=ON (release granted)",
                 "[IO] io logic output applied: button_red=OFF (release granted)",
                 "[IO] io logic output applied: button_blue=OFF (release granted)",

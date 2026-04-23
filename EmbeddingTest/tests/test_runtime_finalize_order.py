@@ -8,6 +8,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
+import numpy as np
+
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
@@ -16,6 +18,7 @@ if str(PROJECT_DIR) not in sys.path:
 
 from application.runtime.execution import _finalize_trigger_outcome
 from application.runtime.hardware import _apply_io_logic_event
+from application.runtime.preview_frame import build_runtime_preview_frame
 
 
 class _Signal:
@@ -141,6 +144,38 @@ class RuntimeFinalizeOrderTest(unittest.TestCase):
         self.assertNotIn("buzzer_on", runtime.events)
         self.assertIn("tower_ng", runtime.events)
         self.assertIn("write_record", runtime.events)
+
+    def test_error_ng_without_camera_outcomes_exports_latest_preview_frame(self) -> None:
+        runtime = _Runtime()
+        outcome = SimpleNamespace(
+            final_result="NG",
+            camera_outcomes={},
+            duration_ms=7,
+            error_message="match failure",
+        )
+
+        with TemporaryDirectory() as tmp:
+            runtime._session.product_dir = tmp
+            runtime._capture_retention_policy = "all"
+            runtime._last_preview_frames = {
+                "cam1": build_runtime_preview_frame(
+                    role="cam1",
+                    image_bgr=np.zeros((24, 32, 3), dtype=np.uint8),
+                    product_dir=tmp,
+                    camera_role="cam1",
+                )
+            }
+
+            _finalize_trigger_outcome(runtime, outcome, release_status_before=None)
+
+            exported_path = Path(runtime._last_capture_paths.get("cam1", ""))
+            self.assertTrue(exported_path.exists())
+            self.assertEqual(exported_path.suffix.lower(), ".png")
+            self.assertIn("match failure", runtime.logAppended.values[-2][0])
+            self.assertEqual(
+                runtime._last_runtime_result.camera_results["cam1"].image_path,
+                str(exported_path),
+            )
 
 
 if __name__ == "__main__":

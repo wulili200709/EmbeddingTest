@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 import numpy as np
-from PySide6 import QtWidgets
+from PySide6 import QtGui, QtWidgets
 
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -88,6 +89,28 @@ class RuntimeModeTriggerButtonsTest(unittest.TestCase):
         self.assertIsNotNone(page.view_cam1.pixmap())
         self.assertFalse(page.view_cam1.pixmap().isNull())
         self.assertEqual(page.view_cam1.text(), "")
+
+    def test_runtime_preview_right_click_save_uses_original_frame_not_overlay_pixmap(self) -> None:
+        page = RuntimeModePage()
+        preview = build_runtime_preview_frame(
+            role="cam1",
+            image_bgr=np.zeros((24, 32, 3), dtype=np.uint8),
+            source_path="",
+            camera_role="cam1",
+        )
+
+        update_runtime_preview(page, "cam1", preview)
+        page.view_cam1.set_runtime_pixmap(QtGui.QPixmap(8, 8))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target_path = Path(tmpdir) / "saved_runtime.png"
+            saved = page.view_cam1.save_current_image_to(target_path)
+
+            self.assertTrue(saved)
+            self.assertTrue(target_path.exists())
+            image = QtGui.QImage(str(target_path))
+            self.assertFalse(image.isNull())
+            self.assertEqual((image.width(), image.height()), (32, 24))
 
     def test_legacy_source_path_aliases_to_preview_source_cache(self) -> None:
         page = RuntimeModePage()

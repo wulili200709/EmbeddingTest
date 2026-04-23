@@ -89,14 +89,14 @@ class RuntimeConveyorToggleIoTest(unittest.TestCase):
 
         invoke_method.assert_not_called()
 
-    def test_di2_toggle_starts_conveyor_and_silences_buzzer(self) -> None:
+    def test_di2_toggle_starts_conveyor_without_silencing_buzzer(self) -> None:
         runtime = _FakeRuntime()
 
         _toggle_conveyor_run_from_di(runtime)
 
         self.assertTrue(runtime._io_controller.outputs["conveyor_run"])
-        self.assertFalse(runtime._io_controller.outputs["buzzer"])
-        self.assertIn("DI2 started conveyor", runtime.status_messages)
+        self.assertTrue(runtime._io_controller.outputs["buzzer"])
+        self.assertIn("DI2 启动皮带", runtime.status_messages)
 
     def test_di2_toggle_stops_conveyor(self) -> None:
         runtime = _FakeRuntime()
@@ -108,7 +108,7 @@ class RuntimeConveyorToggleIoTest(unittest.TestCase):
 
         self.assertFalse(runtime._io_controller.outputs["conveyor_run"])
         self.assertTrue(runtime._io_controller.outputs["buzzer"])
-        self.assertIn("DI2 stopped conveyor", runtime.status_messages)
+        self.assertIn("DI2 停止皮带", runtime.status_messages)
 
 
 if __name__ == "__main__":

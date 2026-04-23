@@ -24,9 +24,13 @@ runtime_mode_pyside6.py
 from __future__ import annotations
 
 import re
+from datetime import datetime
+from pathlib import Path
 
+import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from application.runtime.preview_frame import RuntimePreviewFrame
 from ui.roi_overlay_colors import merge_roi_statuses
 
 
@@ -58,7 +62,9 @@ _RUN_STATE_FOOTER_ZH = {
 class RuntimeImageView(QtWidgets.QLabel):
     def __init__(self, title: str) -> None:
         super().__init__(title)
+        self._title = str(title or "").strip() or "runtime"
         self._pixmap: QtGui.QPixmap | None = None
+        self._source: object | None = None
         self.setAlignment(QtCore.Qt.AlignCenter)
         self.setMinimumSize(160, 120)
         self.setSizePolicy(
@@ -75,10 +81,42 @@ class RuntimeImageView(QtWidgets.QLabel):
             return
         self._refresh_pixmap()
 
+    def set_runtime_source(self, source: object | None) -> None:
+        self._source = source
+
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
         if self._pixmap is not None:
             self._refresh_pixmap()
+
+    def contextMenuEvent(self, event: QtGui.QContextMenuEvent) -> None:
+        menu = QtWidgets.QMenu(self)
+        action_save = menu.addAction("保存图片")
+        action_save.setEnabled(self._has_savable_image())
+        chosen = menu.exec(event.globalPos())
+        if chosen is action_save:
+            self._prompt_save_current_image()
+
+    def save_current_image_to(self, path: str | Path) -> bool:
+        path_text = str(path or "").strip()
+        if not path_text:
+            return False
+        target_path = Path(path_text)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if isinstance(self._source, RuntimePreviewFrame):
+            qimage = _qimage_from_runtime_preview_frame(self._source)
+            return qimage is not None and qimage.save(str(target_path))
+
+        source_path = str(self._source or "").strip()
+        if source_path:
+            pixmap = QtGui.QPixmap(source_path)
+            if not pixmap.isNull():
+                return pixmap.save(str(target_path))
+
+        if self._pixmap is None or self._pixmap.isNull():
+            return False
+        return self._pixmap.save(str(target_path))
 
     def _refresh_pixmap(self) -> None:
         if self._pixmap is None:
@@ -90,6 +128,69 @@ class RuntimeImageView(QtWidgets.QLabel):
         )
         self.setText("")
         self.setPixmap(scaled)
+
+    def _has_savable_image(self) -> bool:
+        if isinstance(self._source, RuntimePreviewFrame):
+            return True
+        source_path = str(self._source or "").strip()
+        if source_path and Path(source_path).exists():
+            return True
+        return self._pixmap is not None and not self._pixmap.isNull()
+
+    def _prompt_save_current_image(self) -> None:
+        if not self._has_savable_image():
+            return
+        default_path = str(Path.home() / self._default_save_filename())
+        target_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "保存图片",
+            default_path,
+            "PNG (*.png);;BMP (*.bmp);;JPEG (*.jpg *.jpeg)",
+        )
+        if not target_path:
+            return
+        if self.save_current_image_to(target_path):
+            QtWidgets.QToolTip.showText(QtGui.QCursor.pos(), f"图片已保存到 {target_path}", self)
+            return
+        QtWidgets.QMessageBox.warning(self, "保存图片", "保存图片失败")
+
+    def _default_save_filename(self) -> str:
+        if isinstance(self._source, RuntimePreviewFrame):
+            source_path = str(getattr(self._source, "source_path", "") or "").strip()
+            if source_path:
+                return Path(source_path).name
+            role = str(getattr(self._source, "role", "") or "").strip() or self._title.lower()
+            return f"{role}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+        source_path = str(self._source or "").strip()
+        if source_path:
+            return Path(source_path).name
+        safe_title = re.sub(r"[^0-9A-Za-z_-]+", "_", self._title).strip("_") or "runtime"
+        return f"{safe_title.lower()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+
+
+def _qimage_from_runtime_preview_frame(source: RuntimePreviewFrame) -> QtGui.QImage | None:
+    image = np.asarray(source.image_bgr)
+    if image.ndim == 2:
+        gray = np.ascontiguousarray(image)
+        qimage = QtGui.QImage(
+            gray.data,
+            int(gray.shape[1]),
+            int(gray.shape[0]),
+            int(gray.strides[0]),
+            QtGui.QImage.Format_Grayscale8,
+        )
+        return qimage.copy()
+    if image.ndim == 3:
+        rgb = np.ascontiguousarray(image[:, :, :3][:, :, ::-1])
+        qimage = QtGui.QImage(
+            rgb.data,
+            int(rgb.shape[1]),
+            int(rgb.shape[0]),
+            int(rgb.strides[0]),
+            QtGui.QImage.Format_RGB888,
+        )
+        return qimage.copy()
+    return None
 
 
 class _ElidedLabel(QtWidgets.QLabel):
@@ -748,11 +849,20 @@ class RuntimeModePage(QtWidgets.QWidget):
             self.view_cam2.set_runtime_pixmap(pixmap, placeholder=placeholder)
 
     def set_camera_source_path(self, role: str, path: str) -> None:
+        normalized_role = str(role).strip() or "cam1"
         source = str(path or "").strip()
-        self._camera_preview_sources[str(role).strip() or "cam1"] = source if source else None
+        normalized_source = source if source else None
+        self._camera_preview_sources[normalized_role] = normalized_source
+        view = self._camera_view_for_role(normalized_role)
+        if view is not None:
+            view.set_runtime_source(normalized_source)
 
     def set_camera_preview_source(self, role: str, source: object) -> None:
-        self._camera_preview_sources[str(role).strip() or "cam1"] = source
+        normalized_role = str(role).strip() or "cam1"
+        self._camera_preview_sources[normalized_role] = source
+        view = self._camera_view_for_role(normalized_role)
+        if view is not None:
+            view.set_runtime_source(source)
 
     def roi_statuses_for_camera(self, camera_id: str) -> dict[str, str]:
         return merge_roi_statuses(self._inspection_rows, camera_id=camera_id)
@@ -760,6 +870,8 @@ class RuntimeModePage(QtWidgets.QWidget):
     def clear_camera_views(self) -> None:
         self._active_role_set = set()
         self._camera_preview_sources = {"cam1": None, "cam2": None}
+        self.view_cam1.set_runtime_source(None)
+        self.view_cam2.set_runtime_source(None)
         self.view_cam1.set_runtime_pixmap(None, placeholder="Cam1")
         self.view_cam2.set_runtime_pixmap(None, placeholder="Cam2")
         self.lbl_cam1_timing.setText("Cam1: -")
@@ -777,6 +889,13 @@ class RuntimeModePage(QtWidgets.QWidget):
         }
         for camera_id, header in self._camera_section_headers.items():
             header.set_result(normalized.get(camera_id, ""))
+
+    def _camera_view_for_role(self, role: str) -> RuntimeImageView | None:
+        if role == "cam1":
+            return self.view_cam1
+        if role == "cam2":
+            return self.view_cam2
+        return None
 
     def _refresh_camera_previews(self) -> None:
         from ui.window_common import update_runtime_preview
