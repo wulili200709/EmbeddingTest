@@ -47,6 +47,12 @@ _RUNNING_YELLOW = "#eab308"
 def _camera_title(camera_id: str) -> str:
     return tr("runtime.camera1") if str(camera_id).strip() == "cam1" else tr("runtime.camera2")
 
+
+def _status_badge_width(label: QtWidgets.QLabel, text: str, *, minimum: int = 56, maximum: int = 160) -> int:
+    metrics = label.fontMetrics()
+    width = metrics.horizontalAdvance(str(text or "")) + 24
+    return max(minimum, min(maximum, width))
+
 class RuntimeImageView(QtWidgets.QLabel):
     def __init__(self, title: str) -> None:
         super().__init__(title)
@@ -152,8 +158,9 @@ class _ItemIndicator(QtWidgets.QFrame):
         }
         bg = color_map.get(status_kind, _PENDING_GRAY)
         display = tr_status_text(status_text.split("(")[0].strip()) if status_text else ""
-        self.lbl_result.setFixedWidth(128 if status_kind == "measured" else 56)
+        self.lbl_result.setFixedWidth(_status_badge_width(self.lbl_result, display, maximum=180 if status_kind == "measured" else 140))
         self.lbl_result.setText(display)
+        self.lbl_result.setToolTip(str(status_text or display or ""))
         self.lbl_result.setStyleSheet(
             f"background:{bg};color:white;font-size:14px;font-weight:bold;border-radius:4px;"
         )
@@ -200,6 +207,7 @@ class _CameraSectionHeader(QtWidgets.QFrame):
             bg = _PENDING_GRAY
             display = tr("runtime.untested")
         self.lbl_result.setText(display)
+        self.lbl_result.setFixedWidth(_status_badge_width(self.lbl_result, display, maximum=140))
         self.lbl_result.setStyleSheet(
             f"background:{bg};color:white;font-size:12px;font-weight:bold;border-radius:4px;"
         )

@@ -6,6 +6,7 @@ from typing import Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from algorithms.registry import algorithm_display_name
+from ui.i18n import tr
 
 try:
     from matplotlib import font_manager as mpl_font_manager
@@ -40,7 +41,6 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
         parent: Optional[QtWidgets.QWidget] = None,
     ):
         super().__init__(parent)
-        self.setWindowTitle("特征分析")
         self.resize(1200, 760)
         self.session_root = session_root
         self._allowed_model_keys = {
@@ -59,59 +59,68 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
         self._refresh_timer.timeout.connect(self._refresh_analysis)
 
         self._build_ui()
+        self.retranslate_ui()
         self._load_products(initial_product, initial_backbone, initial_model_key)
         QtCore.QTimer.singleShot(0, self._refresh_analysis)
 
-    def _build_ui(self):
+    def _build_ui(self) -> None:
         root = QtWidgets.QVBoxLayout(self)
 
         controls = QtWidgets.QGridLayout()
+        self.lbl_product = QtWidgets.QLabel()
+        self.lbl_learning_tool = QtWidgets.QLabel()
+        self.lbl_projection = QtWidgets.QLabel()
+        self.lbl_model = QtWidgets.QLabel()
+        self.lbl_session = QtWidgets.QLabel()
+
         self.cmb_product = QtWidgets.QComboBox()
         self.cmb_product.currentTextChanged.connect(self._on_product_changed)
         self.cmb_model = QtWidgets.QComboBox()
         self.cmb_model.currentIndexChanged.connect(self._schedule_refresh_analysis)
         self.cmb_projection = QtWidgets.QComboBox()
-        self.cmb_projection.addItems(["tsne", "pca"])
+        self.cmb_projection.addItem("TSNE", "tsne")
+        self.cmb_projection.addItem("PCA", "pca")
         self.cmb_projection.currentIndexChanged.connect(self._schedule_refresh_analysis)
-        self.btn_refresh = QtWidgets.QPushButton("刷新分析")
+        self.btn_refresh = QtWidgets.QPushButton()
         self.btn_refresh.clicked.connect(self._refresh_analysis)
 
         self.lbl_model_path = QtWidgets.QLabel("-")
         self.lbl_session_path = QtWidgets.QLabel("-")
-        self.lbl_model_path.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self.lbl_session_path.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        self.lbl_model_path.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.lbl_session_path.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
 
-        controls.addWidget(QtWidgets.QLabel("产品"), 0, 0)
+        controls.addWidget(self.lbl_product, 0, 0)
         controls.addWidget(self.cmb_product, 0, 1)
-        controls.addWidget(QtWidgets.QLabel("学习工具"), 0, 2)
+        controls.addWidget(self.lbl_learning_tool, 0, 2)
         controls.addWidget(self.cmb_model, 0, 3)
-        controls.addWidget(QtWidgets.QLabel("投影"), 0, 4)
+        controls.addWidget(self.lbl_projection, 0, 4)
         controls.addWidget(self.cmb_projection, 0, 5)
         controls.addWidget(self.btn_refresh, 0, 6)
-        controls.addWidget(QtWidgets.QLabel("模型"), 1, 0)
+        controls.addWidget(self.lbl_model, 1, 0)
         controls.addWidget(self.lbl_model_path, 1, 1, 1, 6)
-        controls.addWidget(QtWidgets.QLabel("Session"), 2, 0)
+        controls.addWidget(self.lbl_session, 2, 0)
         controls.addWidget(self.lbl_session_path, 2, 1, 1, 6)
         root.addLayout(controls)
 
-        splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         root.addWidget(splitter, 1)
 
         left = QtWidgets.QWidget()
         left_l = QtWidgets.QVBoxLayout(left)
+        self.lbl_stats = QtWidgets.QLabel()
         self.txt_summary = QtWidgets.QPlainTextEdit()
         self.txt_summary.setReadOnly(True)
         self.txt_summary.setMaximumBlockCount(200)
-        left_l.addWidget(QtWidgets.QLabel("统计"))
+        left_l.addWidget(self.lbl_stats)
         left_l.addWidget(self.txt_summary, 0)
 
+        self.lbl_samples = QtWidgets.QLabel()
         self.table = QtWidgets.QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["GT", "Pred", "diff", "sim_ok", "sim_ng", "文件"])
         self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
-        left_l.addWidget(QtWidgets.QLabel("样本"))
+        left_l.addWidget(self.lbl_samples)
         left_l.addWidget(self.table, 1)
 
         splitter.addWidget(left)
@@ -121,21 +130,51 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
         if FigureCanvas is None or Figure is None:
             self.figure = None
             self.figure_canvas = None
-            self.lbl_plot_error = QtWidgets.QLabel("matplotlib 不可用，无法显示散点图。")
-            self.lbl_plot_error.setAlignment(QtCore.Qt.AlignCenter)
+            self.lbl_plot_error = QtWidgets.QLabel()
+            self.lbl_plot_error.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             right_l.addWidget(self.lbl_plot_error, 1)
         else:
             self.figure = Figure(figsize=(6.0, 5.0))
             self.figure_canvas = FigureCanvas(self.figure)
+            self.lbl_plot_error = None
             right_l.addWidget(self.figure_canvas, 1)
         splitter.addWidget(right)
         splitter.setSizes([430, 770])
 
-        btn_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
-        btn_box.rejected.connect(self.reject)
-        root.addWidget(btn_box)
+        self.btn_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close)
+        self.btn_box.rejected.connect(self.reject)
+        root.addWidget(self.btn_box)
 
-    def _load_products(self, initial_product: str, initial_backbone: str, initial_model_key: str):
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle(tr("debug.embedding.title"))
+        self.lbl_product.setText(tr("debug.embedding.product"))
+        self.lbl_learning_tool.setText(tr("debug.embedding.learning_tool"))
+        self.lbl_projection.setText(tr("debug.embedding.projection"))
+        self.lbl_model.setText(tr("debug.embedding.model"))
+        self.lbl_session.setText(tr("debug.embedding.session"))
+        self.lbl_stats.setText(tr("debug.embedding.stats"))
+        self.lbl_samples.setText(tr("debug.embedding.samples"))
+        self.btn_refresh.setText(tr("debug.embedding.refresh"))
+        self.table.setHorizontalHeaderLabels([
+            "GT",
+            "Pred",
+            "diff",
+            "sim_ok",
+            "sim_ng",
+            tr("debug.embedding.table.file"),
+        ])
+        close_button = self.btn_box.button(QtWidgets.QDialogButtonBox.StandardButton.Close)
+        if close_button is not None:
+            close_button.setText(tr("sample.close"))
+        if self.lbl_plot_error is not None:
+            self.lbl_plot_error.setText(tr("debug.embedding.matplotlib_unavailable"))
+        if self._result is not None:
+            self._render_result(self._result)
+
+    def _shared_model_name(self) -> str:
+        return tr("debug.embedding.shared_model")
+
+    def _load_products(self, initial_product: str, initial_backbone: str, initial_model_key: str) -> None:
         names = list_product_names(self.session_root)
         self.cmb_product.blockSignals(True)
         self.cmb_product.clear()
@@ -147,7 +186,7 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
             self.cmb_product.setCurrentIndex(0)
         self._load_models(initial_backbone, initial_model_key)
 
-    def _load_models(self, initial_backbone: str = "", initial_model_key: str = ""):
+    def _load_models(self, initial_backbone: str = "", initial_model_key: str = "") -> None:
         product_name = self.cmb_product.currentText().strip()
         product_dir = os.path.join(self.session_root, product_name)
         entries = list_available_embedding_models(product_dir)
@@ -173,11 +212,11 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
                 break
             self.cmb_model.setCurrentIndex(selected_index)
 
-    def _on_product_changed(self, _product_name: str):
+    def _on_product_changed(self, _product_name: str) -> None:
         self._load_models()
         self._schedule_refresh_analysis()
 
-    def _schedule_refresh_analysis(self):
+    def _schedule_refresh_analysis(self) -> None:
         self._refresh_timer.start(50)
 
     def _current_model_entry(self) -> Optional[EmbeddingModelEntry]:
@@ -208,21 +247,21 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
             params_mtime,
         )
 
-    def _refresh_analysis(self):
+    def _refresh_analysis(self) -> None:
         product_name = self.cmb_product.currentText().strip()
-        projection = self.cmb_projection.currentText().strip()
+        projection = str(self.cmb_projection.currentData() or self.cmb_projection.currentText() or "tsne").strip().lower()
         entry = self._current_model_entry()
         if not product_name:
-            self._show_error("没有可用产品。")
+            self._show_error(tr("debug.embedding.no_product"))
             return
         if entry is None:
-            self._show_error("当前产品下没有可用的学习工具模型。")
+            self._show_error(tr("debug.embedding.no_model"))
             return
 
         cache_key = self._analysis_cache_key(product_name, entry, projection)
         self.btn_refresh.setEnabled(False)
-        self.txt_summary.setPlainText("Loading analysis...")
-        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        self.txt_summary.setPlainText(tr("debug.embedding.loading"))
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
         QtWidgets.QApplication.processEvents()
         try:
             result = self._analysis_cache.get(cache_key)
@@ -245,7 +284,7 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
             if QtWidgets.QApplication.overrideCursor() is not None:
                 QtWidgets.QApplication.restoreOverrideCursor()
 
-    def _show_error(self, message: str):
+    def _show_error(self, message: str) -> None:
         self._result = None
         self.lbl_model_path.setText("-")
         self.lbl_session_path.setText("-")
@@ -289,7 +328,7 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
             return text
         return text.encode("ascii", "replace").decode("ascii")
 
-    def _render_result(self, result: EmbeddingAnalysisResult):
+    def _render_result(self, result: EmbeddingAnalysisResult) -> None:
         self.lbl_model_path.setText(result.model_path)
         self.lbl_session_path.setText(result.session_file)
         self.txt_summary.setPlainText(self._format_summary(result))
@@ -297,31 +336,7 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
         self._draw_plot(result)
 
     def _format_summary_legacy(self, result: EmbeddingAnalysisResult) -> str:
-        m = result.metrics
-        lines = [
-            f"产品: {result.product_name}",
-            f"学习工具: {result.tool_name or '共享模型'}",
-            f"工具子类: {algorithm_display_name(result.backbone) or result.backbone}",
-            f"ROI: {', '.join(result.label_names) if result.label_names else '-'}",
-            f"投影: {result.projection_method.upper()}",
-            f"特征维度: {result.feature_dim}",
-            f"OK 样本数: {int(m['ok_count'])}",
-            f"NG 样本数: {int(m['ng_count'])}",
-            f"训练集准确率: {m['train_accuracy']:.4f}",
-            f"OK 类内平均相似度: {m['ok_intra_mean']:.4f}",
-            f"NG 类内平均相似度: {m['ng_intra_mean']:.4f}",
-            f"OK-NG 类间平均相似度: {m['ok_ng_cross_mean']:.4f}",
-            f"OK -> OK proto: {m['ok_to_ok_proto']:.4f}",
-            f"NG -> NG proto: {m['ng_to_ng_proto']:.4f}",
-            f"OK -> NG proto: {m['ok_to_ng_proto']:.4f}",
-            f"NG -> OK proto: {m['ng_to_ok_proto']:.4f}",
-            f"OK/NG proto 相似度: {m['proto_similarity']:.4f}",
-        ]
-        if result.notes:
-            lines.append("")
-            lines.append("备注:")
-            lines.extend(f"- {note}" for note in result.notes)
-        return "\n".join(lines)
+        return self._format_summary(result)
 
     def _format_summary(self, result: EmbeddingAnalysisResult) -> str:
         m = result.metrics
@@ -336,46 +351,46 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
         if safe_low == safe_low and safe_high == safe_high and diff_gap > 0:
             safe_range_text = f"{safe_low:.4f} ~ {safe_high:.4f}"
         elif diff_gap == diff_gap:
-            safe_range_text = "none (training diff overlap)"
+            safe_range_text = tr("debug.embedding.summary.safe_margin_none")
         else:
             safe_range_text = "-"
 
         lines = [
-            f"Product: {result.product_name}",
-            f"Tool: {result.tool_name or 'shared model'}",
-            f"Backbone: {algorithm_display_name(result.backbone) or result.backbone}",
-            f"ROI: {', '.join(result.label_names) if result.label_names else '-'}",
-            f"Projection: {result.projection_method.upper()}",
-            f"Feature dim: {result.feature_dim}",
-            f"Rule: {'diff >= margin => OK, else NG' if result.score_mode else '-'}",
-            f"Score mode: {result.score_mode or '-'}",
-            f"Current margin: {result.margin:.4f}",
-            f"Topk: {result.topk if result.topk else '-'}",
-            f"OK count: {int(m['ok_count'])}",
-            f"NG count: {int(m['ng_count'])}",
-            f"Train accuracy: {m['train_accuracy']:.4f}",
-            f"OK diff range: {_fmt_metric('ok_diff_min')} ~ {_fmt_metric('ok_diff_max')}",
-            f"NG diff range: {_fmt_metric('ng_diff_min')} ~ {_fmt_metric('ng_diff_max')}",
-            f"Diff gap (min OK - max NG): {_fmt_metric('diff_gap')}",
-            f"Safe margin range: {safe_range_text}",
-            f"Suggested margin: {_fmt_metric('suggested_margin')}",
-            f"Suggested margin train accuracy: {_fmt_metric('suggested_accuracy')}",
-            f"OK intra mean sim: {m['ok_intra_mean']:.4f}",
-            f"NG intra mean sim: {m['ng_intra_mean']:.4f}",
-            f"OK-NG cross mean sim: {m['ok_ng_cross_mean']:.4f}",
-            f"OK -> OK proto: {m['ok_to_ok_proto']:.4f}",
-            f"NG -> NG proto: {m['ng_to_ng_proto']:.4f}",
-            f"OK -> NG proto: {m['ok_to_ng_proto']:.4f}",
-            f"NG -> OK proto: {m['ng_to_ok_proto']:.4f}",
-            f"OK/NG proto sim: {m['proto_similarity']:.4f}",
+            f"{tr('debug.embedding.summary.product')}: {result.product_name}",
+            f"{tr('debug.embedding.summary.tool')}: {result.tool_name or self._shared_model_name()}",
+            f"{tr('debug.embedding.summary.backbone')}: {algorithm_display_name(result.backbone) or result.backbone}",
+            f"{tr('debug.embedding.summary.roi')}: {', '.join(result.label_names) if result.label_names else '-'}",
+            f"{tr('debug.embedding.summary.projection')}: {result.projection_method.upper()}",
+            f"{tr('debug.embedding.summary.feature_dim')}: {result.feature_dim}",
+            f"{tr('debug.embedding.summary.rule')}: {tr('debug.embedding.summary.rule_margin') if result.score_mode else '-'}",
+            f"{tr('debug.embedding.summary.score_mode')}: {result.score_mode or '-'}",
+            f"{tr('debug.embedding.summary.current_margin')}: {result.margin:.4f}",
+            f"{tr('debug.embedding.summary.topk')}: {result.topk if result.topk else '-'}",
+            f"{tr('debug.embedding.summary.ok_count')}: {int(m['ok_count'])}",
+            f"{tr('debug.embedding.summary.ng_count')}: {int(m['ng_count'])}",
+            f"{tr('debug.embedding.summary.train_accuracy')}: {m['train_accuracy']:.4f}",
+            f"{tr('debug.embedding.summary.ok_diff_range')}: {_fmt_metric('ok_diff_min')} ~ {_fmt_metric('ok_diff_max')}",
+            f"{tr('debug.embedding.summary.ng_diff_range')}: {_fmt_metric('ng_diff_min')} ~ {_fmt_metric('ng_diff_max')}",
+            f"{tr('debug.embedding.summary.diff_gap')}: {_fmt_metric('diff_gap')}",
+            f"{tr('debug.embedding.summary.safe_margin_range')}: {safe_range_text}",
+            f"{tr('debug.embedding.summary.suggested_margin')}: {_fmt_metric('suggested_margin')}",
+            f"{tr('debug.embedding.summary.suggested_accuracy')}: {_fmt_metric('suggested_accuracy')}",
+            f"{tr('debug.embedding.summary.ok_intra_mean')}: {m['ok_intra_mean']:.4f}",
+            f"{tr('debug.embedding.summary.ng_intra_mean')}: {m['ng_intra_mean']:.4f}",
+            f"{tr('debug.embedding.summary.ok_ng_cross_mean')}: {m['ok_ng_cross_mean']:.4f}",
+            f"{tr('debug.embedding.summary.ok_to_ok_proto')}: {m['ok_to_ok_proto']:.4f}",
+            f"{tr('debug.embedding.summary.ng_to_ng_proto')}: {m['ng_to_ng_proto']:.4f}",
+            f"{tr('debug.embedding.summary.ok_to_ng_proto')}: {m['ok_to_ng_proto']:.4f}",
+            f"{tr('debug.embedding.summary.ng_to_ok_proto')}: {m['ng_to_ok_proto']:.4f}",
+            f"{tr('debug.embedding.summary.proto_similarity')}: {m['proto_similarity']:.4f}",
         ]
         if result.notes:
             lines.append("")
-            lines.append("Notes:")
+            lines.append(f"{tr('debug.embedding.summary.notes')}:")
             lines.extend(f"- {note}" for note in result.notes)
         return "\n".join(lines)
 
-    def _fill_table(self, result: EmbeddingAnalysisResult):
+    def _fill_table(self, result: EmbeddingAnalysisResult) -> None:
         self.table.setRowCount(0)
         for row_idx, row in enumerate(result.rows):
             self.table.insertRow(row_idx)
@@ -396,7 +411,7 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
                 self.table.setItem(row_idx, col_idx, item)
         self.table.resizeColumnsToContents()
 
-    def _draw_plot(self, result: EmbeddingAnalysisResult):
+    def _draw_plot(self, result: EmbeddingAnalysisResult) -> None:
         if self.figure is None or self.figure_canvas is None:
             return
         self.figure.clear()
@@ -405,7 +420,7 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
 
         coords = result.point_coords
         if coords.size == 0:
-            ax.set_title(self._plot_text("无特征可显示"), fontproperties=font_props)
+            ax.set_title(self._plot_text(tr("debug.embedding.plot.no_features")), fontproperties=font_props)
             self.figure_canvas.draw_idle()
             return
 
@@ -415,12 +430,12 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
             ok_pts = coords[ok_idx]
             ax.scatter(ok_pts[:, 0], ok_pts[:, 1], c="tab:blue", s=55, alpha=0.85, label="OK")
             center = ok_pts.mean(axis=0)
-            ax.scatter([center[0]], [center[1]], c="navy", marker="*", s=260, label="OK center")
+            ax.scatter([center[0]], [center[1]], c="navy", marker="*", s=260, label=tr("debug.embedding.plot.ok_center"))
         if ng_idx:
             ng_pts = coords[ng_idx]
             ax.scatter(ng_pts[:, 0], ng_pts[:, 1], c="tab:red", s=55, alpha=0.85, label="NG")
             center = ng_pts.mean(axis=0)
-            ax.scatter([center[0]], [center[1]], c="darkred", marker="*", s=260, label="NG center")
+            ax.scatter([center[0]], [center[1]], c="darkred", marker="*", s=260, label=tr("debug.embedding.plot.ng_center"))
 
         for idx, name in enumerate(result.point_names):
             ax.annotate(
@@ -433,12 +448,12 @@ class EmbeddingAnalysisDialog(QtWidgets.QDialog):
 
         ax.set_title(
             self._plot_text(
-                f"{result.product_name} / {result.tool_name or '共享模型'} / {result.projection_method.upper()}"
+                f"{result.product_name} / {result.tool_name or self._shared_model_name()} / {result.projection_method.upper()}"
             ),
             fontproperties=font_props,
         )
-        ax.set_xlabel("Dimension 1")
-        ax.set_ylabel("Dimension 2")
+        ax.set_xlabel(tr("debug.embedding.plot.dimension1"))
+        ax.set_ylabel(tr("debug.embedding.plot.dimension2"))
         ax.grid(True, alpha=0.25)
         ax.legend(loc="best")
         self.figure.tight_layout()

@@ -2848,8 +2848,8 @@ PySide6
 torch
 torchvision
 matplotlib
-
 pip install opencv-python
+
 ## vs code安装python
 打开 VS Code → 左边扩展（Extensions）搜索：
 Python

@@ -22,6 +22,7 @@ from tools.visualize_embeddings import (
     load_product_analysis,
 )
 import tools.visualize_embeddings as visualize_embeddings
+from ui.i18n import language_code, set_language
 
 
 class VisualizeEmbeddingsToolModelsTest(unittest.TestCase):
@@ -151,6 +152,28 @@ class VisualizeEmbeddingsToolModelsTest(unittest.TestCase):
         self.assertAlmostEqual(result.metrics["suggested_margin"], 0.05, places=6)
         self.assertAlmostEqual(result.metrics["suggested_accuracy"], 1.0, places=6)
         self.assertTrue(any("fully separated" in note for note in result.notes))
+
+    def test_list_available_embedding_models_localizes_shared_model_name(self) -> None:
+        previous = language_code()
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                product_dir = Path(tmpdir) / "demo_product"
+                product_dir.mkdir(parents=True, exist_ok=True)
+                save_inspection_items([], str(product_dir / "inspection_items.json"))
+                (product_dir / "register_model_lt01.npz").write_bytes(b"npz")
+
+                set_language("en_US", persist=False)
+                english_entries = list_available_embedding_models(str(product_dir))
+
+                set_language("zh_CN", persist=False)
+                chinese_entries = list_available_embedding_models(str(product_dir))
+
+            self.assertEqual(english_entries[0].tool_name, "Shared model")
+            self.assertIn("Shared model / High-Accuracy Learning Tool", english_entries[0].display_name)
+            self.assertEqual(chinese_entries[0].tool_name, "共享模型")
+            self.assertIn("共享模型 / 高精度学习工具", chinese_entries[0].display_name)
+        finally:
+            set_language(previous, persist=False)
 
 
 if __name__ == "__main__":

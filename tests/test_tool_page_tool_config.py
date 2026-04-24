@@ -42,6 +42,9 @@ class _DummyAlgo:
     def resolve_tool_algorithm(self, algorithm_code: str) -> str:
         return str(algorithm_code or "").strip()
 
+    def is_measurement_tool(self, algorithm_code: str) -> bool:
+        return str(algorithm_code or "").strip() in {"find_line", "line_distance"}
+
     def get_traditional_model_dict(self, algorithm: str, model_key: str | None = None):
         return None
 
@@ -239,6 +242,70 @@ class ToolPageToolConfigTest(unittest.TestCase):
             self.assertIn("background:#6ec0ff", row0_camera.styleSheet())
             self.assertIn("background:#3a3a3a", row1_camera.styleSheet())
             self.assertEqual(harness._selected_inspection_item().item_id, "roi1")
+        finally:
+            harness.cleanup()
+
+    def test_measurement_params_use_combo_data_not_translated_text(self) -> None:
+        harness = _ToolConfigHarness()
+        try:
+            item = InspectionItem(
+                item_id="line1",
+                display_name="line1",
+                camera_id="cam1",
+                roi_label="line1",
+                algorithm_code="find_line",
+                params={"line": {"direction": "left_right", "polarity": "any"}},
+            )
+            harness.inspection_items = [item]
+            harness._visible_inspection_item_indexes = [0]
+            harness.inspection_items_table.setRowCount(1)
+            harness.inspection_items_table.selectRow(0)
+            harness.inspectionItemsChanged = SimpleNamespace(emit=lambda: None)
+            harness._measurement_params_loading = False
+
+            harness.cmb_measurement_unit = QtWidgets.QComboBox()
+            harness.cmb_measurement_unit.addItems(["px", "mm"])
+            harness.cmb_measurement_line_a_tool = QtWidgets.QComboBox()
+            harness.cmb_measurement_line_b_tool = QtWidgets.QComboBox()
+            harness.cmb_measurement_line_a_direction = QtWidgets.QComboBox()
+            harness.cmb_measurement_line_b_direction = QtWidgets.QComboBox()
+            for text, value in (
+                ("左到右", "left_right"),
+                ("右到左", "right_left"),
+                ("上到下", "top_down"),
+                ("下到上", "bottom_up"),
+            ):
+                harness.cmb_measurement_line_a_direction.addItem(text, value)
+                harness.cmb_measurement_line_b_direction.addItem(text, value)
+            harness.cmb_measurement_polarity = QtWidgets.QComboBox()
+            for text, value in (
+                ("任意", "any"),
+                ("暗到亮", "dark_to_bright"),
+                ("亮到暗", "bright_to_dark"),
+            ):
+                harness.cmb_measurement_polarity.addItem(text, value)
+            harness.spin_measurement_edge_threshold = QtWidgets.QDoubleSpinBox()
+            harness.spin_measurement_scan_step = QtWidgets.QSpinBox()
+            harness.spin_measurement_min_points = QtWidgets.QSpinBox()
+            harness.spin_measurement_lower = QtWidgets.QDoubleSpinBox()
+            harness.spin_measurement_upper = QtWidgets.QDoubleSpinBox()
+            harness.spin_measurement_pixel_size = QtWidgets.QDoubleSpinBox()
+            harness.chk_measurement_lower = QtWidgets.QCheckBox()
+            harness.chk_measurement_upper = QtWidgets.QCheckBox()
+
+            harness.cmb_measurement_line_a_direction.setCurrentIndex(1)
+            harness.cmb_measurement_polarity.setCurrentIndex(1)
+            harness.spin_measurement_edge_threshold.setValue(12.5)
+            harness.spin_measurement_scan_step.setValue(4)
+            harness.spin_measurement_min_points.setValue(9)
+
+            tool_config._on_measurement_params_changed(harness)
+
+            self.assertEqual(item.params["line"]["direction"], "right_left")
+            self.assertEqual(item.params["line"]["polarity"], "dark_to_bright")
+            self.assertEqual(item.params["line"]["edge_threshold"], 12.5)
+            self.assertEqual(item.params["line"]["scan_step"], 4)
+            self.assertEqual(item.params["line"]["min_points"], 9)
         finally:
             harness.cleanup()
 

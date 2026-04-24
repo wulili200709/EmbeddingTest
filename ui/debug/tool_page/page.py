@@ -1019,6 +1019,7 @@ ALGORITHM_DISPLAY_KEYS = {
     "meanhsv_s": "debug.algorithm.meanhsv_s",
     "find_circle": "debug.algorithm.find_circle",
     "find_line": "debug.algorithm.find_line",
+    "line_distance": "debug.algorithm.line_distance",
 }
 
 
@@ -1241,7 +1242,7 @@ class ToolPage(QtWidgets.QWidget):
             ("btn_test_to_train", tr("debug.move_to_train")),
             ("btn_add_test", tr("debug.add_external_images")),
             ("btn_del_test", tr("debug.remove")),
-            ("btn_sample_annotation_test", tr("debug.sample_annotation")),
+            ("btn_sample_annotation_test", tr("debug.clear_current_test_list")),
             ("btn_toggle_algo", tr("debug.algorithm_params")),
             ("btn_toggle_tools", tr("debug.inspection_tools")),
             ("btn_train", tr("debug.train_all_tools")),
@@ -1295,6 +1296,7 @@ class ToolPage(QtWidgets.QWidget):
                 tr("debug.tools_table.algorithm"),
                 tr("debug.tools_table.status"),
             ])
+            self._refresh_inspection_items_table()
         if hasattr(self, "template_match_box"):
             self.template_match_box.setTitle(tr("debug.auto_roi"))
         if hasattr(self, "btn_train_cancel"):
@@ -1326,6 +1328,63 @@ class ToolPage(QtWidgets.QWidget):
                 label = form.labelForField(field) if field is not None else None
                 if label is not None:
                     label.setText(label_text)
+        measurement_form = getattr(self, "measurement_form", None)
+        if measurement_form is not None:
+            row_labels = {
+                "cmb_measurement_line_a_tool": tr("debug.measurement.line_a_tool"),
+                "cmb_measurement_line_b_tool": tr("debug.measurement.line_b_tool"),
+                "cmb_measurement_line_a_direction": tr("debug.measurement.line_a_direction"),
+                "cmb_measurement_line_b_direction": tr("debug.measurement.line_b_direction"),
+                "cmb_measurement_polarity": tr("debug.measurement.polarity"),
+                "spin_measurement_edge_threshold": tr("debug.measurement.edge_threshold"),
+                "spin_measurement_scan_step": tr("debug.measurement.scan_step"),
+                "spin_measurement_min_points": tr("debug.measurement.min_points"),
+                "cmb_measurement_unit": tr("debug.measurement.unit"),
+                "spin_measurement_pixel_size": tr("debug.measurement.pixel_size"),
+            }
+            for field_attr, label_text in row_labels.items():
+                field = getattr(self, field_attr, None)
+                label = measurement_form.labelForField(field) if field is not None else None
+                if label is not None:
+                    label.setText(label_text)
+        if hasattr(self, "chk_measurement_lower"):
+            self.chk_measurement_lower.setText(tr("debug.measurement.use_lower"))
+        if hasattr(self, "chk_measurement_upper"):
+            self.chk_measurement_upper.setText(tr("debug.measurement.use_upper"))
+        if hasattr(self, "btn_add_line_distance_tool"):
+            self.btn_add_line_distance_tool.setText(tr("debug.measurement.add_line_distance_tool"))
+        if hasattr(self, "cmb_measurement_line_a_direction"):
+            blocker = QtCore.QSignalBlocker(self.cmb_measurement_line_a_direction)
+            for index, key in enumerate((
+                "debug.measurement.direction.left_right",
+                "debug.measurement.direction.right_left",
+                "debug.measurement.direction.top_down",
+                "debug.measurement.direction.bottom_up",
+            )):
+                if index < self.cmb_measurement_line_a_direction.count():
+                    self.cmb_measurement_line_a_direction.setItemText(index, tr(key))
+            del blocker
+        if hasattr(self, "cmb_measurement_line_b_direction"):
+            blocker = QtCore.QSignalBlocker(self.cmb_measurement_line_b_direction)
+            for index, key in enumerate((
+                "debug.measurement.direction.left_right",
+                "debug.measurement.direction.right_left",
+                "debug.measurement.direction.top_down",
+                "debug.measurement.direction.bottom_up",
+            )):
+                if index < self.cmb_measurement_line_b_direction.count():
+                    self.cmb_measurement_line_b_direction.setItemText(index, tr(key))
+            del blocker
+        if hasattr(self, "cmb_measurement_polarity"):
+            blocker = QtCore.QSignalBlocker(self.cmb_measurement_polarity)
+            for index, key in enumerate((
+                "debug.measurement.polarity.any",
+                "debug.measurement.polarity.dark_to_bright",
+                "debug.measurement.polarity.bright_to_dark",
+            )):
+                if index < self.cmb_measurement_polarity.count():
+                    self.cmb_measurement_polarity.setItemText(index, tr(key))
+            del blocker
         dialog = getattr(self, "_template_editor_dialog", None)
         if dialog is not None and hasattr(dialog, "retranslate_ui"):
             dialog.retranslate_ui()
@@ -2267,9 +2326,9 @@ class ToolPage(QtWidgets.QWidget):
         self.btn_del_test = QtWidgets.QPushButton(_si(SP.SP_DialogDiscardButton), tr("debug.remove"))
         self.btn_del_test.setStyleSheet(_compact_btn)
         self.btn_del_test.clicked.connect(lambda: self._remove_selected_from("TEST"))
-        self.btn_sample_annotation_test = QtWidgets.QPushButton(tr("debug.sample_annotation"))
+        self.btn_sample_annotation_test = QtWidgets.QPushButton(tr("debug.clear_current_test_list"))
         self.btn_sample_annotation_test.setStyleSheet(_compact_btn)
-        self.btn_sample_annotation_test.clicked.connect(self._open_sample_annotation_dialog)
+        self.btn_sample_annotation_test.clicked.connect(self._clear_current_test_list)
         test_actions.addWidget(self.btn_test_to_train, 0, 0)
         test_actions.addWidget(self.btn_add_test, 0, 1)
         test_actions.addWidget(self.btn_sample_annotation_test, 1, 0)
@@ -2401,11 +2460,12 @@ class ToolPage(QtWidgets.QWidget):
 
         self.measurement_params_frame = QtWidgets.QWidget()
         measurement_form = QtWidgets.QFormLayout(self.measurement_params_frame)
+        self.measurement_form = measurement_form
         measurement_form.setContentsMargins(8, 6, 8, 6)
         measurement_form.setSpacing(6)
         self._measurement_params_loading = False
-        self.chk_measurement_lower = QtWidgets.QCheckBox("Use lower")
-        self.chk_measurement_upper = QtWidgets.QCheckBox("Use upper")
+        self.chk_measurement_lower = QtWidgets.QCheckBox(tr("debug.measurement.use_lower"))
+        self.chk_measurement_upper = QtWidgets.QCheckBox(tr("debug.measurement.use_upper"))
         self.spin_measurement_lower = QtWidgets.QDoubleSpinBox()
         self.spin_measurement_upper = QtWidgets.QDoubleSpinBox()
         self.spin_measurement_pixel_size = QtWidgets.QDoubleSpinBox()
@@ -2417,13 +2477,18 @@ class ToolPage(QtWidgets.QWidget):
         self.cmb_measurement_line_a_direction = QtWidgets.QComboBox()
         self.cmb_measurement_line_b_direction = QtWidgets.QComboBox()
         for combo in (self.cmb_measurement_line_a_direction, self.cmb_measurement_line_b_direction):
-            combo.addItems(["left_right", "right_left", "top_down", "bottom_up"])
+            combo.addItem(tr("debug.measurement.direction.left_right"), "left_right")
+            combo.addItem(tr("debug.measurement.direction.right_left"), "right_left")
+            combo.addItem(tr("debug.measurement.direction.top_down"), "top_down")
+            combo.addItem(tr("debug.measurement.direction.bottom_up"), "bottom_up")
             combo.setStyleSheet(_input_style)
-            combo.currentTextChanged.connect(self._on_measurement_params_changed)
+            combo.currentIndexChanged.connect(self._on_measurement_params_changed)
         self.cmb_measurement_polarity = QtWidgets.QComboBox()
-        self.cmb_measurement_polarity.addItems(["any", "dark_to_bright", "bright_to_dark"])
+        self.cmb_measurement_polarity.addItem(tr("debug.measurement.polarity.any"), "any")
+        self.cmb_measurement_polarity.addItem(tr("debug.measurement.polarity.dark_to_bright"), "dark_to_bright")
+        self.cmb_measurement_polarity.addItem(tr("debug.measurement.polarity.bright_to_dark"), "bright_to_dark")
         self.cmb_measurement_polarity.setStyleSheet(_input_style)
-        self.cmb_measurement_polarity.currentTextChanged.connect(self._on_measurement_params_changed)
+        self.cmb_measurement_polarity.currentIndexChanged.connect(self._on_measurement_params_changed)
         self.spin_measurement_edge_threshold = QtWidgets.QDoubleSpinBox()
         self.spin_measurement_edge_threshold.setDecimals(3)
         self.spin_measurement_edge_threshold.setRange(0.0, 255.0)
@@ -2463,22 +2528,22 @@ class ToolPage(QtWidgets.QWidget):
         self.cmb_measurement_unit.addItems(["px", "mm"])
         self.cmb_measurement_unit.setStyleSheet(_input_style)
         self.cmb_measurement_unit.currentTextChanged.connect(self._on_measurement_params_changed)
-        measurement_form.addRow("Line A tool", self.cmb_measurement_line_a_tool)
-        measurement_form.addRow("Line B tool", self.cmb_measurement_line_b_tool)
-        measurement_form.addRow("Line A direction", self.cmb_measurement_line_a_direction)
-        measurement_form.addRow("Line B direction", self.cmb_measurement_line_b_direction)
-        measurement_form.addRow("Polarity", self.cmb_measurement_polarity)
-        measurement_form.addRow("Edge threshold", self.spin_measurement_edge_threshold)
-        measurement_form.addRow("Scan step", self.spin_measurement_scan_step)
-        measurement_form.addRow("Min points", self.spin_measurement_min_points)
+        measurement_form.addRow(tr("debug.measurement.line_a_tool"), self.cmb_measurement_line_a_tool)
+        measurement_form.addRow(tr("debug.measurement.line_b_tool"), self.cmb_measurement_line_b_tool)
+        measurement_form.addRow(tr("debug.measurement.line_a_direction"), self.cmb_measurement_line_a_direction)
+        measurement_form.addRow(tr("debug.measurement.line_b_direction"), self.cmb_measurement_line_b_direction)
+        measurement_form.addRow(tr("debug.measurement.polarity"), self.cmb_measurement_polarity)
+        measurement_form.addRow(tr("debug.measurement.edge_threshold"), self.spin_measurement_edge_threshold)
+        measurement_form.addRow(tr("debug.measurement.scan_step"), self.spin_measurement_scan_step)
+        measurement_form.addRow(tr("debug.measurement.min_points"), self.spin_measurement_min_points)
         measurement_form.addRow(self.chk_measurement_lower, self.spin_measurement_lower)
         measurement_form.addRow(self.chk_measurement_upper, self.spin_measurement_upper)
-        measurement_form.addRow("Unit", self.cmb_measurement_unit)
-        measurement_form.addRow("Pixel size mm/px", self.spin_measurement_pixel_size)
+        measurement_form.addRow(tr("debug.measurement.unit"), self.cmb_measurement_unit)
+        measurement_form.addRow(tr("debug.measurement.pixel_size"), self.spin_measurement_pixel_size)
         self.measurement_params_frame.hide()
         tool_vbox.addWidget(self.measurement_params_frame)
 
-        self.btn_add_line_distance_tool = QtWidgets.QPushButton("添加距离测量")
+        self.btn_add_line_distance_tool = QtWidgets.QPushButton(tr("debug.measurement.add_line_distance_tool"))
         self.btn_add_line_distance_tool.setStyleSheet(_compact_btn)
         self.btn_add_line_distance_tool.clicked.connect(self._add_line_distance_tool)
         tool_vbox.addWidget(self.btn_add_line_distance_tool)
@@ -3600,6 +3665,7 @@ class ToolPage(QtWidgets.QWidget):
             ("btn_del_ok", current_tab_kind == "train" and bool(selected_path)),
             ("btn_test_to_train", current_tab_kind == "test" and bool(selected_path)),
             ("btn_del_test", current_tab_kind == "test" and bool(selected_path)),
+            ("btn_sample_annotation_test", current_tab_kind == "test" and test_count > 0),
         ):
             button = getattr(self, attr_name, None)
             if button is not None:
@@ -3754,6 +3820,26 @@ class ToolPage(QtWidgets.QWidget):
             if not path or path not in self.test_files:
                 return
             self.test_files.remove(str(path))
+        self._refresh_lists()
+        self._clear_training_roi_review_state()
+        self._save_session()
+
+    def _clear_current_test_list(self) -> None:
+        current_role = _selected_image_list_camera_role(self)
+        visible = self._sample_paths_for_kind("test", current_role)
+        if not visible:
+            QtWidgets.QMessageBox.information(self, tr("common.info"), tr("debug.clear_current_test_list_empty"))
+            return
+        role_text = tr("runtime.camera1") if current_role == "cam1" else tr("runtime.camera2")
+        confirm = QtWidgets.QMessageBox.question(
+            self,
+            tr("debug.clear_current_test_list"),
+            tr("debug.clear_current_test_list_confirm", role=role_text),
+        )
+        if confirm != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        remove_set = {str(path) for path in visible if str(path)}
+        self.test_files = [path for path in self.test_files if str(path) not in remove_set]
         self._refresh_lists()
         self._clear_training_roi_review_state()
         self._save_session()

@@ -49,6 +49,21 @@ _MEASUREMENT_DISPLAY_NAMES = {
     "line_distance": "Line Distance",
 }
 
+_ALGORITHM_DISPLAY_KEYS = {
+    SHARED_BACKBONE_ALGORITHM_CODE: "debug.algorithm_group.learning",
+    "efficientnet_b0": "debug.algorithm.efficientnet_b0",
+    "mobilenet_v3_small": "debug.algorithm.mobilenet_v3_small",
+    "mobilenet_v3_large": "debug.algorithm.mobilenet_v3_large",
+    "meanintensity": "debug.algorithm.meanintensity",
+    "meanstd": "debug.algorithm.meanstd",
+    "meanhsv_h": "debug.algorithm.meanhsv_h",
+    "meanhsv_v": "debug.algorithm.meanhsv_v",
+    "meanhsv_s": "debug.algorithm.meanhsv_s",
+    "find_circle": "debug.algorithm.find_circle",
+    "find_line": "debug.algorithm.find_line",
+    "line_distance": "debug.algorithm.line_distance",
+}
+
 
 @dataclass(frozen=True)
 class ToolAlgorithmSpec:
@@ -133,19 +148,41 @@ def list_tool_algorithm_codes() -> List[str]:
     return [spec.code for spec in list_tool_algorithm_specs()]
 
 
+def _default_algorithm_display_name(code: str) -> str:
+    if code in _LEARNING_DISPLAY_NAMES:
+        return _LEARNING_DISPLAY_NAMES[code]
+    if code in _TRADITIONAL_DISPLAY_NAMES:
+        return _TRADITIONAL_DISPLAY_NAMES[code]
+    if code in _MEASUREMENT_DISPLAY_NAMES:
+        return _MEASUREMENT_DISPLAY_NAMES[code]
+    spec = _TOOL_ALGORITHM_SPECS.get(code)
+    if spec is not None:
+        return spec.display_name
+    return code
+
+
+def _translated_display_name(code: str, fallback: str) -> str:
+    key = _ALGORITHM_DISPLAY_KEYS.get(code, "")
+    if not key:
+        return fallback
+    try:
+        from ui.i18n import tr
+    except Exception:
+        return fallback
+    return str(tr(key) or fallback)
+
+
 def algorithm_display_name(code: object) -> str:
     normalized = str(code or "").strip()
     if not normalized:
         return ""
-    if normalized in _LEARNING_DISPLAY_NAMES:
-        return _LEARNING_DISPLAY_NAMES[normalized]
-    if normalized in _TRADITIONAL_DISPLAY_NAMES:
-        return _TRADITIONAL_DISPLAY_NAMES[normalized]
-    if normalized in _MEASUREMENT_DISPLAY_NAMES:
-        return _MEASUREMENT_DISPLAY_NAMES[normalized]
-    spec = get_tool_algorithm_spec(normalized)
-    if spec is not None:
-        return spec.display_name
+    direct_name = _default_algorithm_display_name(normalized)
+    if direct_name != normalized or normalized in _ALGORITHM_DISPLAY_KEYS:
+        return _translated_display_name(normalized, direct_name)
+    normalized_tool = normalize_tool_algorithm_code(normalized)
+    translated_name = _default_algorithm_display_name(normalized_tool)
+    if translated_name != normalized_tool or normalized_tool in _ALGORITHM_DISPLAY_KEYS:
+        return _translated_display_name(normalized_tool, translated_name)
     return normalized
 
 

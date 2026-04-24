@@ -312,11 +312,11 @@ def _update_measurement_params_panel(tool_page) -> None:
         _set_measurement_row_visible(tool_page, tool_page.spin_measurement_pixel_size, is_line_distance)
         tool_page.cmb_measurement_line_a_tool.setEnabled(is_line_distance)
         tool_page.cmb_measurement_line_b_tool.setEnabled(is_line_distance)
-        tool_page.cmb_measurement_line_a_direction.setCurrentText(line_a_direction)
-        tool_page.cmb_measurement_line_b_direction.setCurrentText(line_b_direction)
+        _set_combo_current_data(tool_page.cmb_measurement_line_a_direction, line_a_direction)
+        _set_combo_current_data(tool_page.cmb_measurement_line_b_direction, line_b_direction)
         tool_page.cmb_measurement_line_a_direction.setEnabled(is_find_line)
         tool_page.cmb_measurement_line_b_direction.setEnabled(not is_find_line and not is_line_distance)
-        tool_page.cmb_measurement_polarity.setCurrentText(polarity)
+        _set_combo_current_data(tool_page.cmb_measurement_polarity, polarity)
         tool_page.cmb_measurement_polarity.setEnabled(is_find_line)
         tool_page.spin_measurement_edge_threshold.setValue(float(edge_threshold))
         tool_page.spin_measurement_edge_threshold.setEnabled(is_find_line)
@@ -363,8 +363,16 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
     line_a = dict(params.get("line" if is_find_line else "line_a") or {})
     line_b = dict(params.get("line_b") or {})
     if is_find_line:
-        line_a["direction"] = str(tool_page.cmb_measurement_line_a_direction.currentText() or "left_right").strip()
-        polarity = str(tool_page.cmb_measurement_polarity.currentText() or "any").strip()
+        line_a["direction"] = str(
+            tool_page.cmb_measurement_line_a_direction.currentData()
+            or tool_page.cmb_measurement_line_a_direction.currentText()
+            or "left_right"
+        ).strip()
+        polarity = str(
+            tool_page.cmb_measurement_polarity.currentData()
+            or tool_page.cmb_measurement_polarity.currentText()
+            or "any"
+        ).strip()
         edge_threshold = float(tool_page.spin_measurement_edge_threshold.value())
         scan_step = int(tool_page.spin_measurement_scan_step.value())
         min_points = int(tool_page.spin_measurement_min_points.value())
@@ -386,9 +394,21 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
         params.pop("line_a", None)
         params.pop("line_b", None)
     else:
-        line_a["direction"] = str(tool_page.cmb_measurement_line_a_direction.currentText() or "left_right").strip()
-        line_b["direction"] = str(tool_page.cmb_measurement_line_b_direction.currentText() or "right_left").strip()
-        polarity = str(tool_page.cmb_measurement_polarity.currentText() or "any").strip()
+        line_a["direction"] = str(
+            tool_page.cmb_measurement_line_a_direction.currentData()
+            or tool_page.cmb_measurement_line_a_direction.currentText()
+            or "left_right"
+        ).strip()
+        line_b["direction"] = str(
+            tool_page.cmb_measurement_line_b_direction.currentData()
+            or tool_page.cmb_measurement_line_b_direction.currentText()
+            or "right_left"
+        ).strip()
+        polarity = str(
+            tool_page.cmb_measurement_polarity.currentData()
+            or tool_page.cmb_measurement_polarity.currentText()
+            or "any"
+        ).strip()
         edge_threshold = float(tool_page.spin_measurement_edge_threshold.value())
         scan_step = int(tool_page.spin_measurement_scan_step.value())
         min_points = int(tool_page.spin_measurement_min_points.value())
@@ -565,7 +585,8 @@ def _refresh_inspection_items_table(tool_page) -> None:
             algorithm_combo = QtWidgets.QComboBox(table)
             algorithm_combo.setStyleSheet(_inspection_combo_style(False))
             for spec in algorithm_specs:
-                algorithm_combo.addItem(spec.display_name, spec.code)
+                algorithm_name = tool_page.algo.algorithm_display_name(spec.code) or spec.display_name or spec.code
+                algorithm_combo.addItem(algorithm_name, spec.code)
             current_algorithm = normalize_tool_algorithm_code(inspection_item.algorithm_code)
             algorithm_index = algorithm_combo.findData(current_algorithm)
             if algorithm_index < 0:

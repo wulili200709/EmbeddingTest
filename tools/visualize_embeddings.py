@@ -32,6 +32,7 @@ from algorithms.registry import (
 )
 from domain import load_inspection_items
 from infrastructure.product_params import load_product_params
+from ui.i18n import tr
 
 
 @dataclass
@@ -122,6 +123,7 @@ def list_available_embedding_models(product_dir: str) -> List[EmbeddingModelEntr
         item.model_key: item
         for item in load_inspection_items(inspection_items_path)
     }
+    shared_model_name = tr("debug.embedding.shared_model")
 
     for name in sorted(os.listdir(product_dir)):
         parsed = _parse_register_model_filename(name)
@@ -129,7 +131,7 @@ def list_available_embedding_models(product_dir: str) -> List[EmbeddingModelEntr
             continue
         model_key, backbone = parsed
         item = items_by_key.get(model_key) if model_key else None
-        tool_name = "共享模型"
+        tool_name = shared_model_name
         if item is not None:
             base_name = str(item.display_name or item.roi_label or item.item_id or model_key).strip()
             roi_hint = f"{item.camera_id}/{item.roi_label}".strip("/")
@@ -171,12 +173,13 @@ def _find_embedding_model_entry(
     if normalized_backbone:
         legacy_path = register_model_path(product_dir, normalized_backbone)
         if os.path.exists(legacy_path):
+            shared_model_name = tr("debug.embedding.shared_model")
             return EmbeddingModelEntry(
                 model_key="",
                 backbone=normalized_backbone,
                 model_path=legacy_path,
-                display_name=f"共享模型 / {algorithm_display_name(normalized_backbone) or normalized_backbone}",
-                tool_name="共享模型",
+                display_name=f"{shared_model_name} / {algorithm_display_name(normalized_backbone) or normalized_backbone}",
+                tool_name=shared_model_name,
             )
     return None
 

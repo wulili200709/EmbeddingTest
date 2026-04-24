@@ -13,6 +13,7 @@ if str(PROJECT_DIR) not in sys.path:
 from algorithms.registry import (
     DEFAULT_LEARNING_BACKBONE,
     SHARED_BACKBONE_ALGORITHM_CODE,
+    algorithm_display_name,
     get_tool_algorithm_spec,
     is_learning_tool_algorithm,
     is_measurement_tool_algorithm,
@@ -21,6 +22,7 @@ from algorithms.registry import (
 )
 from application.algorithm_controller import AlgorithmController
 from infrastructure.product_params import ProductRuntimeParams
+from ui.i18n import language_code, set_language
 
 
 class ToolAlgorithmRegistryTest(unittest.TestCase):
@@ -65,6 +67,21 @@ class ToolAlgorithmRegistryTest(unittest.TestCase):
             controller.load_params(str(Path(tmpdir) / "product_params.json"))
         self.assertEqual(controller.product_params.algorithm, "")
         self.assertEqual(controller.current_learning_backbone(), "")
+
+    def test_algorithm_display_name_follows_current_language(self) -> None:
+        previous = language_code()
+        try:
+            set_language("en_US", persist=False)
+            self.assertEqual(algorithm_display_name(SHARED_BACKBONE_ALGORITHM_CODE), "Learning Tools")
+            self.assertEqual(algorithm_display_name("efficientnet_b0"), "High-Accuracy Learning Tool")
+            self.assertEqual(algorithm_display_name("line_distance"), "Line Distance")
+
+            set_language("zh_CN", persist=False)
+            self.assertEqual(algorithm_display_name(SHARED_BACKBONE_ALGORITHM_CODE), "学习工具")
+            self.assertEqual(algorithm_display_name("efficientnet_b0"), "高精度学习工具")
+            self.assertEqual(algorithm_display_name("line_distance"), "距离测量")
+        finally:
+            set_language(previous, persist=False)
 
 
 if __name__ == "__main__":
