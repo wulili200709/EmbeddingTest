@@ -2213,6 +2213,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self._refresh_reference_canvas()
             self._refresh_reference_region_fields()
             self._save_recipe()
+            self.referenceRegionsChanged.emit()
             self._set_reference_status(f"已新增基准 ROI：{label}")
             return
         if 0 <= self._selected_reference_idx < len(self._reference_regions):
@@ -2225,6 +2226,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self._refresh_reference_region_list()
             self._refresh_reference_canvas()
             self._save_recipe()
+            self.referenceRegionsChanged.emit()
             self._set_reference_status(f"已更新基准 ROI：{label}")
 
     def _on_reference_shape_changed(self, shape_name: str) -> None:
