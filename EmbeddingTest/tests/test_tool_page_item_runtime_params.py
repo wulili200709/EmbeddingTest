@@ -24,13 +24,13 @@ from ui.debug.tool_page.page import ToolPage
 class _RuntimeParamsAlgo:
     def __init__(self) -> None:
         self.product_params = SimpleNamespace(
-            algorithm="efficientnet_b0",
+            algorithm="b0",
             score_mode="proto",
             margin=0.02,
             topk=3,
         )
         self.model = SimpleNamespace(
-            backbone="efficientnet_b0",
+            backbone="b0",
             device="cpu",
             score_mode="proto",
             margin=0.02,
@@ -48,19 +48,19 @@ class _RuntimeParamsAlgo:
         return str(code or "").strip() == "shared_backbone_register"
 
     def current_learning_backbone(self) -> str:
-        return "efficientnet_b0"
+        return "b0"
 
     def resolve_tool_algorithm(self, code) -> str:
         normalized = str(code or "").strip()
         if normalized == "shared_backbone_register":
-            return "efficientnet_b0"
+            return "b0"
         return normalized
 
     def resolve_learning_algorithm(self, code) -> str:
         return self.resolve_tool_algorithm(code)
 
     def is_embedding_algorithm(self, algorithm) -> bool:
-        return str(algorithm or "").strip() in {"efficientnet_b0", "patchcore_lite"}
+        return str(algorithm or "").strip() in {"b0", "patchcore_lite"}
 
     def is_anomaly_tool(self, code) -> bool:
         return str(code or "").strip() == "patchcore_lite"
@@ -88,7 +88,7 @@ class _RuntimeParamsAlgo:
         )
         if str(algorithm) == "patchcore_lite":
             self.model = SimpleNamespace(
-                backbone="efficientnet_b0",
+                backbone="b0",
                 device="cpu",
                 threshold=float(self.product_params.margin),
                 topk=int(self.product_params.topk),
@@ -133,7 +133,7 @@ class _RuntimeParamsAlgo:
         if str(algorithm) == "patchcore_lite":
             model = SimpleNamespace(
                 algorithm="patchcore_lite",
-                backbone="efficientnet_b0",
+                backbone="b0",
                 threshold=0.44,
                 topk=int(self.product_params.topk),
                 device="cpu",
@@ -226,7 +226,7 @@ class _RuntimeParamsHarness:
             ),
         ]
         self._selected_index = 0
-        self.current_algorithm_value = "efficientnet_b0"
+        self.current_algorithm_value = "b0"
         self._updating_runtime_params = False
         self.persist_calls = 0
         self.save_runtime_calls = 0
@@ -288,11 +288,11 @@ class ToolPageItemRuntimeParamsTest(unittest.TestCase):
         harness = _RuntimeParamsHarness()
         try:
             harness._selected_index = 0
-            harness.current_algorithm_value = "efficientnet_b0"
+            harness.current_algorithm_value = "b0"
 
             harness._apply_runtime_params_to_ui()
 
-            self.assertEqual(harness.current_algorithm_value, "efficientnet_b0")
+            self.assertEqual(harness.current_algorithm_value, "b0")
             self.assertEqual(harness.cmb_mode.currentText(), "topk")
             self.assertAlmostEqual(harness.spin_margin.value(), 0.11)
             self.assertEqual(harness.spin_topk.value(), 7)
@@ -305,7 +305,7 @@ class ToolPageItemRuntimeParamsTest(unittest.TestCase):
         harness = _RuntimeParamsHarness()
         try:
             harness._selected_index = 1
-            harness.current_algorithm_value = "efficientnet_b0"
+            harness.current_algorithm_value = "b0"
             harness.cmb_mode.setCurrentText("topk")
             harness.spin_margin.setValue(0.58)
             harness.spin_topk.setValue(9)
@@ -328,7 +328,7 @@ class ToolPageItemRuntimeParamsTest(unittest.TestCase):
         try:
             harness._selected_index = 0
 
-            harness.load_embedding_model("efficientnet_b0", model_key="cam1__roi2")
+            harness.load_embedding_model("b0", model_key="cam1__roi2")
 
             self.assertEqual(len(harness.algo.load_calls), 1)
             self.assertEqual(harness.algo.load_calls[0]["model_key"], "cam1__roi2")

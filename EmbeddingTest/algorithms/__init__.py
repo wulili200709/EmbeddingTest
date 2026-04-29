@@ -11,6 +11,7 @@ from .registry import (
     is_traditional_tool_algorithm,
     list_tool_algorithm_codes,
     list_tool_algorithm_specs,
+    normalize_learning_backbone,
     normalize_tool_algorithm_code,
 )
 
@@ -25,5 +26,6 @@ __all__ = [
     "is_traditional_tool_algorithm",
     "list_tool_algorithm_codes",
     "list_tool_algorithm_specs",
+    "normalize_learning_backbone",
     "normalize_tool_algorithm_code",
 ]

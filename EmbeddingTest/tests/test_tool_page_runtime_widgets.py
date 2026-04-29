@@ -48,7 +48,7 @@ class _ToolPageRuntimeWidgetsHarness:
         return None
 
     def current_algorithm(self) -> str:
-        return "efficientnet_b0"
+        return "b0"
 
     def _is_embedding_algorithm(self, algorithm: str | None = None) -> bool:
         return True

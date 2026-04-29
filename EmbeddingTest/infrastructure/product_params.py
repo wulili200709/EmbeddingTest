@@ -5,6 +5,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict
 
+from algorithms.registry import normalize_learning_backbone
+
 
 @dataclass
 class ProductRuntimeParams:
@@ -20,9 +22,11 @@ class ProductRuntimeParams:
         traditional_models = data.get("traditional_models", {})
         if not isinstance(traditional_models, dict):
             traditional_models = {}
+        algorithm = normalize_learning_backbone(str(data.get("algorithm", "")).strip())
+        learning_backbone = normalize_learning_backbone(str(data.get("learning_backbone", "")).strip())
         return cls(
-            algorithm=str(data.get("algorithm", "")).strip(),
-            learning_backbone=str(data.get("learning_backbone", "")).strip(),
+            algorithm=algorithm,
+            learning_backbone=learning_backbone,
             score_mode=str(data.get("score_mode", "proto")),
             margin=float(data.get("margin", 0.02)),
             topk=int(data.get("topk", 3)),
@@ -41,7 +45,7 @@ def load_product_params(path: str) -> ProductRuntimeParams:
     p = Path(path)
     if not p.exists():
         return ProductRuntimeParams()
-    data = json.loads(p.read_text(encoding="utf-8"))
+    data = json.loads(p.read_text(encoding="utf-8-sig"))
     if not isinstance(data, dict):
         raise ValueError(f"Invalid product params: {p}")
     return ProductRuntimeParams.from_dict(data)

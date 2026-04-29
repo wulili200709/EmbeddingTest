@@ -38,7 +38,7 @@ class _FakeAlgo:
         return str(code or "").strip() == "shared_backbone_register"
 
     def current_learning_backbone(self) -> str:
-        return "efficientnet_b0"
+        return "b0"
 
     def resolve_tool_algorithm(self, code) -> str:
         return str(code or "").strip()
@@ -77,7 +77,7 @@ class _FakeAlgo:
                 "ng_samples": list(ng_samples or []),
             }
         )
-        if str(algorithm or "").strip() != "efficientnet_b0":
+        if str(algorithm or "").strip() != "b0":
             self.product_params.traditional_models[
                 self.traditional_model_storage_key(algorithm, model_key=model_key)
             ] = {
@@ -273,14 +273,14 @@ class ToolPageCameraRoleFilterTest(unittest.TestCase):
 
         result = harness._train_inspection_item(harness.inspection_items[0])
 
-        self.assertEqual(result.algorithm, "efficientnet_b0")
+        self.assertEqual(result.algorithm, "b0")
         self.assertEqual(
             harness.algo.train_calls,
             [
                 {
                     "ok_files": ["cam1_ok_a.png"],
                     "ng_files": ["cam1_ng_a.png"],
-                    "algorithm": "efficientnet_b0",
+                    "algorithm": "b0",
                     "product_dir": "demo_product",
                     "label_names": ["roi1"],
                     "model_key": "cam1__roi1",

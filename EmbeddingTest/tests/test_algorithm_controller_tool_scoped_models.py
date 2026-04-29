@@ -24,7 +24,7 @@ class AlgorithmControllerToolScopedModelsTest(unittest.TestCase):
     def test_embedding_model_path_uses_tool_key(self) -> None:
         controller = AlgorithmController()
         path = controller.embedding_model_path(
-            "efficientnet_b0",
+            "b0",
             "C:/demo/product",
             model_key="cam1__roi1",
         )
@@ -32,9 +32,9 @@ class AlgorithmControllerToolScopedModelsTest(unittest.TestCase):
 
     def test_load_embedding_model_reuses_unchanged_model_file(self) -> None:
         controller = AlgorithmController()
-        controller.set_learning_backbone("efficientnet_b0")
+        controller.set_learning_backbone("b0")
         fake_model = SimpleNamespace(
-            backbone="efficientnet_b0",
+            backbone="b0",
             device="cpu",
             score_mode="proto",
             margin=0.1,
@@ -45,7 +45,7 @@ class AlgorithmControllerToolScopedModelsTest(unittest.TestCase):
             product_dir = Path(tmpdir)
             model_path = Path(
                 controller.embedding_model_path(
-                    "efficientnet_b0",
+                    "b0",
                     str(product_dir),
                     model_key="cam1__roi1",
                 )
@@ -58,13 +58,13 @@ class AlgorithmControllerToolScopedModelsTest(unittest.TestCase):
                 {"load_register_model_npz": load_mock},
             ):
                 first_model, _first_msg = controller.load_model_for_algorithm(
-                    "efficientnet_b0",
+                    "b0",
                     str(product_dir),
                     model_key="cam1__roi1",
                 )
                 controller.product_params.margin = 0.6
                 second_model, _second_msg = controller.load_model_for_algorithm(
-                    "efficientnet_b0",
+                    "b0",
                     str(product_dir),
                     model_key="cam1__roi1",
                 )
@@ -254,7 +254,7 @@ class AlgorithmControllerToolScopedModelsTest(unittest.TestCase):
         controller = AlgorithmController()
         fake_model = SimpleNamespace(
             algorithm="patchcore_lite",
-            backbone="efficientnet_b0",
+            backbone="b0",
             threshold=0.12,
             topk=5,
             device="cpu",
@@ -287,7 +287,7 @@ class AlgorithmControllerToolScopedModelsTest(unittest.TestCase):
         controller = AlgorithmController()
         controller.model = SimpleNamespace(
             algorithm="patchcore_lite",
-            backbone="efficientnet_b0",
+            backbone="b0",
             device="cpu",
             topk=3,
             threshold=0.25,

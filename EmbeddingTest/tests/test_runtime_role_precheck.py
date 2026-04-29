@@ -39,7 +39,7 @@ class _FakeRuntimeContext:
 
 
 class _FakeAlgo:
-    def __init__(self, *, traditional_models=None, backbone: str = "efficientnet_b0") -> None:
+    def __init__(self, *, traditional_models=None, backbone: str = "b0") -> None:
         self.product_params = SimpleNamespace(traditional_models=dict(traditional_models or {}))
         self.model = SimpleNamespace(backbone=backbone, device="cpu")
         self.feat_net_requests: list[str] = []
@@ -54,11 +54,11 @@ class _FakeAlgo:
         return is_traditional_tool_algorithm(code)
 
     def current_learning_backbone(self) -> str:
-        return "efficientnet_b0"
+        return "b0"
 
     def resolve_tool_algorithm(self, code) -> str:
         if is_learning_tool_algorithm(code):
-            return "efficientnet_b0"
+            return "b0"
         return str(code or "").strip()
 
     def get_feat_net(self, backbone: str, device=None):
@@ -144,8 +144,8 @@ class RuntimeRolePrecheckTest(unittest.TestCase):
         self.assertEqual(role_message, "")
         self.assertFalse(global_ok)
         self.assertEqual(global_message, "traditional algorithm meanintensity is not trained yet")
-        self.assertEqual(runtime_context.loaded_algorithms, [("efficientnet_b0", "cam1__roi1"), ("efficientnet_b0", "cam1__roi1")])
-        self.assertEqual(algo.feat_net_requests, ["efficientnet_b0", "efficientnet_b0"])
+        self.assertEqual(runtime_context.loaded_algorithms, [("b0", "cam1__roi1"), ("b0", "cam1__roi1")])
+        self.assertEqual(algo.feat_net_requests, ["b0", "b0"])
 
     def test_role_precheck_requires_grouped_traditional_model_key(self) -> None:
         items = [

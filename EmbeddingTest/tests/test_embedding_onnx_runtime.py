@@ -37,9 +37,9 @@ class _FakeSession:
 class EmbeddingOnnxRuntimeTest(unittest.TestCase):
     def test_ort_backbone_path_uses_project_session_cache_and_storage_code(self) -> None:
         expected = {
-            "efficientnet_b0": "lt01_features_opset17.onnx",
-            "mobilenet_v3_small": "lt02_features_opset17.onnx",
-            "mobilenet_v3_large": "lt03_features_opset17.onnx",
+            "b0": "lt01_features_opset17.onnx",
+            "b1": "lt02_features_opset17.onnx",
+            "b2": "lt03_features_opset17.onnx",
         }
         for backbone, file_name in expected.items():
             with self.subTest(backbone=backbone):
@@ -58,9 +58,9 @@ class EmbeddingOnnxRuntimeTest(unittest.TestCase):
 
     def test_load_backbone_prefers_onnxruntime_for_learning_backbones_on_cpu(self) -> None:
         expected_out_ch = {
-            "efficientnet_b0": 1280,
-            "mobilenet_v3_small": 576,
-            "mobilenet_v3_large": 960,
+            "b0": 1280,
+            "b1": 1280,
+            "b2": 1408,
         }
         for backbone, out_ch_expected in expected_out_ch.items():
             with self.subTest(backbone=backbone):
@@ -82,9 +82,9 @@ class EmbeddingOnnxRuntimeTest(unittest.TestCase):
 
     def test_load_backbone_falls_back_to_torch_when_ort_unavailable(self) -> None:
         expected_out_ch = {
-            "efficientnet_b0": 1280,
-            "mobilenet_v3_small": 576,
-            "mobilenet_v3_large": 960,
+            "b0": 1280,
+            "b1": 1280,
+            "b2": 1408,
         }
         for backbone, out_ch_expected in expected_out_ch.items():
             with self.subTest(backbone=backbone):

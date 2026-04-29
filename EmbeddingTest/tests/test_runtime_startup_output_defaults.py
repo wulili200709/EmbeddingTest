@@ -68,7 +68,7 @@ class _FakeTimer:
 
 
 class StartupOutputDefaultsTest(unittest.TestCase):
-    def test_reserved_output_is_enabled_on_startup(self) -> None:
+    def test_reserved_output_is_disabled_on_startup(self) -> None:
         runtime = _FakeRuntime()
         controller = _FakeController()
 
@@ -77,20 +77,20 @@ class StartupOutputDefaultsTest(unittest.TestCase):
         self.assertEqual(
             controller.calls,
             [
-                ("reserved_out_1", True),
+                ("reserved_out_1", False),
                 ("reserved_out_2", False),
-                ("button_green", True),
-                ("button_red", False),
+                ("button_green", False),
+                ("button_red", True),
                 ("button_blue", False),
             ],
         )
         self.assertEqual(
             runtime.logAppended.messages,
             [
-                "[IO] startup output default applied: reserved_out_1=ON",
+                "[IO] startup output default applied: reserved_out_1=OFF",
                 "[IO] startup output default applied: reserved_out_2=OFF",
-                "[IO] startup output default applied: button_green=ON",
-                "[IO] startup output default applied: button_red=OFF",
+                "[IO] startup output default applied: button_green=OFF",
+                "[IO] startup output default applied: button_red=ON",
                 "[IO] startup output default applied: button_blue=OFF",
             ],
         )
@@ -129,11 +129,11 @@ class StartupOutputDefaultsTest(unittest.TestCase):
 
         self.assertEqual(len(runtime.logAppended.messages), 5)
         self.assertIn("failed to apply startup output default", runtime.logAppended.messages[0])
-        self.assertIn("reserved_out_1=True", runtime.logAppended.messages[0])
+        self.assertIn("reserved_out_1=False", runtime.logAppended.messages[0])
         self.assertIn("failed to apply startup output default", runtime.logAppended.messages[1])
         self.assertIn("reserved_out_2=False", runtime.logAppended.messages[1])
-        self.assertIn("button_green=True", runtime.logAppended.messages[2])
-        self.assertIn("button_red=False", runtime.logAppended.messages[3])
+        self.assertIn("button_green=False", runtime.logAppended.messages[2])
+        self.assertIn("button_red=True", runtime.logAppended.messages[3])
         self.assertIn("button_blue=False", runtime.logAppended.messages[4])
 
     def test_shutdown_output_failure_is_logged_without_raising(self) -> None:

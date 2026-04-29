@@ -11,13 +11,13 @@ import numpy as np
 PATCHCORE_LITE_ALGORITHM = "patchcore_lite"
 ANOMALY_ALGORITHMS = [PATCHCORE_LITE_ALGORITHM]
 _ANOMALY_BACKBONES = {
-    PATCHCORE_LITE_ALGORITHM: "efficientnet_b0",
+    PATCHCORE_LITE_ALGORITHM: "b0",
 }
 
 
 def anomaly_backbone_for_algorithm(algorithm: str) -> str:
     normalized = str(algorithm or PATCHCORE_LITE_ALGORITHM).strip() or PATCHCORE_LITE_ALGORITHM
-    return _ANOMALY_BACKBONES.get(normalized, "efficientnet_b0")
+    return _ANOMALY_BACKBONES.get(normalized, "b0")
 
 
 def _normalize_labels(label_name: str, label_names: Optional[Sequence[str]]) -> List[str]:

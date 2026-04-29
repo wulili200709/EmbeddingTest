@@ -29,10 +29,10 @@ _SPLIT_BUTTON_BOX_INPUT_NAMES = {"conveyor_start", "conveyor_stop", "reset_butto
 _RUNTIME_IO_LOGIC_FILENAME = "runtime_io_logic.json"
 _BUILTIN_RUNTIME_IO_LOGIC_DEFAULTS = {
     "startup": [
-        {"type": "set_conveyor_run", "value": True, "reason": "startup default"},
+        {"type": "set_conveyor_run", "value": False, "reason": "startup default"},
         {"type": "set_buzzer", "value": False, "reason": "startup default"},
-        {"type": "set_output", "name": "button_green", "value": True, "reason": "startup default"},
-        {"type": "set_output", "name": "button_red", "value": False, "reason": "startup default"},
+        {"type": "set_output", "name": "button_green", "value": False, "reason": "startup default"},
+        {"type": "set_output", "name": "button_red", "value": True, "reason": "startup default"},
         {"type": "set_output", "name": "button_blue", "value": False, "reason": "startup default"},
     ],
     "shutdown": [

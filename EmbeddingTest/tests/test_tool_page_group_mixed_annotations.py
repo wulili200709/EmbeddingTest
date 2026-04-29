@@ -45,7 +45,7 @@ class _MixedGroupHarness:
         self.algo = SimpleNamespace(
             tool_model_key=lambda value: str(value or "").strip(),
             is_learning_tool=lambda code: str(code or "").strip() == "shared_backbone_register",
-            current_learning_backbone=lambda: "efficientnet_b0",
+            current_learning_backbone=lambda: "b0",
             resolve_tool_algorithm=lambda code: str(code or "").strip(),
             is_anomaly_tool=lambda _code: False,
         )

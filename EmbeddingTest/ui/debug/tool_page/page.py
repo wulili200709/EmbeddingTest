@@ -1057,15 +1057,9 @@ ALGORITHM_GROUPS = [
     (
         "学习工具",
         [
-            ("高精度学习", "efficientnet_b0", True),
-            ("轻量学习", "mobilenet_v3_small", True),
-            ("均衡学习", "mobilenet_v3_large", True),
-        ],
-    ),
-    (
-        "异常检测工具",
-        [
-            ("PatchCore Lite 异常检测", "patchcore_lite", True),
+            ("B0学习", "b0", True),
+            ("B1学习", "b1", True),
+            ("B2学习", "b2", True),
         ],
     ),
     (
@@ -2436,7 +2430,7 @@ class ToolPage(QtWidgets.QWidget):
         self.btn_sample_annotation = QtWidgets.QPushButton("样本标注...")
         self.btn_sample_annotation.setStyleSheet(_compact_btn)
         self.btn_sample_annotation.clicked.connect(self._open_sample_annotation_dialog)
-        self.btn_del_ok = QtWidgets.QPushButton(_si(SP.SP_DialogDiscardButton), "移除")
+        self.btn_del_ok = QtWidgets.QPushButton("移除")
         self.btn_del_ok.setStyleSheet(_compact_btn)
         self.btn_del_ok.clicked.connect(lambda: self._remove_selected_from("TRAIN"))
         train_actions.addWidget(self.btn_import_train, 0, 0)
@@ -2465,10 +2459,10 @@ class ToolPage(QtWidgets.QWidget):
         self.btn_test_to_train = QtWidgets.QPushButton("转为训练")
         self.btn_test_to_train.setStyleSheet(_compact_btn)
         self.btn_test_to_train.clicked.connect(lambda: self._move_selected_sample_to("TRAIN"))
-        self.btn_add_test = QtWidgets.QPushButton(_si(SP.SP_FileDialogStart), "添加外部图片")
+        self.btn_add_test = QtWidgets.QPushButton("添加外部图片")
         self.btn_add_test.setStyleSheet(_compact_btn)
         self.btn_add_test.clicked.connect(lambda: self._add_images_to("TEST"))
-        self.btn_del_test = QtWidgets.QPushButton(_si(SP.SP_DialogDiscardButton), "移除")
+        self.btn_del_test = QtWidgets.QPushButton("移除")
         self.btn_del_test.setStyleSheet(_compact_btn)
         self.btn_del_test.clicked.connect(lambda: self._remove_selected_from("TEST"))
         self.btn_sample_annotation_test = QtWidgets.QPushButton("一键清空")

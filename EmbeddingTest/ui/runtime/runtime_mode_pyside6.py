@@ -312,6 +312,44 @@ class _CameraSectionHeader(QtWidgets.QFrame):
         )
 
 
+def _localize_runtime_result_detail(detail_text: object) -> str:
+    text = " ".join(str(detail_text or "").strip().split())
+    if not text:
+        return ""
+    lower = text.lower()
+    if (
+        "match failure" in lower
+        or "did not find any match" in lower
+        or "no match" in lower
+        or "not find any match" in lower
+    ):
+        return "模板匹配失败"
+    if "missing line2dup model" in lower or "line2dup template" in lower:
+        return "模板未配置"
+    if "missing ncc model" in lower or "ncc model" in lower:
+        return "NCC模板未配置"
+    return text
+
+
+def _result_reason_display_text(result_text: object, detail_text: object) -> str:
+    result_upper = str(result_text or "").strip().upper()
+    if result_upper == "OK":
+        return ""
+    detail = _localize_runtime_result_detail(detail_text)
+    if not detail:
+        return "检测NG" if result_upper == "NG" else result_upper
+    for candidate in re.split(r"[；;\n]+", detail):
+        text = candidate.strip()
+        if not text:
+            continue
+        if re.fullmatch(r"cam\d+\s*=\s*(?:OK|NG|-)", text, flags=re.IGNORECASE):
+            continue
+        if text.startswith(("capture ", "match ", "infer ", "耗时 ")):
+            continue
+        return text
+    return "检测NG" if result_upper == "NG" else detail
+
+
 class RuntimeModePage(QtWidgets.QWidget):
     refreshCamerasRequested = QtCore.Signal()
     connectCamerasRequested = QtCore.Signal(object)
@@ -570,6 +608,20 @@ class RuntimeModePage(QtWidgets.QWidget):
         )
         total_layout.addWidget(self.lbl_final_result, 1)
 
+        self.lbl_result_reason = _ElidedLabel("")
+        self.lbl_result_reason.setMinimumHeight(24)
+        self.lbl_result_reason.setAlignment(QtCore.Qt.AlignCenter)
+        self.lbl_result_reason.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+        self.lbl_result_reason.setStyleSheet(
+            f"background:#303030;color:{_TEXT_DIM};font-size:13px;font-weight:bold;"
+            "border-radius:4px;padding:3px 6px;"
+        )
+        self.lbl_result_reason.hide()
+        total_layout.addWidget(self.lbl_result_reason)
+
         right_layout.addWidget(total_frame)
         body.addWidget(camera_frame)
         body.addWidget(right_panel)
@@ -739,7 +791,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         elif result_upper == "NG":
             bg = _NG_RED
             display = "NG"
-        elif result_upper in {"ERROR", "BLOCKED"}:
+        elif result_upper in {"ERROR", "BLOCKED", "PRECHECK_FAILED"}:
             bg = _NG_RED
             display = result_upper
         else:
@@ -750,6 +802,19 @@ class RuntimeModePage(QtWidgets.QWidget):
             f"background:{bg};color:white;font-size:16px;font-weight:bold;border-radius:4px;"
         )
         self.lbl_final_result.setToolTip(str(detail_text or ""))
+        reason_text = _result_reason_display_text(result_upper, detail_text)
+        if reason_text:
+            prefix = "不良原因" if result_upper == "NG" else "原因"
+            self.lbl_result_reason.setText(f"{prefix}: {reason_text}")
+            reason_color = _NG_RED if result_upper in {"NG", "ERROR", "BLOCKED", "PRECHECK_FAILED"} else _TEXT_DIM
+            self.lbl_result_reason.setStyleSheet(
+                f"background:#303030;color:{reason_color};font-size:13px;font-weight:bold;"
+                "border-radius:4px;padding:3px 6px;"
+            )
+            self.lbl_result_reason.show()
+        else:
+            self.lbl_result_reason.setText("")
+            self.lbl_result_reason.hide()
         if result_upper in {"OK", "NG"}:
             self._increment_result_counter(result_upper)
 

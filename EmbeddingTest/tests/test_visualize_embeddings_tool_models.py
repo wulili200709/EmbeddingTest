@@ -56,7 +56,7 @@ class VisualizeEmbeddingsToolModelsTest(unittest.TestCase):
 
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].model_key, "cam1__roi1")
-        self.assertEqual(entries[0].backbone, "efficientnet_b0")
+        self.assertEqual(entries[0].backbone, "b0")
         self.assertIn("螺丝1", entries[0].display_name)
 
     def test_list_available_embedding_models_uses_group_display_name(self) -> None:
@@ -116,8 +116,8 @@ class VisualizeEmbeddingsToolModelsTest(unittest.TestCase):
             (product_dir / "product_params.json").write_text(
                 json.dumps(
                     {
-                        "algorithm": "efficientnet_b0",
-                        "learning_backbone": "efficientnet_b0",
+                        "algorithm": "b0",
+                        "learning_backbone": "b0",
                         "score_mode": "proto",
                         "margin": 0.02,
                         "topk": 3,
@@ -143,7 +143,7 @@ class VisualizeEmbeddingsToolModelsTest(unittest.TestCase):
             model_path.write_bytes(b"npz")
 
             model = RegisterModel(
-                backbone="efficientnet_b0",
+                backbone="b0",
                 score_mode="proto",
                 margin=0.02,
                 topk=3,
@@ -173,7 +173,7 @@ class VisualizeEmbeddingsToolModelsTest(unittest.TestCase):
                 result = load_product_analysis(
                     session_root=str(session_root),
                     product_name="demo_product",
-                    backbone="efficientnet_b0",
+                    backbone="b0",
                     model_key="cam1__roi1",
                     projection_method="pca",
                 )
@@ -215,8 +215,8 @@ class VisualizeEmbeddingsToolModelsTest(unittest.TestCase):
             (product_dir / "product_params.json").write_text(
                 json.dumps(
                     {
-                        "algorithm": "efficientnet_b0",
-                        "learning_backbone": "efficientnet_b0",
+                        "algorithm": "b0",
+                        "learning_backbone": "b0",
                         "score_mode": "proto",
                         "margin": 0.02,
                         "topk": 3,
@@ -243,7 +243,7 @@ class VisualizeEmbeddingsToolModelsTest(unittest.TestCase):
             model_path.write_bytes(b"npz")
 
             model = RegisterModel(
-                backbone="efficientnet_b0",
+                backbone="b0",
                 score_mode="proto",
                 margin=0.02,
                 topk=3,
@@ -282,7 +282,7 @@ class VisualizeEmbeddingsToolModelsTest(unittest.TestCase):
                 result = load_product_analysis(
                     session_root=str(session_root),
                     product_name="demo_product",
-                    backbone="efficientnet_b0",
+                    backbone="b0",
                     model_key="cam1__pusher",
                     projection_method="pca",
                 )
@@ -377,8 +377,8 @@ class VisualizeEmbeddingsToolModelsTest(unittest.TestCase):
             (product_dir / "product_params.json").write_text(
                 json.dumps(
                     {
-                        "algorithm": "efficientnet_b0",
-                        "learning_backbone": "efficientnet_b0",
+                        "algorithm": "b0",
+                        "learning_backbone": "b0",
                         "score_mode": "proto",
                         "margin": 0.02,
                         "topk": 3,
@@ -413,7 +413,7 @@ class VisualizeEmbeddingsToolModelsTest(unittest.TestCase):
             model_path.write_bytes(b"npz")
 
             model = RegisterModel(
-                backbone="efficientnet_b0",
+                backbone="b0",
                 score_mode="proto",
                 margin=0.02,
                 topk=3,
@@ -461,7 +461,7 @@ class VisualizeEmbeddingsToolModelsTest(unittest.TestCase):
                 result = load_product_analysis(
                     session_root=str(session_root),
                     product_name="demo_product",
-                    backbone="efficientnet_b0",
+                    backbone="b0",
                     model_key="cam1__hole",
                     projection_method="pca",
                 )

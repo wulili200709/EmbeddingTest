@@ -51,6 +51,7 @@ from algorithms.registry import (
     is_learning_tool_algorithm,
     is_traditional_tool_algorithm,
     learning_backbone_storage_code,
+    normalize_learning_backbone,
     normalize_tool_algorithm_code,
 )
 from infrastructure.product_params import (
@@ -188,16 +189,16 @@ class AlgorithmController:
         return not is_traditional_algorithm(normalized)
 
     def current_learning_backbone(self) -> str:
-        backbone = str(self.product_params.learning_backbone or "").strip()
+        backbone = normalize_learning_backbone(self.product_params.learning_backbone)
         if backbone in SUPPORTED_EMBEDDING_ALGORITHMS:
             return backbone
-        algorithm = str(self.product_params.algorithm or "").strip()
+        algorithm = normalize_learning_backbone(self.product_params.algorithm)
         if algorithm in SUPPORTED_EMBEDDING_ALGORITHMS:
             return algorithm
         return ""
 
     def set_learning_backbone(self, backbone: str) -> str:
-        normalized = str(backbone or "").strip()
+        normalized = normalize_learning_backbone(backbone)
         if normalized not in SUPPORTED_EMBEDDING_ALGORITHMS:
             normalized = DEFAULT_LEARNING_BACKBONE
         self.product_params.learning_backbone = normalized
@@ -206,7 +207,7 @@ class AlgorithmController:
         return normalized
 
     def resolve_learning_algorithm(self, algorithm: object) -> str:
-        normalized = str(algorithm or "").strip()
+        normalized = normalize_learning_backbone(algorithm)
         if not normalized:
             return ""
         if normalize_tool_algorithm_code(normalized) == SHARED_BACKBONE_ALGORITHM_CODE:
@@ -321,7 +322,7 @@ class AlgorithmController:
         return True
 
     def get_feat_net(self, backbone: str, device: Optional[str] = None) -> Any:
-        normalized_backbone = str(backbone or "").strip()
+        normalized_backbone = normalize_learning_backbone(backbone)
         if not normalized_backbone:
             raise ValueError("backbone is required")
         normalized_device = str(device or qr_core.get_device()).strip() or "cpu"

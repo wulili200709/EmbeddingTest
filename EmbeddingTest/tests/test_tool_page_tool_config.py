@@ -32,7 +32,7 @@ class _DummyAlgo:
         return algorithm_code == SHARED_BACKBONE_ALGORITHM_CODE
 
     def current_learning_backbone(self) -> str:
-        return "efficientnet_b0"
+        return "b0"
 
     def embedding_model_path(self, backbone: str, product_dir: str, model_key: str | None = None) -> str:
         suffix = model_key or "shared"
@@ -214,7 +214,7 @@ class ToolPageToolConfigTest(unittest.TestCase):
             self.assertEqual(QtGui.QColor(color).name().lower(), "#00c8c8")
             self.assertGreaterEqual(width, 3.0)
             self.assertFalse(dash)
-            self.assertEqual(harness.current_algorithm_value, "efficientnet_b0")
+            self.assertEqual(harness.current_algorithm_value, "b0")
         finally:
             harness.cleanup()
 

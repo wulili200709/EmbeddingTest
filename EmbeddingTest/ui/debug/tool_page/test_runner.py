@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from algorithms.registry import normalize_learning_backbone
 from line2dup.core import locator as line2dup_locator
 
 
@@ -197,10 +198,14 @@ def _append_test_log(tool_page, row: Dict[str, object]) -> str:
         writer = csv.DictWriter(f, fieldnames=fields)
         if not file_exists:
             writer.writeheader()
+        algorithm = row.get("algorithm", tool_page.current_algorithm())
+        normalized_algorithm = normalize_learning_backbone(algorithm)
+        if normalized_algorithm in {"b0", "b1", "b2"}:
+            algorithm = normalized_algorithm
         writer.writerow({
             "timestamp": datetime.now().isoformat(timespec="seconds"),
             "product": tool_page.session.current_product,
-            "algorithm": row.get("algorithm", tool_page.current_algorithm()),
+            "algorithm": algorithm,
             "score_mode": row.get("score_mode", tool_page.cmb_mode.currentText()),
             "margin": row.get("margin", float(tool_page.spin_margin.value())),
             "topk": row.get("topk", int(tool_page.spin_topk.value())),

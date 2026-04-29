@@ -657,7 +657,7 @@ def visualize_analysis_matplotlib(result: EmbeddingAnalysisResult):
 if __name__ == "__main__":
     SESSION_ROOT = ".qr_session"
     PRODUCT_NAME = "Screw"
-    BACKBONE = "efficientnet_b0"
+    BACKBONE = "b0"
 
     analysis = load_product_analysis(
         session_root=SESSION_ROOT,

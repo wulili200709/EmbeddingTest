@@ -373,9 +373,9 @@ def generate_report(*, session_root: str, product_name: str, model_key: str, out
     product_dir = os.path.join(session_root, product_name)
     os.makedirs(output_dir, exist_ok=True)
     model_specs = [
-        ("efficientnet_b0", "lt01"),
-        ("mobilenet_v3_small", "lt02"),
-        ("mobilenet_v3_large", "lt03"),
+        ("b0", "lt01"),
+        ("b1", "lt02"),
+        ("b2", "lt03"),
     ]
     reports = [
         _build_model_report(

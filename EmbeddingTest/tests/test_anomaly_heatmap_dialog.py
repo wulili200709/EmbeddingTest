@@ -44,7 +44,7 @@ class AnomalyHeatmapDialogTest(unittest.TestCase):
     def test_dialog_renders_summary_and_tabs(self) -> None:
         model = AnomalyModel(
             algorithm="patchcore_lite",
-            backbone="efficientnet_b0",
+            backbone="b0",
             threshold=0.10,
             topk=1,
             label_name="roi1",

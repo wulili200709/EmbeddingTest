@@ -37,17 +37,17 @@ class AlgorithmControllerFeatNetCacheTest(unittest.TestCase):
             return_value="cpu",
             create=True,
         ):
-            feat_net_1 = controller.get_feat_net("efficientnet_b0", "cpu")
-            feat_net_2 = controller.get_feat_net("efficientnet_b0", "cpu")
+            feat_net_1 = controller.get_feat_net("b0", "cpu")
+            feat_net_2 = controller.get_feat_net("b0", "cpu")
 
         self.assertIs(feat_net_1, feat_net_2)
-        self.assertEqual(load_calls, [("efficientnet_b0", "cpu")])
+        self.assertEqual(load_calls, [("b0", "cpu")])
 
     def test_predict_image_uses_cached_feat_net_when_not_provided(self) -> None:
         controller = AlgorithmController()
-        controller.product_params.algorithm = "efficientnet_b0"
+        controller.product_params.algorithm = "b0"
         controller.model = SimpleNamespace(
-            backbone="efficientnet_b0",
+            backbone="b0",
             device="cpu",
             score_mode="proto",
             margin=0.02,
@@ -87,7 +87,7 @@ class AlgorithmControllerFeatNetCacheTest(unittest.TestCase):
                 controller.predict_image(str(image_path), labels=["roi1", "roi2"])
                 controller.predict_image(str(image_path), labels=["roi1", "roi2"])
 
-        self.assertEqual(load_calls, [("efficientnet_b0", "cpu")])
+        self.assertEqual(load_calls, [("b0", "cpu")])
 
 
 if __name__ == "__main__":

@@ -6,30 +6,40 @@ from .traditional import TRADITIONAL_ALGORITHMS
 
 
 LEARNING_BACKBONES = [
-    "efficientnet_b0",
-    "mobilenet_v3_small",
-    "mobilenet_v3_large",
+    "b0",
+    "b1",
+    "b2",
 ]
 DEFAULT_LEARNING_BACKBONE = LEARNING_BACKBONES[0]
 SHARED_BACKBONE_ALGORITHM_CODE = "shared_backbone_register"
+
+LEGACY_LEARNING_BACKBONE_ALIASES = {
+    "efficientnet_b0": "b0",
+    "efficientnet_b1": "b1",
+    "efficientnet_b2": "b2",
+    "mobilenet_v3_small": "b1",
+    "mobilenet_v3_large": "b2",
+}
+
 LEGACY_SHARED_BACKBONE_ALGORITHM_CODES = {
     "",
     "inherit_product",
     "inherit_product_backbone",
     SHARED_BACKBONE_ALGORITHM_CODE,
     *LEARNING_BACKBONES,
+    *LEGACY_LEARNING_BACKBONE_ALIASES.keys(),
 }
 
 _LEARNING_DISPLAY_NAMES = {
-    "efficientnet_b0": "高精度学习",
-    "mobilenet_v3_small": "轻量学习",
-    "mobilenet_v3_large": "均衡学习",
+    "b0": "B0学习",
+    "b1": "B1学习",
+    "b2": "B2学习",
 }
 
 _LEARNING_STORAGE_CODES = {
-    "efficientnet_b0": "lt01",
-    "mobilenet_v3_small": "lt02",
-    "mobilenet_v3_large": "lt03",
+    "b0": "lt01",
+    "b1": "lt02",
+    "b2": "lt03",
 }
 _STORAGE_CODE_TO_BACKBONE = {
     value: key
@@ -92,6 +102,17 @@ def normalize_tool_algorithm_code(code: object) -> str:
     return normalized
 
 
+def normalize_learning_backbone(code: object) -> str:
+    normalized = str(code or "").strip()
+    if not normalized:
+        return ""
+    if normalized in _STORAGE_CODE_TO_BACKBONE:
+        return _STORAGE_CODE_TO_BACKBONE[normalized]
+    if normalized in LEGACY_LEARNING_BACKBONE_ALIASES:
+        return LEGACY_LEARNING_BACKBONE_ALIASES[normalized]
+    return normalized
+
+
 def get_tool_algorithm_spec(code: object) -> Optional[ToolAlgorithmSpec]:
     normalized = normalize_tool_algorithm_code(code)
     return _TOOL_ALGORITHM_SPECS.get(normalized)
@@ -118,7 +139,7 @@ def list_tool_algorithm_codes() -> List[str]:
 
 
 def algorithm_display_name(code: object) -> str:
-    normalized = str(code or "").strip()
+    normalized = normalize_learning_backbone(code)
     if not normalized:
         return ""
     if normalized in _LEARNING_DISPLAY_NAMES:
@@ -134,7 +155,7 @@ def algorithm_display_name(code: object) -> str:
 
 
 def learning_backbone_storage_code(code: object) -> str:
-    normalized = str(code or "").strip()
+    normalized = normalize_learning_backbone(code)
     if not normalized:
         return ""
     return _LEARNING_STORAGE_CODES.get(normalized, normalized)
@@ -144,7 +165,7 @@ def storage_code_backbone(code: object) -> str:
     normalized = str(code or "").strip()
     if not normalized:
         return ""
-    return _STORAGE_CODE_TO_BACKBONE.get(normalized, normalized)
+    return _STORAGE_CODE_TO_BACKBONE.get(normalized, normalize_learning_backbone(normalized))
 
 
 def is_learning_tool_algorithm(code: object) -> bool:
@@ -165,6 +186,7 @@ def is_traditional_tool_algorithm(code: object) -> bool:
 __all__ = [
     "DEFAULT_LEARNING_BACKBONE",
     "LEARNING_BACKBONES",
+    "LEGACY_LEARNING_BACKBONE_ALIASES",
     "LEGACY_SHARED_BACKBONE_ALGORITHM_CODES",
     "SHARED_BACKBONE_ALGORITHM_CODE",
     "ToolAlgorithmSpec",
@@ -176,6 +198,7 @@ __all__ = [
     "learning_backbone_storage_code",
     "list_tool_algorithm_codes",
     "list_tool_algorithm_specs",
+    "normalize_learning_backbone",
     "normalize_tool_algorithm_code",
     "storage_code_backbone",
 ]

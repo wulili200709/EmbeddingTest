@@ -11,6 +11,50 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 
+_TIMING_PREFIXES = ("capture", "match", "infer", "total", "耗时")
+
+
+def _clean_text(text: object) -> str:
+    return " ".join(str(text or "").strip().split())
+
+
+def _display_name_with_ng(name: object) -> str:
+    text = _clean_text(name)
+    if not text:
+        return ""
+    return text if text.upper().endswith("NG") else f"{text}NG"
+
+
+def _localize_failure_text(text: object) -> str:
+    raw = _clean_text(text)
+    if not raw:
+        return ""
+    lower = raw.lower()
+    if (
+        "match failure" in lower
+        or "did not find any match" in lower
+        or "no match" in lower
+        or "not find any match" in lower
+    ):
+        return "模板匹配失败"
+    if "missing line2dup model" in lower or "line2dup template" in lower:
+        return "模板未配置"
+    if "missing ncc model" in lower or "ncc model" in lower:
+        return "NCC模板未配置"
+    return raw
+
+
+def _strip_timing_parts(text: object) -> str:
+    parts: List[str] = []
+    for part in _clean_text(text).replace("；", " ").split():
+        if part.startswith(_TIMING_PREFIXES):
+            continue
+        if "=" in part and part.split("=", 1)[0] in {"capture", "match", "infer", "total"}:
+            continue
+        parts.append(part)
+    return " ".join(parts)
+
+
 @dataclass
 class InspectionItemResult:
     item_id: str
@@ -112,10 +156,13 @@ class RuntimeInspectionResult:
 
     def summary_text(self) -> str:
         parts: List[str] = []
+        failure_text = self.failure_summary_text()
+        if failure_text:
+            parts.append(failure_text)
         for camera_id in sorted(self.camera_results.keys()):
             result = self.camera_results[camera_id].result or "-"
             parts.append(f"{camera_id}={result}")
-        if self.error_message:
+        if self.error_message and self.error_message not in parts:
             parts.append(self.error_message)
         if self.capture_ms:
             parts.append(f"capture {self.capture_ms:.1f} ms")
@@ -126,6 +173,46 @@ class RuntimeInspectionResult:
         if self.duration_ms:
             parts.append(f"耗时 {self.duration_ms} ms")
         return "；".join(parts) if parts else "本次没有检测结果"
+
+    def failure_summary_text(self, *, max_items: int = 5) -> str:
+        error_text = _localize_failure_text(self.error_message)
+        if error_text:
+            return error_text
+
+        ng_items = [
+            item
+            for item in self.item_results
+            if str(item.result or "").strip().upper() == "NG"
+        ]
+        names: List[str] = []
+        seen: set[str] = set()
+        for item in ng_items:
+            name = (
+                _clean_text(item.display_name)
+                or _clean_text(item.item_id)
+                or _clean_text(item.roi_label)
+            )
+            display = _display_name_with_ng(name)
+            if display and display not in seen:
+                names.append(display)
+                seen.add(display)
+        if names:
+            shown = names[: max(1, int(max_items))]
+            suffix = f" 等{len(names)}项NG" if len(names) > len(shown) else ""
+            return "、".join(shown) + suffix
+
+        for camera_id in sorted(self.camera_results.keys()):
+            camera = self.camera_results[camera_id]
+            if str(camera.result or "").strip().upper() != "NG":
+                continue
+            detail = _strip_timing_parts(camera.detail)
+            localized = _localize_failure_text(detail)
+            if localized:
+                if localized.startswith("NG:"):
+                    localized = localized[3:].strip()
+                if localized:
+                    return localized
+        return ""
 
     def to_record_extra_fields(self) -> Dict[str, object]:
         row: Dict[str, object] = {}

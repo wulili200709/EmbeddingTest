@@ -43,11 +43,11 @@ class _DummyAlgo:
         return str(algorithm_code) == "shared_backbone_register"
 
     def current_learning_backbone(self) -> str:
-        return "efficientnet_b0"
+        return "b0"
 
     def resolve_tool_algorithm(self, algorithm_code: str) -> str:
         if str(algorithm_code) == "shared_backbone_register":
-            return "efficientnet_b0"
+            return "b0"
         return str(algorithm_code)
 
 
@@ -111,7 +111,7 @@ class _Harness:
         self.loaded_paths.append(path)
 
     def current_algorithm(self) -> str:
-        return "efficientnet_b0"
+        return "b0"
 
     def _update_sample_panel_widgets(self) -> None:
         return None

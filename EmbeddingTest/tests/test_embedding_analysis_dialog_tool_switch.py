@@ -21,7 +21,7 @@ from ui.debug.embedding_analysis_dialog import EmbeddingAnalysisDialog
 def _analysis_result(tool_name: str, model_path: str, model_key: str) -> EmbeddingAnalysisResult:
     return EmbeddingAnalysisResult(
         product_name="demo_product",
-        backbone="efficientnet_b0",
+        backbone="b0",
         model_path=model_path,
         session_file="session.json",
         projection_method="pca",
@@ -62,14 +62,14 @@ class EmbeddingAnalysisDialogToolSwitchTest(unittest.TestCase):
         entries = [
             EmbeddingModelEntry(
                 model_key="cam1__roi1",
-                backbone="efficientnet_b0",
+                backbone="b0",
                 model_path="cam1__roi1_register_model_lt01.npz",
                 display_name="密封圈1 (cam1/roi1) / 高精度学习工具",
                 tool_name="密封圈1 (cam1/roi1)",
             ),
             EmbeddingModelEntry(
                 model_key="cam1__roi2",
-                backbone="efficientnet_b0",
+                backbone="b0",
                 model_path="cam1__roi2_register_model_lt01.npz",
                 display_name="密封圈2 (cam1/roi2) / 高精度学习工具",
                 tool_name="密封圈2 (cam1/roi2)",
@@ -90,7 +90,7 @@ class EmbeddingAnalysisDialogToolSwitchTest(unittest.TestCase):
             dialog = EmbeddingAnalysisDialog(
                 session_root="dummy_root",
                 initial_product="demo_product",
-                initial_backbone="efficientnet_b0",
+                initial_backbone="b0",
                 initial_model_key="cam1__roi1",
             )
             try:
@@ -113,37 +113,37 @@ class EmbeddingAnalysisDialogToolSwitchTest(unittest.TestCase):
         entries = [
             EmbeddingModelEntry(
                 model_key="cam1__roi1",
-                backbone="efficientnet_b0",
+                backbone="b0",
                 model_path="cam1__roi1_register_model_lt01.npz",
                 display_name="roi1 / efficientnet",
                 tool_name="roi1",
             ),
             EmbeddingModelEntry(
                 model_key="cam1__roi2",
-                backbone="efficientnet_b0",
+                backbone="b0",
                 model_path="cam1__roi2_register_model_lt01.npz",
                 display_name="roi2 / efficientnet",
                 tool_name="roi2",
             ),
             EmbeddingModelEntry(
                 model_key="cam1__roi3",
-                backbone="efficientnet_b0",
+                backbone="b0",
                 model_path="cam1__roi3_register_model_lt01.npz",
                 display_name="roi3 / efficientnet",
                 tool_name="roi3",
             ),
             EmbeddingModelEntry(
                 model_key="cam1__legacy",
-                backbone="efficientnet_b0",
+                backbone="b0",
                 model_path="cam1__legacy_register_model_lt01.npz",
                 display_name="legacy / efficientnet",
                 tool_name="legacy",
             ),
             EmbeddingModelEntry(
                 model_key="cam1__roi1",
-                backbone="mobilenet_v3_small",
+                backbone="b1",
                 model_path="cam1__roi1_register_model_lt02.npz",
-                display_name="roi1 / mobilenet",
+                display_name="roi1 / b1",
                 tool_name="roi1",
             ),
         ]
@@ -159,10 +159,10 @@ class EmbeddingAnalysisDialogToolSwitchTest(unittest.TestCase):
             dialog = EmbeddingAnalysisDialog(
                 session_root="dummy_root",
                 initial_product="demo_product",
-                initial_backbone="efficientnet_b0",
+                initial_backbone="b0",
                 initial_model_key="cam1__roi2",
                 allowed_model_keys=["cam1__roi1", "cam1__roi2", "cam1__roi3"],
-                allowed_backbones=["efficientnet_b0"],
+                allowed_backbones=["b0"],
             )
             try:
                 QtTest.QTest.qWait(120)
@@ -178,7 +178,7 @@ class EmbeddingAnalysisDialogToolSwitchTest(unittest.TestCase):
                     for index in range(dialog.cmb_model.count())
                 ]
                 self.assertEqual(visible_keys, ["cam1__roi1", "cam1__roi2", "cam1__roi3"])
-                self.assertEqual(visible_backbones, ["efficientnet_b0", "efficientnet_b0", "efficientnet_b0"])
+                self.assertEqual(visible_backbones, ["b0", "b0", "b0"])
                 self.assertEqual(dialog._current_model_entry().model_key, "cam1__roi2")
             finally:
                 dialog.close()

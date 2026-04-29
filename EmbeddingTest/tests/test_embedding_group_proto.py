@@ -33,7 +33,7 @@ class EmbeddingGroupProtoTest(unittest.TestCase):
             model = embedding.train_register_model_from_samples(
                 ok_samples=[("ok_1.png", "roi1"), ("ok_2.png", "roi2")],
                 ng_samples=[("ng_1.png", "roi1"), ("ng_2.png", "roi2")],
-                backbone="efficientnet_b0",
+                backbone="b0",
                 score_mode="topk",
                 margin=0.02,
                 topk=3,

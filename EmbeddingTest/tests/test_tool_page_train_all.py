@@ -45,13 +45,13 @@ class _FakeAlgo:
         return str(code or "").strip() == "shared_backbone_register"
 
     def current_learning_backbone(self) -> str:
-        return "efficientnet_b0"
+        return "b0"
 
     def resolve_tool_algorithm(self, code) -> str:
         return str(code or "").strip()
 
     def is_embedding_algorithm(self, algorithm) -> bool:
-        return str(algorithm or "").strip() == "efficientnet_b0"
+        return str(algorithm or "").strip() == "b0"
 
     def traditional_model_storage_key(self, algorithm: str, *, model_key: object = "") -> str:
         normalized = str(model_key or "").strip()
@@ -86,7 +86,7 @@ class _FakeAlgo:
                 "ng_samples": list(ng_samples or []),
             }
         )
-        if algorithm != "efficientnet_b0":
+        if algorithm != "b0":
             stored_model_key = str(model_key)
             if self.force_legacy_traditional_key and str(model_key).startswith("cam1__hole"):
                 stored_model_key = "cam1__roi1"
@@ -102,7 +102,7 @@ class _FakeAlgo:
             traditional_model_dict = None
         return TrainResult(
             algorithm=algorithm,
-            is_embedding=(algorithm == "efficientnet_b0"),
+            is_embedding=(algorithm == "b0"),
             status_message=f"trained {algorithm}",
             dialog_message=f"done {algorithm}",
             traditional_model_dict=traditional_model_dict,
@@ -309,7 +309,7 @@ class ToolPageTrainAllTest(unittest.TestCase):
                 harness.algo.train_calls,
                 [
                     {
-                        "algorithm": "efficientnet_b0",
+                        "algorithm": "b0",
                         "label_names": ["roi1"],
                         "model_key": "cam1__roi1",
                         "product_dir": tmpdir,
@@ -330,7 +330,7 @@ class ToolPageTrainAllTest(unittest.TestCase):
                 harness.algo.clear_calls,
                 [
                     {
-                        "algorithm": "efficientnet_b0",
+                        "algorithm": "b0",
                         "product_dir": tmpdir,
                         "model_key": "cam1__roi1",
                     },
@@ -388,7 +388,7 @@ class ToolPageTrainAllTest(unittest.TestCase):
                 harness.algo.train_calls,
                 [
                     {
-                        "algorithm": "efficientnet_b0",
+                        "algorithm": "b0",
                         "label_names": ["roi1"],
                         "model_key": "cam1__roi1",
                         "product_dir": tmpdir,
@@ -409,7 +409,7 @@ class ToolPageTrainAllTest(unittest.TestCase):
                 harness.algo.clear_calls,
                 [
                     {
-                        "algorithm": "efficientnet_b0",
+                        "algorithm": "b0",
                         "product_dir": tmpdir,
                         "model_key": "cam1__roi1",
                     },

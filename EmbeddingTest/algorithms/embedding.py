@@ -29,8 +29,7 @@ from .labelme import (
     clamp_roi_xywh,
     labelme_json_of_image,
 )
-from .registry import learning_backbone_storage_code
-from .registry import LEARNING_BACKBONES
+from .registry import LEARNING_BACKBONES, learning_backbone_storage_code, normalize_learning_backbone
 from app_paths import writable_embedding_test_root
 
 
@@ -75,32 +74,35 @@ class _OnnxRuntimeFeatureNet:
 
 
 def _build_torch_backbone(name: str):
-    if name == "efficientnet_b0":
+    normalized_name = normalize_learning_backbone(name)
+    if normalized_name == "b0":
         model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.DEFAULT)
         feat = model.features
-    elif name == "mobilenet_v3_small":
-        model = models.mobilenet_v3_small(weights=models.MobileNet_V3_Small_Weights.DEFAULT)
+    elif normalized_name == "b1":
+        model = models.efficientnet_b1(weights=models.EfficientNet_B1_Weights.DEFAULT)
         feat = model.features
-    elif name == "mobilenet_v3_large":
-        model = models.mobilenet_v3_large(weights=models.MobileNet_V3_Large_Weights.DEFAULT)
+    elif normalized_name == "b2":
+        model = models.efficientnet_b2(weights=models.EfficientNet_B2_Weights.DEFAULT)
         feat = model.features
     else:
         raise ValueError(f"Unknown backbone: {name}")
-    return feat, _backbone_out_channels(name)
+    return feat, _backbone_out_channels(normalized_name)
 
 
 def _backbone_out_channels(name: str) -> int:
-    if name == "efficientnet_b0":
+    normalized_name = normalize_learning_backbone(name)
+    if normalized_name == "b0":
         return 1280
-    if name == "mobilenet_v3_small":
-        return 576
-    if name == "mobilenet_v3_large":
-        return 960
+    if normalized_name == "b1":
+        return 1280
+    if normalized_name == "b2":
+        return 1408
     raise ValueError(f"Unknown backbone: {name}")
 
 
 def _ort_backbone_path(name: str) -> str:
-    storage_code = learning_backbone_storage_code(name) or str(name or "").strip()
+    normalized_name = normalize_learning_backbone(name)
+    storage_code = learning_backbone_storage_code(normalized_name) or str(normalized_name or "").strip()
     root = writable_embedding_test_root(__file__)
     cache_dir = root / ".qr_session" / "_onnx_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -131,7 +133,7 @@ def _export_backbone_features_to_onnx(name: str, onnx_path: str) -> None:
 
 
 def _maybe_load_ort_backbone(name: str, device: str):
-    normalized_name = str(name or "").strip()
+    normalized_name = normalize_learning_backbone(name)
     normalized_device = str(device or "cpu").strip().lower() or "cpu"
     if normalized_device != "cpu":
         return None
@@ -178,21 +180,22 @@ def get_device() -> str:
 
 def load_backbone(name: str, device: Optional[str] = None):
     device = device or get_device()
-    out_ch = _backbone_out_channels(name)
+    normalized_name = normalize_learning_backbone(name)
+    out_ch = _backbone_out_channels(normalized_name)
     ort_feat = None
     try:
-        ort_feat = _maybe_load_ort_backbone(name, str(device))
+        ort_feat = _maybe_load_ort_backbone(normalized_name, str(device))
     except Exception as exc:
-        if str(device or "").strip().lower() == "cpu" and str(name or "").strip() in _ORT_BACKBONE_NAMES:
-            _ort_log("fallback", str(name), f"backend=torch reason={type(exc).__name__}:{exc}")
+        if str(device or "").strip().lower() == "cpu" and normalized_name in _ORT_BACKBONE_NAMES:
+            _ort_log("fallback", normalized_name, f"backend=torch reason={type(exc).__name__}:{exc}")
         ort_feat = None
     if ort_feat is not None:
         return ort_feat, out_ch
 
-    feat, _ = _build_torch_backbone(name)
+    feat, _ = _build_torch_backbone(normalized_name)
     feat.eval().to(device)
-    if str(device or "").strip().lower() == "cpu" and str(name or "").strip() in _ORT_BACKBONE_NAMES:
-        _ort_log("backend", str(name), "backend=torch source=load_backbone")
+    if str(device or "").strip().lower() == "cpu" and normalized_name in _ORT_BACKBONE_NAMES:
+        _ort_log("backend", normalized_name, "backend=torch source=load_backbone")
     return feat, out_ch
 
 
@@ -744,7 +747,7 @@ def _collapse_embedding_bank(
 def train_register_model(
     ok_files: Sequence[str],
     ng_files: Sequence[str],
-    backbone: str = "efficientnet_b0",
+    backbone: str = "b0",
     score_mode: str = "proto",
     margin: float = 0.02,
     topk: int = 3,
@@ -828,7 +831,7 @@ def _analysis_sample_name(
 def train_register_model_from_samples(
     ok_samples: Sequence[Tuple[str, str]],
     ng_samples: Sequence[Tuple[str, str]],
-    backbone: str = "efficientnet_b0",
+    backbone: str = "b0",
     score_mode: str = "proto",
     margin: float = 0.02,
     topk: int = 3,

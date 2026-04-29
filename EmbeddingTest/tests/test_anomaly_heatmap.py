@@ -48,7 +48,7 @@ class AnomalyHeatmapTest(unittest.TestCase):
     def test_generate_anomaly_heatmap_returns_overlay_images(self) -> None:
         model = AnomalyModel(
             algorithm="patchcore_lite",
-            backbone="efficientnet_b0",
+            backbone="b0",
             threshold=0.20,
             topk=1,
             label_name="roi1",

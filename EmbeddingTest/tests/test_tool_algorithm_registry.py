@@ -17,6 +17,7 @@ from algorithms.registry import (
     is_anomaly_tool_algorithm,
     is_learning_tool_algorithm,
     is_traditional_tool_algorithm,
+    normalize_learning_backbone,
     normalize_tool_algorithm_code,
 )
 from application.algorithm_controller import AlgorithmController
@@ -30,7 +31,7 @@ class ToolAlgorithmRegistryTest(unittest.TestCase):
             SHARED_BACKBONE_ALGORITHM_CODE,
         )
         self.assertEqual(
-            normalize_tool_algorithm_code("efficientnet_b0"),
+            normalize_tool_algorithm_code("b0"),
             SHARED_BACKBONE_ALGORITHM_CODE,
         )
 
@@ -45,17 +46,22 @@ class ToolAlgorithmRegistryTest(unittest.TestCase):
         params = ProductRuntimeParams.from_dict(
             {
                 "algorithm": "",
-                "learning_backbone": "mobilenet_v3_small",
+                "learning_backbone": "b1",
                 "score_mode": "proto",
                 "margin": 0.02,
                 "topk": 3,
             }
         )
 
-        self.assertEqual(params.learning_backbone, "mobilenet_v3_small")
+        self.assertEqual(params.learning_backbone, "b1")
         fallback = ProductRuntimeParams.from_dict({})
         self.assertEqual(fallback.learning_backbone, "")
-        self.assertEqual(DEFAULT_LEARNING_BACKBONE, "efficientnet_b0")
+        self.assertEqual(DEFAULT_LEARNING_BACKBONE, "b0")
+
+    def test_legacy_backbone_aliases_upgrade_to_b1_b2(self) -> None:
+        self.assertEqual(normalize_learning_backbone("efficientnet_b0"), "b0")
+        self.assertEqual(normalize_learning_backbone("mobilenet_v3_small"), "b1")
+        self.assertEqual(normalize_learning_backbone("mobilenet_v3_large"), "b2")
 
     def test_algorithm_controller_keeps_learning_tool_unselected_when_params_empty(self) -> None:
         controller = AlgorithmController()

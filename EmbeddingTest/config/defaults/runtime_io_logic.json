@@ -3,7 +3,7 @@
     {
       "type": "set_output",
       "name": "conveyor_run",
-      "value": true,
+      "value": false,
       "reason": "startup default"
     },
     {
@@ -15,13 +15,13 @@
     {
       "type": "set_output",
       "name": "button_green",
-      "value": true,
+      "value": false,
       "reason": "startup default"
     },
     {
       "type": "set_output",
       "name": "button_red",
-      "value": false,
+      "value": true,
       "reason": "startup default"
     },
     {
