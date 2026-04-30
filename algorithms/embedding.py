@@ -4,7 +4,9 @@ import glob
 import json
 import os
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple
+from pathlib import Path
+from threading import RLock
+from typing import Any, List, Optional, Sequence, Tuple
 
 import numpy as np
 from PIL import Image
@@ -18,18 +20,70 @@ try:
 except Exception:  # pragma: no cover
     cv2 = None
 
+try:
+    import onnx  # type: ignore  # noqa: F401
+except Exception:  # pragma: no cover
+    onnx = None
+
+try:
+    import onnxruntime as ort  # type: ignore
+except Exception:  # pragma: no cover
+    ort = None
+
+from app_paths import writable_embedding_test_root
 from .labelme import (
     clamp_roi_xywh,
     labelme_json_of_image,
 )
 
 
+_BACKBONE_OUTPUT_CHANNELS = {
+    "efficientnet_b0": 1280,
+    "mobilenet_v3_small": 576,
+    "mobilenet_v3_large": 960,
+}
+_ORT_EXPORT_VERSION = "v1"
+_ORT_EXPORT_LOCK = RLock()
+
+
 def get_device() -> str:
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def load_backbone(name: str, device: Optional[str] = None):
-    device = device or get_device()
+class _NormalizedEmbeddingBackbone(torch.nn.Module):
+    def __init__(self, feature_extractor: torch.nn.Module) -> None:
+        super().__init__()
+        self.feature_extractor = feature_extractor
+
+    def forward(self, batch: torch.Tensor) -> torch.Tensor:
+        feat = self.feature_extractor(batch)
+        feat = F.adaptive_avg_pool2d(feat, 1).flatten(1)
+        feat = F.normalize(feat, dim=1)
+        return feat
+
+
+@dataclass(frozen=True)
+class OrtBackboneRunner:
+    session: Any
+    input_name: str
+    output_name: str
+    providers: Tuple[str, ...]
+    device: str
+    model_path: str
+    model_format: str = "ort"
+    runtime_backend: str = "ort"
+
+    def run(self, batch: object) -> np.ndarray:
+        if isinstance(batch, torch.Tensor):
+            batch_np = batch.detach().cpu().numpy()
+        else:
+            batch_np = np.asarray(batch, dtype=np.float32)
+        batch_np = np.ascontiguousarray(batch_np.astype(np.float32, copy=False))
+        outputs = self.session.run([self.output_name], {self.input_name: batch_np})
+        return np.asarray(outputs[0], dtype=np.float32)
+
+
+def _build_torch_backbone_model(name: str) -> tuple[torch.nn.Module, int]:
     if name == "efficientnet_b0":
         model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.DEFAULT)
         feat = model.features
@@ -45,8 +99,189 @@ def load_backbone(name: str, device: Optional[str] = None):
     else:
         raise ValueError(f"Unknown backbone: {name}")
 
-    feat.eval().to(device)
-    return feat, out_ch
+    wrapper = _NormalizedEmbeddingBackbone(feat)
+    wrapper.eval()
+    setattr(wrapper, "runtime_backend", "torch")
+    return wrapper, out_ch
+
+
+def _normalized_device(device: Optional[str] = None) -> str:
+    normalized = str(device or get_device()).strip()
+    return normalized or "cpu"
+
+
+def _device_kind(device: Optional[str] = None) -> str:
+    normalized = _normalized_device(device).lower()
+    return "cuda" if normalized.startswith("cuda") else "cpu"
+
+
+def _normalized_backbone_backend(preferred_backend: Optional[str] = None) -> str:
+    normalized = str(preferred_backend or "auto").strip().lower() or "auto"
+    if normalized not in {"auto", "ort", "torch"}:
+        raise ValueError(f"unsupported backbone backend: {preferred_backend}")
+    return normalized
+
+
+def _ort_cache_root() -> Path:
+    return writable_embedding_test_root(__file__) / ".cache" / "ort_backbones"
+
+
+def _backbone_onnx_path(name: str) -> Path:
+    return _ort_cache_root() / f"{name}_{_ORT_EXPORT_VERSION}.onnx"
+
+
+def _backbone_ort_path(name: str, *, device: str) -> Path:
+    return _ort_cache_root() / f"{name}_{_device_kind(device)}_{_ORT_EXPORT_VERSION}.ort"
+
+
+def _ort_providers_for_device(device: Optional[str] = None) -> tuple[str, ...]:
+    if ort is None:
+        return ()
+    try:
+        available = set(ort.get_available_providers())
+    except Exception:
+        return ()
+    if _device_kind(device) == "cuda":
+        if "CUDAExecutionProvider" in available:
+            return ("CUDAExecutionProvider", "CPUExecutionProvider")
+        return ()
+    if "CPUExecutionProvider" in available:
+        return ("CPUExecutionProvider",)
+    return ()
+
+
+def _export_backbone_onnx(name: str, onnx_path: Path) -> None:
+    if onnx is None:
+        raise RuntimeError("onnx is required to export ORT backbone models")
+    model, _ = _build_torch_backbone_model(name)
+    model = model.cpu().eval()
+    dummy = torch.randn(1, 3, 224, 224, dtype=torch.float32)
+    os.makedirs(onnx_path.parent, exist_ok=True)
+    torch.onnx.export(
+        model,
+        dummy,
+        str(onnx_path),
+        export_params=True,
+        do_constant_folding=True,
+        verbose=False,
+        input_names=["input"],
+        output_names=["embedding"],
+        dynamo=False,
+        report=False,
+        verify=False,
+        profile=False,
+        dynamic_axes={
+            "input": {0: "batch_size"},
+            "embedding": {0: "batch_size"},
+        },
+        opset_version=17,
+    )
+
+
+def _ensure_ort_model(name: str, *, device: str) -> Path:
+    ort_path = _backbone_ort_path(name, device=device)
+    if ort_path.exists():
+        return ort_path
+
+    onnx_path = _backbone_onnx_path(name)
+    with _ORT_EXPORT_LOCK:
+        if ort_path.exists():
+            return ort_path
+        if not onnx_path.exists():
+            _export_backbone_onnx(name, onnx_path)
+        session_options = ort.SessionOptions()
+        session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        can_save_ort = False
+        try:
+            session_options.optimized_model_filepath = str(ort_path)
+            session_options.add_session_config_entry("session.save_model_format", "ORT")
+            can_save_ort = True
+        except Exception:
+            can_save_ort = False
+        if not can_save_ort:
+            return onnx_path
+        ort.InferenceSession(
+            str(onnx_path),
+            sess_options=session_options,
+            providers=list(_ort_providers_for_device(device)),
+        )
+    if ort_path.exists():
+        return ort_path
+    return onnx_path
+
+
+def _load_ort_backbone(name: str, *, device: str) -> Optional[OrtBackboneRunner]:
+    if ort is None:
+        return None
+    providers = _ort_providers_for_device(device)
+    if not providers:
+        return None
+    try:
+        model_path = _ensure_ort_model(name, device=device)
+        try:
+            session = ort.InferenceSession(str(model_path), providers=list(providers))
+        except Exception:
+            if str(model_path).lower().endswith(".ort"):
+                try:
+                    os.remove(model_path)
+                except OSError:
+                    pass
+                model_path = _ensure_ort_model(name, device=device)
+                session = ort.InferenceSession(str(model_path), providers=list(providers))
+            else:
+                raise
+    except Exception:
+        return None
+    inputs = session.get_inputs()
+    outputs = session.get_outputs()
+    if not inputs or not outputs:
+        return None
+    return OrtBackboneRunner(
+        session=session,
+        input_name=str(inputs[0].name),
+        output_name=str(outputs[0].name),
+        providers=tuple(str(provider) for provider in providers),
+        device=device,
+        model_path=str(model_path),
+        model_format=model_path.suffix.lstrip(".") or "ort",
+    )
+
+
+def describe_backbone_runner(feat_net: object) -> dict[str, object]:
+    backend = str(getattr(feat_net, "runtime_backend", "") or "torch").strip().lower() or "torch"
+    model_format = str(getattr(feat_net, "model_format", "") or "").strip().lower()
+    if not model_format and backend == "torch":
+        model_format = "torch"
+    model_path = str(getattr(feat_net, "model_path", "") or "").strip()
+    providers = tuple(
+        str(provider).strip()
+        for provider in tuple(getattr(feat_net, "providers", ()) or ())
+        if str(provider).strip()
+    )
+    return {
+        "backend": backend,
+        "model_format": model_format,
+        "model_path": model_path,
+        "providers": providers,
+    }
+
+
+def load_backbone(
+    name: str,
+    device: Optional[str] = None,
+    *,
+    preferred_backend: Optional[str] = None,
+):
+    normalized_name = str(name or "").strip()
+    normalized_device = _normalized_device(device)
+    backend_choice = _normalized_backbone_backend(preferred_backend)
+    if backend_choice in {"auto", "ort"}:
+        ort_runner = _load_ort_backbone(normalized_name, device=normalized_device)
+        if ort_runner is not None:
+            return ort_runner, _BACKBONE_OUTPUT_CHANNELS[normalized_name]
+    model, out_ch = _build_torch_backbone_model(normalized_name)
+    model.eval().to(normalized_device)
+    return model, out_ch
 
 
 TF = transforms.Compose(
@@ -56,6 +291,16 @@ TF = transforms.Compose(
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ]
 )
+
+
+def _run_embedding_batch(feat_net, batch: torch.Tensor, *, device: Optional[str] = None) -> np.ndarray:
+    if getattr(feat_net, "runtime_backend", "") == "ort":
+        return feat_net.run(batch)
+    batch = batch.to(_normalized_device(device))
+    feat = feat_net(batch)
+    if isinstance(feat, torch.Tensor):
+        return feat.detach().cpu().numpy()
+    return np.asarray(feat, dtype=np.float32)
 
 
 def load_images(folder: str) -> List[str]:
@@ -205,7 +450,6 @@ def embed_batch(
     if roi_xywhs is not None and len(roi_xywhs) != len(labels):
         raise ValueError("roi_xywhs must have the same length as label_names")
 
-    device = device or get_device()
     require_shapes = roi_xywhs is None or any(roi_xywh is None for roi_xywh in roi_xywhs)
     context = _build_image_roi_context(img_path, require_shapes=require_shapes)
     tensors = []
@@ -218,11 +462,8 @@ def embed_batch(
         )
         tensors.append(TF(roi_img))
 
-    batch = torch.stack(tensors, dim=0).to(device)
-    feat = feat_net(batch)
-    feat = F.adaptive_avg_pool2d(feat, 1).flatten(1)
-    feat = F.normalize(feat, dim=1)
-    return feat.detach().cpu().numpy()
+    batch = torch.stack(tensors, dim=0)
+    return _run_embedding_batch(feat_net, batch, device=device)
 
 
 @torch.no_grad()
@@ -278,7 +519,6 @@ def embed_batch_from_array(
     if roi_xywhs is not None and len(roi_xywhs) != len(labels):
         raise ValueError("roi_xywhs must have the same length as label_names")
 
-    device = device or get_device()
     context = _build_array_roi_context(image_bgr, shape_by_label=shape_by_label)
     tensors = []
     for index, label_name in enumerate(labels):
@@ -290,11 +530,8 @@ def embed_batch_from_array(
         )
         tensors.append(TF(roi_img))
 
-    batch = torch.stack(tensors, dim=0).to(device)
-    feat = feat_net(batch)
-    feat = F.adaptive_avg_pool2d(feat, 1).flatten(1)
-    feat = F.normalize(feat, dim=1)
-    return feat.detach().cpu().numpy()
+    batch = torch.stack(tensors, dim=0)
+    return _run_embedding_batch(feat_net, batch, device=device)
 
 
 @torch.no_grad()
@@ -502,6 +739,7 @@ __all__ = [
     "embed_many",
     "embed_one",
     "embed_one_from_array",
+    "describe_backbone_runner",
     "get_device",
     "load_backbone",
     "load_images",

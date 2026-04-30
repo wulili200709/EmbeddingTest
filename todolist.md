@@ -2849,6 +2849,7 @@ torch
 torchvision
 matplotlib
 pip install opencv-python
+pip install onnx onnxruntime
 
 ## vs code安装python
 打开 VS Code → 左边扩展（Extensions）搜索：

@@ -9,8 +9,10 @@ Combined with position correction, template matching, sample annotation, and lea
 Install the required packages before running the application:
 
 ```bash
-pip install numpy opencv-python PySide6 torch torchvision matplotlib
+pip install numpy opencv-python PySide6 torch torchvision matplotlib onnx onnxruntime
 ```
+
+If you want ONNX Runtime GPU execution, install `onnxruntime-gpu` instead of `onnxruntime`.
 
 # Quick Start
 This guide follows a simple and practical workflow in the English UI:

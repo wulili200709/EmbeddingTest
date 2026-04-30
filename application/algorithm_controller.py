@@ -140,7 +140,7 @@ class AlgorithmController:
     def __init__(self) -> None:
         self.product_params: ProductRuntimeParams = ProductRuntimeParams()
         self.model: Optional[Any] = None          # qr_core.RegisterModel | None
-        self._feat_net_cache: Dict[Tuple[str, str], Any] = {}
+        self._feat_net_cache: Dict[Tuple[str, str, str], Any] = {}
         self._active_product_dir: str = ""
         self._loaded_embedding_model_key: Tuple[str, str] = ("", "")
 
@@ -300,17 +300,64 @@ class AlgorithmController:
             return False
         return True
 
-    def get_feat_net(self, backbone: str, device: Optional[str] = None) -> Any:
+    @staticmethod
+    def _feat_net_runtime_info(feat_net: Any) -> Dict[str, Any]:
+        describer = getattr(qr_core, "describe_backbone_runner", None)
+        if not callable(describer) or feat_net is None:
+            return {}
+        try:
+            raw_info = dict(describer(feat_net) or {})
+        except Exception:
+            return {}
+        backend = str(raw_info.get("backend", "") or "").strip().lower()
+        model_format = str(raw_info.get("model_format", "") or "").strip().lower()
+        model_path = str(raw_info.get("model_path", "") or "").strip()
+        providers = tuple(
+            str(provider).strip()
+            for provider in tuple(raw_info.get("providers", ()) or ())
+            if str(provider).strip()
+        )
+        return {
+            "backend": backend,
+            "backend_label": backend.upper() if backend else "",
+            "model_format": model_format,
+            "model_format_label": model_format.upper() if model_format else "",
+            "model_path": model_path,
+            "providers": providers,
+        }
+
+    @classmethod
+    def _print_feat_net_backend(cls, backbone: str, feat_net: Any) -> None:
+        info = cls._feat_net_runtime_info(feat_net)
+        backend_label = str(info.get("backend_label", "") or "").strip() or "TORCH"
+        model_path = str(info.get("model_path", "") or "").strip()
+        model_hint = f"  model={os.path.basename(model_path)}" if model_path else ""
+        print(f"[EmbeddingTest] inference backbone={backbone} backend={backend_label}{model_hint}")
+
+    def get_feat_net(
+        self,
+        backbone: str,
+        device: Optional[str] = None,
+        *,
+        preferred_backend: str = "auto",
+    ) -> Any:
         normalized_backbone = str(backbone or "").strip()
         if not normalized_backbone:
             raise ValueError("backbone is required")
         normalized_device = str(device or qr_core.get_device()).strip() or "cpu"
-        cache_key = (normalized_backbone, normalized_device)
+        normalized_backend = str(preferred_backend or "auto").strip().lower() or "auto"
+        cache_key = (normalized_backbone, normalized_device, normalized_backend)
         feat_net = self._feat_net_cache.get(cache_key)
         if feat_net is not None:
+            self._print_feat_net_backend(normalized_backbone, feat_net)
             return feat_net
-        feat_net, _ = qr_core.load_backbone(normalized_backbone, device=normalized_device)
+        feat_net, _ = qr_core.load_backbone(
+            normalized_backbone,
+            device=normalized_device,
+            preferred_backend=normalized_backend,
+        )
         self._feat_net_cache[cache_key] = feat_net
+        self._print_feat_net_backend(normalized_backbone, feat_net)
         return feat_net
 
     def clear_feat_net_cache(self) -> None:
