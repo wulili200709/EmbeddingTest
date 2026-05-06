@@ -105,6 +105,104 @@ class RuntimeModeTriggerButtonsTest(unittest.TestCase):
         self.assertTrue(page.view_cam2.isHidden())
         self.assertFalse(page.btn_trigger_cam2.isEnabled())
 
+    def test_runtime_item_list_hides_find_line_helpers_when_line_distance_exists(self) -> None:
+        page = RuntimeModePage()
+
+        page.set_inspection_items(
+            [
+                {
+                    "item_id": "left",
+                    "display_name": "左",
+                    "camera_id": "cam1",
+                    "algorithm_code": "find_line",
+                    "enabled": True,
+                    "status_kind": "ok",
+                    "status_text": "OK",
+                },
+                {
+                    "item_id": "right",
+                    "display_name": "右",
+                    "camera_id": "cam1",
+                    "algorithm_code": "find_line",
+                    "enabled": True,
+                    "status_kind": "ok",
+                    "status_text": "OK",
+                },
+                {
+                    "item_id": "line_distance",
+                    "display_name": "Line Distance",
+                    "camera_id": "cam1",
+                    "algorithm_code": "line_distance",
+                    "params": {
+                        "line_a_item_id": "left",
+                        "line_b_item_id": "right",
+                    },
+                    "enabled": True,
+                    "status_kind": "ng",
+                    "status_text": "NG",
+                },
+            ]
+        )
+
+        self.assertEqual(len(page._item_indicators), 1)
+        self.assertIn("line_distance", page._item_indicators_by_item_id)
+        self.assertNotIn("left", page._item_indicators_by_item_id)
+        self.assertNotIn("right", page._item_indicators_by_item_id)
+
+    def test_runtime_item_list_keeps_non_helper_items_with_line_distance(self) -> None:
+        page = RuntimeModePage()
+
+        page.set_inspection_items(
+            [
+                {
+                    "item_id": "left",
+                    "display_name": "左",
+                    "camera_id": "cam1",
+                    "algorithm_code": "find_line",
+                    "enabled": True,
+                    "status_kind": "ok",
+                    "status_text": "OK",
+                },
+                {
+                    "item_id": "right",
+                    "display_name": "右",
+                    "camera_id": "cam1",
+                    "algorithm_code": "find_line",
+                    "enabled": True,
+                    "status_kind": "ok",
+                    "status_text": "OK",
+                },
+                {
+                    "item_id": "roi3",
+                    "display_name": "roi3",
+                    "camera_id": "cam1",
+                    "algorithm_code": "shared_backbone_register",
+                    "enabled": True,
+                    "status_kind": "pending",
+                    "status_text": "PENDING",
+                },
+                {
+                    "item_id": "line_distance",
+                    "display_name": "Line Distance",
+                    "camera_id": "cam1",
+                    "algorithm_code": "line_distance",
+                    "params": {
+                        "line_a_item_id": "left",
+                        "line_b_item_id": "right",
+                    },
+                    "enabled": True,
+                    "status_kind": "ng",
+                    "status_text": "NG",
+                },
+            ]
+        )
+
+        self.assertEqual(len(page._item_indicators), 2)
+        self.assertIn("roi3", page._item_indicators_by_item_id)
+        self.assertIn("line_distance", page._item_indicators_by_item_id)
+        self.assertNotIn("left", page._item_indicators_by_item_id)
+        self.assertNotIn("right", page._item_indicators_by_item_id)
+
 
 if __name__ == "__main__":
     unittest.main()

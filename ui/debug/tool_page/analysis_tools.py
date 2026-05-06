@@ -12,6 +12,11 @@ import cv2
 import numpy as np
 
 import algorithms.proxy as qr_core
+from algorithms.registry import learning_backbone_storage_code
+
+
+def _storage_algorithm_code(value: object) -> str:
+    return learning_backbone_storage_code(value)
 
 
 def _summarize_test_rows(tool_page, rows: List[Dict[str, object]]) -> Dict[str, object]:
@@ -82,13 +87,14 @@ def _save_test_result_report(
     report_dir = os.path.join(tool_page.session.product_dir, "test_exports")
     os.makedirs(report_dir, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base = f"{report_prefix}_{tool_page.current_algorithm()}_{stamp}"
+    algorithm_code = _storage_algorithm_code(tool_page.current_algorithm())
+    base = f"{report_prefix}_{algorithm_code}_{stamp}"
     json_path = os.path.join(report_dir, base + ".json")
     csv_path = os.path.join(report_dir, base + ".csv")
 
     payload = {
         "product": tool_page.session.current_product,
-        "algorithm": tool_page.current_algorithm(),
+        "algorithm": algorithm_code,
         "score_mode": tool_page.cmb_mode.currentText(),
         "margin": float(tool_page.spin_margin.value()),
         "topk": int(tool_page.spin_topk.value()),

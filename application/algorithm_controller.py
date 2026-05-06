@@ -49,7 +49,9 @@ from algorithms.registry import (
     is_measurement_tool_algorithm,
     is_traditional_tool_algorithm,
     learning_backbone_storage_code,
+    learning_backbone_storage_codes,
     normalize_tool_algorithm_code,
+    storage_code_backbone,
 )
 from infrastructure.product_params import (
     ProductRuntimeParams,
@@ -151,8 +153,8 @@ class AlgorithmController:
     def load_params(self, path: str) -> None:
         """从 product_params.json 加载；不存在则使用默认值。"""
         self.product_params = load_product_params(path)
-        alg = str(self.product_params.algorithm or "").strip()
-        learning_backbone = str(self.product_params.learning_backbone or "").strip()
+        alg = storage_code_backbone(self.product_params.algorithm)
+        learning_backbone = storage_code_backbone(self.product_params.learning_backbone)
         if learning_backbone not in SUPPORTED_EMBEDDING_ALGORITHMS:
             if alg in SUPPORTED_EMBEDDING_ALGORITHMS:
                 learning_backbone = alg
@@ -188,16 +190,16 @@ class AlgorithmController:
         return is_measurement_algorithm(normalized)
 
     def current_learning_backbone(self) -> str:
-        backbone = str(self.product_params.learning_backbone or "").strip()
+        backbone = storage_code_backbone(self.product_params.learning_backbone)
         if backbone in SUPPORTED_EMBEDDING_ALGORITHMS:
             return backbone
-        algorithm = str(self.product_params.algorithm or "").strip()
+        algorithm = storage_code_backbone(self.product_params.algorithm)
         if algorithm in SUPPORTED_EMBEDDING_ALGORITHMS:
             return algorithm
         return ""
 
     def set_learning_backbone(self, backbone: str) -> str:
-        normalized = str(backbone or "").strip()
+        normalized = storage_code_backbone(backbone)
         if normalized not in SUPPORTED_EMBEDDING_ALGORITHMS:
             normalized = DEFAULT_LEARNING_BACKBONE
         self.product_params.learning_backbone = normalized
@@ -206,7 +208,7 @@ class AlgorithmController:
         return normalized
 
     def resolve_learning_algorithm(self, algorithm: object) -> str:
-        normalized = str(algorithm or "").strip()
+        normalized = storage_code_backbone(algorithm)
         if not normalized:
             return ""
         if normalize_tool_algorithm_code(normalized) == SHARED_BACKBONE_ALGORITHM_CODE:
@@ -249,8 +251,20 @@ class AlgorithmController:
             return os.path.join(product_dir, f"{normalized_key}_register_model_{storage_code}.npz")
         return os.path.join(product_dir, f"register_model_{storage_code}.npz")
 
+    def embedding_model_storage_paths(self, algorithm: str, product_dir: str, *, model_key: object = "") -> List[str]:
+        normalized_key = self.tool_model_key(model_key)
+        paths: List[str] = []
+        for storage_code in learning_backbone_storage_codes(algorithm):
+            if normalized_key:
+                paths.append(os.path.join(product_dir, f"{normalized_key}_register_model_{storage_code}.npz"))
+            else:
+                paths.append(os.path.join(product_dir, f"register_model_{storage_code}.npz"))
+        paths.append(self.embedding_model_legacy_path(algorithm, product_dir, model_key=normalized_key))
+        return list(dict.fromkeys(paths))
+
     def embedding_model_legacy_path(self, algorithm: str, product_dir: str, *, model_key: object = "") -> str:
         normalized_key = self.tool_model_key(model_key)
+        algorithm = storage_code_backbone(algorithm)
         if normalized_key:
             return os.path.join(product_dir, f"{normalized_key}_register_model_{algorithm}.npz")
         return os.path.join(product_dir, f"register_model_{algorithm}.npz")
@@ -332,7 +346,7 @@ class AlgorithmController:
         backend_label = str(info.get("backend_label", "") or "").strip() or "TORCH"
         model_path = str(info.get("model_path", "") or "").strip()
         model_hint = f"  model={os.path.basename(model_path)}" if model_path else ""
-        print(f"[EmbeddingTest] inference backbone={backbone} backend={backend_label}{model_hint}")
+        print(f"[EmbeddingTest] inference backbone={learning_backbone_storage_code(backbone)} backend={backend_label}{model_hint}")
 
     def get_feat_net(
         self,
@@ -341,7 +355,7 @@ class AlgorithmController:
         *,
         preferred_backend: str = "auto",
     ) -> Any:
-        normalized_backbone = str(backbone or "").strip()
+        normalized_backbone = storage_code_backbone(backbone)
         if not normalized_backbone:
             raise ValueError("backbone is required")
         normalized_device = str(device or qr_core.get_device()).strip() or "cpu"
@@ -391,28 +405,48 @@ class AlgorithmController:
         model_file = self.embedding_model_path(algorithm, product_dir, model_key=normalized_model_key)
         source_model_key = normalized_model_key
         if not os.path.exists(model_file) and normalized_model_key:
-            legacy_model_file = self.embedding_model_path(algorithm, product_dir)
-            legacy_raw_model_file = self.embedding_model_legacy_path(
-                algorithm,
-                product_dir,
-                model_key=normalized_model_key,
+            legacy_model_file = next(
+                (path for path in self.embedding_model_storage_paths(algorithm, product_dir) if os.path.exists(path)),
+                "",
             )
-            if os.path.exists(legacy_model_file):
+            legacy_raw_model_file = next(
+                (
+                    path
+                    for path in self.embedding_model_storage_paths(
+                        algorithm,
+                        product_dir,
+                        model_key=normalized_model_key,
+                    )
+                    if os.path.exists(path)
+                ),
+                "",
+            )
+            if legacy_model_file:
                 model_file = legacy_model_file
                 source_model_key = ""
-            elif os.path.exists(legacy_raw_model_file):
+            elif legacy_raw_model_file:
                 model_file = legacy_raw_model_file
         if not os.path.exists(model_file):
-            legacy_model_file = self.embedding_model_legacy_path(
-                algorithm,
-                product_dir,
-                model_key=normalized_model_key,
+            legacy_model_file = next(
+                (
+                    path
+                    for path in self.embedding_model_storage_paths(
+                        algorithm,
+                        product_dir,
+                        model_key=normalized_model_key,
+                    )
+                    if os.path.exists(path)
+                ),
+                "",
             )
-            if os.path.exists(legacy_model_file):
+            if legacy_model_file:
                 model_file = legacy_model_file
         if not os.path.exists(model_file) and not normalized_model_key:
-            legacy_shared_model = self.embedding_model_legacy_path(algorithm, product_dir)
-            if os.path.exists(legacy_shared_model):
+            legacy_shared_model = next(
+                (path for path in self.embedding_model_storage_paths(algorithm, product_dir) if os.path.exists(path)),
+                "",
+            )
+            if legacy_shared_model:
                 model_file = legacy_shared_model
         if not os.path.exists(model_file):
             self.model = None
@@ -573,10 +607,10 @@ class AlgorithmController:
         if self.is_embedding_algorithm(algorithm):
             if not self._loaded_embedding_matches(algorithm, labels=labels, model_key=model_key):
                 if not self._active_product_dir:
-                    raise RuntimeError(f"algorithm model not loaded: {algorithm}")
+                    raise RuntimeError(f"algorithm model not loaded: {learning_backbone_storage_code(algorithm)}")
                 self.load_model_for_algorithm(algorithm, self._active_product_dir, model_key=model_key)
             if self.model is None:
-                raise RuntimeError(f"algorithm model not loaded: {algorithm}")
+                raise RuntimeError(f"algorithm model not loaded: {learning_backbone_storage_code(algorithm)}")
             self.apply_params_to_model()
 
             if len(labels) == 1 and roi is None:

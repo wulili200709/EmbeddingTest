@@ -13,6 +13,7 @@ from algorithms.measurement import (
     measure_edge_distance_from_array,
     measure_find_line_from_array,
 )
+from algorithms.registry import learning_backbone_storage_code
 from algorithms.traditional import TraditionalThresholdModel, compute_roi_metrics_from_array, metric_value
 from application.runtime.preview_frame import RuntimePreviewShape
 from domain import (
@@ -152,7 +153,7 @@ def _predict_learning_items_batch_rows(
         for item in group:
             load_embedding_model(algorithm, model_key=item.model_key)
             if algo.model is None:
-                raise RuntimeError(f"algorithm model not loaded: {algorithm}")
+                raise RuntimeError(f"algorithm model not loaded: {learning_backbone_storage_code(algorithm)}")
             algo.apply_params_to_model()
             models.append(algo.model)
         group_feat_net = feat_net
@@ -245,7 +246,7 @@ def _predict_learning_items_batch_rows_from_frame(
         for item in group:
             load_embedding_model(algorithm, model_key=item.model_key)
             if algo.model is None:
-                raise RuntimeError(f"algorithm model not loaded: {algorithm}")
+                raise RuntimeError(f"algorithm model not loaded: {learning_backbone_storage_code(algorithm)}")
             algo.apply_params_to_model()
             models.append(algo.model)
         group_feat_net = feat_net

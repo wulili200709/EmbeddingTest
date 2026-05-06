@@ -10,6 +10,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from app_paths import packaged_embedding_test_root, writable_embedding_test_root
 from application import AlgorithmController, ProductSession
 from application.runtime.preview_frame import RuntimePreviewFrame, RuntimePreviewShape
+from application.runtime.preview_frame import read_exported_runtime_preview_measurements
 from line2dup.core import locator as line2dup_locator
 import algorithms.proxy as qr_core
 from ui.i18n import tr
@@ -103,6 +104,7 @@ def connect_runtime_dialogs(window: QtWidgets.QWidget, runtime_ctrl) -> None:
 
 
 def update_runtime_preview(runtime_page, role: str, source: object) -> None:
+    display_size = _runtime_preview_display_size(runtime_page, role)
     if hasattr(runtime_page, "set_camera_preview_source"):
         runtime_page.set_camera_preview_source(role, source)
     if isinstance(source, RuntimePreviewFrame):
@@ -111,7 +113,11 @@ def update_runtime_preview(runtime_page, role: str, source: object) -> None:
             roi_statuses = dict(runtime_page.roi_statuses_for_camera(role) or {})
         runtime_page.set_camera_pixmap(
             role,
-            _render_runtime_overlay_pixmap(source, roi_statuses=roi_statuses),
+            _render_runtime_overlay_pixmap(
+                source,
+                roi_statuses=roi_statuses,
+                display_size=display_size,
+            ),
         )
         return
 
@@ -122,7 +128,11 @@ def update_runtime_preview(runtime_page, role: str, source: object) -> None:
             roi_statuses = dict(runtime_page.roi_statuses_for_camera(role) or {})
         runtime_page.set_camera_pixmap(
             role,
-            _render_runtime_overlay_pixmap(path, roi_statuses=roi_statuses),
+            _render_runtime_overlay_pixmap(
+                path,
+                roi_statuses=roi_statuses,
+                display_size=display_size,
+            ),
         )
         return
     runtime_page.set_camera_pixmap(
@@ -132,10 +142,23 @@ def update_runtime_preview(runtime_page, role: str, source: object) -> None:
     )
 
 
+def _runtime_preview_display_size(runtime_page, role: str) -> QtCore.QSize | None:
+    role_text = str(role or "cam1").strip()
+    view_name = "view_cam2" if role_text == "cam2" else "view_cam1"
+    view = getattr(runtime_page, view_name, None)
+    if view is None or not hasattr(view, "size"):
+        return None
+    size = view.size()
+    if size.width() <= 0 or size.height() <= 0:
+        return None
+    return QtCore.QSize(size)
+
+
 def _render_runtime_overlay_pixmap(
     source: str | RuntimePreviewFrame,
     *,
     roi_statuses: Optional[dict[str, str]] = None,
+    display_size: QtCore.QSize | None = None,
 ) -> QtGui.QPixmap:
     pixmap = _runtime_source_pixmap(source)
     if pixmap.isNull():
@@ -147,6 +170,7 @@ def _render_runtime_overlay_pixmap(
 
     _draw_runtime_search_region(painter, source)
     _draw_runtime_roi_shapes(painter, source, roi_statuses=roi_statuses)
+    _draw_runtime_measurements(painter, source, canvas.size(), display_size=display_size)
 
     painter.end()
     return canvas
@@ -276,6 +300,159 @@ def _draw_runtime_roi_shapes(
             continue
         color, width, dash = overlay_style_for_label(label, status=roi_statuses.get(label, ""))
         draw_shape(label, color, width=width, dash=dash)
+
+
+def _point_tuple(value: object) -> tuple[float, float] | None:
+    if not isinstance(value, (list, tuple)) or len(value) < 2:
+        return None
+    try:
+        return float(value[0]), float(value[1])
+    except (TypeError, ValueError):
+        return None
+
+
+def _segment_tuple(value: object) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    if not isinstance(value, (list, tuple)) or len(value) < 2:
+        return None
+    p0 = _point_tuple(value[0])
+    p1 = _point_tuple(value[1])
+    if p0 is None or p1 is None:
+        return None
+    return p0, p1
+
+
+def _draw_runtime_measurements(
+    painter: QtGui.QPainter,
+    source: str | RuntimePreviewFrame,
+    source_size: QtCore.QSize,
+    *,
+    display_size: QtCore.QSize | None = None,
+) -> None:
+    overlay_scale = _runtime_measurement_overlay_scale(source_size, display_size)
+    for measurement in _runtime_source_measurements(source):
+        measurement_type = str(measurement.get("type", "") or "").strip()
+        pred = str(measurement.get("pred", "") or "").strip().upper()
+        color = QtGui.QColor("#22c55e" if pred == "OK" else "#ff4040" if pred == "NG" else "#f97316")
+        if measurement_type == "line_distance":
+            line_a = measurement.get("line_a")
+            if isinstance(line_a, dict):
+                segment_a = _segment_tuple(line_a.get("line_segment"))
+                if segment_a is not None:
+                    _draw_runtime_segment(painter, segment_a, color, overlay_scale=overlay_scale)
+            line_b = measurement.get("line_b")
+            if isinstance(line_b, dict):
+                segment_b = _segment_tuple(line_b.get("line_segment"))
+                if segment_b is not None:
+                    _draw_runtime_segment(painter, segment_b, color, overlay_scale=overlay_scale)
+            dimension_segment = _segment_tuple(measurement.get("dimension_segment"))
+            if dimension_segment is not None:
+                _draw_runtime_dimension(
+                    painter,
+                    dimension_segment,
+                    color,
+                    str(measurement.get("label", "") or ""),
+                    overlay_scale=overlay_scale,
+                )
+            continue
+        segment = _segment_tuple(measurement.get("line_segment"))
+        if segment is not None:
+            _draw_runtime_segment(painter, segment, color, overlay_scale=overlay_scale)
+
+
+def _runtime_measurement_overlay_scale(
+    source_size: QtCore.QSize,
+    display_size: QtCore.QSize | None,
+) -> float:
+    source_w = max(1.0, float(source_size.width()))
+    source_h = max(1.0, float(source_size.height()))
+    if display_size is not None and display_size.width() > 0 and display_size.height() > 0:
+        display_scale = min(float(display_size.width()) / source_w, float(display_size.height()) / source_h)
+        if display_scale > 0:
+            return max(1.0, min(12.0, 1.0 / display_scale))
+    return max(1.0, min(8.0, max(source_w / 700.0, source_h / 500.0)))
+
+
+def _draw_runtime_segment(
+    painter: QtGui.QPainter,
+    segment: tuple[tuple[float, float], tuple[float, float]],
+    color: QtGui.QColor,
+    *,
+    overlay_scale: float = 1.0,
+) -> None:
+    pen = QtGui.QPen(color)
+    pen.setWidthF(max(3.0, 3.0 * float(overlay_scale)))
+    pen.setStyle(QtCore.Qt.SolidLine)
+    painter.setPen(pen)
+    painter.setBrush(QtCore.Qt.NoBrush)
+    (x0, y0), (x1, y1) = segment
+    painter.drawLine(QtCore.QPointF(x0, y0), QtCore.QPointF(x1, y1))
+
+
+def _draw_runtime_dimension(
+    painter: QtGui.QPainter,
+    segment: tuple[tuple[float, float], tuple[float, float]],
+    color: QtGui.QColor,
+    text: str,
+    *,
+    overlay_scale: float = 1.0,
+) -> None:
+    (x0, y0), (x1, y1) = segment
+    scale = max(1.0, float(overlay_scale))
+    painter.setPen(QtGui.QPen(color, max(3.0, 3.0 * scale), QtCore.Qt.SolidLine))
+    painter.drawLine(QtCore.QPointF(x0, y0), QtCore.QPointF(x1, y1))
+
+    dx = x1 - x0
+    dy = y1 - y0
+    length = max(1.0, float((dx * dx + dy * dy) ** 0.5))
+    ux = dx / length
+    uy = dy / length
+    nx = -uy
+    ny = ux
+    head = max(12.0 * scale, min(24.0 * scale, length * 0.2))
+    painter.setBrush(QtGui.QBrush(color))
+    for x, y, sign in ((x0, y0, 1.0), (x1, y1, -1.0)):
+        back_x = x + sign * ux * head
+        back_y = y + sign * uy * head
+        painter.drawPolygon(
+            QtGui.QPolygonF(
+                [
+                    QtCore.QPointF(x, y),
+                    QtCore.QPointF(back_x + nx * head * 0.45, back_y + ny * head * 0.45),
+                    QtCore.QPointF(back_x - nx * head * 0.45, back_y - ny * head * 0.45),
+                ]
+            )
+        )
+
+    if not text:
+        return
+    tx = (x0 + x1) * 0.5 + nx * 16.0 * scale
+    ty = (y0 + y1) * 0.5 + ny * 16.0 * scale
+    font = painter.font()
+    font.setPixelSize(max(18, int(round(18.0 * scale))))
+    font.setBold(True)
+    painter.setFont(font)
+    metrics = QtGui.QFontMetrics(font)
+    rect = metrics.boundingRect(text)
+    box = QtCore.QRectF(
+        tx - rect.width() / 2 - 7 * scale,
+        ty - rect.height() / 2 - 5 * scale,
+        rect.width() + 14 * scale,
+        rect.height() + 10 * scale,
+    )
+    painter.setPen(QtCore.Qt.NoPen)
+    painter.setBrush(QtGui.QBrush(QtGui.QColor(0, 0, 0, 180)))
+    painter.drawRoundedRect(box, 4, 4)
+    painter.setPen(QtGui.QPen(color))
+    painter.drawText(box, QtCore.Qt.AlignCenter, text)
+
+
+def _runtime_source_measurements(source: str | RuntimePreviewFrame) -> tuple[dict, ...]:
+    if isinstance(source, RuntimePreviewFrame):
+        return tuple(dict(item) for item in tuple(getattr(source, "measurements", ()) or ()) if isinstance(item, dict))
+    path = str(source or "").strip()
+    if not path:
+        return ()
+    return read_exported_runtime_preview_measurements(path)
 
 
 def _runtime_source_shapes(source: str | RuntimePreviewFrame) -> tuple[RuntimePreviewShape, ...]:

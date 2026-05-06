@@ -380,7 +380,7 @@ def load_product_analysis(
     entry = _find_embedding_model_entry(product_dir, backbone=backbone, model_key=model_key)
     if entry is None:
         raise FileNotFoundError(
-            f"register model not found: backbone={backbone!r}, model_key={model_key!r}"
+            f"register model not found: subtype={learning_backbone_storage_code(backbone)!r}, model_key={model_key!r}"
         )
     model_path = entry.model_path
 
@@ -493,7 +493,7 @@ def visualize_analysis_matplotlib(result: EmbeddingAnalysisResult):
         plt.annotate(name, (coords[idx, 0], coords[idx, 1]), fontsize=8, alpha=0.75)
 
     plt.title(
-        f"Embedding analysis: {result.product_name} / {result.backbone} / {result.projection_method.upper()}",
+        f"Embedding analysis: {result.product_name} / {algorithm_display_name(result.backbone) or learning_backbone_storage_code(result.backbone)} / {result.projection_method.upper()}",
         fontsize=13,
         fontweight="bold",
     )
@@ -508,7 +508,7 @@ def visualize_analysis_matplotlib(result: EmbeddingAnalysisResult):
 if __name__ == "__main__":
     SESSION_ROOT = ".qr_session"
     PRODUCT_NAME = "Screw"
-    BACKBONE = "efficientnet_b0"
+    BACKBONE = "b0"
 
     analysis = load_product_analysis(
         session_root=SESSION_ROOT,

@@ -36,6 +36,7 @@ import numpy as np
 
 from PySide6 import QtCore, QtGui, QtWidgets
 import algorithms.proxy as qr_core
+from algorithms.registry import learning_backbone_storage_code
 
 from infrastructure.camera_settings_store import (
     CameraSettingsStore,
@@ -385,7 +386,7 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
         self.btn_autogen_current = QtWidgets.QPushButton(tr("debug.batch_roi_current"))
         self.btn_autogen_current.clicked.connect(self._run_autogen_current_list)
         row.addWidget(self.btn_autogen_current)
-        self.btn_autogen_current_image = QtWidgets.QPushButton("Generate Missing ROI (Current Image)")
+        self.btn_autogen_current_image = QtWidgets.QPushButton(tr("debug.batch_roi_current_image_missing"))
         self.btn_autogen_current_image.clicked.connect(self._run_autogen_current_image)
         row.addWidget(self.btn_autogen_current_image)
         self.btn_clear_current = QtWidgets.QPushButton(tr("debug.clear_roi_current"))
@@ -549,6 +550,7 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         body.addWidget(center_panel, 2)
         self._canvas_shapes: list[dict[str, object]] = []
         self._active_roi_label = ""
+        self._suppress_tool_page_context_sync = False
 
         right_panel = QtWidgets.QFrame()
         right_panel.setStyleSheet("QFrame{background:#2f2f2f;border:1px solid #505050;}")
@@ -750,6 +752,8 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         return str(item.data(QtCore.Qt.UserRole) or item.toolTip() or "").strip()
 
     def _sync_tool_page_context(self, preferred_path: str = "") -> None:
+        if getattr(self, "_suppress_tool_page_context_sync", False):
+            return
         camera_role = str(self.cmb_camera.currentData() or "cam1")
         sample_kind = str(self.cmb_sample_kind.currentData() or "train")
         try:
@@ -779,7 +783,12 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         dialog.activateWindow()
 
     def _on_tool_page_roi_geometry_changed(self) -> None:
-        self._reload_samples(preferred_path=self._current_dialog_selected_path())
+        previous = bool(getattr(self, "_suppress_tool_page_context_sync", False))
+        self._suppress_tool_page_context_sync = True
+        try:
+            self._reload_samples(preferred_path=self._current_dialog_selected_path())
+        finally:
+            self._suppress_tool_page_context_sync = previous
 
     def _mark_current_image_all_ok(self) -> None:
         path, camera_role = self._current_path_and_role()
@@ -1270,7 +1279,6 @@ class ToolPage(QtWidgets.QWidget):
             ("btn_debug_open_io", tr("debug.open_io_debug")),
             ("btn_debug_close_io", tr("debug.close_io_debug")),
             ("btn_debug_refresh_io", tr("debug.refresh_dido")),
-            ("btn_debug_simulate_trigger", tr("debug.simulate_trigger_todo")),
         ):
             widget = getattr(self, attr, None)
             if widget is not None:
@@ -1353,6 +1361,8 @@ class ToolPage(QtWidgets.QWidget):
             self.chk_measurement_upper.setText(tr("debug.measurement.use_upper"))
         if hasattr(self, "btn_add_line_distance_tool"):
             self.btn_add_line_distance_tool.setText(tr("debug.measurement.add_line_distance_tool"))
+        if hasattr(self, "btn_delete_line_distance_tool"):
+            self.btn_delete_line_distance_tool.setText(tr("debug.measurement.delete_line_distance_tool"))
         if hasattr(self, "cmb_measurement_line_a_direction"):
             blocker = QtCore.QSignalBlocker(self.cmb_measurement_line_a_direction)
             for index, key in enumerate((
@@ -1388,7 +1398,25 @@ class ToolPage(QtWidgets.QWidget):
         dialog = getattr(self, "_template_editor_dialog", None)
         if dialog is not None and hasattr(dialog, "retranslate_ui"):
             dialog.retranslate_ui()
+        self._retranslate_tool_dialogs()
+        if hasattr(self, "lbl_debug_di_snapshot") and getattr(self, "_debug_io_controller", None) is None:
+            self.lbl_debug_di_snapshot.setText(tr("debug.di_disconnected"))
+            self.lbl_debug_do_snapshot.setText(tr("debug.do_disconnected"))
+            self.lbl_debug_io_mapping_summary.setText(tr("debug.mapping_not_loaded"))
         self._sync_footer()
+
+    def _tool_dialog_title(self, key: str) -> str:
+        title_keys = {
+            "camera_debug": "action.camera_tool",
+            "io_debug": "action.io_tool",
+            "template_match": "action.auto_region",
+        }
+        return tr(title_keys.get(str(key), str(key)))
+
+    def _retranslate_tool_dialogs(self) -> None:
+        for key, dialog in getattr(self, "_tool_dialogs", {}).items():
+            if dialog is not None:
+                dialog.setWindowTitle(self._tool_dialog_title(key))
 
     def current_algorithm(self) -> str:
         value = self.cmb_algorithm.currentData() if hasattr(self, "cmb_algorithm") else None
@@ -1842,7 +1870,6 @@ class ToolPage(QtWidgets.QWidget):
     def open_camera_debug_dialog(self) -> None:
         self._show_tool_dialog(
             "camera_debug",
-            tr("action.camera_tool"),
             self.camera_debug_page,
             size=(1100, 700),
         )
@@ -1852,7 +1879,6 @@ class ToolPage(QtWidgets.QWidget):
     def open_io_debug_dialog(self) -> None:
         self._show_tool_dialog(
             "io_debug",
-            tr("action.io_tool"),
             self.io_debug_page,
             size=(900, 480),
         )
@@ -1910,7 +1936,6 @@ class ToolPage(QtWidgets.QWidget):
     def open_template_match_dialog(self) -> None:
         self._show_tool_dialog(
             "template_match",
-            tr("action.auto_region"),
             self.template_match_box,
             size=(880, 170),
         )
@@ -2291,7 +2316,7 @@ class ToolPage(QtWidgets.QWidget):
         self.btn_sample_annotation = QtWidgets.QPushButton(tr("debug.sample_annotation"))
         self.btn_sample_annotation.setStyleSheet(_compact_btn)
         self.btn_sample_annotation.clicked.connect(self._open_sample_annotation_dialog)
-        self.btn_del_ok = QtWidgets.QPushButton(_si(SP.SP_DialogDiscardButton), tr("debug.remove"))
+        self.btn_del_ok = QtWidgets.QPushButton(tr("debug.remove"))
         self.btn_del_ok.setStyleSheet(_compact_btn)
         self.btn_del_ok.clicked.connect(lambda: self._remove_selected_from("TRAIN"))
         train_actions.addWidget(self.btn_import_train, 0, 0)
@@ -2320,10 +2345,10 @@ class ToolPage(QtWidgets.QWidget):
         self.btn_test_to_train = QtWidgets.QPushButton(tr("debug.move_to_train"))
         self.btn_test_to_train.setStyleSheet(_compact_btn)
         self.btn_test_to_train.clicked.connect(lambda: self._move_selected_sample_to("TRAIN"))
-        self.btn_add_test = QtWidgets.QPushButton(_si(SP.SP_FileDialogStart), tr("debug.add_external_images"))
+        self.btn_add_test = QtWidgets.QPushButton(tr("debug.add_external_images"))
         self.btn_add_test.setStyleSheet(_compact_btn)
         self.btn_add_test.clicked.connect(lambda: self._add_images_to("TEST"))
-        self.btn_del_test = QtWidgets.QPushButton(_si(SP.SP_DialogDiscardButton), tr("debug.remove"))
+        self.btn_del_test = QtWidgets.QPushButton(tr("debug.remove"))
         self.btn_del_test.setStyleSheet(_compact_btn)
         self.btn_del_test.clicked.connect(lambda: self._remove_selected_from("TEST"))
         self.btn_sample_annotation_test = QtWidgets.QPushButton(tr("debug.clear_current_test_list"))
@@ -2543,10 +2568,22 @@ class ToolPage(QtWidgets.QWidget):
         self.measurement_params_frame.hide()
         tool_vbox.addWidget(self.measurement_params_frame)
 
+        measurement_action_row = QtWidgets.QHBoxLayout()
+        measurement_action_row.setContentsMargins(0, 0, 0, 0)
+        measurement_action_row.setSpacing(4)
+
         self.btn_add_line_distance_tool = QtWidgets.QPushButton(tr("debug.measurement.add_line_distance_tool"))
         self.btn_add_line_distance_tool.setStyleSheet(_compact_btn)
         self.btn_add_line_distance_tool.clicked.connect(self._add_line_distance_tool)
-        tool_vbox.addWidget(self.btn_add_line_distance_tool)
+        measurement_action_row.addWidget(self.btn_add_line_distance_tool, 1)
+
+        self.btn_delete_line_distance_tool = QtWidgets.QPushButton(tr("debug.measurement.delete_line_distance_tool"))
+        self.btn_delete_line_distance_tool.setStyleSheet(_compact_btn)
+        self.btn_delete_line_distance_tool.setEnabled(False)
+        self.btn_delete_line_distance_tool.hide()
+        self.btn_delete_line_distance_tool.clicked.connect(self._delete_selected_line_distance_tool)
+        measurement_action_row.addWidget(self.btn_delete_line_distance_tool, 1)
+        tool_vbox.addLayout(measurement_action_row)
 
         self.tool_config_frame = tool_frame
         self.inspection_items_table = QtWidgets.QTableWidget(0, 5)
@@ -3053,11 +3090,6 @@ class ToolPage(QtWidgets.QWidget):
         self.btn_debug_refresh_io.setStyleSheet(_compact_btn)
         self.btn_debug_refresh_io.clicked.connect(self._refresh_debug_io_snapshot)
         io_ctrl_layout.addWidget(self.btn_debug_refresh_io)
-
-        self.btn_debug_simulate_trigger = QtWidgets.QPushButton(tr("debug.simulate_trigger_todo"))
-        self.btn_debug_simulate_trigger.setStyleSheet(_compact_btn)
-        self.btn_debug_simulate_trigger.setEnabled(False)
-        io_ctrl_layout.addWidget(self.btn_debug_simulate_trigger)
 
         io_left_vbox.addWidget(io_ctrl_w)
         io_left_vbox.addSpacing(4)
@@ -4523,7 +4555,6 @@ class ToolPage(QtWidgets.QWidget):
     def _show_tool_dialog(
         self,
         key: str,
-        title: str,
         widget: QtWidgets.QWidget,
         *,
         size: Tuple[int, int],
@@ -4531,7 +4562,6 @@ class ToolPage(QtWidgets.QWidget):
         dialog = self._tool_dialogs.get(key)
         if dialog is None:
             dialog = QtWidgets.QDialog(self)
-            dialog.setWindowTitle(title)
             dialog.setModal(False)
             dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, False)
             layout = QtWidgets.QVBoxLayout(dialog)
@@ -4541,6 +4571,7 @@ class ToolPage(QtWidgets.QWidget):
             if key == "camera_debug":
                 dialog.finished.connect(lambda *_: self._stop_debug_camera_preview())
             self._tool_dialogs[key] = dialog
+        dialog.setWindowTitle(self._tool_dialog_title(key))
         if key == "camera_debug":
             # ??????????? Enter ???????????????????????
             for _btn in dialog.findChildren(QtWidgets.QPushButton):
@@ -4587,13 +4618,14 @@ class ToolPage(QtWidgets.QWidget):
         report_dir = os.path.join(self.session.product_dir, "margin_reports")
         os.makedirs(report_dir, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base = f"margin_report_{self.current_algorithm()}_{stamp}"
+        algorithm_code = learning_backbone_storage_code(self.current_algorithm())
+        base = f"margin_report_{algorithm_code}_{stamp}"
         json_path = os.path.join(report_dir, base + ".json")
         csv_path = os.path.join(report_dir, base + ".csv")
 
         payload = {
             "product": self.session.current_product,
-            "algorithm": self.current_algorithm(),
+            "algorithm": algorithm_code,
             "score_mode": self.cmb_mode.currentText(),
             "topk": int(self.spin_topk.value()),
             "margin": float(self.spin_margin.value()),

@@ -241,6 +241,8 @@ class InspectionExecutorPerItemTest(unittest.TestCase):
         self.assertEqual(distance_row["measurement"]["line_a_item_id"], "left")
         self.assertEqual(distance_row["measurement"]["line_b_item_id"], "right")
         self.assertIn("dimension_segment", distance_row["measurement"])
+        self.assertEqual(len(response.measurements), 1)
+        self.assertEqual(response.measurements[0]["type"], "line_distance")
 
         response = executor.execute(
             InspectionExecutionRequest(

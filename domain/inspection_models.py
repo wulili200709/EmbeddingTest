@@ -43,6 +43,7 @@ class InspectionItemResult:
             "roi_label": self.roi_label,
             "algorithm_code": self.algorithm_code,
             "enabled": self.enabled,
+            "params": dict(self.params or {}),
             "status_kind": kind,
             "status_text": text,
         }

@@ -17,7 +17,8 @@ if root_str not in sys.path:
     sys.path.insert(0, root_str)
 
 from algorithms.registry import SHARED_BACKBONE_ALGORITHM_CODE
-from domain.inspection_items import InspectionItem
+from domain.inspection_items import InspectionItem, load_inspection_items
+from ui.i18n import language_code, set_language, tr
 from ui.debug.tool_page import roi_ops, tool_config
 
 
@@ -35,6 +36,9 @@ class _DummyAlgo:
     def embedding_model_path(self, backbone: str, product_dir: str, model_key: str | None = None) -> str:
         suffix = model_key or "shared"
         return os.path.join(product_dir, f"{suffix}_{backbone}.npz")
+
+    def embedding_model_storage_paths(self, backbone: str, product_dir: str):
+        return [self.embedding_model_path(backbone, product_dir)]
 
     def algorithm_display_name(self, algorithm: str) -> str:
         return algorithm
@@ -87,6 +91,9 @@ class _ToolConfigHarness:
         self.inspection_items_table = QtWidgets.QTableWidget(0, 5)
         self.lbl_tool_config_hint = QtWidgets.QLabel("")
         self.lbl_tool_config_hint.hide()
+        self.lbl_status = QtWidgets.QLabel("")
+        self.btn_delete_line_distance_tool = QtWidgets.QPushButton()
+        self.inspectionItemsChanged = SimpleNamespace(emit=lambda: None)
         self.canvas = _DummyCanvas()
         self._inspection_items_table_loading = False
         self._updating_runtime_params = False
@@ -131,6 +138,9 @@ class _ToolConfigHarness:
 
     def _update_learning_backbone_hint(self) -> None:
         tool_config._update_learning_backbone_hint(self)
+
+    def _update_measurement_params_panel(self) -> None:
+        return None
 
 
 class ToolPageToolConfigTest(unittest.TestCase):
@@ -206,6 +216,95 @@ class ToolPageToolConfigTest(unittest.TestCase):
             self.assertIsNotNone(item)
             self.assertEqual(item.text(), "roi2")
         finally:
+            harness.cleanup()
+
+    def test_delete_selected_line_distance_tool_removes_only_selected_measurement(self) -> None:
+        harness = _ToolConfigHarness()
+        try:
+            harness.inspection_items.extend(
+                [
+                    InspectionItem(
+                        item_id="line_distance",
+                        display_name="Line Distance",
+                        camera_id="cam1",
+                        roi_label="",
+                        algorithm_code="line_distance",
+                    ),
+                    InspectionItem(
+                        item_id="line_distance_2",
+                        display_name="Line Distance",
+                        camera_id="cam1",
+                        roi_label="",
+                        algorithm_code="line_distance",
+                    ),
+                ]
+            )
+
+            harness._refresh_inspection_items_table()
+            harness.inspection_items_table.setCurrentCell(2, 1)
+            harness.inspection_items_table.selectRow(2)
+            tool_config._delete_selected_line_distance_tool(harness)
+
+            remaining_ids = [item.item_id for item in harness.inspection_items]
+            self.assertIn("line_distance", remaining_ids)
+            self.assertNotIn("line_distance_2", remaining_ids)
+            self.assertEqual(harness.inspection_items_table.rowCount(), 2)
+            self.assertFalse(harness.btn_delete_line_distance_tool.isEnabled())
+            persisted_ids = [item.item_id for item in load_inspection_items(harness.session.inspection_items_path)]
+            self.assertEqual(persisted_ids, remaining_ids)
+        finally:
+            harness.cleanup()
+
+    def test_delete_line_distance_button_only_visible_for_selected_distance_tool(self) -> None:
+        harness = _ToolConfigHarness()
+        try:
+            harness.inspection_items.append(
+                InspectionItem(
+                    item_id="line_distance",
+                    display_name="Line Distance",
+                    camera_id="cam1",
+                    roi_label="",
+                    algorithm_code="line_distance",
+                )
+            )
+
+            harness._refresh_inspection_items_table()
+            self.assertFalse(harness.btn_delete_line_distance_tool.isVisible())
+
+            harness.inspection_items_table.setCurrentCell(0, 1)
+            harness.inspection_items_table.selectRow(0)
+            harness._on_inspection_items_selection_changed()
+            self.assertFalse(harness.btn_delete_line_distance_tool.isVisible())
+
+            harness.inspection_items_table.setCurrentCell(1, 1)
+            harness.inspection_items_table.selectRow(1)
+            harness._on_inspection_items_selection_changed()
+            self.assertTrue(harness.btn_delete_line_distance_tool.isVisible())
+            self.assertTrue(harness.btn_delete_line_distance_tool.isEnabled())
+        finally:
+            harness.cleanup()
+
+    def test_line_distance_default_name_is_translated_in_table(self) -> None:
+        previous = language_code()
+        harness = _ToolConfigHarness()
+        try:
+            set_language("zh_CN", persist=False)
+            harness.inspection_items.append(
+                InspectionItem(
+                    item_id="line_distance",
+                    display_name="Line Distance",
+                    camera_id="cam1",
+                    roi_label="",
+                    algorithm_code="line_distance",
+                )
+            )
+
+            harness._refresh_inspection_items_table()
+            item = harness.inspection_items_table.item(1, 1)
+            self.assertIsNotNone(item)
+            self.assertEqual(item.text(), tr("debug.algorithm.line_distance"))
+        finally:
+            set_language(previous, persist=False)
             harness.cleanup()
 
     def test_row_highlight_and_selected_tool_follow_selected_row_not_current_row(self) -> None:

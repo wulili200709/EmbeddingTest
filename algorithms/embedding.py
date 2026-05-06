@@ -31,6 +31,7 @@ except Exception:  # pragma: no cover
     ort = None
 
 from app_paths import writable_embedding_test_root
+from .registry import learning_backbone_storage_code, storage_code_backbone
 from .labelme import (
     clamp_roi_xywh,
     labelme_json_of_image,
@@ -84,6 +85,7 @@ class OrtBackboneRunner:
 
 
 def _build_torch_backbone_model(name: str) -> tuple[torch.nn.Module, int]:
+    name = storage_code_backbone(name)
     if name == "efficientnet_b0":
         model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.DEFAULT)
         feat = model.features
@@ -127,11 +129,11 @@ def _ort_cache_root() -> Path:
 
 
 def _backbone_onnx_path(name: str) -> Path:
-    return _ort_cache_root() / f"{name}_{_ORT_EXPORT_VERSION}.onnx"
+    return _ort_cache_root() / f"{learning_backbone_storage_code(name)}_{_ORT_EXPORT_VERSION}.onnx"
 
 
 def _backbone_ort_path(name: str, *, device: str) -> Path:
-    return _ort_cache_root() / f"{name}_{_device_kind(device)}_{_ORT_EXPORT_VERSION}.ort"
+    return _ort_cache_root() / f"{learning_backbone_storage_code(name)}_{_device_kind(device)}_{_ORT_EXPORT_VERSION}.ort"
 
 
 def _ort_providers_for_device(device: Optional[str] = None) -> tuple[str, ...]:
@@ -151,6 +153,7 @@ def _ort_providers_for_device(device: Optional[str] = None) -> tuple[str, ...]:
 
 
 def _export_backbone_onnx(name: str, onnx_path: Path) -> None:
+    name = storage_code_backbone(name)
     if onnx is None:
         raise RuntimeError("onnx is required to export ORT backbone models")
     model, _ = _build_torch_backbone_model(name)
@@ -179,6 +182,7 @@ def _export_backbone_onnx(name: str, onnx_path: Path) -> None:
 
 
 def _ensure_ort_model(name: str, *, device: str) -> Path:
+    name = storage_code_backbone(name)
     ort_path = _backbone_ort_path(name, device=device)
     if ort_path.exists():
         return ort_path
@@ -211,6 +215,7 @@ def _ensure_ort_model(name: str, *, device: str) -> Path:
 
 
 def _load_ort_backbone(name: str, *, device: str) -> Optional[OrtBackboneRunner]:
+    name = storage_code_backbone(name)
     if ort is None:
         return None
     providers = _ort_providers_for_device(device)
@@ -272,7 +277,7 @@ def load_backbone(
     *,
     preferred_backend: Optional[str] = None,
 ):
-    normalized_name = str(name or "").strip()
+    normalized_name = storage_code_backbone(name)
     normalized_device = _normalized_device(device)
     backend_choice = _normalized_backbone_backend(preferred_backend)
     if backend_choice in {"auto", "ort"}:
@@ -607,7 +612,7 @@ def save_register_model_npz(model: RegisterModel, npz_path: str) -> None:
     os.makedirs(os.path.dirname(npz_path) or ".", exist_ok=True)
     np.savez_compressed(
         npz_path,
-        backbone=np.array([model.backbone]),
+        backbone=np.array([learning_backbone_storage_code(model.backbone)]),
         score_mode=np.array([model.score_mode]),
         margin=np.array([float(model.margin)], dtype=np.float32),
         topk=np.array([int(model.topk)], dtype=np.int32),
@@ -624,7 +629,7 @@ def save_register_model_npz(model: RegisterModel, npz_path: str) -> None:
 def load_register_model_npz(npz_path: str) -> RegisterModel:
     data = np.load(npz_path, allow_pickle=False)
     return RegisterModel(
-        backbone=str(data["backbone"][0]),
+        backbone=storage_code_backbone(data["backbone"][0]),
         score_mode=str(data["score_mode"][0]),
         margin=float(data["margin"][0]),
         topk=int(data["topk"][0]),
@@ -643,7 +648,7 @@ def load_register_model_npz(npz_path: str) -> RegisterModel:
 def train_register_model(
     ok_files: Sequence[str],
     ng_files: Sequence[str],
-    backbone: str = "efficientnet_b0",
+    backbone: str = "b0",
     score_mode: str = "proto",
     margin: float = 0.02,
     topk: int = 3,
@@ -653,6 +658,7 @@ def train_register_model(
 ) -> RegisterModel:
     if not ok_files or not ng_files:
         raise RuntimeError("Both OK and NG samples are required")
+    backbone = storage_code_backbone(backbone)
     device = device or get_device()
     feat_net, _ = load_backbone(backbone, device=device)
     labels = [str(name) for name in (label_names or [label_name]) if str(name).strip()]

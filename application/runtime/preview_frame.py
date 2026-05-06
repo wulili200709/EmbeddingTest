@@ -26,6 +26,7 @@ class RuntimePreviewFrame:
     product_dir: str = ""
     camera_role: str = "cam1"
     roi_shapes: tuple[RuntimePreviewShape, ...] = ()
+    measurements: tuple[dict, ...] = ()
 
 
 def build_runtime_preview_frame(
@@ -36,6 +37,7 @@ def build_runtime_preview_frame(
     product_dir: str = "",
     camera_role: str = "cam1",
     roi_shapes: tuple[RuntimePreviewShape, ...] = (),
+    measurements: tuple[dict, ...] = (),
 ) -> RuntimePreviewFrame:
     image = np.asarray(image_bgr)
     if image.ndim not in {2, 3}:
@@ -50,6 +52,7 @@ def build_runtime_preview_frame(
         product_dir=str(product_dir or "").strip(),
         camera_role=str(camera_role or "").strip() or "cam1",
         roi_shapes=tuple(roi_shapes or ()),
+        measurements=tuple(dict(item) for item in tuple(measurements or ()) if isinstance(item, dict)),
     )
 
 
@@ -94,6 +97,27 @@ def read_exported_runtime_preview_shapes(image_path: str) -> tuple[RuntimePrevie
     return tuple(shapes)
 
 
+def read_exported_runtime_preview_measurements(image_path: str) -> tuple[dict, ...]:
+    path_text = str(image_path or "").strip()
+    if not path_text:
+        return ()
+    json_path = Path(labelme_json_of_image(path_text))
+    if not json_path.exists():
+        return ()
+    try:
+        with json_path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception:
+        return ()
+    flags = payload.get("flags", {})
+    if not isinstance(flags, dict):
+        return ()
+    measurements = flags.get("runtime_measurements", [])
+    if not isinstance(measurements, list):
+        return ()
+    return tuple(dict(item) for item in measurements if isinstance(item, dict))
+
+
 def load_runtime_preview_shapes(image_path: str) -> tuple[RuntimePreviewShape, ...]:
     # Backward-compatible alias for older callers that still read exported sidecars.
     return read_exported_runtime_preview_shapes(image_path)
@@ -126,6 +150,7 @@ def export_runtime_preview_frame(
         product_dir=frame.product_dir,
         camera_role=frame.camera_role,
         roi_shapes=frame.roi_shapes,
+        measurements=frame.measurements,
     )
 
 
@@ -134,7 +159,13 @@ def _write_runtime_preview_json(image_path: Path, frame: RuntimePreviewFrame) ->
     height, width = image.shape[:2]
     payload = {
         "version": "5.5.0",
-        "flags": {},
+        "flags": {
+            "runtime_measurements": [
+                dict(item)
+                for item in tuple(getattr(frame, "measurements", ()) or ())
+                if isinstance(item, dict)
+            ],
+        },
         "shapes": [
             {
                 "label": str(shape.label or "").strip(),
@@ -164,6 +195,7 @@ __all__ = [
     "RuntimePreviewFrame",
     "RuntimePreviewShape",
     "build_runtime_preview_frame",
+    "read_exported_runtime_preview_measurements",
     "read_exported_runtime_preview_shapes",
     "load_runtime_preview_shapes",
 ]

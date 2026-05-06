@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from domain import aggregate_runtime_outcome, recipe_name_from_path
+from algorithms.registry import learning_backbone_storage_code
 
 from .capture_policy import normalize_capture_retention_policy
 from .preview_frame import RuntimePreviewFrame, build_runtime_preview_frame, export_runtime_preview_frame
@@ -402,7 +403,7 @@ def _precheck_for_roles(runtime, roles) -> tuple[bool, str]:
         except Exception as exc:
             return False, f"failed to load model: {exc}"
         if runtime._algo.model is None:
-            return False, f"algorithm {algorithm} does not have a trained model yet"
+            return False, f"algorithm {learning_backbone_storage_code(algorithm)} does not have a trained model yet"
     traditional_items = [
         item
         for item in enabled_items
@@ -465,6 +466,7 @@ def _inspect_frame(runtime, role: str, frame):
         )
         runtime._last_item_results_by_camera[role] = list(response.item_results)
     roi_shapes = tuple(getattr(response, "roi_shapes", ()) or ())
+    measurements = tuple(getattr(response, "measurements", ()) or ())
     preview_frame = build_runtime_preview_frame(
         role=role,
         image_bgr=image,
@@ -472,6 +474,7 @@ def _inspect_frame(runtime, role: str, frame):
         product_dir=product_dir,
         camera_role=role,
         roi_shapes=roi_shapes,
+        measurements=measurements,
     )
     with runtime._frame_lock:
         runtime._last_preview_frames[role] = preview_frame

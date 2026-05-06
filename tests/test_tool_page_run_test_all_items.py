@@ -110,6 +110,9 @@ class _Harness:
     def _load_canvas_image(self, path: str) -> None:
         self.loaded_paths.append(path)
 
+    def _update_sample_panel_widgets(self) -> None:
+        return None
+
     def current_algorithm(self) -> str:
         return "efficientnet_b0"
 
@@ -179,6 +182,8 @@ class ToolPageRunTestAllItemsTest(unittest.TestCase):
         )
         self.assertEqual(len(harness.rows), 2)
         self.assertEqual(harness.rows[0]["file_name"], f"{Path(image_path).name} [ROI1]")
+        self.assertEqual(harness.rows[0]["algorithm"], "efficientnet_b0")
+        self.assertEqual(harness.log_rows[0]["algorithm"], "efficientnet_b0")
         self.assertEqual(harness.rows[1]["file_name"], f"{Path(image_path).name} [ROI2]")
         self.assertEqual(harness.loaded_paths, [image_path])
         self.assertIn("overall=NG", harness.lbl_status.text)

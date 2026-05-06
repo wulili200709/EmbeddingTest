@@ -30,6 +30,7 @@ _DEBUG_IO_NAME_LABELS = {
     "tower_blue": ("debug.io_name.tower_blue", "DO_TOWER_BLUE"),
     "light_cam1": ("debug.io_name.light_cam1", "DO_LIGHT_CAM1"),
     "light_cam2": ("debug.io_name.light_cam2", "DO_LIGHT_CAM2"),
+    "buzzer": ("debug.io_name.buzzer", "DO_BUZZER"),
     "reserved_out_1": ("debug.io_name.reserved_out_1", "DO_RESERVED_1"),
     "reserved_out_2": ("debug.io_name.reserved_out_2", "DO_RESERVED_2"),
 }
@@ -386,7 +387,9 @@ def _grab_debug_camera_once(self) -> None:
     self.lbl_status.setText(f"Status: {role} debug capture saved to test samples -> {os.path.basename(image_path)}")
 
 
-def _debug_io_display_name(name: str) -> str:
+def _debug_io_display_name(name: str, channel: int | None = None) -> str:
+    if str(name) == "reserved_out_1" and channel == 5:
+        return f"{tr('debug.io_name.buzzer')}\nDO_BUZZER"
     entry = _DEBUG_IO_NAME_LABELS.get(str(name))
     if entry is None:
         return str(name)
@@ -464,7 +467,7 @@ def _update_debug_io_panels(self, di_word: int, do_word: int) -> None:
         _set_debug_di_indicator(indicator, display_state)
         indicator.setToolTip(tooltip)
         hint = self._debug_di_hints[channel]
-        hint.setText(_debug_io_display_name(name))
+        hint.setText(_debug_io_display_name(name, channel))
         hint.setToolTip(tooltip)
 
     for channel, button in self._debug_do_channel_buttons.items():
@@ -494,7 +497,7 @@ def _update_debug_io_panels(self, di_word: int, do_word: int) -> None:
         button.blockSignals(False)
         button.setToolTip(tooltip)
         hint = self._debug_do_hints[channel]
-        hint.setText(_debug_io_display_name(name))
+        hint.setText(_debug_io_display_name(name, channel))
         hint.setToolTip(tooltip)
 
     input_states = []
@@ -555,8 +558,8 @@ def _close_debug_io(self, *, silent: bool = False) -> None:
     if getattr(self, "_debug_io_uses_runtime_controller", False):
         self._debug_io_uses_runtime_controller = False
     self._debug_io_controller = None
-    self.lbl_debug_di_snapshot.setText("DI: disconnected")
-    self.lbl_debug_do_snapshot.setText("DO: disconnected")
+    self.lbl_debug_di_snapshot.setText(tr("debug.di_disconnected"))
+    self.lbl_debug_do_snapshot.setText(tr("debug.do_disconnected"))
     _reset_debug_io_panels(self)
     if getattr(self, "_runtime_io_ready", False) and getattr(self, "_runtime_io_controller", None) is not None:
         self._apply_runtime_io_debug_state()

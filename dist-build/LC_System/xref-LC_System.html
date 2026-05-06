@@ -11052,12 +11052,18 @@ imports:
  &#8226;   <a href="#__future__">__future__</a>
  &#8226;   <a href="#algorithms">algorithms</a>
  &#8226;   <a href="#algorithms.labelme">algorithms.labelme</a>
+ &#8226;   <a href="#algorithms.registry">algorithms.registry</a>
+ &#8226;   <a href="#app_paths">app_paths</a>
  &#8226;   <a href="#cv2">cv2</a>
  &#8226;   <a href="#dataclasses">dataclasses</a>
  &#8226;   <a href="#glob">glob</a>
  &#8226;   <a href="#json">json</a>
  &#8226;   <a href="#numpy">numpy</a>
+ &#8226;   <a href="#onnx">onnx</a>
+ &#8226;   <a href="#onnxruntime">onnxruntime</a>
  &#8226;   <a href="#os">os</a>
+ &#8226;   <a href="#pathlib">pathlib</a>
+ &#8226;   <a href="#threading">threading</a>
  &#8226;   <a href="#torch">torch</a>
  &#8226;   <a href="#torch.nn.functional">torch.nn.functional</a>
  &#8226;   <a href="#torchvision">torchvision</a>
@@ -11203,10 +11209,17 @@ imports:
   <div class="import">
 imported by:
     <a href="#algorithms">algorithms</a>
+ &#8226;   <a href="#algorithms.embedding">algorithms.embedding</a>
  &#8226;   <a href="#application.algorithm_controller">application.algorithm_controller</a>
+ &#8226;   <a href="#application.runtime.execution">application.runtime.execution</a>
+ &#8226;   <a href="#application.runtime_context">application.runtime_context</a>
  &#8226;   <a href="#domain.inspection_items">domain.inspection_items</a>
+ &#8226;   <a href="#infrastructure.product_params">infrastructure.product_params</a>
  &#8226;   <a href="#tools.visualize_embeddings">tools.visualize_embeddings</a>
  &#8226;   <a href="#ui.debug.embedding_analysis_dialog">ui.debug.embedding_analysis_dialog</a>
+ &#8226;   <a href="#ui.debug.tool_page.analysis_tools">ui.debug.tool_page.analysis_tools</a>
+ &#8226;   <a href="#ui.debug.tool_page.page">ui.debug.tool_page.page</a>
+ &#8226;   <a href="#ui.debug.tool_page.test_runner">ui.debug.tool_page.test_runner</a>
  &#8226;   <a href="#ui.debug.tool_page.tool_config">ui.debug.tool_page.tool_config</a>
 
   </div>
@@ -12360,7 +12373,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#application.runtime.hardware">application.runtime.hardware</a>
+    <a href="#algorithms.embedding">algorithms.embedding</a>
+ &#8226;   <a href="#application.runtime.hardware">application.runtime.hardware</a>
  &#8226;   <a href="#devices.nkio_raw">devices.nkio_raw</a>
  &#8226;   <a href="#infrastructure.camera_settings_store">infrastructure.camera_settings_store</a>
  &#8226;   <a href="#line2dup.core.bootstrap">line2dup.core.bootstrap</a>
@@ -12777,6 +12791,7 @@ imported by:
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#__future__">__future__</a>
+ &#8226;   <a href="#algorithms.registry">algorithms.registry</a>
  &#8226;   <a href="#application.runtime">application.runtime</a>
  &#8226;   <a href="#application.runtime.capture_policy">application.runtime.capture_policy</a>
  &#8226;   <a href="#application.runtime.controller">application.runtime.controller</a>
@@ -12885,6 +12900,7 @@ imports:
  &#8226;   <a href="#algorithms.embedding">algorithms.embedding</a>
  &#8226;   <a href="#algorithms.measurement">algorithms.measurement</a>
  &#8226;   <a href="#algorithms.proxy">algorithms.proxy</a>
+ &#8226;   <a href="#algorithms.registry">algorithms.registry</a>
  &#8226;   <a href="#algorithms.traditional">algorithms.traditional</a>
  &#8226;   <a href="#application">application</a>
  &#8226;   <a href="#application.AlgorithmController">application.AlgorithmController</a>
@@ -34902,6 +34918,7 @@ imports:
  &#8226;   <a href="#importlib">importlib</a>
  &#8226;   <a href="#importlib._bootstrap">importlib._bootstrap</a>
  &#8226;   <a href="#importlib._bootstrap_external">importlib._bootstrap_external</a>
+ &#8226;   <a href="#importlib.machinery">importlib.machinery</a>
  &#8226;   <a href="#sys">sys</a>
  &#8226;   <a href="#warnings">warnings</a>
 
@@ -35144,6 +35161,7 @@ imports:
 imported by:
     <a href="#cProfile">cProfile</a>
  &#8226;   <a href="#ctypes.util">ctypes.util</a>
+ &#8226;   <a href="#importlib">importlib</a>
  &#8226;   <a href="#importlib.abc">importlib.abc</a>
  &#8226;   <a href="#inspect">inspect</a>
  &#8226;   <a href="#modulefinder">modulefinder</a>
@@ -35674,6 +35692,7 @@ imported by:
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#__future__">__future__</a>
+ &#8226;   <a href="#algorithms.registry">algorithms.registry</a>
  &#8226;   <a href="#dataclasses">dataclasses</a>
  &#8226;   <a href="#infrastructure">infrastructure</a>
  &#8226;   <a href="#json">json</a>
@@ -62764,7 +62783,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#onnx">onnx</a>
+    <a href="#algorithms.embedding">algorithms.embedding</a>
+ &#8226;   <a href="#onnx">onnx</a>
  &#8226;   <a href="#onnx._mapping">onnx._mapping</a>
  &#8226;   <a href="#onnx.checker">onnx.checker</a>
  &#8226;   <a href="#onnx.compose">onnx.compose</a>
@@ -69887,7 +69907,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#onnxruntime">onnxruntime</a>
+    <a href="#algorithms.embedding">algorithms.embedding</a>
+ &#8226;   <a href="#onnxruntime">onnxruntime</a>
  &#8226;   <a href="#onnxruntime.capi">onnxruntime.capi</a>
  &#8226;   <a href="#onnxruntime.capi.onnxruntime_inference_collection">onnxruntime.capi.onnxruntime_inference_collection</a>
  &#8226;   <a href="#onnxruntime.transformers">onnxruntime.transformers</a>
@@ -122938,6 +122959,7 @@ imported by:
  &#8226;   <a href="#aiohttp.helpers">aiohttp.helpers</a>
  &#8226;   <a href="#aiohttp.web_fileresponse">aiohttp.web_fileresponse</a>
  &#8226;   <a href="#aiohttp.web_urldispatcher">aiohttp.web_urldispatcher</a>
+ &#8226;   <a href="#algorithms.embedding">algorithms.embedding</a>
  &#8226;   <a href="#anyio._core._fileio">anyio._core._fileio</a>
  &#8226;   <a href="#app_paths">app_paths</a>
  &#8226;   <a href="#application.runtime.capture_policy">application.runtime.capture_policy</a>
@@ -185710,6 +185732,7 @@ imports:
   <div class="import">
 imported by:
     <a href="#_threading_local">_threading_local</a>
+ &#8226;   <a href="#algorithms.embedding">algorithms.embedding</a>
  &#8226;   <a href="#algorithms.proxy">algorithms.proxy</a>
  &#8226;   <a href="#anyio._backends._asyncio">anyio._backends._asyncio</a>
  &#8226;   <a href="#anyio._core._asyncio_selector_thread">anyio._core._asyncio_selector_thread</a>
@@ -267172,6 +267195,7 @@ imported by:
 imports:
     <a href="#__future__">__future__</a>
  &#8226;   <a href="#algorithms.proxy">algorithms.proxy</a>
+ &#8226;   <a href="#algorithms.registry">algorithms.registry</a>
  &#8226;   <a href="#csv">csv</a>
  &#8226;   <a href="#cv2">cv2</a>
  &#8226;   <a href="#datetime">datetime</a>
@@ -267322,6 +267346,7 @@ imports:
  &#8226;   <a href="#PySide6.QtWidgets">PySide6.QtWidgets</a>
  &#8226;   <a href="#__future__">__future__</a>
  &#8226;   <a href="#algorithms.proxy">algorithms.proxy</a>
+ &#8226;   <a href="#algorithms.registry">algorithms.registry</a>
  &#8226;   <a href="#application">application</a>
  &#8226;   <a href="#application.AlgorithmController">application.AlgorithmController</a>
  &#8226;   <a href="#application.InspectionExecutionRequest">application.InspectionExecutionRequest</a>
@@ -267424,6 +267449,7 @@ imports:
  &#8226;   <a href="#PySide6.QtGui">PySide6.QtGui</a>
  &#8226;   <a href="#PySide6.QtWidgets">PySide6.QtWidgets</a>
  &#8226;   <a href="#__future__">__future__</a>
+ &#8226;   <a href="#algorithms.registry">algorithms.registry</a>
  &#8226;   <a href="#csv">csv</a>
  &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#line2dup.core">line2dup.core</a>

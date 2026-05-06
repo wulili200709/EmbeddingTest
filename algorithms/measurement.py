@@ -281,7 +281,9 @@ def _crop_from_shape(image_bgr: np.ndarray, shape: Mapping[str, Any]) -> tuple[n
     return crop, mask, (x, y)
 
 
-def _edge_response(delta: np.ndarray, polarity: str) -> np.ndarray:
+def _edge_response(delta: np.ndarray, polarity: str, *, direction: str = "left_right") -> np.ndarray:
+    if direction in {"right_left", "bottom_up"}:
+        delta = -delta
     if polarity == "dark_to_bright":
         return delta
     if polarity == "bright_to_dark":
@@ -308,7 +310,7 @@ def _refine_horizontal_edge_x(gray: np.ndarray, y: int, x: int, config: FindLine
     if w < 2:
         return float(x)
     delta = gray[int(y), 1:] - gray[int(y), :-1]
-    response = _edge_response(delta, config.polarity)
+    response = _edge_response(delta, config.polarity, direction=config.direction)
     lo = max(0, int(x) - 2)
     hi = min(w - 2, int(x) + 2)
     if hi < lo:
@@ -328,7 +330,7 @@ def _refine_vertical_edge_y(gray: np.ndarray, x: int, y: int, config: FindLineCo
     if h < 2:
         return float(y)
     delta = gray[1:, int(x)] - gray[:-1, int(x)]
-    response = _edge_response(delta, config.polarity)
+    response = _edge_response(delta, config.polarity, direction=config.direction)
     lo = max(0, int(y) - 2)
     hi = min(h - 2, int(y) + 2)
     if hi < lo:
@@ -362,7 +364,7 @@ def find_edge_points(
         if w < 2:
             return np.empty((0, 2), dtype=np.float32)
         delta = gray[:, 1:] - gray[:, :-1]
-        response = _edge_response(delta, config.polarity)
+        response = _edge_response(delta, config.polarity, direction=config.direction)
         adjacent_valid = valid_mask[:, 1:] & valid_mask[:, :-1]
         x_indexes = range(w) if config.direction == "left_right" else range(w - 1, -1, -1)
         for y in range(0, h, config.scan_step):
@@ -381,7 +383,7 @@ def find_edge_points(
         if h < 2:
             return np.empty((0, 2), dtype=np.float32)
         delta = gray[1:, :] - gray[:-1, :]
-        response = _edge_response(delta, config.polarity)
+        response = _edge_response(delta, config.polarity, direction=config.direction)
         adjacent_valid = valid_mask[1:, :] & valid_mask[:-1, :]
         y_indexes = range(h) if config.direction == "top_down" else range(h - 1, -1, -1)
         for x in range(0, w, config.scan_step):

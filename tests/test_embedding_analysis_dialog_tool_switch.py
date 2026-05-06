@@ -63,14 +63,14 @@ class EmbeddingAnalysisDialogToolSwitchTest(unittest.TestCase):
             EmbeddingModelEntry(
                 model_key="cam1__roi1",
                 backbone="efficientnet_b0",
-                model_path="cam1__roi1_register_model_lt01.npz",
+                model_path="cam1__roi1_register_model_b0.npz",
                 display_name="密封圈1 (cam1/roi1) / 高精度学习工具",
                 tool_name="密封圈1 (cam1/roi1)",
             ),
             EmbeddingModelEntry(
                 model_key="cam1__roi2",
                 backbone="efficientnet_b0",
-                model_path="cam1__roi2_register_model_lt01.npz",
+                model_path="cam1__roi2_register_model_b0.npz",
                 display_name="密封圈2 (cam1/roi2) / 高精度学习工具",
                 tool_name="密封圈2 (cam1/roi2)",
             ),
@@ -114,42 +114,43 @@ class EmbeddingAnalysisDialogToolSwitchTest(unittest.TestCase):
             EmbeddingModelEntry(
                 model_key="cam1__roi1",
                 backbone="efficientnet_b0",
-                model_path="cam1__roi1_register_model_lt01.npz",
-                display_name="roi1 / efficientnet",
+                model_path="cam1__roi1_register_model_b0.npz",
+                display_name="roi1 / 高精度学习工具",
                 tool_name="roi1",
             ),
             EmbeddingModelEntry(
                 model_key="cam1__roi2",
                 backbone="efficientnet_b0",
-                model_path="cam1__roi2_register_model_lt01.npz",
-                display_name="roi2 / efficientnet",
+                model_path="cam1__roi2_register_model_b0.npz",
+                display_name="roi2 / 高精度学习工具",
                 tool_name="roi2",
             ),
             EmbeddingModelEntry(
                 model_key="cam1__roi3",
                 backbone="efficientnet_b0",
-                model_path="cam1__roi3_register_model_lt01.npz",
-                display_name="roi3 / efficientnet",
+                model_path="cam1__roi3_register_model_b0.npz",
+                display_name="roi3 / 高精度学习工具",
                 tool_name="roi3",
             ),
             EmbeddingModelEntry(
                 model_key="cam1__legacy",
                 backbone="efficientnet_b0",
-                model_path="cam1__legacy_register_model_lt01.npz",
-                display_name="legacy / efficientnet",
+                model_path="cam1__legacy_register_model_b0.npz",
+                display_name="legacy / 高精度学习工具",
                 tool_name="legacy",
             ),
             EmbeddingModelEntry(
                 model_key="cam1__roi1",
                 backbone="mobilenet_v3_small",
-                model_path="cam1__roi1_register_model_lt02.npz",
-                display_name="roi1 / mobilenet",
+                model_path="cam1__roi1_register_model_b1.npz",
+                display_name="roi1 / 轻量学习工具",
                 tool_name="roi1",
             ),
         ]
 
         def _fake_load(*, session_root: str, product_name: str, backbone: str, model_key: str, projection_method: str):
-            return _analysis_result(f"{model_key}:{backbone}", f"{model_key}_{backbone}.npz", model_key)
+            storage_code = "b1" if backbone == "mobilenet_v3_small" else "b0"
+            return _analysis_result(f"{model_key}:{storage_code}", f"{model_key}_{storage_code}.npz", model_key)
 
         with mock.patch("ui.debug.embedding_analysis_dialog.list_product_names", return_value=["demo_product"]), \
             mock.patch("ui.debug.embedding_analysis_dialog.list_available_embedding_models", return_value=entries), \

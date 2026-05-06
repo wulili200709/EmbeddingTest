@@ -19,6 +19,7 @@ from algorithms.registry import (
     is_measurement_tool_algorithm,
     is_traditional_tool_algorithm,
     normalize_tool_algorithm_code,
+    storage_code_backbone,
 )
 from application.algorithm_controller import AlgorithmController
 from infrastructure.product_params import ProductRuntimeParams
@@ -35,6 +36,20 @@ class ToolAlgorithmRegistryTest(unittest.TestCase):
             normalize_tool_algorithm_code("efficientnet_b0"),
             SHARED_BACKBONE_ALGORITHM_CODE,
         )
+        self.assertEqual(
+            normalize_tool_algorithm_code("b0"),
+            SHARED_BACKBONE_ALGORITHM_CODE,
+        )
+        self.assertEqual(
+            normalize_tool_algorithm_code("lt_b0"),
+            SHARED_BACKBONE_ALGORITHM_CODE,
+        )
+
+    def test_storage_backbone_codes_normalize_to_backbone_names(self) -> None:
+        self.assertEqual(storage_code_backbone("b0"), "efficientnet_b0")
+        self.assertEqual(storage_code_backbone("b1"), "mobilenet_v3_small")
+        self.assertEqual(storage_code_backbone("b2"), "mobilenet_v3_large")
+        self.assertEqual(storage_code_backbone("lt_b0"), "efficientnet_b0")
 
     def test_registry_knows_learning_and_traditional_families(self) -> None:
         self.assertTrue(is_learning_tool_algorithm(SHARED_BACKBONE_ALGORITHM_CODE))
@@ -57,6 +72,8 @@ class ToolAlgorithmRegistryTest(unittest.TestCase):
         )
 
         self.assertEqual(params.learning_backbone, "mobilenet_v3_small")
+        self.assertEqual(params.to_dict()["learning_backbone"], "b1")
+        self.assertEqual(ProductRuntimeParams.from_dict({"learning_backbone": "b1"}).learning_backbone, "mobilenet_v3_small")
         fallback = ProductRuntimeParams.from_dict({})
         self.assertEqual(fallback.learning_backbone, "")
         self.assertEqual(DEFAULT_LEARNING_BACKBONE, "efficientnet_b0")

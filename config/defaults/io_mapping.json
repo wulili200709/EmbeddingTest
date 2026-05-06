@@ -40,7 +40,7 @@
       "channel": 4,
       "active_high": false
     },
-    "reserved_out_1": {
+    "buzzer": {
       "channel": 5,
       "active_high": false
     },

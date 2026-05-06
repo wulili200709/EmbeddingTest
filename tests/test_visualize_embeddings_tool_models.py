@@ -42,7 +42,7 @@ class VisualizeEmbeddingsToolModelsTest(unittest.TestCase):
                 ],
                 str(product_dir / "inspection_items.json"),
             )
-            (product_dir / "cam1__roi1_register_model_lt01.npz").write_bytes(b"npz")
+            (product_dir / "cam1__roi1_register_model_b0.npz").write_bytes(b"npz")
 
             entries = list_available_embedding_models(str(product_dir))
 
@@ -75,8 +75,8 @@ class VisualizeEmbeddingsToolModelsTest(unittest.TestCase):
             (product_dir / "product_params.json").write_text(
                 json.dumps(
                     {
-                        "algorithm": "efficientnet_b0",
-                        "learning_backbone": "efficientnet_b0",
+                        "algorithm": "b0",
+                        "learning_backbone": "b0",
                         "score_mode": "proto",
                         "margin": 0.02,
                         "topk": 3,
@@ -98,7 +98,7 @@ class VisualizeEmbeddingsToolModelsTest(unittest.TestCase):
                 ],
                 str(product_dir / "inspection_items.json"),
             )
-            model_path = product_dir / "cam1__roi1_register_model_lt01.npz"
+            model_path = product_dir / "cam1__roi1_register_model_b0.npz"
             model_path.write_bytes(b"npz")
 
             model = RegisterModel(
@@ -137,7 +137,7 @@ class VisualizeEmbeddingsToolModelsTest(unittest.TestCase):
                     projection_method="pca",
                 )
 
-        self.assertTrue(result.model_path.endswith("cam1__roi1_register_model_lt01.npz"))
+        self.assertTrue(result.model_path.endswith("cam1__roi1_register_model_b0.npz"))
         self.assertEqual(result.tool_name, "螺丝1 (cam1/roi1)")
         self.assertEqual(result.label_names, ["roi1"])
         self.assertEqual(len(result.rows), 2)
@@ -160,7 +160,7 @@ class VisualizeEmbeddingsToolModelsTest(unittest.TestCase):
                 product_dir = Path(tmpdir) / "demo_product"
                 product_dir.mkdir(parents=True, exist_ok=True)
                 save_inspection_items([], str(product_dir / "inspection_items.json"))
-                (product_dir / "register_model_lt01.npz").write_bytes(b"npz")
+                (product_dir / "register_model_b0.npz").write_bytes(b"npz")
 
                 set_language("en_US", persist=False)
                 english_entries = list_available_embedding_models(str(product_dir))

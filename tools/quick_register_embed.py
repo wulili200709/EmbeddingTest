@@ -28,8 +28,8 @@ print("PYTHON =", sys.executable)
 
 DEVICE = "cuda"  # 这里仅用于打印；真正 device 在 qr_core 内部自适应
 
-# 选择 backbone：efficientnet_b0 / mobilenet_v3_small / mobilenet_v3_large
-BACKBONE = "efficientnet_b0"
+# 选择学习工具子类：b0 / b1 / b2
+BACKBONE = "b0"
 # Scoring: "proto" or "topk"
 SCORE_MODE = "proto"
 MARGIN = 0.02

@@ -54,6 +54,7 @@ class InspectionExecutionResponse:
     total_ms: float = 0.0
     item_results: List[InspectionItemResult] = field(default_factory=list)
     roi_shapes: tuple[object, ...] = field(default_factory=tuple)
+    measurements: tuple[dict, ...] = field(default_factory=tuple)
 
 
 class InspectionExecutor:
@@ -243,6 +244,17 @@ class InspectionExecutor:
                 match_ms=match_ms,
                 infer_ms=infer_ms,
             )
+        raw_measurements = tuple(
+            dict(row.get("measurement", {}) or {})
+            for row in item_rows
+            if isinstance(row.get("measurement"), dict)
+        )
+        line_distance_measurements = tuple(
+            measurement
+            for measurement in raw_measurements
+            if str(measurement.get("type", "") or "").strip() == "line_distance"
+        )
+        measurements = line_distance_measurements or raw_measurements
 
         return InspectionExecutionResponse(
             camera_id=request.camera_id,
@@ -260,6 +272,7 @@ class InspectionExecutor:
             total_ms=total_ms,
             item_results=item_results,
             roi_shapes=roi_shapes,
+            measurements=measurements,
         )
 
     def _predict_image_for_item(self, path: str, **kwargs) -> dict:

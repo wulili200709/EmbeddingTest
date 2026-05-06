@@ -732,11 +732,15 @@ class RuntimeModePage(QtWidgets.QWidget):
             if camera_id not in grouped_rows:
                 grouped_rows[camera_id] = []
             grouped_rows[camera_id].append(row)
+        display_grouped_rows = {
+            camera_id: self._runtime_display_rows_for_camera(camera_rows)
+            for camera_id, camera_rows in grouped_rows.items()
+        }
 
         insert_index = 0
         display_index = 1
         for camera_id in ["cam1", "cam2"]:
-            camera_rows = grouped_rows.get(camera_id, [])
+            camera_rows = display_grouped_rows.get(camera_id, [])
             if not camera_rows:
                 continue
 
@@ -764,6 +768,31 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._items_scroll.viewport().update()
         self._refresh_camera_previews()
         self._refresh_trigger_buttons()
+
+    @staticmethod
+    def _runtime_display_rows_for_camera(rows: list[dict]) -> list[dict]:
+        camera_rows = list(rows or [])
+        line_helper_ids: set[str] = set()
+        for row in camera_rows:
+            if str(row.get("algorithm_code", "") or "").strip() != "line_distance":
+                continue
+            params = row.get("params", {})
+            if not isinstance(params, dict):
+                continue
+            for key in ("line_a_item_id", "line_b_item_id"):
+                item_id = str(params.get(key, "") or "").strip()
+                if item_id:
+                    line_helper_ids.add(item_id)
+        if not line_helper_ids:
+            return camera_rows
+        return [
+            row
+            for row in camera_rows
+            if not (
+                str(row.get("algorithm_code", "") or "").strip() == "find_line"
+                and str(row.get("item_id", "") or "").strip() in line_helper_ids
+            )
+        ]
 
     def set_camera_pixmap(self, role: str, pixmap: QtGui.QPixmap | None, *, placeholder: str | None = None) -> None:
         if role == "cam1":

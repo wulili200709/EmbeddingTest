@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -17,7 +17,7 @@ if root_str not in sys.path:
 
 from application.algorithm_controller import TrainResult
 from domain.inspection_items import InspectionItem
-from ui.debug.tool_page.page import ToolPage
+from ui.debug.tool_page.page import ToolPage, _SampleAnnotationPreviewDialog
 
 
 class _FakeAlgo:
@@ -175,6 +175,60 @@ class _RoleFilterHarness:
         return []
 
 
+class _PreviewDialogToolPageHarness(QtWidgets.QWidget):
+    inspectionItemsChanged = QtCore.Signal()
+    roiGeometryChanged = QtCore.Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.current_role = "cam1"
+        self.role_changes: list[str] = []
+        self.tabs = None
+
+    def current_product_name(self) -> str:
+        return "demo"
+
+    def configured_camera_roles(self) -> list[str]:
+        return ["cam1", "cam2"]
+
+    def current_camera_role(self) -> str:
+        return self.current_role
+
+    def _current_sample_tab_kind(self) -> str:
+        return "train"
+
+    def _sample_paths_for_kind(self, kind: str, camera_role=None) -> list[str]:
+        return [f"{camera_role or self.current_role}_{kind}.png"]
+
+    def _sample_item_display_text(self, path: str, _sample_kind: str, _camera_role=None) -> str:
+        return os.path.basename(path)
+
+    def _current_selected_path(self) -> str:
+        return ""
+
+    def _inspection_label_names_for_role(self, _camera_role) -> list[str]:
+        return ["roi1"]
+
+    def _path_has_roi_geometry(self, _path: str, _label: str) -> bool:
+        return False
+
+    def _sample_roi_status_for_path(self, _path: str, _camera_role: str, _label: str) -> str:
+        return ""
+
+    def _sample_usage_text(self, _path: str) -> str:
+        return "TRAIN"
+
+    def _sample_annotation_state_for_path(self, _path: str, _camera_role: str) -> str:
+        return "unset"
+
+    def _set_current_camera_role(self, role: object, *, sync_debug_role: bool = True) -> None:
+        self.current_role = str(role or "cam1")
+        self.role_changes.append(self.current_role)
+
+    def _select_path_in_current_tab(self, _path: str) -> None:
+        return None
+
+
 class ToolPageCameraRoleFilterTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -265,6 +319,26 @@ class ToolPageCameraRoleFilterTest(unittest.TestCase):
         self.assertFalse(harness.cmb_debug_camera_role.isEnabled())
         self.assertFalse(harness.cmb_current_camera_role.model().item(1).isEnabled())
         self.assertFalse(harness.cmb_debug_camera_role.model().item(1).isEnabled())
+
+    def test_preview_refresh_from_tool_change_does_not_switch_main_camera_role(self) -> None:
+        harness = _PreviewDialogToolPageHarness()
+        dialog = _SampleAnnotationPreviewDialog(harness)
+        try:
+            index = dialog.cmb_camera.findData("cam2")
+            self.assertGreaterEqual(index, 0)
+            blocker = QtCore.QSignalBlocker(dialog.cmb_camera)
+            dialog.cmb_camera.setCurrentIndex(index)
+            del blocker
+            harness.current_role = "cam1"
+            harness.role_changes.clear()
+
+            dialog._on_tool_page_roi_geometry_changed()
+
+            self.assertEqual(harness.current_role, "cam1")
+            self.assertEqual(harness.role_changes, [])
+        finally:
+            dialog.close()
+            harness.close()
 
 
 if __name__ == "__main__":

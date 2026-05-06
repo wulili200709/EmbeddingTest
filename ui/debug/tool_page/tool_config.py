@@ -125,6 +125,68 @@ def _add_line_distance_tool(tool_page) -> None:
                 break
 
 
+def _update_delete_line_distance_button(tool_page) -> None:
+    button = getattr(tool_page, "btn_delete_line_distance_tool", None)
+    if button is None:
+        return
+    item = _selected_inspection_item(tool_page)
+    can_delete = (
+        item is not None
+        and normalize_tool_algorithm_code(getattr(item, "algorithm_code", "")) == "line_distance"
+    )
+    button.setEnabled(can_delete)
+    button.setVisible(can_delete)
+
+
+def _inspection_item_display_name(inspection_item) -> str:
+    item_id = str(getattr(inspection_item, "item_id", "") or "").strip()
+    raw_name = str(
+        getattr(inspection_item, "display_name", "")
+        or getattr(inspection_item, "roi_label", "")
+        or item_id
+    ).strip()
+    algorithm = normalize_tool_algorithm_code(getattr(inspection_item, "algorithm_code", ""))
+    if algorithm == "line_distance":
+        default_names = {"", "Line Distance", "line_distance"}
+        if item_id.startswith("line_distance"):
+            default_names.add(item_id)
+        if raw_name in default_names:
+            return tr("debug.algorithm.line_distance")
+    return raw_name
+
+
+def _delete_selected_line_distance_tool(tool_page) -> None:
+    row = _selected_inspection_item_row(tool_page)
+    if row < 0 or row >= len(getattr(tool_page, "inspection_items", []) or []):
+        QtWidgets.QMessageBox.information(
+            tool_page,
+            tr("debug.measurement.delete_line_distance_tool"),
+            tr("debug.measurement.delete_line_distance_select"),
+        )
+        return
+
+    inspection_item = tool_page.inspection_items[row]
+    if normalize_tool_algorithm_code(getattr(inspection_item, "algorithm_code", "")) != "line_distance":
+        QtWidgets.QMessageBox.information(
+            tool_page,
+            tr("debug.measurement.delete_line_distance_tool"),
+            tr("debug.measurement.delete_line_distance_select"),
+        )
+        return
+
+    display_name = (
+        _inspection_item_display_name(inspection_item)
+        or tr("debug.algorithm.line_distance")
+    )
+    del tool_page.inspection_items[row]
+    _persist_inspection_items(tool_page)
+    _refresh_inspection_items_table(tool_page)
+    _update_delete_line_distance_button(tool_page)
+    status_label = getattr(tool_page, "lbl_status", None)
+    if status_label is not None:
+        status_label.setText(tr("debug.measurement.deleted_line_distance", name=display_name))
+
+
 def _inspection_combo_style(selected: bool) -> str:
     background = "#6ec0ff" if selected else "#3a3a3a"
     foreground = "#1a1a1a" if selected else "#d0d0d0"
@@ -469,8 +531,15 @@ def _inspection_item_status(tool_page, inspection_item):
                 time=_format_timestamp(model_path),
             )
             return tr("debug.status.trained"), tooltip, "#79d279"
-        legacy_path = tool_page.algo.embedding_model_path(backbone, tool_page.session.product_dir)
-        if os.path.exists(legacy_path):
+        legacy_path = next(
+            (
+                path
+                for path in tool_page.algo.embedding_model_storage_paths(backbone, tool_page.session.product_dir)
+                if path != model_path and os.path.exists(path)
+            ),
+            "",
+        )
+        if legacy_path:
             tooltip = tr(
                 "debug.tooltip.learning_trained_legacy",
                 model=os.path.basename(legacy_path),
@@ -562,7 +631,7 @@ def _refresh_inspection_items_table(tool_page) -> None:
             )
             table.setItem(row, 0, enabled_item)
 
-            display_name = inspection_item.display_name or inspection_item.roi_label or inspection_item.item_id
+            display_name = _inspection_item_display_name(inspection_item)
             name_item = QtWidgets.QTableWidgetItem(display_name)
             name_item.setFlags(
                 QtCore.Qt.ItemFlag.ItemIsEnabled
@@ -634,6 +703,7 @@ def _refresh_inspection_items_table(tool_page) -> None:
     _sync_inspection_items_row_highlight(tool_page)
     _on_inspection_items_selection_changed(tool_page)
 
+    _update_delete_line_distance_button(tool_page)
     _update_learning_backbone_hint(tool_page)
 
 
@@ -671,6 +741,7 @@ def _on_inspection_items_selection_changed(tool_page) -> None:
         tool_page._refresh_lists()
         tool_page._update_runtime_widgets()
         tool_page._update_learning_backbone_hint()
+        _update_delete_line_distance_button(tool_page)
         tool_page._update_measurement_params_panel()
         return
     if tool_page.algo.is_learning_tool(item.algorithm_code):
@@ -686,6 +757,7 @@ def _on_inspection_items_selection_changed(tool_page) -> None:
     tool_page._refresh_lists()
     tool_page._update_runtime_widgets()
     tool_page._update_learning_backbone_hint()
+    _update_delete_line_distance_button(tool_page)
     tool_page._update_measurement_params_panel()
     image_path = tool_page.canvas.image_path()
     if image_path:
@@ -769,6 +841,8 @@ __all__ = [
     "_on_inspection_items_table_item_changed",
     "_persist_inspection_items",
     "_add_line_distance_tool",
+    "_delete_selected_line_distance_tool",
+    "_update_delete_line_distance_button",
     "_refresh_inspection_items_table",
     "_selected_inspection_item",
     "_selected_inspection_item_row",

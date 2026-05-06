@@ -44,7 +44,7 @@ def default_io_config() -> IoConfig:
             "tower_blue": IoChannelConfig(channel=2, active_high=False),
             "light_cam1": IoChannelConfig(channel=3, active_high=False),
             "light_cam2": IoChannelConfig(channel=4, active_high=False),
-            "reserved_out_1": IoChannelConfig(channel=5, active_high=False),
+            "buzzer": IoChannelConfig(channel=5, active_high=False),
             "reserved_out_2": IoChannelConfig(channel=6, active_high=False),
         },
     )

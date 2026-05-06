@@ -18,6 +18,7 @@ from application.runtime.preview_frame import (  # noqa: E402
     RuntimePreviewShape,
     build_runtime_preview_frame,
     export_runtime_preview_frame,
+    read_exported_runtime_preview_measurements,
     read_exported_runtime_preview_shapes,
 )
 
@@ -35,6 +36,14 @@ class RuntimePreviewFrameExportTest(unittest.TestCase):
                     shape_type="rectangle",
                     points=((1.0, 2.0), (10.0, 12.0)),
                 ),
+            ),
+            measurements=(
+                {
+                    "type": "line_distance",
+                    "label": "12.000px",
+                    "dimension_segment": [[2.0, 4.0], [14.0, 4.0]],
+                    "pred": "OK",
+                },
             ),
         )
 
@@ -61,6 +70,9 @@ class RuntimePreviewFrameExportTest(unittest.TestCase):
             shapes = read_exported_runtime_preview_shapes(str(image_path))
             self.assertEqual(len(shapes), 1)
             self.assertEqual(shapes[0].label, "roi1")
+            measurements = read_exported_runtime_preview_measurements(str(image_path))
+            self.assertEqual(len(measurements), 1)
+            self.assertEqual(measurements[0]["label"], "12.000px")
 
 
 if __name__ == "__main__":

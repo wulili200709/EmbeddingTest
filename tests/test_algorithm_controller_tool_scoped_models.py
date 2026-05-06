@@ -25,7 +25,7 @@ class AlgorithmControllerToolScopedModelsTest(unittest.TestCase):
             "C:/demo/product",
             model_key="cam1__roi1",
         )
-        self.assertTrue(path.endswith("cam1__roi1_register_model_lt01.npz"))
+        self.assertTrue(path.endswith("cam1__roi1_register_model_b0.npz"))
 
     def test_train_stores_traditional_model_by_tool_key(self) -> None:
         controller = AlgorithmController()

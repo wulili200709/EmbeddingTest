@@ -81,6 +81,66 @@ class EdgeDistanceMeasurementTest(unittest.TestCase):
         self.assertEqual(upper, 26.0)
         self.assertEqual(unit, "px")
 
+    def test_find_line_polarity_follows_reverse_horizontal_scan_direction(self) -> None:
+        image = np.zeros((80, 120, 3), dtype=np.uint8)
+        image[:, 50:, :] = 220
+        shape_by_label = {
+            "roi1": {
+                "label": "roi1",
+                "shape_type": "rectangle",
+                "points": [[10.0, 10.0], [110.0, 70.0]],
+            }
+        }
+
+        result = measure_find_line_from_array(
+            image,
+            shape_by_label=shape_by_label,
+            preferred_label="roi1",
+            params={
+                "line": {
+                    "direction": "right_left",
+                    "polarity": "bright_to_dark",
+                    "edge_threshold": 30,
+                    "scan_step": 2,
+                    "blur_ksize": 0,
+                    "min_points": 20,
+                },
+            },
+        )
+
+        self.assertAlmostEqual(result.position_px, 40.0, delta=0.5)
+        self.assertLess(result.line.residual, 0.5)
+
+    def test_find_line_polarity_follows_reverse_vertical_scan_direction(self) -> None:
+        image = np.zeros((120, 80, 3), dtype=np.uint8)
+        image[55:, :, :] = 220
+        shape_by_label = {
+            "roi1": {
+                "label": "roi1",
+                "shape_type": "rectangle",
+                "points": [[10.0, 10.0], [70.0, 110.0]],
+            }
+        }
+
+        result = measure_find_line_from_array(
+            image,
+            shape_by_label=shape_by_label,
+            preferred_label="roi1",
+            params={
+                "line": {
+                    "direction": "bottom_up",
+                    "polarity": "bright_to_dark",
+                    "edge_threshold": 30,
+                    "scan_step": 2,
+                    "blur_ksize": 0,
+                    "min_points": 20,
+                },
+            },
+        )
+
+        self.assertAlmostEqual(result.position_px, 45.0, delta=0.5)
+        self.assertLess(result.line.residual, 0.5)
+
     def test_find_line_filters_obvious_outlier_points(self) -> None:
         true_points = np.asarray([(25.0, float(y)) for y in range(30)], dtype=np.float32)
         outliers = np.asarray([(60.0, 5.0), (60.0, 15.0), (60.0, 25.0)], dtype=np.float32)

@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from algorithms.registry import learning_backbone_storage_code
 from line2dup.core import locator as line2dup_locator
 
 
@@ -152,7 +153,7 @@ def _append_test_log(tool_page, row: Dict[str, object]) -> str:
         writer.writerow({
             "timestamp": datetime.now().isoformat(timespec="seconds"),
             "product": tool_page.session.current_product,
-            "algorithm": row.get("algorithm", tool_page.current_algorithm()),
+            "algorithm": learning_backbone_storage_code(row.get("algorithm", tool_page.current_algorithm())),
             "score_mode": tool_page.cmb_mode.currentText(),
             "margin": float(tool_page.spin_margin.value()),
             "topk": int(tool_page.spin_topk.value()),

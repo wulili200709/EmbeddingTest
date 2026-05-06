@@ -5,6 +5,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict
 
+from algorithms.registry import learning_backbone_storage_code, storage_code_backbone
+
 
 @dataclass
 class ProductRuntimeParams:
@@ -21,8 +23,8 @@ class ProductRuntimeParams:
         if not isinstance(traditional_models, dict):
             traditional_models = {}
         return cls(
-            algorithm=str(data.get("algorithm", "")).strip(),
-            learning_backbone=str(data.get("learning_backbone", "")).strip(),
+            algorithm=storage_code_backbone(data.get("algorithm", "")),
+            learning_backbone=storage_code_backbone(data.get("learning_backbone", "")),
             score_mode=str(data.get("score_mode", "proto")),
             margin=float(data.get("margin", 0.02)),
             topk=int(data.get("topk", 3)),
@@ -34,7 +36,10 @@ class ProductRuntimeParams:
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        payload["algorithm"] = learning_backbone_storage_code(payload.get("algorithm", ""))
+        payload["learning_backbone"] = learning_backbone_storage_code(payload.get("learning_backbone", ""))
+        return payload
 
 
 def load_product_params(path: str) -> ProductRuntimeParams:
