@@ -44,7 +44,7 @@
       "channel": 5,
       "active_high": false
     },
-    "reserved_out_2": {
+    "reserved_out_1": {
       "channel": 6,
       "active_high": false
     }

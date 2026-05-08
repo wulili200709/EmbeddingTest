@@ -41,6 +41,7 @@ from ui.shell.chrome import (
 from ui.shell.dialogs import (
     DEFAULT_ADMIN_PASSWORD,
     PasswordSettingsStore,
+    RuntimeModeSettingsStore,
     RuntimeRecordSettingsStore,
     TowerLightSettingsStore,
     confirm_admin_password,
@@ -97,7 +98,7 @@ from ui.i18n import set_language, tr
 # Test-stage switch:
 # False = 测试模式：NG时不自动弹出放行密码框，且不进入NG锁定，可直接继续下一次测试
 # True  = 产线模式：NG时自动弹出放行密码框，并进入NG锁定
-AUTO_SHOW_RELEASE_DIALOG_ON_NG = True
+AUTO_SHOW_RELEASE_DIALOG_ON_NG = True  # default; config/runtime_mode_settings.json overrides this at startup
 
 
 def _normalize_application_font(app: QtWidgets.QApplication) -> None:
@@ -138,11 +139,19 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self._runtime_record_store = RuntimeRecordSettingsStore()
         self._tower_light_store = TowerLightSettingsStore()
+        self._runtime_mode_store = RuntimeModeSettingsStore()
         self._password_settings = self._password_store.load()
         self._runtime_record_settings = self._runtime_record_store.load()
         self._tower_light_settings = self._tower_light_store.load()
+        self._runtime_mode_settings = self._runtime_mode_store.load()
         self._release_password = self._password_settings["run_password"]
         self._admin_password = self._password_settings["engineer_password"]
+        self._auto_show_release_dialog_on_ng = bool(
+            self._runtime_mode_settings.get(
+                "auto_show_release_dialog_on_ng",
+                AUTO_SHOW_RELEASE_DIALOG_ON_NG,
+            )
+        )
         self._runtime_import_error = detect_runtime_import_error()
         self._engine_warmup_thread: Optional[QtCore.QThread] = None
         self._brand_banner_source = QtGui.QPixmap(str(_resource_path("logo2.png")))
@@ -165,7 +174,7 @@ class MainWindow(QtWidgets.QMainWindow):
             runtime_context=ProductRuntimeContext(self.session, self.algo),
             import_error=self._runtime_import_error,
             release_password=self._release_password,
-            lock_on_ng=AUTO_SHOW_RELEASE_DIALOG_ON_NG,
+            lock_on_ng=self._auto_show_release_dialog_on_ng,
             parent=self,
         )
         self.runtime_ctrl.set_capture_retention_policy(self._runtime_capture_policy)
@@ -606,7 +615,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_runtime_trigger_result(self, result: str, _detail: str) -> None:
         if str(result).strip().upper() != "NG":
             return
-        if not AUTO_SHOW_RELEASE_DIALOG_ON_NG:
+        if not self._auto_show_release_dialog_on_ng:
             return
         QtCore.QTimer.singleShot(80, self._show_release_dialog)
 

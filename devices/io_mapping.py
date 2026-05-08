@@ -68,6 +68,8 @@ class IoMapping:
                     # Light polarity is still site-specific; active_high here is just a default.
                     "light_cam1": {"channel": 3, "active_high": False},
                     "light_cam2": {"channel": 4, "active_high": False},
+                    "buzzer": {"channel": 5, "active_high": False},
+                    "reserved_out_2": {"channel": 6, "active_high": False},
                 },
             }
         )
@@ -100,6 +102,7 @@ class IoMapping:
                 "tower_blue": cls._normalize_legacy_output(data.get("tower_blue"), default_channel=2),
                 "light_cam1": cls._normalize_legacy_output(data.get("light_cam1"), default_channel=3),
                 "light_cam2": cls._normalize_legacy_output(data.get("light_cam2"), default_channel=4),
+                "buzzer": cls._normalize_legacy_output(data.get("buzzer"), default_channel=5),
             },
         }
 

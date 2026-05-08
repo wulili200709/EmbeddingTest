@@ -18,6 +18,7 @@ if root_str not in sys.path:
 
 
 from ui.runtime.runtime_mode_pyside6 import RuntimeModePage
+from ui.i18n import language_code, set_language, tr
 from ui.window_common import update_runtime_preview
 from application.runtime.preview_frame import build_runtime_preview_frame
 
@@ -148,6 +149,31 @@ class RuntimeModeTriggerButtonsTest(unittest.TestCase):
         self.assertIn("line_distance", page._item_indicators_by_item_id)
         self.assertNotIn("left", page._item_indicators_by_item_id)
         self.assertNotIn("right", page._item_indicators_by_item_id)
+
+    def test_runtime_item_list_translates_default_line_distance_name(self) -> None:
+        previous = language_code()
+        try:
+            set_language("zh_CN", persist=False)
+            page = RuntimeModePage()
+
+            page.set_inspection_items(
+                [
+                    {
+                        "item_id": "line_distance",
+                        "display_name": "Line Distance",
+                        "camera_id": "cam1",
+                        "algorithm_code": "line_distance",
+                        "enabled": True,
+                        "status_kind": "pending",
+                        "status_text": "PENDING",
+                    },
+                ]
+            )
+
+            self.assertEqual(len(page._item_indicators), 1)
+            self.assertEqual(page._item_indicators[0].lbl_name._full_text, tr("debug.algorithm.line_distance"))
+        finally:
+            set_language(previous, persist=False)
 
     def test_runtime_item_list_keeps_non_helper_items_with_line_distance(self) -> None:
         page = RuntimeModePage()

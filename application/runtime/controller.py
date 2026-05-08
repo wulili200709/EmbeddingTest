@@ -109,6 +109,7 @@ except Exception:
 
 DEFAULT_TOWER_LIGHT_OK_FLASH_MS = 200
 DEFAULT_TOWER_LIGHT_NG_FLASH_MS = 200
+DEFAULT_TOWER_LIGHT_NG_BUZZER_MS = 500
 DEFAULT_TOWER_LIGHT_IDLE_BLUE_DELAY_MS = 30000
 
 
@@ -264,6 +265,7 @@ class RuntimeController(QtCore.QObject):
         self._tower_light_settings = {
             "ok_flash_ms": DEFAULT_TOWER_LIGHT_OK_FLASH_MS,
             "ng_flash_ms": DEFAULT_TOWER_LIGHT_NG_FLASH_MS,
+            "ng_buzzer_ms": DEFAULT_TOWER_LIGHT_NG_BUZZER_MS,
             "idle_blue_delay_ms": DEFAULT_TOWER_LIGHT_IDLE_BLUE_DELAY_MS,
         }
 
@@ -359,6 +361,7 @@ class RuntimeController(QtCore.QObject):
         normalized = {
             "ok_flash_ms": max(10, int(settings.get("ok_flash_ms", DEFAULT_TOWER_LIGHT_OK_FLASH_MS))),
             "ng_flash_ms": max(10, int(settings.get("ng_flash_ms", DEFAULT_TOWER_LIGHT_NG_FLASH_MS))),
+            "ng_buzzer_ms": max(0, int(settings.get("ng_buzzer_ms", DEFAULT_TOWER_LIGHT_NG_BUZZER_MS))),
             "idle_blue_delay_ms": max(0, int(settings.get("idle_blue_delay_ms", DEFAULT_TOWER_LIGHT_IDLE_BLUE_DELAY_MS))),
         }
         self._tower_light_settings = normalized
@@ -381,6 +384,7 @@ class RuntimeController(QtCore.QObject):
                 self._io_controller,
                 ok_flash_ms=normalized["ok_flash_ms"],
                 ng_flash_ms=normalized["ng_flash_ms"],
+                ng_buzzer_ms=normalized["ng_buzzer_ms"],
                 idle_blue_delay_s=float(normalized["idle_blue_delay_ms"]) / 1000.0,
             )
 
@@ -396,7 +400,7 @@ class RuntimeController(QtCore.QObject):
             self._tower_light_controller.all_off()
         elif previous_state == "ok":
             self._tower_light_controller.show_ok()
-        elif previous_state == "ng":
+        elif previous_state in {"ng", "ng_buzzer"}:
             self._tower_light_controller.show_ng()
         elif previous_state == "post_result" and hasattr(self._tower_light_controller, "schedule_idle_waiting"):
             self._tower_light_controller.schedule_idle_waiting()

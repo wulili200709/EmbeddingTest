@@ -65,6 +65,7 @@ def _rebuild_runner(runtime) -> bool:
             runtime._io_controller,
             ok_flash_ms=int(tower_settings.get("ok_flash_ms", 200) or 200),
             ng_flash_ms=int(tower_settings.get("ng_flash_ms", 200) or 200),
+            ng_buzzer_ms=int(tower_settings.get("ng_buzzer_ms", 500) or 0),
             idle_blue_delay_s=float(int(tower_settings.get("idle_blue_delay_ms", 30000) or 30000)) / 1000.0,
         )
     runtime._camera_manager = runtime_controller_module.HikCameraManager()

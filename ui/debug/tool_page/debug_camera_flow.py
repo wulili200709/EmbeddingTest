@@ -388,8 +388,6 @@ def _grab_debug_camera_once(self) -> None:
 
 
 def _debug_io_display_name(name: str, channel: int | None = None) -> str:
-    if str(name) == "reserved_out_1" and channel == 5:
-        return f"{tr('debug.io_name.buzzer')}\nDO_BUZZER"
     entry = _DEBUG_IO_NAME_LABELS.get(str(name))
     if entry is None:
         return str(name)

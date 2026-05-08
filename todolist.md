@@ -3302,7 +3302,9 @@ CPU/GPU 自适应推理技术
 DA9521001
 DA9521010
 DA9520986
-
+G26075:
+DA9520952
+DA9587425
 
 
 # 相机线触发
@@ -3764,3 +3766,22 @@ embedding forward: 只允许一个 worker 跑
 一句话总结：
 
 如果 cam1 forward 时 cam2 也同时 forward，CPU 上基本一定会抢资源；所以更稳的设计是只让一个 forward 同时执行，另一个排队。
+
+# 密码锁
+测试 NG 会锁住然后弹框”的变量在 ui/shell/main_window.py (line 100)：
+AUTO_SHOW_RELEASE_DIALOG_ON_NG = True
+它同时控制 NG 锁定和自动弹放行密码框。False 就是测试模式，不锁、不弹框；True 是产线模式，会锁并弹框。
+EmbeddingTest\dist\LC System\EmbeddingTest\config\runtime_mode_settings.json
+true：NG 后锁定，并自动弹放行密码框
+false：NG 后不锁定，不弹框，方便本地测试继续触发
+
+如果是脚踏/完整触发，cam1 判 NG 不会提前停止 cam2。cam2 还是会继续拍照和检测。
+
+当前流程在 services/inspection_runtime.py (line 166)：
+
+按顺序取相机角色：cam1、cam2。
+cam1 拍照完成后，立刻把 cam1 检测丢到线程里。
+不等 cam1 检测结果，继续 cam2 拍照。
+cam2 也提交检测后，才统一等待两个结果。
+最后 final_ok = all(...)，只要任意一路 NG，最终就是 NG，并在最后统一锁机/亮灯/弹框。
+所以正常 NG 判定场景下：cam1 NG 时，cam2 已经会继续跑，甚至可能已经拍完了。

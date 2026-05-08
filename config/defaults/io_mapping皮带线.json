@@ -63,6 +63,10 @@
     "reserved_out_2": {
       "channel": 6,
       "active_high": false
+    },
+    "buzzer": {
+      "channel": 7,
+      "active_high": false
     }
   }
 }

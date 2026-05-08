@@ -68,7 +68,7 @@ from ui.debug import (
     OverlayShape,
     RoiCanvas,
 )
-from ui.i18n import tr
+from ui.i18n import language_code, tr
 from ui.roi_overlay_colors import is_roi_label, overlay_style_for_label
 from ui.runtime import RuntimeImageView
 from path_utils import product_relative_path, resolve_product_path
@@ -377,6 +377,10 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
         self.lbl_ref.setStyleSheet("color:#d0d0d0;font-size:12px;")
         root.addWidget(self.lbl_ref)
 
+        self.lbl_status = QtWidgets.QLabel("")
+        self.lbl_status.setStyleSheet("color:#86efac;font-size:12px;")
+        root.addWidget(self.lbl_status)
+
         self.chk_only_missing = QtWidgets.QCheckBox(tr("debug.only_missing_roi"))
         self.chk_only_missing.setChecked(True)
         root.addWidget(self.chk_only_missing, 0, QtCore.Qt.AlignmentFlag.AlignRight)
@@ -396,6 +400,9 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
 
         self._tool_page.roiGeometryChanged.connect(self._refresh_scope)
         self._tool_page.inspectionItemsChanged.connect(self._refresh_scope)
+        self._autogen_thread: QtCore.QThread | None = None
+        self._autogen_worker: _SampleAutoRoiWorker | None = None
+        self._autogen_running = False
         self._refresh_scope()
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:
@@ -432,9 +439,16 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
         self.lbl_ref.setText(f"{tr('debug.reference_image')}: {os.path.basename(ref_image) if ref_image else '-'}")
         self.lbl_ref.setToolTip(ref_image)
         has_scope = bool(paths)
-        self.btn_autogen_current.setEnabled(has_scope)
-        self.btn_clear_current.setEnabled(has_scope)
-        self.btn_autogen_current_image.setEnabled(bool(current_path))
+        if self._autogen_running:
+            self.btn_autogen_current.setEnabled(False)
+            self.btn_clear_current.setEnabled(False)
+            self.btn_autogen_current_image.setEnabled(False)
+            self.chk_only_missing.setEnabled(False)
+        else:
+            self.btn_autogen_current.setEnabled(has_scope)
+            self.btn_clear_current.setEnabled(has_scope)
+            self.btn_autogen_current_image.setEnabled(bool(current_path))
+            self.chk_only_missing.setEnabled(True)
 
     def _sync_tool_page_role(self) -> None:
         self._tool_page._set_current_camera_role(self._camera_role(), sync_debug_role=True)
@@ -445,12 +459,7 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
             QtWidgets.QMessageBox.information(self, tr("common.info"), tr("sample.no_processable_images"))
             return
         self._sync_tool_page_role()
-        self._tool_page._autogen_roi_for_images(
-            paths,
-            only_missing=self.chk_only_missing.isChecked(),
-            silent=False,
-            camera_role=self._camera_role(),
-        )
+        self._start_autogen_job(paths, only_missing=self.chk_only_missing.isChecked())
 
     def _run_autogen_current_image(self) -> None:
         path = self._current_path()
@@ -458,12 +467,217 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
             QtWidgets.QMessageBox.information(self, tr("common.info"), tr("sample.no_selected_image"))
             return
         self._sync_tool_page_role()
-        self._tool_page._autogen_roi_for_images(
-            [path],
-            only_missing=True,
-            silent=False,
-            camera_role=self._camera_role(),
-        )
+        self._start_autogen_job([path], only_missing=True)
+
+    def _set_autogen_running(self, running: bool, message: str = "") -> None:
+        self._autogen_running = bool(running)
+        self.lbl_status.setText(message)
+        self._refresh_scope()
+
+    def _prepare_autogen_payload(
+        self,
+        paths: List[str],
+        *,
+        only_missing: bool,
+    ) -> dict | None:
+        tool_page = self._tool_page
+        ref_image = tool_page.ref_image
+        method = tool_page.loc_method
+        role = self._camera_role()
+        labels: List[str]
+        pre_resolved = False
+
+        if method == "line2dup":
+            try:
+                recipe = tool_page.line2dup_recipe_for_role(role, force_reload=True)
+                if role == tool_page.current_camera_role():
+                    tool_page.line2dup_recipe = recipe
+            except Exception as exc:
+                QtWidgets.QMessageBox.warning(self, "Info", f"Failed to load template recipe: {exc}")
+                return None
+            if recipe.reference_image and os.path.exists(recipe.reference_image):
+                ref_image = recipe.reference_image
+                if tool_page.ref_image != ref_image:
+                    if role == tool_page.current_camera_role():
+                        tool_page._set_reference(ref_image)
+                    else:
+                        tool_page.ref_image = ref_image
+                        if getattr(tool_page, "lbl_ref", None) is not None:
+                            tool_page.lbl_ref.setText(
+                                f"{tr('debug.reference_image')}: {os.path.basename(ref_image)}"
+                            )
+                            tool_page.lbl_ref.setToolTip(ref_image)
+            if not os.path.exists(tool_page.line2dup_model_path_for_role(role)):
+                QtWidgets.QMessageBox.warning(self, "Info", "Current product has no template model. Create a template first.")
+                return None
+            labels = tool_page._line2dup_output_labels(role)
+            recipe_region_labels = {
+                str(region.get("output_label") or region.get("reference_label") or "").strip()
+                for region in (recipe.reference_regions or [])
+                if isinstance(region, dict)
+            }
+            recipe_region_labels.discard("")
+            if (not ref_image or not os.path.exists(ref_image)) and not recipe_region_labels:
+                QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("auto.need_reference_or_saved"))
+                return None
+            if labels:
+                missing_labels = [label for label in labels if label not in recipe_region_labels]
+                if missing_labels:
+                    ref_json = qr_core.labelme_json_of_image(ref_image) if ref_image else ""
+                    if not ref_json or not os.path.exists(ref_json):
+                        QtWidgets.QMessageBox.warning(
+                            self,
+                            tr("common.info"),
+                            tr("auto.missing_reference_json", labels=", ".join(missing_labels)),
+                        )
+                        return None
+                    missing_labels = [
+                        label for label in missing_labels
+                        if qr_core.read_shape_from_labelme(ref_json, label) is None
+                    ]
+                    if missing_labels:
+                        QtWidgets.QMessageBox.warning(
+                            self,
+                            tr("common.info"),
+                            tr("auto.missing_reference_roi", labels=", ".join(missing_labels)),
+                        )
+                        return None
+        else:
+            labels = ["roi"]
+            if not ref_image or not os.path.exists(ref_image):
+                QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("auto.set_reference_first"))
+                return None
+            ref_json = qr_core.labelme_json_of_image(ref_image)
+            if not os.path.exists(ref_json):
+                QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("auto.reference_missing_json"))
+                return None
+            if qr_core.try_read_xywh_from_labelme(ref_json, "anchor") is None:
+                QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("auto.reference_missing_anchor"))
+                return None
+            if qr_core.try_read_xywh_from_labelme(ref_json, "roi") is None:
+                QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("auto.reference_missing_roi"))
+                return None
+
+        resolved_paths = list(paths)
+        if not only_missing:
+            resolved_paths = tool_page._resolve_autogen_targets(
+                paths,
+                only_missing=False,
+                silent=False,
+                camera_role=role,
+            )
+            pre_resolved = True
+            if not resolved_paths:
+                return None
+
+        return {
+            "paths": resolved_paths,
+            "labels": labels,
+            "method": method,
+            "ref_image": ref_image,
+            "product_dir": tool_page.session.product_dir,
+            "camera_role": role,
+            "only_missing": bool(only_missing),
+            "pre_resolved": pre_resolved,
+        }
+
+    def _start_autogen_job(self, paths: List[str], *, only_missing: bool) -> None:
+        if self._autogen_running:
+            return
+        if getattr(self._tool_page, "_sample_auto_roi_jobs", []):
+            QtWidgets.QMessageBox.information(self, tr("common.info"), "自动ROI正在处理，请等待")
+            return
+        payload = self._prepare_autogen_payload(paths, only_missing=only_missing)
+        if payload is None:
+            return
+
+        thread = QtCore.QThread(self._tool_page)
+        worker = _SampleAutoRoiWorker(payload)
+        worker.moveToThread(thread)
+        self._autogen_thread = thread
+        self._autogen_worker = worker
+
+        jobs = getattr(self._tool_page, "_sample_auto_roi_jobs", None)
+        if jobs is None:
+            jobs = []
+            setattr(self._tool_page, "_sample_auto_roi_jobs", jobs)
+        jobs.append((thread, worker))
+
+        thread.started.connect(worker.run)
+        worker.progressChanged.connect(self._on_autogen_progress)
+        worker.finished.connect(self._on_autogen_finished)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(lambda: self._forget_autogen_job(thread, worker))
+        self._set_autogen_running(True, "处理中...")
+        thread.start()
+
+    def _forget_autogen_job(self, thread: QtCore.QThread, worker: _SampleAutoRoiWorker) -> None:
+        jobs = getattr(self._tool_page, "_sample_auto_roi_jobs", [])
+        try:
+            jobs.remove((thread, worker))
+        except ValueError:
+            pass
+        if self._autogen_thread is thread:
+            self._autogen_thread = None
+            self._autogen_worker = None
+
+    def _on_autogen_progress(self, message: str) -> None:
+        if self._autogen_running:
+            self.lbl_status.setText(f"处理中... {message}")
+
+    def _on_autogen_finished(self, result: dict) -> None:
+        tool_page = self._tool_page
+        result = dict(result or {})
+        timings = dict(result.get("timings", {}) or {})
+        for path, elapsed_ms in timings.items():
+            try:
+                value = float(elapsed_ms)
+            except Exception:
+                continue
+            tool_page._line2dup_match_ms_by_image[str(path)] = value
+            tool_page._line2dup_autogen_ms_by_image[str(path)] = value
+
+        ok = int(result.get("ok", 0) or 0)
+        errs = [str(err) for err in result.get("errs", []) or [] if str(err)]
+        changed_paths = {str(path) for path in result.get("ok_paths", []) or [] if str(path)}
+        todo_paths = {str(path) for path in result.get("todo_paths", []) or [] if str(path)}
+
+        if ok:
+            previous = bool(getattr(tool_page, "_suppress_sample_preview_reload", False))
+            tool_page._suppress_sample_preview_reload = True
+            try:
+                tool_page._reload_inspection_items()
+                tool_page.roiGeometryChanged.emit()
+            finally:
+                tool_page._suppress_sample_preview_reload = previous
+
+            cur = tool_page.canvas.image_path()
+            if cur and cur in todo_paths:
+                tool_page._load_canvas_image(cur)
+                tool_page._set_status_for_current_image(cur)
+            self._preview_dialog._refresh_after_auto_roi_change(changed_paths, self._camera_role())
+
+        if result.get("fatal"):
+            message = str(result.get("fatal") or "")
+            if self.isVisible():
+                QtWidgets.QMessageBox.warning(self, tr("common.error"), message)
+            self.lbl_status.setText(message)
+        elif result.get("no_work"):
+            if self.isVisible():
+                QtWidgets.QMessageBox.information(self, tr("common.info"), tr("auto.images_already_have_roi"))
+            self.lbl_status.setText(tr("auto.images_already_have_roi"))
+        else:
+            msg = tr("auto.finished", ok=ok, failed=len(errs))
+            if errs:
+                msg += "\n\n" + tr("auto.failed_examples") + "\n" + "\n".join(errs[:10])
+            if self.isVisible():
+                QtWidgets.QMessageBox.information(self, tr("common.done"), msg)
+            tool_page.lbl_status.setText(tr("auto.status_generated", ok=ok, failed=len(errs)))
+            self.lbl_status.setText(tr("auto.status_generated", ok=ok, failed=len(errs)))
+
+        self._set_autogen_running(False, self.lbl_status.text())
 
     def _run_clear_current_list(self) -> None:
         paths = self._scope_paths()
@@ -783,12 +997,28 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         dialog.activateWindow()
 
     def _on_tool_page_roi_geometry_changed(self) -> None:
+        if bool(getattr(self._tool_page, "_suppress_sample_preview_reload", False)):
+            return
         previous = bool(getattr(self, "_suppress_tool_page_context_sync", False))
         self._suppress_tool_page_context_sync = True
         try:
             self._reload_samples(preferred_path=self._current_dialog_selected_path())
         finally:
             self._suppress_tool_page_context_sync = previous
+
+    def _refresh_after_auto_roi_change(self, changed_paths: set[str], camera_role: str) -> None:
+        path = self._current_dialog_selected_path()
+        if not path:
+            return
+        role = str(camera_role or self.cmb_camera.currentData() or "cam1")
+        self._refresh_current_row_text(path, role)
+        if path in set(changed_paths or set()):
+            self._populate_roi_table(path, role)
+            self._refresh_canvas_overlays(path, role)
+            self.lbl_image_status.setText(
+                f"Status: {self._tool_page._sample_usage_text(path)} / "
+                f"{self._tool_page._sample_annotation_state_for_path(path, role)}"
+            )
 
     def _mark_current_image_all_ok(self) -> None:
         path, camera_role = self._current_path_and_role()
@@ -1113,6 +1343,112 @@ class _DebugCameraPreviewThread(QtCore.QThread):
 
             self.frameReady.emit(image)
             self.msleep(30)
+
+
+class _SampleAutoRoiWorker(QtCore.QObject):
+    progressChanged = QtCore.Signal(str)
+    finished = QtCore.Signal(dict)
+
+    def __init__(self, payload: dict, parent: Optional[QtCore.QObject] = None) -> None:
+        super().__init__(parent)
+        self._payload = dict(payload or {})
+
+    @QtCore.Slot()
+    def run(self) -> None:
+        try:
+            result = self._run_autogen()
+        except Exception as exc:
+            result = {
+                "ok": 0,
+                "errs": [str(exc)],
+                "ok_paths": [],
+                "todo_paths": [],
+                "timings": {},
+                "fatal": str(exc),
+            }
+        self.finished.emit(result)
+
+    def _run_autogen(self) -> dict:
+        paths = [str(path) for path in self._payload.get("paths", []) if str(path)]
+        labels = [str(label).strip() for label in self._payload.get("labels", []) if str(label).strip()] or ["roi"]
+        method = str(self._payload.get("method", "") or "").strip()
+        only_missing = bool(self._payload.get("only_missing", True))
+        pre_resolved = bool(self._payload.get("pre_resolved", False))
+
+        if pre_resolved:
+            todo = list(paths)
+        else:
+            missing = self._missing_roi_files(paths, labels)
+            todo = list(missing) if only_missing else list(paths)
+
+        if not todo:
+            return {
+                "ok": 0,
+                "errs": [],
+                "ok_paths": [],
+                "todo_paths": [],
+                "timings": {},
+                "no_work": True,
+            }
+
+        ok = 0
+        ok_paths: list[str] = []
+        timings: dict[str, float] = {}
+        errs: list[str] = []
+        total = len(todo)
+        for index, path in enumerate(todo, start=1):
+            self.progressChanged.emit(f"{index}/{total} {os.path.basename(path)}")
+            try:
+                if method == "line2dup":
+                    run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
+                        tgt_img_path=path,
+                        ref_img_path=str(self._payload.get("ref_image", "") or ""),
+                        product_dir=str(self._payload.get("product_dir", "") or ""),
+                        camera_role=str(self._payload.get("camera_role", "cam1") or "cam1"),
+                    )
+                    timings[path] = float(run.total_ms)
+                else:
+                    qr_core.autogen_roi_json_from_reference(
+                        tgt_img_path=path,
+                        ref_img_path=str(self._payload.get("ref_image", "") or ""),
+                        method=method,
+                        anchor_label="anchor",
+                        roi_label="roi",
+                    )
+                ok += 1
+                ok_paths.append(path)
+            except Exception as exc:
+                errs.append(f"{os.path.basename(path)}: {exc}")
+
+        return {
+            "ok": ok,
+            "errs": errs,
+            "ok_paths": ok_paths,
+            "todo_paths": todo,
+            "timings": timings,
+            "no_work": False,
+        }
+
+    @staticmethod
+    def _missing_roi_files(paths: list[str], labels: list[str]) -> list[str]:
+        missing: list[str] = []
+        for path in paths:
+            json_path = qr_core.labelme_json_of_image(path)
+            if not os.path.exists(json_path):
+                missing.append(path)
+                continue
+            try:
+                existing_labels = {
+                    str(shape.get("label", "") or "").strip()
+                    for shape in qr_core.list_shapes_from_labelme(json_path)
+                    if isinstance(shape, dict)
+                }
+            except Exception:
+                missing.append(path)
+                continue
+            if any(label not in existing_labels for label in labels):
+                missing.append(path)
+        return missing
 
 
 # ---------------------------------------------------------------------------
@@ -3332,7 +3668,10 @@ class ToolPage(QtWidgets.QWidget):
         if hasattr(self, "lbl_images_section"):
             title = tr("debug.image_list")
             if current_role:
-                title = f"{title} ({current_role})"
+                if language_code().lower().startswith("zh"):
+                    title = f"{title}（{current_role}）"
+                else:
+                    title = f"{title} ({current_role})"
             self.lbl_images_section.setText(title)
 
         def fill(

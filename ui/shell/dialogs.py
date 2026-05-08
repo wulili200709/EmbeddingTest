@@ -12,6 +12,7 @@ DEFAULT_ADMIN_PASSWORD = "admin123"
 SYSTEM_PASSWORDS_FILENAME = "system_passwords.json"
 TOWER_LIGHT_SETTINGS_FILENAME = "tower_light_settings.json"
 RUNTIME_RECORD_SETTINGS_FILENAME = "runtime_record_settings.json"
+RUNTIME_MODE_SETTINGS_FILENAME = "runtime_mode_settings.json"
 
 
 def _dialog_style_sheet() -> str:
@@ -100,6 +101,7 @@ class TowerLightSettingsStore:
         return {
             "ok_flash_ms": 200,
             "ng_flash_ms": 200,
+            "ng_buzzer_ms": 500,
             "idle_blue_delay_ms": 30000,
         }
 
@@ -182,6 +184,74 @@ class RuntimeRecordSettingsStore:
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+
+
+class RuntimeModeSettingsStore:
+    def path(self) -> Path:
+        config_dir = writable_embedding_test_root(__file__) / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        return config_dir / RUNTIME_MODE_SETTINGS_FILENAME
+
+    def default_settings(self) -> dict[str, bool]:
+        return {
+            "auto_show_release_dialog_on_ng": True,
+        }
+
+    def load(self) -> dict[str, bool]:
+        settings = self.default_settings()
+        path = self.path()
+        raw: dict = {}
+        if path.exists():
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                raw = {}
+
+        if isinstance(raw, dict):
+            raw_value = settings["auto_show_release_dialog_on_ng"]
+            for key in (
+                "auto_show_release_dialog_on_ng",
+                "AUTO_SHOW_RELEASE_DIALOG_ON_NG",
+                "lock_on_ng",
+            ):
+                if key in raw:
+                    raw_value = raw.get(key)
+                    break
+            settings["auto_show_release_dialog_on_ng"] = self._as_bool(
+                raw_value,
+                default=settings["auto_show_release_dialog_on_ng"],
+            )
+
+        try:
+            self.save(settings)
+        except Exception:
+            pass
+        return settings
+
+    def save(self, settings: dict[str, object]) -> None:
+        payload = {
+            "auto_show_release_dialog_on_ng": self._as_bool(
+                settings.get("auto_show_release_dialog_on_ng", True),
+                default=True,
+            ),
+        }
+        self.path().write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _as_bool(value: object, *, default: bool) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        text = str(value).strip().lower()
+        if text in {"1", "true", "yes", "y", "on"}:
+            return True
+        if text in {"0", "false", "no", "n", "off"}:
+            return False
+        return bool(default)
 
 
 def prompt_password_dialog(
@@ -343,6 +413,13 @@ def prompt_tower_light_settings(
     ng_spin.setValue(max(10, int(current_settings.get("ng_flash_ms", 200))))
     layout.addRow("\u7ea2\u706f\u65f6\u957f", ng_spin)
 
+    buzzer_spin = QtWidgets.QSpinBox()
+    buzzer_spin.setRange(0, 10000)
+    buzzer_spin.setSingleStep(10)
+    buzzer_spin.setSuffix(" ms")
+    buzzer_spin.setValue(max(0, int(current_settings.get("ng_buzzer_ms", 500))))
+    layout.addRow("\u8702\u9e23\u5668\u65f6\u957f", buzzer_spin)
+
     idle_spin = QtWidgets.QSpinBox()
     idle_spin.setRange(0, 600000)
     idle_spin.setSingleStep(100)
@@ -363,5 +440,6 @@ def prompt_tower_light_settings(
     return {
         "ok_flash_ms": int(ok_spin.value()),
         "ng_flash_ms": int(ng_spin.value()),
+        "ng_buzzer_ms": int(buzzer_spin.value()),
         "idle_blue_delay_ms": int(idle_spin.value()),
     }

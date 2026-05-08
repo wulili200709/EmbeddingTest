@@ -103,6 +103,9 @@ class IoController:
     def tower_all_off(self) -> None:
         self.set_tower_light(red=False, green=False, blue=False)
 
+    def set_buzzer(self, on: bool) -> None:
+        self.set_output("buzzer", bool(on))
+
     def set_camera_light(self, camera_index: int, on: bool) -> None:
         if int(camera_index) == 1:
             self.set_output("light_cam1", on)

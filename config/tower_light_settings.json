@@ -1,5 +1,6 @@
 {
   "ok_flash_ms": 500,
   "ng_flash_ms": 500,
+  "ng_buzzer_ms": 500,
   "idle_blue_delay_ms": 1000
 }

@@ -41,6 +41,9 @@ CONFIG_DATA_FILES = [
     CONFIG_ROOT / "camera_settings.json",
     CONFIG_ROOT / "system_passwords.json",
     CONFIG_ROOT / "tower_light_settings.json",
+    CONFIG_ROOT / "runtime_record_settings.json",
+    CONFIG_ROOT / "runtime_mode_settings.json",
+    CONFIG_ROOT / "ui_settings.json",
 ]
 CONFIG_DATA_DIRS = [
     (CONFIG_ROOT / "defaults", "EmbeddingTest/config/defaults"),

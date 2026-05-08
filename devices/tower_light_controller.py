@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 
 from .io_controller import IoController
 
@@ -14,11 +15,13 @@ class TowerLightController:
         *,
         ok_flash_ms: int = 200,
         ng_flash_ms: int = 200,
+        ng_buzzer_ms: int = 500,
         idle_blue_delay_s: float = 30.0,
     ) -> None:
         self.io = io
         self.ok_flash_s = max(0.01, float(ok_flash_ms) / 1000.0)
         self.ng_flash_s = max(0.01, float(ng_flash_ms) / 1000.0)
+        self.ng_buzzer_s = max(0.0, float(ng_buzzer_ms) / 1000.0)
         self.idle_blue_delay_s = max(0.0, float(idle_blue_delay_s))
         self._lock = threading.Lock()
         self._flash_timer: threading.Timer | None = None
@@ -33,12 +36,14 @@ class TowerLightController:
         with self._lock:
             self._cancel_flash_timer_locked()
             self._cancel_idle_timer_locked()
+            self._set_buzzer_safely(False)
 
     def all_off(self) -> None:
         with self._lock:
             self._cancel_flash_timer_locked()
             self._cancel_idle_timer_locked()
             self.io.tower_all_off()
+            self._set_buzzer_safely(False)
             self._state = "off"
 
     def enter_waiting(self) -> None:
@@ -46,6 +51,7 @@ class TowerLightController:
             self._cancel_flash_timer_locked()
             self._cancel_idle_timer_locked()
             self.io.set_tower_light(red=False, green=False, blue=True)
+            self._set_buzzer_safely(False)
             self._state = "waiting"
 
     def enter_inspecting(self) -> None:
@@ -53,6 +59,7 @@ class TowerLightController:
             self._cancel_flash_timer_locked()
             self._cancel_idle_timer_locked()
             self.io.tower_all_off()
+            self._set_buzzer_safely(False)
             self._state = "inspecting"
 
     def show_ok(self) -> None:
@@ -60,6 +67,8 @@ class TowerLightController:
 
     def show_ng(self) -> None:
         self._flash_result(color="red", state_name="ng", flash_s=self.ng_flash_s)
+        if self.ng_buzzer_s > 0.0:
+            self._pulse_buzzer(self.ng_buzzer_s)
 
     def schedule_idle_waiting(self) -> None:
         with self._lock:
@@ -90,6 +99,19 @@ class TowerLightController:
             timer.daemon = True
             self._flash_timer = timer
             timer.start()
+
+    def _pulse_buzzer(self, duration_s: float) -> None:
+        try:
+            self._set_buzzer_safely(True)
+            time.sleep(max(0.0, float(duration_s)))
+        finally:
+            self._set_buzzer_safely(False)
+
+    def _set_buzzer_safely(self, on: bool) -> None:
+        try:
+            self.io.set_buzzer(bool(on))
+        except Exception:
+            pass
 
     def _finish_flash_and_schedule_idle(self) -> None:
         with self._lock:

@@ -489,10 +489,14 @@ class RuntimeModePage(QtWidgets.QWidget):
 
         self.lbl_cam1_timing = QtWidgets.QLabel("Cam1: -")
         self.lbl_cam1_timing.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
+        self.lbl_cam1_timing.setWordWrap(True)
+        self.lbl_cam1_timing.setMinimumWidth(0)
         total_layout.addWidget(self.lbl_cam1_timing)
 
         self.lbl_cam2_timing = QtWidgets.QLabel("Cam2: -")
         self.lbl_cam2_timing.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
+        self.lbl_cam2_timing.setWordWrap(True)
+        self.lbl_cam2_timing.setMinimumWidth(0)
         total_layout.addWidget(self.lbl_cam2_timing)
         self._refresh_camera_timing_visibility()
 
@@ -750,7 +754,7 @@ class RuntimeModePage(QtWidgets.QWidget):
             insert_index += 1
 
             for row in camera_rows:
-                name = str(row.get("display_name", ""))
+                name = self._runtime_item_display_name(row)
                 indicator = _ItemIndicator(display_index, name)
                 kind = str(row.get("status_kind", "pending"))
                 text = str(row.get("status_text", ""))
@@ -768,6 +772,17 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._items_scroll.viewport().update()
         self._refresh_camera_previews()
         self._refresh_trigger_buttons()
+
+    @staticmethod
+    def _runtime_item_display_name(row: dict) -> str:
+        name = str(row.get("display_name", "") or "").strip()
+        algorithm = str(row.get("algorithm_code", "") or "").strip()
+        item_id = str(row.get("item_id", "") or "").strip()
+        if algorithm == "line_distance":
+            default_names = {"", "Line Distance", "line_distance"}
+            if item_id.startswith("line_distance") and name in default_names:
+                return tr("debug.algorithm.line_distance")
+        return name or str(row.get("roi_label", "") or item_id)
 
     @staticmethod
     def _runtime_display_rows_for_camera(rows: list[dict]) -> list[dict]:
@@ -900,7 +915,7 @@ class RuntimeModePage(QtWidgets.QWidget):
             return f"{title}: -"
         return (
             f"{title}: {tr('runtime.capture')} {capture_ms:.1f}  "
-            f"{tr('runtime.match')} {match_ms:.1f}  "
+            f"{tr('runtime.match')} {match_ms:.1f}\n"
             f"{tr('runtime.infer')} {infer_ms:.1f}  "
             f"{tr('runtime.total_flow')} {total_ms:.1f} ms"
         )
