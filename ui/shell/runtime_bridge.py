@@ -54,8 +54,9 @@ def load_runtime_capture_policy_from_session(window) -> str:
 
 
 def persist_runtime_capture_policy(window, policy: str) -> None:
+    normalized = normalize_runtime_capture_policy(policy)
     session_data = window.session.load_session()
-    session_data.runtime_capture_policy = normalize_runtime_capture_policy(policy)
+    session_data.runtime_capture_policy = normalized
     window.session.save_session(session_data)
 
 

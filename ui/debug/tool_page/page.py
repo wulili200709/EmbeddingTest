@@ -1229,6 +1229,7 @@ ALGORITHM_GROUPS = [
         [
             ("Find Line", "find_line", True),
             ("Line Distance", "line_distance", True),
+            ("Reference Normal Distance", "line_distance_ref_normal", True),
             ("Find Circle", "find_circle", False),
         ],
     ),
@@ -1259,6 +1260,7 @@ ALGORITHM_DISPLAY_KEYS = {
     "find_circle": "debug.algorithm.find_circle",
     "find_line": "debug.algorithm.find_line",
     "line_distance": "debug.algorithm.line_distance",
+    "line_distance_ref_normal": "debug.algorithm.line_distance_ref_normal",
 }
 
 
@@ -2879,9 +2881,9 @@ class ToolPage(QtWidgets.QWidget):
         for checkbox in (self.chk_measurement_lower, self.chk_measurement_upper):
             checkbox.setStyleSheet(f"color:{_TEXT_LIGHT};font-size:12px;")
             checkbox.toggled.connect(self._on_measurement_params_changed)
-        self.spin_measurement_pixel_size.setDecimals(6)
+        self.spin_measurement_pixel_size.setDecimals(9)
         self.spin_measurement_pixel_size.setRange(0.0, 1000000.0)
-        self.spin_measurement_pixel_size.setSingleStep(0.001)
+        self.spin_measurement_pixel_size.setSingleStep(0.000001)
         self.spin_measurement_pixel_size.setKeyboardTracking(False)
         self.spin_measurement_pixel_size.setStyleSheet(_input_style)
         self.spin_measurement_pixel_size.valueChanged.connect(self._on_measurement_params_changed)

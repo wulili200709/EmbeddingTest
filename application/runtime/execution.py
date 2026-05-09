@@ -50,6 +50,17 @@ def _outcome_roles(outcome) -> tuple[str, ...]:
     return tuple(sorted(set(roles)))
 
 
+def _capture_export_roles(outcome, preview_frames: dict[str, object]) -> tuple[str, ...]:
+    roles = set(_outcome_roles(outcome))
+    if not roles:
+        roles = {
+            str(role).strip()
+            for role, frame in dict(preview_frames or {}).items()
+            if str(role).strip() and isinstance(frame, RuntimePreviewFrame)
+        }
+    return tuple(sorted(roles))
+
+
 def _should_export_captures(runtime, final_result: str) -> bool:
     policy = normalize_capture_retention_policy(runtime._capture_retention_policy)
     return policy == "all" or str(final_result or "").strip().upper() == "NG"
@@ -253,7 +264,7 @@ def _export_runtime_captures_sync(
 
 def _finalize_trigger_outcome(runtime, outcome, release_status_before) -> None:
     current_preview_frames = dict(runtime._last_preview_frames)
-    current_roles = _outcome_roles(outcome)
+    current_roles = _capture_export_roles(outcome, current_preview_frames)
     active_roles = runtime._connected_roles()
     item_results_by_camera = {
         str(role): list(rows or [])

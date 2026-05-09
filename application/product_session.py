@@ -55,7 +55,7 @@ class SessionData:
     loc_method: str = "line2dup"
     runtime_cam1_serial: Optional[str] = None
     runtime_cam2_serial: Optional[str] = None
-    runtime_capture_policy: str = "ng_only"
+    runtime_capture_policy: Optional[str] = None
 
 
 PRODUCT_NAME_RE = re.compile(r"^[a-zA-Z0-9_\u4e00-\u9fa5]+$")

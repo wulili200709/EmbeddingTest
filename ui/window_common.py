@@ -333,17 +333,21 @@ def _draw_runtime_measurements(
         measurement_type = str(measurement.get("type", "") or "").strip()
         pred = str(measurement.get("pred", "") or "").strip().upper()
         color = QtGui.QColor("#22c55e" if pred == "OK" else "#ff4040" if pred == "NG" else "#f97316")
-        if measurement_type == "line_distance":
-            line_a = measurement.get("line_a")
-            if isinstance(line_a, dict):
-                segment_a = _segment_tuple(line_a.get("line_segment"))
-                if segment_a is not None:
-                    _draw_runtime_segment(painter, segment_a, color, overlay_scale=overlay_scale)
-            line_b = measurement.get("line_b")
-            if isinstance(line_b, dict):
-                segment_b = _segment_tuple(line_b.get("line_segment"))
-                if segment_b is not None:
-                    _draw_runtime_segment(painter, segment_b, color, overlay_scale=overlay_scale)
+        if measurement_type in {"line_distance", "line_distance_ref_normal"}:
+            segment_a = _segment_tuple(measurement.get("line_a_segment"))
+            if segment_a is None:
+                line_a = measurement.get("line_a")
+                if isinstance(line_a, dict):
+                    segment_a = _segment_tuple(line_a.get("line_segment"))
+            if segment_a is not None:
+                _draw_runtime_segment(painter, segment_a, color, overlay_scale=overlay_scale)
+            segment_b = _segment_tuple(measurement.get("line_b_segment"))
+            if segment_b is None:
+                line_b = measurement.get("line_b")
+                if isinstance(line_b, dict):
+                    segment_b = _segment_tuple(line_b.get("line_segment"))
+            if segment_b is not None:
+                _draw_runtime_segment(painter, segment_b, color, overlay_scale=overlay_scale)
             dimension_segment = _segment_tuple(measurement.get("dimension_segment"))
             if dimension_segment is not None:
                 _draw_runtime_dimension(

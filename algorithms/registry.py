@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from .measurement import MEASUREMENT_ALGORITHMS
+from .measurement import LINE_DISTANCE_ALGORITHMS, MEASUREMENT_ALGORITHMS
 from .traditional import TRADITIONAL_ALGORITHMS
 
 
@@ -66,6 +66,7 @@ _TRADITIONAL_DISPLAY_NAMES = {
 _MEASUREMENT_DISPLAY_NAMES = {
     "find_line": "Find Line",
     "line_distance": "Line Distance",
+    "line_distance_ref_normal": "Reference Normal Distance",
 }
 
 _ALGORITHM_DISPLAY_KEYS = {
@@ -81,6 +82,7 @@ _ALGORITHM_DISPLAY_KEYS = {
     "find_circle": "debug.algorithm.find_circle",
     "find_line": "debug.algorithm.find_line",
     "line_distance": "debug.algorithm.line_distance",
+    "line_distance_ref_normal": "debug.algorithm.line_distance_ref_normal",
 }
 
 
@@ -124,7 +126,7 @@ for _code in MEASUREMENT_ALGORITHMS:
                 "line_b_item_id": "",
                 "limit_unit": "px",
             }
-            if _code == "line_distance"
+            if _code in LINE_DISTANCE_ALGORITHMS
             else {
                 "line_a": {"direction": "left_right"},
                 "line_b": {"direction": "right_left"},

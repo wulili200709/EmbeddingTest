@@ -665,6 +665,8 @@ class RuntimeController(QtCore.QObject):
             else None
         )
         self._set_busy(True)
+        self._last_capture_paths = {}
+        self._last_preview_frames = {}
         self._last_item_results_by_camera = {}
         self._last_runtime_result = self._build_pending_runtime_result(status="RUNNING")
         self._emit_runtime_context()
@@ -726,6 +728,8 @@ class RuntimeController(QtCore.QObject):
             else None
         )
         self._set_busy(True)
+        self._last_capture_paths = {}
+        self._last_preview_frames = {}
         self._last_item_results_by_camera = {}
         self._last_runtime_result = self._build_pending_runtime_result(status="RUNNING")
         self._emit_runtime_context()

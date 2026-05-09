@@ -94,7 +94,7 @@ def _measurement_overlays_for_path(tool_page, img_path: str) -> List[OverlayShap
             if pred == "NG"
             else _MEASUREMENT_LINE_COLOR
         )
-        if str(measurement.get("type", "") or "") == "line_distance":
+        if str(measurement.get("type", "") or "") in {"line_distance", "line_distance_ref_normal"}:
             raw_dimension = measurement.get("dimension_segment")
             dimension: Optional[Tuple[Tuple[float, float], Tuple[float, float]]] = None
             if isinstance(raw_dimension, (list, tuple)) and len(raw_dimension) >= 2:

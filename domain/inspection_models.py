@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional
 
+LINE_DISTANCE_ALGORITHMS = {"line_distance", "line_distance_ref_normal"}
+
 
 @dataclass
 class InspectionItemResult:
@@ -22,6 +24,8 @@ class InspectionItemResult:
     params: Dict[str, object] = field(default_factory=dict)
     result: str = "PENDING"  # PENDING/RUNNING/OK/NG/MEASURED/INACTIVE/DISABLED
     detail: str = ""
+    value: Optional[float] = None
+    unit: str = ""
 
     def to_runtime_row(self) -> dict:
         status_map = {
@@ -44,6 +48,8 @@ class InspectionItemResult:
             "algorithm_code": self.algorithm_code,
             "enabled": self.enabled,
             "params": dict(self.params or {}),
+            "value": self.value,
+            "unit": self.unit,
             "status_kind": kind,
             "status_text": text,
         }
@@ -137,6 +143,8 @@ class RuntimeInspectionResult:
             row[f"{prefix}_name"] = item.display_name
             row[f"{prefix}_result"] = item.result
             row[f"{prefix}_roi_label"] = item.roi_label
+            if item.algorithm_code in LINE_DISTANCE_ALGORITHMS and item.value is not None:
+                row[f"{prefix}_distance"] = item.value
         return row
 
 

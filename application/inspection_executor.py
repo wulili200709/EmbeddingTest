@@ -15,11 +15,19 @@ from dataclasses import dataclass, field
 import math
 from typing import List, Protocol
 
+import numpy as np
+
+from algorithms.measurement import (
+    FittedLine,
+    LINE_DISTANCE_ALGORITHMS,
+    LINE_DISTANCE_REF_NORMAL_ALGORITHM,
+    fit_line_filtered,
+)
 from domain import InspectionItem, InspectionItemResult
 
 
 def _is_line_distance_item(item: InspectionItem) -> bool:
-    return str(getattr(item, "algorithm_code", "") or "").strip() == "line_distance"
+    return str(getattr(item, "algorithm_code", "") or "").strip() in LINE_DISTANCE_ALGORITHMS
 
 
 class PredictorProtocol(Protocol):
@@ -155,6 +163,8 @@ class InspectionExecutor:
                 params=dict(item.params or {}),
                 result=str(row.get("pred", "NG") or "NG"),
                 detail=self._build_detail(row),
+                value=self._row_value(row),
+                unit=self._row_unit(row),
             )
             item_results.append(item_result)
             enabled_item_results.append(item_result)
@@ -169,12 +179,13 @@ class InspectionExecutor:
                 image_path=request.image_path,
             )
             if line_distance_row is None:
+                distance_algorithm = str(getattr(distance_item, "algorithm_code", "") or "").strip() or "line_distance"
                 line_distance_row = {
                     "file_path": request.image_path,
                     "file_name": str(distance_item.display_name or distance_item.item_id or "Line Distance"),
                     "pred": "NG",
                     "detail": "line distance pair missing",
-                    "algorithm": "line_distance",
+                    "algorithm": distance_algorithm,
                     "tool_name": str(distance_item.display_name or distance_item.item_id or "Line Distance"),
                     "camera_id": request.camera_id,
                     "roi_label": str(distance_item.roi_label or ""),
@@ -191,6 +202,8 @@ class InspectionExecutor:
                 params=dict(distance_item.params or {}),
                 result=str(line_distance_row.get("pred", "NG") or "NG"),
                 detail=self._build_detail(line_distance_row),
+                value=self._row_value(line_distance_row),
+                unit=self._row_unit(line_distance_row),
             )
             item_results.append(line_distance_result)
             enabled_item_results.append(line_distance_result)
@@ -252,7 +265,7 @@ class InspectionExecutor:
         line_distance_measurements = tuple(
             measurement
             for measurement in raw_measurements
-            if str(measurement.get("type", "") or "").strip() == "line_distance"
+            if str(measurement.get("type", "") or "").strip() in LINE_DISTANCE_ALGORITHMS
         )
         measurements = line_distance_measurements or raw_measurements
 
@@ -294,10 +307,79 @@ class InspectionExecutor:
             return None
         return float(text)
 
+    @staticmethod
+    def _optional_bool(value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        text = str(value).strip().lower()
+        return text in {"1", "true", "yes", "y", "on", "enable", "enabled", "是", "启用"}
+
     @classmethod
     def _item_param_float(cls, item: InspectionItem, key: str) -> float | None:
         params = dict(getattr(item, "params", {}) or {})
         return cls._optional_float(params.get(key))
+
+    @classmethod
+    def _row_value(cls, row: dict) -> float | None:
+        try:
+            value = row.get("value")
+        except Exception:
+            return None
+        return cls._optional_float(value)
+
+    @staticmethod
+    def _row_unit(row: dict) -> str:
+        try:
+            measurement = row.get("measurement")
+        except Exception:
+            measurement = None
+        if isinstance(measurement, dict):
+            unit = str(measurement.get("unit", "") or "").strip()
+            if unit:
+                return unit
+        try:
+            return str(row.get("unit", "") or "").strip()
+        except Exception:
+            return ""
+
+    @classmethod
+    def _compensated_value(
+        cls,
+        value: float,
+        params: dict,
+    ) -> tuple[float, float, bool, float, float]:
+        raw_value = float(value)
+        enabled = cls._optional_bool(params.get("compensation_enabled"))
+        slope = cls._optional_float(params.get("compensation_slope"))
+        intercept = cls._optional_float(params.get("compensation_intercept"))
+        k = 1.0 if slope is None else float(slope)
+        b = 0.0 if intercept is None else float(intercept)
+        if not enabled:
+            return raw_value, raw_value, False, k, b
+        return float(k * raw_value + b), raw_value, True, k, b
+
+    @staticmethod
+    def _measurement_decimals(unit: object) -> int:
+        return 3
+
+    @classmethod
+    def _round_measurement_value(cls, value: float, unit: object) -> float:
+        decimals = cls._measurement_decimals(unit)
+        return float(f"{float(value):.{decimals}f}")
+
+    @classmethod
+    def _format_measurement_value(cls, value: float, unit: object) -> str:
+        unit_text = str(unit or "").strip().lower() or "px"
+        decimals = cls._measurement_decimals(unit_text)
+        return f"{float(value):.{decimals}f}{unit_text}"
+
+    @classmethod
+    def _format_measurement_limit(cls, value: float | None, unit: object) -> str:
+        if value is None:
+            return "-"
+        return cls._format_measurement_value(float(value), unit)
 
     @staticmethod
     def _point_tuple(value: object) -> tuple[float, float] | None:
@@ -321,6 +403,243 @@ class InspectionExecutor:
         if p0 is None or p1 is None:
             return None
         return p0, p1
+
+    @classmethod
+    def _line_points_from_row(cls, row: dict) -> np.ndarray:
+        measurement = row.get("measurement")
+        if not isinstance(measurement, dict):
+            return np.empty((0, 2), dtype=np.float32)
+        raw_points = measurement.get("edge_points")
+        points: list[tuple[float, float]] = []
+        if isinstance(raw_points, (list, tuple)):
+            for point in raw_points:
+                parsed = cls._point_tuple(point)
+                if parsed is not None:
+                    points.append(parsed)
+        return np.asarray(points, dtype=np.float32).reshape(-1, 2)
+
+    @staticmethod
+    def _line_segment_length(
+        segment: tuple[tuple[float, float], tuple[float, float]],
+    ) -> float:
+        (x0, y0), (x1, y1) = segment
+        return float(math.hypot(float(x1) - float(x0), float(y1) - float(y0)))
+
+    @classmethod
+    def _line_from_segment(
+        cls,
+        segment: tuple[tuple[float, float], tuple[float, float]],
+    ) -> FittedLine:
+        (x0, y0), (x1, y1) = segment
+        dx = float(x1) - float(x0)
+        dy = float(y1) - float(y0)
+        length = math.hypot(dx, dy)
+        if length <= 1e-12:
+            raise RuntimeError("line distance segment invalid")
+        return FittedLine(
+            vx=float(dx / length),
+            vy=float(dy / length),
+            x0=float((float(x0) + float(x1)) * 0.5),
+            y0=float((float(y0) + float(y1)) * 0.5),
+            residual=0.0,
+            point_count=2,
+        )
+
+    @staticmethod
+    def _dominant_line_axis(
+        segment_a: tuple[tuple[float, float], tuple[float, float]],
+        segment_b: tuple[tuple[float, float], tuple[float, float]],
+    ) -> str:
+        (ax0, ay0), (ax1, ay1) = segment_a
+        (bx0, by0), (bx1, by1) = segment_b
+        dx = abs(float(ax1) - float(ax0)) + abs(float(bx1) - float(bx0))
+        dy = abs(float(ay1) - float(ay0)) + abs(float(by1) - float(by0))
+        return "y" if dy >= dx else "x"
+
+    @staticmethod
+    def _axis_range_from_points(points: np.ndarray, axis: str) -> tuple[float, float] | None:
+        pts = np.asarray(points, dtype=np.float32).reshape(-1, 2)
+        if pts.size == 0:
+            return None
+        coord = pts[:, 1] if axis == "y" else pts[:, 0]
+        return float(np.min(coord)), float(np.max(coord))
+
+    @staticmethod
+    def _axis_range_from_segment(
+        segment: tuple[tuple[float, float], tuple[float, float]],
+        axis: str,
+    ) -> tuple[float, float]:
+        index = 1 if axis == "y" else 0
+        v0 = float(segment[0][index])
+        v1 = float(segment[1][index])
+        return min(v0, v1), max(v0, v1)
+
+    @staticmethod
+    def _point_on_line_at_axis(line: FittedLine, axis: str, value: float) -> tuple[float, float] | None:
+        if axis == "y":
+            if abs(float(line.vy)) <= 1e-12:
+                return None
+            t = (float(value) - float(line.y0)) / float(line.vy)
+            return float(line.x0) + t * float(line.vx), float(value)
+        if abs(float(line.vx)) <= 1e-12:
+            return None
+        t = (float(value) - float(line.x0)) / float(line.vx)
+        return float(value), float(line.y0) + t * float(line.vy)
+
+    @classmethod
+    def _segment_for_line_interval(
+        cls,
+        line: FittedLine,
+        *,
+        axis: str,
+        interval: tuple[float, float] | None,
+        fallback: tuple[tuple[float, float], tuple[float, float]],
+    ) -> tuple[tuple[float, float], tuple[float, float]]:
+        if interval is None:
+            return fallback
+        lo, hi = interval
+        p0 = cls._point_on_line_at_axis(line, axis, lo)
+        p1 = cls._point_on_line_at_axis(line, axis, hi)
+        if p0 is None or p1 is None:
+            return fallback
+        if math.hypot(float(p1[0]) - float(p0[0]), float(p1[1]) - float(p0[1])) <= 1e-12:
+            return fallback
+        return p0, p1
+
+    @staticmethod
+    def _line_intersection(
+        point_a: tuple[float, float],
+        dir_a: tuple[float, float],
+        point_b: tuple[float, float],
+        dir_b: tuple[float, float],
+    ) -> tuple[float, float] | None:
+        ax, ay = point_a
+        avx, avy = dir_a
+        bx, by = point_b
+        bvx, bvy = dir_b
+        denom = float(avx) * float(bvy) - float(avy) * float(bvx)
+        if abs(denom) <= 1e-12:
+            return None
+        t = ((float(bx) - float(ax)) * float(bvy) - (float(by) - float(ay)) * float(bvx)) / denom
+        return float(ax) + t * float(avx), float(ay) + t * float(avy)
+
+    @staticmethod
+    def _angle_delta_from_lines(line_a: FittedLine, line_b: FittedLine) -> float:
+        dot = abs(float(line_a.vx) * float(line_b.vx) + float(line_a.vy) * float(line_b.vy))
+        dot = max(-1.0, min(1.0, dot))
+        return float(math.degrees(math.acos(dot)))
+
+    @classmethod
+    def _fit_line_for_common_interval(
+        cls,
+        *,
+        row: dict,
+        segment: tuple[tuple[float, float], tuple[float, float]],
+        axis: str,
+        interval: tuple[float, float] | None,
+        context: str,
+    ) -> tuple[FittedLine, tuple[tuple[float, float], tuple[float, float]], int]:
+        points = cls._line_points_from_row(row)
+        fit_points = points
+        if interval is not None and points.size > 0:
+            coord = points[:, 1] if axis == "y" else points[:, 0]
+            fit_points = points[(coord >= float(interval[0])) & (coord <= float(interval[1]))]
+        if len(fit_points) >= 2:
+            min_points = min(10, int(len(fit_points)))
+            line, filtered_points = fit_line_filtered(fit_points, min_points=min_points, context=context)
+            segment_fit = cls._segment_for_line_interval(
+                line,
+                axis=axis,
+                interval=interval,
+                fallback=segment,
+            )
+            return line, segment_fit, int(len(filtered_points))
+        line = cls._line_from_segment(segment)
+        segment_fit = cls._segment_for_line_interval(
+            line,
+            axis=axis,
+            interval=interval,
+            fallback=segment,
+        )
+        return line, segment_fit, 0
+
+    @classmethod
+    def _reference_normal_distance_between_rows(
+        cls,
+        *,
+        row_a: dict,
+        row_b: dict,
+        segment_a: tuple[tuple[float, float], tuple[float, float]],
+        segment_b: tuple[tuple[float, float], tuple[float, float]],
+        item_a_id: str,
+        item_b_id: str,
+    ) -> dict:
+        axis = cls._dominant_line_axis(segment_a, segment_b)
+        points_a = cls._line_points_from_row(row_a)
+        points_b = cls._line_points_from_row(row_b)
+        range_a = cls._axis_range_from_points(points_a, axis) or cls._axis_range_from_segment(segment_a, axis)
+        range_b = cls._axis_range_from_points(points_b, axis) or cls._axis_range_from_segment(segment_b, axis)
+        lo = max(float(range_a[0]), float(range_b[0]))
+        hi = min(float(range_a[1]), float(range_b[1]))
+        common_interval = (lo, hi) if hi > lo + 1e-6 else None
+
+        line_a, common_segment_a, point_count_a = cls._fit_line_for_common_interval(
+            row=row_a,
+            segment=segment_a,
+            axis=axis,
+            interval=common_interval,
+            context=f"{item_a_id} common-{axis}",
+        )
+        line_b, common_segment_b, point_count_b = cls._fit_line_for_common_interval(
+            row=row_b,
+            segment=segment_b,
+            axis=axis,
+            interval=common_interval,
+            context=f"{item_b_id} common-{axis}",
+        )
+
+        length_a = cls._line_segment_length(segment_a)
+        length_b = cls._line_segment_length(segment_b)
+        reference_is_a = length_a >= length_b
+        ref_line = line_a if reference_is_a else line_b
+        ref_segment = common_segment_a if reference_is_a else common_segment_b
+        ref_item_id = item_a_id if reference_is_a else item_b_id
+
+        ref_mid = (
+            (float(ref_segment[0][0]) + float(ref_segment[1][0])) * 0.5,
+            (float(ref_segment[0][1]) + float(ref_segment[1][1])) * 0.5,
+        )
+        normal = (-float(ref_line.vy), float(ref_line.vx))
+        p_a = cls._line_intersection(
+            (float(line_a.x0), float(line_a.y0)),
+            (float(line_a.vx), float(line_a.vy)),
+            ref_mid,
+            normal,
+        )
+        p_b = cls._line_intersection(
+            (float(line_b.x0), float(line_b.y0)),
+            (float(line_b.vx), float(line_b.vy)),
+            ref_mid,
+            normal,
+        )
+        if p_a is None or p_b is None:
+            raise RuntimeError("reference-normal line intersection failed")
+        distance_px = float(math.hypot(float(p_b[0]) - float(p_a[0]), float(p_b[1]) - float(p_a[1])))
+        return {
+            "distance_px": distance_px,
+            "angle_delta": cls._angle_delta_from_lines(line_a, line_b),
+            "dimension_segment": (p_a, p_b),
+            "distance_mode": "reference_normal_intersection",
+            "reference_line_item_id": ref_item_id,
+            "common_axis": axis,
+            "common_interval": list(common_interval) if common_interval is not None else None,
+            "line_a_segment": common_segment_a,
+            "line_b_segment": common_segment_b,
+            "line_a_fit": line_a.to_dict(),
+            "line_b_fit": line_b.to_dict(),
+            "line_a_common_points": point_count_a,
+            "line_b_common_points": point_count_b,
+        }
 
     @staticmethod
     def _line_item_ref(item: InspectionItem) -> str:
@@ -428,8 +747,26 @@ class InspectionExecutor:
         segment_b = cls._line_segment_from_row(row_b)
         if segment_a is None or segment_b is None:
             return None
-        distance_px, angle_delta = cls._distance_between_segments(segment_a, segment_b)
-        dimension_segment = cls._dimension_segment(segment_a, segment_b, distance_px)
+        distance_algorithm = str(getattr(distance_item, "algorithm_code", "") or "").strip() or "line_distance"
+        if distance_algorithm == LINE_DISTANCE_REF_NORMAL_ALGORITHM:
+            distance_info = cls._reference_normal_distance_between_rows(
+                row_a=row_a,
+                row_b=row_b,
+                segment_a=segment_a,
+                segment_b=segment_b,
+                item_a_id=cls._line_item_ref(item_a),
+                item_b_id=cls._line_item_ref(item_b),
+            )
+            distance_px = float(distance_info["distance_px"])
+            angle_delta = float(distance_info["angle_delta"])
+            dimension_segment = distance_info["dimension_segment"]
+        else:
+            distance_px, angle_delta = cls._distance_between_segments(segment_a, segment_b)
+            dimension_segment = cls._dimension_segment(segment_a, segment_b, distance_px)
+            distance_info = {
+                "distance_mode": "average_cross_line_distance",
+                "dimension_segment": dimension_segment,
+            }
 
         params = dict(getattr(distance_item, "params", {}) or {})
         unit = str(params.get("limit_unit", "px") or "px").strip().lower()
@@ -445,25 +782,39 @@ class InspectionExecutor:
             if pixel_size <= 0.0:
                 raise RuntimeError("pixel_size_mm is required when line-distance limits use mm")
             value = float(distance_px * pixel_size)
+        value, raw_value, compensation_enabled, compensation_slope, compensation_intercept = cls._compensated_value(
+            value,
+            params,
+        )
+        reported_value = cls._round_measurement_value(value, unit)
         lower = cls._optional_float(params.get("lower_limit", params.get(f"lower_limit_{unit}")))
         upper = cls._optional_float(params.get("upper_limit", params.get(f"upper_limit_{unit}")))
         ok = True
-        if lower is not None and value < lower:
+        if lower is not None and reported_value < lower:
             ok = False
-        if upper is not None and value > upper:
+        if upper is not None and reported_value > upper:
             ok = False
 
         name_a = str(getattr(item_a, "display_name", "") or getattr(item_a, "roi_label", "") or "LineA")
         name_b = str(getattr(item_b, "display_name", "") or getattr(item_b, "roi_label", "") or "LineB")
         display_name = str(getattr(distance_item, "display_name", "") or getattr(distance_item, "item_id", "") or "Line Distance")
         detail = (
-            f"distance={value:.3f}{unit}"
-            f" raw={distance_px:.3f}px"
+            f"distance={cls._format_measurement_value(reported_value, unit)}"
             f" angle_delta={angle_delta:.3f}deg"
             f" lines={name_a}/{name_b}"
         )
+        if compensation_enabled:
+            detail += (
+                f" compensation=k={compensation_slope:.6g},b={compensation_intercept:.6g}"
+            )
+        detail += f" raw={distance_px:.3f}px"
+        if distance_algorithm == LINE_DISTANCE_REF_NORMAL_ALGORITHM:
+            detail += f" mode=ref_normal ref={distance_info.get('reference_line_item_id', '-') or '-'}"
         if lower is not None or upper is not None:
-            detail += f" spec={lower if lower is not None else '-'}..{upper if upper is not None else '-'}{unit}"
+            detail += (
+                f" spec={cls._format_measurement_limit(lower, unit)}"
+                f"..{cls._format_measurement_limit(upper, unit)}"
+            )
 
         return {
             "file_path": image_path,
@@ -473,7 +824,8 @@ class InspectionExecutor:
             "diff": angle_delta,
             "sim_ok": None,
             "sim_ng": None,
-            "value": value,
+            "value": reported_value,
+            "unit": unit,
             "threshold": upper,
             "match_ms": max(
                 (
@@ -487,20 +839,41 @@ class InspectionExecutor:
             "total_ms": 0.0,
             "json_name": str(row_a.get("json_name", row_b.get("json_name", "")) or ""),
             "detail": detail,
-            "algorithm": "line_distance",
+            "algorithm": distance_algorithm,
             "tool_name": display_name,
             "camera_id": camera_id,
             "roi_label": str(getattr(distance_item, "roi_label", "") or ""),
             "params": params,
             "measurement": {
-                "type": "line_distance",
+                "type": distance_algorithm,
                 "distance_px": distance_px,
-                "distance": value,
+                "distance": reported_value,
                 "unit": unit,
                 "pixel_size_mm": pixel_size,
+                "compensation_enabled": compensation_enabled,
+                "compensation_slope": compensation_slope,
+                "compensation_intercept": compensation_intercept,
                 "angle_delta_deg": angle_delta,
                 "dimension_segment": [[float(x), float(y)] for x, y in dimension_segment],
-                "label": f"{value:.3f}{unit}",
+                "distance_mode": str(distance_info.get("distance_mode", "") or ""),
+                "reference_line_item_id": str(distance_info.get("reference_line_item_id", "") or ""),
+                "common_axis": str(distance_info.get("common_axis", "") or ""),
+                "common_interval": distance_info.get("common_interval"),
+                "line_a_segment": (
+                    [[float(x), float(y)] for x, y in distance_info["line_a_segment"]]
+                    if distance_info.get("line_a_segment") is not None
+                    else None
+                ),
+                "line_b_segment": (
+                    [[float(x), float(y)] for x, y in distance_info["line_b_segment"]]
+                    if distance_info.get("line_b_segment") is not None
+                    else None
+                ),
+                "line_a_fit": distance_info.get("line_a_fit"),
+                "line_b_fit": distance_info.get("line_b_fit"),
+                "line_a_common_points": distance_info.get("line_a_common_points"),
+                "line_b_common_points": distance_info.get("line_b_common_points"),
+                "label": cls._format_measurement_value(reported_value, unit),
                 "pred": "OK" if ok else "NG",
                 "line_a_item_id": cls._line_item_ref(item_a),
                 "line_b_item_id": cls._line_item_ref(item_b),

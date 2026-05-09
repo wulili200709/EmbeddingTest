@@ -9,7 +9,10 @@ import cv2
 import numpy as np
 
 
-MEASUREMENT_ALGORITHMS = ["find_line", "line_distance"]
+LINE_DISTANCE_ALGORITHM = "line_distance"
+LINE_DISTANCE_REF_NORMAL_ALGORITHM = "line_distance_ref_normal"
+LINE_DISTANCE_ALGORITHMS = {LINE_DISTANCE_ALGORITHM, LINE_DISTANCE_REF_NORMAL_ALGORITHM}
+MEASUREMENT_ALGORITHMS = ["find_line", LINE_DISTANCE_ALGORITHM, LINE_DISTANCE_REF_NORMAL_ALGORITHM]
 
 _DIRECTIONS = {"left_right", "right_left", "top_down", "bottom_up"}
 _POLARITIES = {"any", "dark_to_bright", "bright_to_dark"}
@@ -745,6 +748,9 @@ def judge_edge_distance(
 
 __all__ = [
     "MEASUREMENT_ALGORITHMS",
+    "LINE_DISTANCE_ALGORITHM",
+    "LINE_DISTANCE_ALGORITHMS",
+    "LINE_DISTANCE_REF_NORMAL_ALGORITHM",
     "EdgeDistanceConfig",
     "EdgeDistanceResult",
     "FindLineConfig",

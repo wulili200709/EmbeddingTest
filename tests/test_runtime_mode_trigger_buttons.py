@@ -175,6 +175,31 @@ class RuntimeModeTriggerButtonsTest(unittest.TestCase):
         finally:
             set_language(previous, persist=False)
 
+    def test_runtime_item_list_translates_legacy_name_for_reference_normal_distance(self) -> None:
+        previous = language_code()
+        try:
+            set_language("zh_CN", persist=False)
+            page = RuntimeModePage()
+
+            page.set_inspection_items(
+                [
+                    {
+                        "item_id": "line_distance",
+                        "display_name": tr("debug.algorithm.line_distance"),
+                        "camera_id": "cam1",
+                        "algorithm_code": "line_distance_ref_normal",
+                        "enabled": True,
+                        "status_kind": "pending",
+                        "status_text": "PENDING",
+                    },
+                ]
+            )
+
+            self.assertEqual(len(page._item_indicators), 1)
+            self.assertEqual(page._item_indicators[0].lbl_name._full_text, tr("debug.algorithm.line_distance_ref_normal"))
+        finally:
+            set_language(previous, persist=False)
+
     def test_runtime_item_list_keeps_non_helper_items_with_line_distance(self) -> None:
         page = RuntimeModePage()
 

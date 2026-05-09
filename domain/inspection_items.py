@@ -22,6 +22,7 @@ from algorithms.registry import (
 
 
 SUPPORTED_CAMERA_IDS = ("cam1", "cam2")
+LINE_DISTANCE_ALGORITHMS = {"line_distance", "line_distance_ref_normal"}
 
 
 def _slug_token(value: object, fallback: str = "tool") -> str:
@@ -121,7 +122,7 @@ def load_inspection_items(path: str) -> List[InspectionItem]:
         if not isinstance(entry, dict):
             continue
         item = InspectionItem.from_dict(entry)
-        if item.roi_label or item.algorithm_code == "line_distance":
+        if item.roi_label or item.algorithm_code in LINE_DISTANCE_ALGORITHMS:
             items.append(item)
     return items
 
@@ -205,7 +206,7 @@ def sync_items_with_labels(
         item
         for item in existing_items
         if isinstance(item, InspectionItem)
-        and item.algorithm_code == "line_distance"
+        and item.algorithm_code in LINE_DISTANCE_ALGORITHMS
         and item.item_id not in {synced_item.item_id for synced_item in synced}
     ]
     for existing in existing_distance_items:

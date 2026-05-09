@@ -142,6 +142,42 @@ class RuntimeRecordWriterTest(unittest.TestCase):
             self.assertEqual(rows[1]["item_01_name"], "ROI 1")
             self.assertEqual(rows[1]["item_01_result"], "NG")
 
+    def test_runtime_record_includes_distance_value_for_distance_item(self) -> None:
+        runtime_result = RuntimeInspectionResult(
+            task_id="runtime_002",
+            product_name="demo_product",
+            final_result="OK",
+            item_results=[
+                InspectionItemResult(
+                    item_id="line_distance",
+                    display_name="卡尺距离测量",
+                    camera_id="cam1",
+                    roi_label="",
+                    algorithm_code="line_distance_ref_normal",
+                    result="OK",
+                    value=5.724321,
+                    unit="mm",
+                ),
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = TestRecordService(CsvRecordWriter(tmpdir))
+            file_path = service.write_product_result(
+                product_name=runtime_result.product_name,
+                final_result=runtime_result.final_result,
+                camera1_result="OK",
+                extra_fields=runtime_result.to_record_extra_fields(),
+            )
+
+            with file_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+                rows = list(csv.DictReader(csv_file))
+
+            self.assertEqual(len(rows), 1)
+            row = rows[0]
+            self.assertEqual(row["item_01_distance"], "5.724321")
+            self.assertNotIn("item_01_distance_unit", row)
+
 
 if __name__ == "__main__":
     unittest.main()

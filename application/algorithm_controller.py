@@ -33,6 +33,7 @@ from algorithms.traditional import (
     train_threshold_model,
 )
 from algorithms.measurement import (
+    LINE_DISTANCE_ALGORITHMS,
     MEASUREMENT_ALGORITHMS,
     is_measurement_algorithm,
     judge_edge_distance,
@@ -662,7 +663,7 @@ class AlgorithmController:
                 measurement_payload = measurement.to_dict()
                 value = None
                 threshold = None
-            elif algorithm == "line_distance":
+            elif algorithm in LINE_DISTANCE_ALGORITHMS:
                 raise RuntimeError("Line Distance must be run with paired Find Line tools")
             else:
                 measurement = measure_edge_distance(

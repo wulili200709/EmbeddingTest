@@ -20,6 +20,10 @@ from application.runtime_controller import (
     normalize_capture_retention_policy,
     retained_capture_paths_for_policy,
 )
+from ui.shell.runtime_bridge import (
+    load_runtime_capture_policy_from_session,
+    persist_runtime_capture_policy,
+)
 
 
 class RuntimeCapturePolicyTest(unittest.TestCase):
@@ -37,6 +41,74 @@ class RuntimeCapturePolicyTest(unittest.TestCase):
 
             loaded = session.load_session()
             self.assertEqual(loaded.runtime_capture_policy, RUNTIME_CAPTURE_POLICY_ALL)
+
+    def test_runtime_capture_policy_is_stored_per_product(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            session = ProductSession(tmpdir)
+            session.load()
+            session.create_product("A")
+            session.create_product("B")
+            session.switch_product("A")
+            session.save_session(SessionData(runtime_capture_policy=RUNTIME_CAPTURE_POLICY_ALL))
+            window = type(
+                "Window",
+                (),
+                {
+                    "session": session,
+                },
+            )()
+
+            self.assertEqual(
+                load_runtime_capture_policy_from_session(window),
+                RUNTIME_CAPTURE_POLICY_ALL,
+            )
+
+            session.switch_product("B")
+            self.assertEqual(
+                load_runtime_capture_policy_from_session(window),
+                RUNTIME_CAPTURE_POLICY_NG_ONLY,
+            )
+
+            persist_runtime_capture_policy(window, RUNTIME_CAPTURE_POLICY_NG_ONLY)
+            session.switch_product("A")
+            self.assertEqual(
+                load_runtime_capture_policy_from_session(window),
+                RUNTIME_CAPTURE_POLICY_ALL,
+            )
+
+    def test_persist_runtime_capture_policy_writes_current_product_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            session = ProductSession(tmpdir)
+            session.load()
+            session.switch_product("Default")
+            window = type(
+                "Window",
+                (),
+                {
+                    "session": session,
+                },
+            )()
+
+            persist_runtime_capture_policy(window, RUNTIME_CAPTURE_POLICY_ALL)
+
+            self.assertEqual(session.load_session().runtime_capture_policy, RUNTIME_CAPTURE_POLICY_ALL)
+
+    def test_saving_unrelated_session_data_preserves_runtime_capture_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            session = ProductSession(tmpdir)
+            session.load()
+            session.switch_product("Default")
+            product_dir = Path(session.product_dir)
+            image_path = product_dir / "debug_capture" / "cam1.png"
+            image_path.parent.mkdir(parents=True, exist_ok=True)
+            image_path.write_bytes(b"png")
+
+            session.save_session(SessionData(runtime_capture_policy=RUNTIME_CAPTURE_POLICY_ALL))
+            session.save_session(SessionData(test_files=[str(image_path)]))
+
+            raw = json.loads(Path(session.session_json).read_text(encoding="utf-8"))
+            self.assertEqual(raw["runtime_capture_policy"], RUNTIME_CAPTURE_POLICY_ALL)
+            self.assertEqual(raw["test_files"], ["debug_capture/cam1.png"])
 
     def test_session_stores_relative_image_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

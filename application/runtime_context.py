@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Protocol
 import algorithms.proxy as qr_core
 import numpy as np
 from algorithms.measurement import (
+    LINE_DISTANCE_ALGORITHMS,
     judge_edge_distance,
     measure_edge_distance_from_array,
     measure_find_line_from_array,
@@ -126,7 +127,7 @@ def _is_measurement_item(algo, item: InspectionItem) -> bool:
 
 
 def _is_line_distance_item(item: InspectionItem) -> bool:
-    return str(getattr(item, "algorithm_code", "") or "").strip() == "line_distance"
+    return str(getattr(item, "algorithm_code", "") or "").strip() in LINE_DISTANCE_ALGORITHMS
 
 
 def _predict_learning_items_batch_rows(

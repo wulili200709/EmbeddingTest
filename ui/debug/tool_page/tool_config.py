@@ -7,9 +7,14 @@ from datetime import datetime
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from algorithms.measurement import LINE_DISTANCE_ALGORITHMS
 from algorithms.registry import list_tool_algorithm_specs, normalize_tool_algorithm_code
 from domain import InspectionItem, SUPPORTED_CAMERA_IDS, save_inspection_items
 from ui.i18n import tr
+
+
+def _is_line_distance_algorithm(algorithm: object) -> bool:
+    return str(algorithm or "").strip() in LINE_DISTANCE_ALGORITHMS
 
 
 def _current_camera_role(tool_page) -> str:
@@ -132,7 +137,7 @@ def _update_delete_line_distance_button(tool_page) -> None:
     item = _selected_inspection_item(tool_page)
     can_delete = (
         item is not None
-        and normalize_tool_algorithm_code(getattr(item, "algorithm_code", "")) == "line_distance"
+        and _is_line_distance_algorithm(normalize_tool_algorithm_code(getattr(item, "algorithm_code", "")))
     )
     button.setEnabled(can_delete)
     button.setVisible(can_delete)
@@ -146,12 +151,22 @@ def _inspection_item_display_name(inspection_item) -> str:
         or item_id
     ).strip()
     algorithm = normalize_tool_algorithm_code(getattr(inspection_item, "algorithm_code", ""))
-    if algorithm == "line_distance":
-        default_names = {"", "Line Distance", "line_distance"}
+    if _is_line_distance_algorithm(algorithm):
+        default_names = {"", "Line Distance", "line_distance", tr("debug.algorithm.line_distance")}
+        display_key = "debug.algorithm.line_distance"
+        if algorithm == "line_distance_ref_normal":
+            default_names.update(
+                {
+                    "Reference Normal Distance",
+                    "line_distance_ref_normal",
+                    tr("debug.algorithm.line_distance_ref_normal"),
+                }
+            )
+            display_key = "debug.algorithm.line_distance_ref_normal"
         if item_id.startswith("line_distance"):
             default_names.add(item_id)
         if raw_name in default_names:
-            return tr("debug.algorithm.line_distance")
+            return tr(display_key)
     return raw_name
 
 
@@ -166,7 +181,7 @@ def _delete_selected_line_distance_tool(tool_page) -> None:
         return
 
     inspection_item = tool_page.inspection_items[row]
-    if normalize_tool_algorithm_code(getattr(inspection_item, "algorithm_code", "")) != "line_distance":
+    if not _is_line_distance_algorithm(normalize_tool_algorithm_code(getattr(inspection_item, "algorithm_code", ""))):
         QtWidgets.QMessageBox.information(
             tool_page,
             tr("debug.measurement.delete_line_distance_tool"),
@@ -331,7 +346,7 @@ def _update_measurement_params_panel(tool_page) -> None:
     params = dict(getattr(item, "params", {}) or {})
     algorithm = str(tool_page.algo.resolve_tool_algorithm(item.algorithm_code) or "").strip()
     is_find_line = algorithm == "find_line"
-    is_line_distance = algorithm == "line_distance"
+    is_line_distance = _is_line_distance_algorithm(algorithm)
     unit = str(params.get("limit_unit", "") or "").strip().lower()
     if unit not in {"px", "mm"}:
         unit = "mm" if ("lower_limit_mm" in params or "upper_limit_mm" in params) else "px"
@@ -421,7 +436,7 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
         unit = "px"
     algorithm = str(tool_page.algo.resolve_tool_algorithm(item.algorithm_code) or "").strip()
     is_find_line = algorithm == "find_line"
-    is_line_distance = algorithm == "line_distance"
+    is_line_distance = _is_line_distance_algorithm(algorithm)
     line_a = dict(params.get("line" if is_find_line else "line_a") or {})
     line_b = dict(params.get("line_b") or {})
     if is_find_line:
@@ -556,7 +571,7 @@ def _inspection_item_status(tool_page, inspection_item):
 
     if getattr(tool_page.algo, "is_measurement_tool", lambda _code: False)(inspection_item.algorithm_code):
         algorithm = tool_page.algo.resolve_tool_algorithm(inspection_item.algorithm_code)
-        if algorithm == "line_distance":
+        if _is_line_distance_algorithm(algorithm):
             params = dict(getattr(inspection_item, "params", {}) or {})
             line_a = str(params.get("line_a_item_id", "") or "").strip() or "-"
             line_b = str(params.get("line_b_item_id", "") or "").strip() or "-"

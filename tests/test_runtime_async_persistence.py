@@ -180,6 +180,30 @@ class RuntimeAsyncPersistenceTest(unittest.TestCase):
             self.assertIn("cam1", controller._last_capture_paths)
             self.assertTrue(Path(controller._last_capture_paths["cam1"]).exists())
 
+    def test_all_policy_exports_preview_frame_when_outcome_has_no_camera_rows(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            controller = self._build_controller(tmpdir)
+            controller.set_capture_retention_policy("all")
+            controller._last_preview_frames["cam1"] = build_runtime_preview_frame(
+                role="cam1",
+                image_bgr=np.zeros((8, 8, 3), dtype=np.uint8),
+                product_dir=tmpdir,
+                camera_role="cam1",
+            )
+
+            outcome = FinalInspectionOutcome(
+                final_result="NG",
+                camera_outcomes={},
+                duration_ms=60,
+                error_message="match failure",
+            )
+
+            controller._finalize_trigger_outcome(outcome, release_status_before=None)
+            controller.shutdown_persistence(wait=True)
+
+            self.assertIn("cam1", controller._last_capture_paths)
+            self.assertTrue(Path(controller._last_capture_paths["cam1"]).exists())
+
 
 if __name__ == "__main__":
     unittest.main()

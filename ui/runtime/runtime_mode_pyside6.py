@@ -32,6 +32,8 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from ui.i18n import tr, tr_runtime_state, tr_status_text
 from ui.roi_overlay_colors import merge_roi_statuses
 
+LINE_DISTANCE_ALGORITHMS = {"line_distance", "line_distance_ref_normal"}
+
 
 _DARK_BG = "#2d2d2d"
 _PANEL_BG = "#363636"
@@ -778,10 +780,22 @@ class RuntimeModePage(QtWidgets.QWidget):
         name = str(row.get("display_name", "") or "").strip()
         algorithm = str(row.get("algorithm_code", "") or "").strip()
         item_id = str(row.get("item_id", "") or "").strip()
-        if algorithm == "line_distance":
-            default_names = {"", "Line Distance", "line_distance"}
-            if item_id.startswith("line_distance") and name in default_names:
-                return tr("debug.algorithm.line_distance")
+        if algorithm in LINE_DISTANCE_ALGORITHMS:
+            default_names = {"", "Line Distance", "line_distance", tr("debug.algorithm.line_distance")}
+            display_key = "debug.algorithm.line_distance"
+            if algorithm == "line_distance_ref_normal":
+                default_names.update(
+                    {
+                        "Reference Normal Distance",
+                        "line_distance_ref_normal",
+                        tr("debug.algorithm.line_distance_ref_normal"),
+                    }
+                )
+                display_key = "debug.algorithm.line_distance_ref_normal"
+            if item_id.startswith("line_distance"):
+                default_names.add(item_id)
+            if name in default_names:
+                return tr(display_key)
         return name or str(row.get("roi_label", "") or item_id)
 
     @staticmethod
@@ -789,7 +803,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         camera_rows = list(rows or [])
         line_helper_ids: set[str] = set()
         for row in camera_rows:
-            if str(row.get("algorithm_code", "") or "").strip() != "line_distance":
+            if str(row.get("algorithm_code", "") or "").strip() not in LINE_DISTANCE_ALGORITHMS:
                 continue
             params = row.get("params", {})
             if not isinstance(params, dict):
