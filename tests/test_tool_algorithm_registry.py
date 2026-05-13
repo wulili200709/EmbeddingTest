@@ -57,6 +57,12 @@ class ToolAlgorithmRegistryTest(unittest.TestCase):
         self.assertEqual(get_tool_algorithm_spec("meanhsv_h").family, "traditional")
         self.assertTrue(is_measurement_tool_algorithm("find_line"))
         self.assertEqual(get_tool_algorithm_spec("find_line").family, "measurement")
+        self.assertTrue(is_measurement_tool_algorithm("find_line_subpix"))
+        self.assertEqual(get_tool_algorithm_spec("find_line_subpix").family, "measurement")
+        self.assertEqual(
+            get_tool_algorithm_spec("find_line_subpix").default_params["line"]["edge_detector"],
+            "subpix_shen",
+        )
         self.assertTrue(is_measurement_tool_algorithm("line_distance"))
         self.assertEqual(get_tool_algorithm_spec("line_distance").family, "measurement")
         self.assertTrue(is_measurement_tool_algorithm("line_distance_ref_normal"))
@@ -93,12 +99,14 @@ class ToolAlgorithmRegistryTest(unittest.TestCase):
             set_language("en_US", persist=False)
             self.assertEqual(algorithm_display_name(SHARED_BACKBONE_ALGORITHM_CODE), "Learning Tools")
             self.assertEqual(algorithm_display_name("efficientnet_b0"), "High-Accuracy Learning Tool")
+            self.assertEqual(algorithm_display_name("find_line_subpix"), "Subpixel Find Line")
             self.assertEqual(algorithm_display_name("line_distance"), "Line Distance")
             self.assertEqual(algorithm_display_name("line_distance_ref_normal"), "Reference Normal Distance")
 
             set_language("zh_CN", persist=False)
             self.assertEqual(algorithm_display_name(SHARED_BACKBONE_ALGORITHM_CODE), "学习工具")
             self.assertEqual(algorithm_display_name("efficientnet_b0"), "高精度学习工具")
+            self.assertEqual(algorithm_display_name("find_line_subpix"), "高阶亚像素找线")
             self.assertEqual(algorithm_display_name("line_distance"), "距离测量")
         finally:
             set_language(previous, persist=False)

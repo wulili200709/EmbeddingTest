@@ -9,13 +9,23 @@ import cv2
 import numpy as np
 
 
+FIND_LINE_ALGORITHM = "find_line"
+FIND_LINE_SUBPIX_ALGORITHM = "find_line_subpix"
+FIND_LINE_ALGORITHMS = {FIND_LINE_ALGORITHM, FIND_LINE_SUBPIX_ALGORITHM}
 LINE_DISTANCE_ALGORITHM = "line_distance"
 LINE_DISTANCE_REF_NORMAL_ALGORITHM = "line_distance_ref_normal"
 LINE_DISTANCE_ALGORITHMS = {LINE_DISTANCE_ALGORITHM, LINE_DISTANCE_REF_NORMAL_ALGORITHM}
-MEASUREMENT_ALGORITHMS = ["find_line", LINE_DISTANCE_ALGORITHM, LINE_DISTANCE_REF_NORMAL_ALGORITHM]
+MEASUREMENT_ALGORITHMS = [
+    FIND_LINE_ALGORITHM,
+    FIND_LINE_SUBPIX_ALGORITHM,
+    LINE_DISTANCE_ALGORITHM,
+    LINE_DISTANCE_REF_NORMAL_ALGORITHM,
+]
 
 _DIRECTIONS = {"left_right", "right_left", "top_down", "bottom_up"}
 _POLARITIES = {"any", "dark_to_bright", "bright_to_dark"}
+_EDGE_DETECTORS = {"canny", "subpix_shen"}
+_PEAK_SELECTIONS = {"first", "strongest", "dominant"}
 
 
 @dataclass(frozen=True)
@@ -26,6 +36,8 @@ class FindLineConfig:
     edge_threshold: float = 10.0
     blur_ksize: int = 3
     min_points: int = 10
+    edge_detector: str = "canny"
+    peak_selection: str = "dominant"
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any] | None, *, defaults: "FindLineConfig" | None = None) -> "FindLineConfig":
@@ -37,6 +49,12 @@ class FindLineConfig:
         polarity = str(payload.get("polarity", base.polarity) or base.polarity).strip()
         if polarity not in _POLARITIES:
             polarity = base.polarity
+        edge_detector = str(payload.get("edge_detector", base.edge_detector) or base.edge_detector).strip()
+        if edge_detector not in _EDGE_DETECTORS:
+            edge_detector = base.edge_detector
+        peak_selection = str(payload.get("peak_selection", base.peak_selection) or base.peak_selection).strip()
+        if peak_selection not in _PEAK_SELECTIONS:
+            peak_selection = base.peak_selection
         blur_ksize = int(payload.get("blur_ksize", base.blur_ksize) or 0)
         if blur_ksize > 0 and blur_ksize % 2 == 0:
             blur_ksize += 1
@@ -47,6 +65,8 @@ class FindLineConfig:
             edge_threshold=max(0.0, float(payload.get("edge_threshold", base.edge_threshold) or 0.0)),
             blur_ksize=max(0, blur_ksize),
             min_points=max(2, int(payload.get("min_points", base.min_points) or 2)),
+            edge_detector=edge_detector,
+            peak_selection=peak_selection,
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -112,12 +132,23 @@ class FindLineMeasurementConfig:
     value_mode: str = "position"
 
     @classmethod
-    def from_params(cls, params: Mapping[str, Any] | None, *, roi_label: str = "") -> "FindLineMeasurementConfig":
+    def from_params(
+        cls,
+        params: Mapping[str, Any] | None,
+        *,
+        roi_label: str = "",
+        algorithm: object = FIND_LINE_ALGORITHM,
+    ) -> "FindLineMeasurementConfig":
         payload = dict(params or {})
         line_payload = payload.get("line")
         if not isinstance(line_payload, Mapping):
             line_payload = payload.get("line_a")
-        line = FindLineConfig.from_dict(line_payload, defaults=FindLineConfig(direction="left_right"))
+        algorithm_key = str(algorithm or "").strip().lower()
+        default_detector = "subpix_shen" if algorithm_key == FIND_LINE_SUBPIX_ALGORITHM else "canny"
+        line = FindLineConfig.from_dict(
+            line_payload,
+            defaults=FindLineConfig(direction="left_right", edge_detector=default_detector),
+        )
         limit_unit = str(payload.get("limit_unit", "") or "").strip().lower()
         if not limit_unit:
             limit_unit = "mm" if ("lower_limit_mm" in payload or "upper_limit_mm" in payload) else "px"
@@ -348,11 +379,222 @@ def _refine_vertical_edge_y(gray: np.ndarray, x: int, y: int, config: FindLineCo
     return float(best + 1 + offset)
 
 
+def _smooth_subpixel_derivative(delta: np.ndarray, *, horizontal: bool) -> np.ndarray:
+    kernel = np.asarray([1.0, 4.0, 6.0, 4.0, 1.0], dtype=np.float32) / 16.0
+    kernel = kernel.reshape(1, -1) if horizontal else kernel.reshape(-1, 1)
+    return cv2.filter2D(
+        np.asarray(delta, dtype=np.float32),
+        cv2.CV_32F,
+        kernel,
+        borderType=cv2.BORDER_REPLICATE,
+    )
+
+
+def _is_response_peak(response: np.ndarray, index: int, threshold: float) -> bool:
+    center = float(response[int(index)])
+    if center < float(threshold):
+        return False
+    left = float(response[int(index) - 1]) if int(index) > 0 else -math.inf
+    right = float(response[int(index) + 1]) if int(index) < len(response) - 1 else -math.inf
+    return center >= left and center >= right
+
+
+def _subpixel_peak_coordinate(response: np.ndarray, index: int) -> float:
+    idx = int(index)
+    offset = 0.0
+    if 0 < idx < len(response) - 1:
+        offset = _parabolic_peak_offset(response[idx - 1], response[idx], response[idx + 1])
+    return float(idx + 1 + offset)
+
+
+def _filter_subpixel_edge_runs(points: np.ndarray, config: FindLineConfig) -> np.ndarray:
+    pts = np.asarray(points, dtype=np.float32).reshape(-1, 2)
+    if len(pts) <= int(config.min_points):
+        return pts
+    if config.direction in {"left_right", "right_left"}:
+        primary = pts[:, 1]
+        secondary = pts[:, 0]
+    else:
+        primary = pts[:, 0]
+        secondary = pts[:, 1]
+    runs: list[np.ndarray] = []
+    start = 0
+    max_primary_gap = max(1.0, float(config.scan_step) * 2.5)
+    max_secondary_jump = max(8.0, float(config.scan_step) * 8.0)
+    for idx in range(1, len(pts)):
+        if (
+            abs(float(primary[idx] - primary[idx - 1])) > max_primary_gap
+            or abs(float(secondary[idx] - secondary[idx - 1])) > max_secondary_jump
+        ):
+            runs.append(pts[start:idx])
+            start = idx
+    runs.append(pts[start:])
+    best = max(runs, key=len)
+    if len(best) >= int(config.min_points):
+        return np.asarray(best, dtype=np.float32)
+    return pts
+
+
+def _subpixel_line_secondary_at_primary(
+    line: FittedLine,
+    primary: float,
+    *,
+    horizontal: bool,
+) -> float:
+    if horizontal:
+        if abs(float(line.vy)) <= 1e-12:
+            return float(line.x0)
+        t = (float(primary) - float(line.y0)) / float(line.vy)
+        return float(line.x0) + t * float(line.vx)
+    if abs(float(line.vx)) <= 1e-12:
+        return float(line.y0)
+    t = (float(primary) - float(line.x0)) / float(line.vx)
+    return float(line.y0) + t * float(line.vy)
+
+
+def _subpixel_point_from_candidate(
+    primary: float,
+    secondary: float,
+    *,
+    horizontal: bool,
+) -> tuple[float, float]:
+    if horizontal:
+        return float(secondary), float(primary)
+    return float(primary), float(secondary)
+
+
+def _select_subpixel_edge_points(
+    candidates_by_scan: list[tuple[float, list[tuple[float, float]]]],
+    *,
+    horizontal: bool,
+    config: FindLineConfig,
+) -> np.ndarray:
+    if not candidates_by_scan:
+        return np.empty((0, 2), dtype=np.float32)
+
+    def first_candidate(candidates: list[tuple[float, float]]) -> tuple[float, float]:
+        return candidates[0]
+
+    def strongest_candidate(candidates: list[tuple[float, float]]) -> tuple[float, float]:
+        return max(candidates, key=lambda item: float(item[1]))
+
+    selector = first_candidate if config.peak_selection == "first" else strongest_candidate
+    seed_points = np.asarray(
+        [
+            _subpixel_point_from_candidate(primary, selector(candidates)[0], horizontal=horizontal)
+            for primary, candidates in candidates_by_scan
+            if candidates
+        ],
+        dtype=np.float32,
+    ).reshape(-1, 2)
+    seed_points = _filter_subpixel_edge_runs(seed_points, config)
+    if config.peak_selection != "dominant" or len(seed_points) < int(config.min_points):
+        return seed_points
+
+    try:
+        seed_line, seed_fit_points = fit_line_filtered(
+            seed_points,
+            min_points=min(int(config.min_points), int(len(seed_points))),
+            context="subpixel dominant edge seed",
+        )
+    except Exception:
+        return seed_points
+
+    seed_residual = max(float(seed_line.residual), 0.0)
+    gate_px = max(
+        2.5,
+        seed_residual * 3.0 + 1.0,
+        float(config.scan_step) * 2.0,
+        float(config.blur_ksize) * 0.75 if config.blur_ksize > 0 else 0.0,
+    )
+    selected: list[tuple[float, float]] = []
+    for primary, candidates in candidates_by_scan:
+        if not candidates:
+            continue
+        predicted = _subpixel_line_secondary_at_primary(seed_line, primary, horizontal=horizontal)
+        nearest = min(candidates, key=lambda item: abs(float(item[0]) - predicted))
+        nearest_distance = abs(float(nearest[0]) - predicted)
+        if nearest_distance <= gate_px:
+            selected.append(_subpixel_point_from_candidate(primary, nearest[0], horizontal=horizontal))
+
+    refined_points = np.asarray(selected, dtype=np.float32).reshape(-1, 2)
+    if len(refined_points) < int(config.min_points):
+        return np.asarray(seed_fit_points, dtype=np.float32).reshape(-1, 2)
+    return _filter_subpixel_edge_runs(refined_points, config)
+
+
+def _find_subpixel_edge_points(
+    crop_bgr: np.ndarray,
+    mask: np.ndarray,
+    config: FindLineConfig,
+) -> np.ndarray:
+    gray = cv2.cvtColor(np.asarray(crop_bgr, dtype=np.uint8), cv2.COLOR_BGR2GRAY).astype(np.float32)
+    if config.blur_ksize >= 3:
+        gray = cv2.GaussianBlur(gray, (config.blur_ksize, config.blur_ksize), 0)
+    valid_mask = np.asarray(mask, dtype=np.uint8) > 0
+    h, w = gray.shape[:2]
+    points: list[tuple[float, float]] = []
+
+    if config.direction in {"left_right", "right_left"}:
+        if w < 2:
+            return np.empty((0, 2), dtype=np.float32)
+        delta = gray[:, 1:] - gray[:, :-1]
+        filtered_delta = _smooth_subpixel_derivative(delta, horizontal=True)
+        response = _edge_response(filtered_delta, config.polarity, direction=config.direction)
+        adjacent_valid = valid_mask[:, 1:] & valid_mask[:, :-1]
+        x_indexes = range(0, w - 1) if config.direction == "left_right" else range(w - 2, -1, -1)
+        candidates_by_scan: list[tuple[float, list[tuple[float, float]]]] = []
+        for y in range(0, h, config.scan_step):
+            row_response = response[y]
+            row_valid = adjacent_valid[y]
+            candidates: list[tuple[float, float]] = []
+            for x in x_indexes:
+                if row_valid[int(x)] and _is_response_peak(row_response, int(x), config.edge_threshold):
+                    candidates.append(
+                        (
+                            _subpixel_peak_coordinate(row_response, int(x)),
+                            float(row_response[int(x)]),
+                        )
+                    )
+            if candidates:
+                candidates_by_scan.append((float(y), candidates))
+        points = _select_subpixel_edge_points(candidates_by_scan, horizontal=True, config=config)
+    else:
+        if h < 2:
+            return np.empty((0, 2), dtype=np.float32)
+        delta = gray[1:, :] - gray[:-1, :]
+        filtered_delta = _smooth_subpixel_derivative(delta, horizontal=False)
+        response = _edge_response(filtered_delta, config.polarity, direction=config.direction)
+        adjacent_valid = valid_mask[1:, :] & valid_mask[:-1, :]
+        y_indexes = range(0, h - 1) if config.direction == "top_down" else range(h - 2, -1, -1)
+        candidates_by_scan: list[tuple[float, list[tuple[float, float]]]] = []
+        for x in range(0, w, config.scan_step):
+            col_response = response[:, x]
+            col_valid = adjacent_valid[:, x]
+            candidates: list[tuple[float, float]] = []
+            for y in y_indexes:
+                if col_valid[int(y)] and _is_response_peak(col_response, int(y), config.edge_threshold):
+                    candidates.append(
+                        (
+                            _subpixel_peak_coordinate(col_response, int(y)),
+                            float(col_response[int(y)]),
+                        )
+                    )
+            if candidates:
+                candidates_by_scan.append((float(x), candidates))
+        points = _select_subpixel_edge_points(candidates_by_scan, horizontal=False, config=config)
+
+    return _filter_subpixel_edge_runs(np.asarray(points, dtype=np.float32), config)
+
+
 def find_edge_points(
     crop_bgr: np.ndarray,
     mask: np.ndarray,
     config: FindLineConfig,
 ) -> np.ndarray:
+    if config.edge_detector == "subpix_shen":
+        return _find_subpixel_edge_points(crop_bgr, mask, config)
+
     gray = cv2.cvtColor(np.asarray(crop_bgr, dtype=np.uint8), cv2.COLOR_BGR2GRAY).astype(np.float32)
     if config.blur_ksize >= 3:
         gray = cv2.GaussianBlur(gray, (config.blur_ksize, config.blur_ksize), 0)
@@ -550,8 +792,9 @@ def measure_find_line_from_array(
     shape_by_label: Mapping[str, dict],
     preferred_label: str = "roi1",
     params: Mapping[str, Any] | None = None,
+    algorithm: object = FIND_LINE_ALGORITHM,
 ) -> FindLineMeasurementResult:
-    config = FindLineMeasurementConfig.from_params(params, roi_label=preferred_label)
+    config = FindLineMeasurementConfig.from_params(params, roi_label=preferred_label, algorithm=algorithm)
     roi_label, shape = _shape_from_labels(shape_by_label, config.roi_label or preferred_label)
     crop, mask, origin = _crop_from_shape(image_bgr, shape)
     points = find_edge_points(crop, mask, config.line)
@@ -655,6 +898,7 @@ def measure_find_line(
     *,
     preferred_label: str = "roi1",
     params: Mapping[str, Any] | None = None,
+    algorithm: object = FIND_LINE_ALGORITHM,
 ) -> FindLineMeasurementResult:
     if not os.path.exists(img_path):
         raise FileNotFoundError(img_path)
@@ -678,6 +922,7 @@ def measure_find_line(
         shape_by_label={label: shape},
         preferred_label=label,
         params=params,
+        algorithm=algorithm,
     )
 
 
@@ -685,7 +930,7 @@ def measurement_value(result: EdgeDistanceResult | FindLineMeasurementResult, al
     key = str(algorithm or "").strip().lower()
     if key == "edge_distance" and isinstance(result, EdgeDistanceResult):
         return float(result.distance_px)
-    if key == "find_line" and isinstance(result, FindLineMeasurementResult):
+    if key in FIND_LINE_ALGORITHMS and isinstance(result, FindLineMeasurementResult):
         return float(result.position_px)
     raise ValueError(f"Unsupported measurement algorithm: {algorithm}")
 
@@ -748,6 +993,9 @@ def judge_edge_distance(
 
 __all__ = [
     "MEASUREMENT_ALGORITHMS",
+    "FIND_LINE_ALGORITHM",
+    "FIND_LINE_ALGORITHMS",
+    "FIND_LINE_SUBPIX_ALGORITHM",
     "LINE_DISTANCE_ALGORITHM",
     "LINE_DISTANCE_ALGORITHMS",
     "LINE_DISTANCE_REF_NORMAL_ALGORITHM",

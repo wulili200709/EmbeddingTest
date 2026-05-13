@@ -47,7 +47,12 @@ class _DummyAlgo:
         return str(algorithm_code or "").strip()
 
     def is_measurement_tool(self, algorithm_code: str) -> bool:
-        return str(algorithm_code or "").strip() in {"find_line", "line_distance"}
+        return str(algorithm_code or "").strip() in {
+            "find_line",
+            "find_line_subpix",
+            "line_distance",
+            "line_distance_ref_normal",
+        }
 
     def get_traditional_model_dict(self, algorithm: str, model_key: str | None = None):
         return None
@@ -218,6 +223,38 @@ class ToolPageToolConfigTest(unittest.TestCase):
         finally:
             harness.cleanup()
 
+    def test_subpixel_find_line_stays_config_only_in_algorithm_combo(self) -> None:
+        harness = _ToolConfigHarness()
+        try:
+            harness.inspection_items.append(
+                InspectionItem(
+                    item_id="subpix_line",
+                    display_name="subpix_line",
+                    camera_id="cam1",
+                    roi_label="roi3",
+                    algorithm_code="find_line_subpix",
+                    params={"line": {"direction": "left_right", "edge_detector": "subpix_shen"}},
+                )
+            )
+
+            harness._refresh_inspection_items_table()
+
+            algorithm_combo = harness.inspection_items_table.cellWidget(1, 3)
+            self.assertIsNotNone(algorithm_combo)
+            self.assertEqual(algorithm_combo.findData("find_line_subpix"), -1)
+            self.assertGreaterEqual(algorithm_combo.findData("find_line"), 0)
+            self.assertEqual(algorithm_combo.currentData(), "find_line")
+            self.assertEqual(harness.inspection_items[-1].algorithm_code, "find_line_subpix")
+
+            harness.inspection_items_table.setCurrentCell(1, 1)
+            harness.inspection_items_table.selectRow(1)
+            harness._on_inspection_items_selection_changed()
+
+            self.assertEqual(harness.current_algorithm_value, "find_line")
+            self.assertEqual(harness.algo.product_params.algorithm, "find_line_subpix")
+        finally:
+            harness.cleanup()
+
     def test_delete_selected_line_distance_tool_removes_only_selected_measurement(self) -> None:
         harness = _ToolConfigHarness()
         try:
@@ -303,6 +340,35 @@ class ToolPageToolConfigTest(unittest.TestCase):
             item = harness.inspection_items_table.item(1, 1)
             self.assertIsNotNone(item)
             self.assertEqual(item.text(), tr("debug.algorithm.line_distance"))
+        finally:
+            set_language(previous, persist=False)
+            harness.cleanup()
+
+    def test_line_distance_algorithm_combo_is_config_only(self) -> None:
+        previous = language_code()
+        harness = _ToolConfigHarness()
+        try:
+            set_language("zh_CN", persist=False)
+            harness.inspection_items.append(
+                InspectionItem(
+                    item_id="line_distance",
+                    display_name="Reference Normal Distance",
+                    camera_id="cam1",
+                    roi_label="",
+                    algorithm_code="line_distance_ref_normal",
+                )
+            )
+
+            harness._refresh_inspection_items_table()
+
+            name_item = harness.inspection_items_table.item(1, 1)
+            self.assertIsNotNone(name_item)
+            self.assertEqual(name_item.text(), tr("debug.algorithm.line_distance"))
+            algorithm_combo = harness.inspection_items_table.cellWidget(1, 3)
+            self.assertIsNotNone(algorithm_combo)
+            self.assertFalse(algorithm_combo.isEnabled())
+            self.assertEqual(algorithm_combo.currentText(), tr("debug.algorithm.line_distance"))
+            self.assertNotEqual(algorithm_combo.currentText(), tr("debug.algorithm.line_distance_ref_normal"))
         finally:
             set_language(previous, persist=False)
             harness.cleanup()
@@ -405,6 +471,7 @@ class ToolPageToolConfigTest(unittest.TestCase):
             self.assertEqual(item.params["line"]["edge_threshold"], 12.5)
             self.assertEqual(item.params["line"]["scan_step"], 4)
             self.assertEqual(item.params["line"]["min_points"], 9)
+            self.assertEqual(item.params["line"]["edge_detector"], "canny")
         finally:
             harness.cleanup()
 

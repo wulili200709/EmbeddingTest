@@ -7,7 +7,12 @@ from datetime import datetime
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from algorithms.measurement import LINE_DISTANCE_ALGORITHMS
+from algorithms.measurement import (
+    FIND_LINE_ALGORITHM,
+    FIND_LINE_ALGORITHMS,
+    FIND_LINE_SUBPIX_ALGORITHM,
+    LINE_DISTANCE_ALGORITHMS,
+)
 from algorithms.registry import list_tool_algorithm_specs, normalize_tool_algorithm_code
 from domain import InspectionItem, SUPPORTED_CAMERA_IDS, save_inspection_items
 from ui.i18n import tr
@@ -15,6 +20,31 @@ from ui.i18n import tr
 
 def _is_line_distance_algorithm(algorithm: object) -> bool:
     return str(algorithm or "").strip() in LINE_DISTANCE_ALGORITHMS
+
+
+def _is_find_line_algorithm(algorithm: object) -> bool:
+    return str(algorithm or "").strip() in FIND_LINE_ALGORITHMS
+
+
+def _public_algorithm_code(algorithm: object) -> str:
+    raw = str(algorithm or "").strip()
+    if raw == FIND_LINE_SUBPIX_ALGORITHM:
+        return FIND_LINE_ALGORITHM
+    normalized = normalize_tool_algorithm_code(raw)
+    if normalized == FIND_LINE_SUBPIX_ALGORITHM:
+        return FIND_LINE_ALGORITHM
+    if raw in {"", "edge_distance"}:
+        return normalized
+    if normalized == FIND_LINE_ALGORITHM and raw not in FIND_LINE_ALGORITHMS:
+        return normalized
+    if normalized in LINE_DISTANCE_ALGORITHMS:
+        return normalized
+    return raw
+
+
+def _hide_from_algorithm_picker(algorithm: object) -> bool:
+    normalized = normalize_tool_algorithm_code(algorithm)
+    return normalized == FIND_LINE_SUBPIX_ALGORITHM or normalized in LINE_DISTANCE_ALGORITHMS
 
 
 def _current_camera_role(tool_page) -> str:
@@ -162,7 +192,6 @@ def _inspection_item_display_name(inspection_item) -> str:
                     tr("debug.algorithm.line_distance_ref_normal"),
                 }
             )
-            display_key = "debug.algorithm.line_distance_ref_normal"
         if item_id.startswith("line_distance"):
             default_names.add(item_id)
         if raw_name in default_names:
@@ -294,7 +323,7 @@ def _line_item_options(tool_page, selected_item) -> list[tuple[str, str]]:
         if not item_id or item_id == current_id:
             continue
         algorithm = str(tool_page.algo.resolve_tool_algorithm(getattr(item, "algorithm_code", "")) or "").strip()
-        if algorithm != "find_line":
+        if not _is_find_line_algorithm(algorithm):
             continue
         display = str(getattr(item, "display_name", "") or getattr(item, "roi_label", "") or item_id).strip()
         options.append((display, item_id))
@@ -345,7 +374,7 @@ def _update_measurement_params_panel(tool_page) -> None:
 
     params = dict(getattr(item, "params", {}) or {})
     algorithm = str(tool_page.algo.resolve_tool_algorithm(item.algorithm_code) or "").strip()
-    is_find_line = algorithm == "find_line"
+    is_find_line = _is_find_line_algorithm(algorithm)
     is_line_distance = _is_line_distance_algorithm(algorithm)
     unit = str(params.get("limit_unit", "") or "").strip().lower()
     if unit not in {"px", "mm"}:
@@ -435,7 +464,7 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
     if unit not in {"px", "mm"}:
         unit = "px"
     algorithm = str(tool_page.algo.resolve_tool_algorithm(item.algorithm_code) or "").strip()
-    is_find_line = algorithm == "find_line"
+    is_find_line = _is_find_line_algorithm(algorithm)
     is_line_distance = _is_line_distance_algorithm(algorithm)
     line_a = dict(params.get("line" if is_find_line else "line_a") or {})
     line_b = dict(params.get("line_b") or {})
@@ -457,6 +486,10 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
         line_a["edge_threshold"] = edge_threshold
         line_a["scan_step"] = scan_step
         line_a["min_points"] = min_points
+        if algorithm == FIND_LINE_SUBPIX_ALGORITHM:
+            line_a["edge_detector"] = "subpix_shen"
+        else:
+            line_a["edge_detector"] = "canny"
         params["line"] = line_a
         params.pop("line_a", None)
         params.pop("line_b", None)
@@ -572,17 +605,19 @@ def _inspection_item_status(tool_page, inspection_item):
     if getattr(tool_page.algo, "is_measurement_tool", lambda _code: False)(inspection_item.algorithm_code):
         algorithm = tool_page.algo.resolve_tool_algorithm(inspection_item.algorithm_code)
         if _is_line_distance_algorithm(algorithm):
+            display_algorithm = "line_distance"
             params = dict(getattr(inspection_item, "params", {}) or {})
             line_a = str(params.get("line_a_item_id", "") or "").strip() or "-"
             line_b = str(params.get("line_b_item_id", "") or "").strip() or "-"
             ready = line_a != "-" and line_b != "-" and line_a != line_b
             tooltip = (
-                f"Algorithm: {tool_page.algo.algorithm_display_name(algorithm) or algorithm}\n"
+                f"Algorithm: {tool_page.algo.algorithm_display_name(display_algorithm) or display_algorithm}\n"
                 f"Measures distance from {line_a} to {line_b} and judges OK/NG from lower/upper limits."
             )
             return (f"{line_a} -> {line_b}" if ready else "Select lines"), tooltip, "#79d279" if ready else "#d98c8c"
+        display_algorithm = _public_algorithm_code(algorithm)
         tooltip = (
-            f"Algorithm: {tool_page.algo.algorithm_display_name(algorithm) or algorithm}\n"
+            f"Algorithm: {tool_page.algo.algorithm_display_name(display_algorithm) or display_algorithm}\n"
             "Finds one fitted line inside the ROI for downstream distance measurement."
         )
         return "Ready", tooltip, "#79d279"
@@ -628,7 +663,11 @@ def _refresh_inspection_items_table(tool_page) -> None:
     table.blockSignals(True)
     try:
         table.setRowCount(len(visible_indexes))
-        algorithm_specs = list_tool_algorithm_specs()
+        algorithm_specs = [
+            spec
+            for spec in list_tool_algorithm_specs()
+            if not _hide_from_algorithm_picker(getattr(spec, "code", ""))
+        ]
 
         for row, actual_index in enumerate(visible_indexes):
             inspection_item = tool_page.inspection_items[actual_index]
@@ -671,11 +710,17 @@ def _refresh_inspection_items_table(tool_page) -> None:
             for spec in algorithm_specs:
                 algorithm_name = tool_page.algo.algorithm_display_name(spec.code) or spec.display_name or spec.code
                 algorithm_combo.addItem(algorithm_name, spec.code)
-            current_algorithm = normalize_tool_algorithm_code(inspection_item.algorithm_code)
-            algorithm_index = algorithm_combo.findData(current_algorithm)
-            if algorithm_index < 0:
-                algorithm_index = 0
-            algorithm_combo.setCurrentIndex(algorithm_index)
+            current_algorithm_raw = normalize_tool_algorithm_code(inspection_item.algorithm_code)
+            if current_algorithm_raw in LINE_DISTANCE_ALGORITHMS:
+                algorithm_combo.addItem(tr("debug.algorithm.line_distance"), current_algorithm_raw)
+                algorithm_combo.setCurrentIndex(algorithm_combo.count() - 1)
+                algorithm_combo.setEnabled(False)
+            else:
+                current_algorithm = _public_algorithm_code(inspection_item.algorithm_code)
+                algorithm_index = algorithm_combo.findData(current_algorithm)
+                if algorithm_index < 0:
+                    algorithm_index = 0
+                algorithm_combo.setCurrentIndex(algorithm_index)
             algorithm_combo.currentIndexChanged.connect(
                 lambda _index, row_index=actual_index, combo=algorithm_combo: tool_page._on_inspection_item_algorithm_changed(
                     row_index,
@@ -763,9 +808,10 @@ def _on_inspection_items_selection_changed(tool_page) -> None:
         algorithm = tool_page.algo.current_learning_backbone()
     else:
         algorithm = tool_page.algo.resolve_tool_algorithm(item.algorithm_code)
+    display_algorithm = _public_algorithm_code(algorithm)
     tool_page._updating_runtime_params = True
     try:
-        tool_page._set_current_algorithm(algorithm)
+        tool_page._set_current_algorithm(display_algorithm)
     finally:
         tool_page._updating_runtime_params = False
     tool_page.algo.product_params.algorithm = algorithm
@@ -841,7 +887,7 @@ def _on_inspection_item_algorithm_changed(tool_page, row: int, algorithm_code: o
             tool_page.algo.product_params.algorithm = normalized
             tool_page._updating_runtime_params = True
             try:
-                tool_page._set_current_algorithm(normalized)
+                tool_page._set_current_algorithm(_public_algorithm_code(normalized))
             finally:
                 tool_page._updating_runtime_params = False
         tool_page._update_runtime_widgets()

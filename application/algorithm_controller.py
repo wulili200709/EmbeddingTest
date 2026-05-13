@@ -33,6 +33,7 @@ from algorithms.traditional import (
     train_threshold_model,
 )
 from algorithms.measurement import (
+    FIND_LINE_ALGORITHMS,
     LINE_DISTANCE_ALGORITHMS,
     MEASUREMENT_ALGORITHMS,
     is_measurement_algorithm,
@@ -646,11 +647,12 @@ class AlgorithmController:
             threshold = float(threshold_model.threshold)
         elif is_measurement_algorithm(algorithm):
             params = dict(params_override or {})
-            if algorithm == "find_line":
+            if algorithm in FIND_LINE_ALGORITHMS:
                 measurement = measure_find_line(
                     path,
                     preferred_label=labels[0] if labels else "roi1",
                     params=params,
+                    algorithm=algorithm,
                 )
                 pred = "OK"
                 diff = float(measurement.line.residual)

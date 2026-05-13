@@ -54,24 +54,25 @@ ROOT_LEVEL_BINARY_FILES = [
     SDK_ROOT / "Lib" / "x64" / "NKLCLIBx64.dll",
     SDK_ROOT / "Lib" / "x64" / "NKIOLIBx64.dll",
 ]
-def _first_existing_path(*paths: Path) -> Path:
+def _first_existing_path(*paths: Path) -> Path | None:
     for path in paths:
         if path.exists():
             return path
-    return paths[0]
+    return None
 
 
 WINRING0X64_SYS = _first_existing_path(
-    SDK_ROOT / "Lib" / "x64" / "WinRing0x64.sys",
-    SDK_ROOT / "Bin" / "WinRing0x64.sys",
     SDK_ROOT / "Sample" / "CPP" / "NK_IO_LC_TEST_Console" / "SDKLib" / "Lib" / "x64" / "WinRing0x64.sys",
     SDK_ROOT / "Sample" / "Qt" / "NK_IO_LC_TEST_Qt" / "SDKLib" / "Lib" / "x64" / "WinRing0x64.sys",
+    SDK_ROOT / "Lib" / "x64" / "WinRing0x64.sys",
+    SDK_ROOT / "Bin" / "WinRing0x64.sys",
 )
 
 ROOT_LEVEL_DATA_FILES = [
     SDK_ROOT / "Lib" / "x64" / "WinRing0.sys",
-    WINRING0X64_SYS,
 ]
+if WINRING0X64_SYS is not None:
+    ROOT_LEVEL_DATA_FILES.append(WINRING0X64_SYS)
 PYD_TAG = f"cp{sys.version_info.major}{sys.version_info.minor}"
 
 

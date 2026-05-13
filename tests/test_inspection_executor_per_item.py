@@ -540,6 +540,70 @@ class InspectionExecutorPerItemTest(unittest.TestCase):
         self.assertNotIn("raw_distance", distance_row["measurement"])
         self.assertIn("compensation=k=1,b=0.3", response.item_results[-1].detail)
 
+    def test_line_distance_px_unit_ignores_compensation(self) -> None:
+        class _FindLinePredictor:
+            def predict_image(self, path: str, **kwargs) -> dict:
+                label = kwargs.get("labels_override", [""])[0]
+                x = 10.0 if label == "left" else 52.0
+                return {
+                    "pred": "OK",
+                    "measurement": {
+                        "roi_label": label,
+                        "line_segment": [[x, 0.0], [x, 100.0]],
+                    },
+                }
+
+        executor = InspectionExecutor(_FindLinePredictor())
+        response = executor.execute(
+            InspectionExecutionRequest(
+                camera_id="cam1",
+                image_path="demo.png",
+                items=[
+                    InspectionItem(
+                        item_id="left",
+                        display_name="Left",
+                        camera_id="cam1",
+                        roi_label="left",
+                        algorithm_code="find_line",
+                    ),
+                    InspectionItem(
+                        item_id="right",
+                        display_name="Right",
+                        camera_id="cam1",
+                        roi_label="right",
+                        algorithm_code="find_line",
+                    ),
+                    InspectionItem(
+                        item_id="width",
+                        display_name="Width",
+                        camera_id="cam1",
+                        roi_label="",
+                        algorithm_code="line_distance",
+                        params={
+                            "line_a_item_id": "left",
+                            "line_b_item_id": "right",
+                            "limit_unit": "px",
+                            "lower_limit": 41.0,
+                            "upper_limit": 43.0,
+                            "compensation_enabled": True,
+                            "compensation_slope": 0.5,
+                            "compensation_intercept": 1.0,
+                        },
+                    ),
+                ],
+            )
+        )
+
+        self.assertEqual(response.result, "OK")
+        assert response.raw_row is not None
+        distance_row = response.raw_row["item_rows"][-1]
+        self.assertAlmostEqual(distance_row["value"], 42.0)
+        self.assertAlmostEqual(distance_row["measurement"]["distance_px"], 42.0)
+        self.assertAlmostEqual(distance_row["measurement"]["distance"], 42.0)
+        self.assertFalse(distance_row["measurement"]["compensation_enabled"])
+        self.assertIn("distance=42.000px", response.item_results[-1].detail)
+        self.assertNotIn("compensation=", response.item_results[-1].detail)
+
 
 if __name__ == "__main__":
     unittest.main()

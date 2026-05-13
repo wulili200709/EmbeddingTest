@@ -1,7 +1,12 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from .measurement import LINE_DISTANCE_ALGORITHMS, MEASUREMENT_ALGORITHMS
+from .measurement import (
+    FIND_LINE_ALGORITHMS,
+    FIND_LINE_SUBPIX_ALGORITHM,
+    LINE_DISTANCE_ALGORITHMS,
+    MEASUREMENT_ALGORITHMS,
+)
 from .traditional import TRADITIONAL_ALGORITHMS
 
 
@@ -65,6 +70,7 @@ _TRADITIONAL_DISPLAY_NAMES = {
 
 _MEASUREMENT_DISPLAY_NAMES = {
     "find_line": "Find Line",
+    "find_line_subpix": "Subpixel Find Line",
     "line_distance": "Line Distance",
     "line_distance_ref_normal": "Reference Normal Distance",
 }
@@ -81,6 +87,7 @@ _ALGORITHM_DISPLAY_KEYS = {
     "meanhsv_s": "debug.algorithm.meanhsv_s",
     "find_circle": "debug.algorithm.find_circle",
     "find_line": "debug.algorithm.find_line",
+    "find_line_subpix": "debug.algorithm.find_line_subpix",
     "line_distance": "debug.algorithm.line_distance",
     "line_distance_ref_normal": "debug.algorithm.line_distance_ref_normal",
 }
@@ -119,8 +126,13 @@ for _code in MEASUREMENT_ALGORITHMS:
         family="measurement",
         fit_mode="measure",
         default_params=(
-            {"line": {"direction": "left_right"}}
-            if _code == "find_line"
+            {
+                "line": {
+                    "direction": "left_right",
+                    "edge_detector": "subpix_shen" if _code == FIND_LINE_SUBPIX_ALGORITHM else "canny",
+                }
+            }
+            if _code in FIND_LINE_ALGORITHMS
             else {
                 "line_a_item_id": "",
                 "line_b_item_id": "",

@@ -29,10 +29,9 @@ from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from algorithms.measurement import FIND_LINE_ALGORITHMS, LINE_DISTANCE_ALGORITHMS
 from ui.i18n import tr, tr_runtime_state, tr_status_text
 from ui.roi_overlay_colors import merge_roi_statuses
-
-LINE_DISTANCE_ALGORITHMS = {"line_distance", "line_distance_ref_normal"}
 
 
 _DARK_BG = "#2d2d2d"
@@ -818,7 +817,7 @@ class RuntimeModePage(QtWidgets.QWidget):
             row
             for row in camera_rows
             if not (
-                str(row.get("algorithm_code", "") or "").strip() == "find_line"
+                str(row.get("algorithm_code", "") or "").strip() in FIND_LINE_ALGORITHMS
                 and str(row.get("item_id", "") or "").strip() in line_helper_ids
             )
         ]

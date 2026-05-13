@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Protocol
 import algorithms.proxy as qr_core
 import numpy as np
 from algorithms.measurement import (
+    FIND_LINE_ALGORITHMS,
     LINE_DISTANCE_ALGORITHMS,
     judge_edge_distance,
     measure_edge_distance_from_array,
@@ -649,12 +650,13 @@ class ProductRuntimeContext:
         for item in measurement_items:
             params = dict(item.params or {})
             algorithm = self.algo.resolve_tool_algorithm(item.algorithm_code)
-            if algorithm == "find_line":
+            if algorithm in FIND_LINE_ALGORITHMS:
                 measurement = measure_find_line_from_array(
                     image,
                     shape_by_label=shape_by_label,
                     preferred_label=str(item.roi_label or "").strip() or "roi",
                     params=params,
+                    algorithm=algorithm,
                 )
                 pred = "OK"
                 judged_value = None

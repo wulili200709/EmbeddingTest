@@ -1228,8 +1228,6 @@ ALGORITHM_GROUPS = [
         "measurement",
         [
             ("Find Line", "find_line", True),
-            ("Line Distance", "line_distance", True),
-            ("Reference Normal Distance", "line_distance_ref_normal", True),
             ("Find Circle", "find_circle", False),
         ],
     ),
@@ -1259,6 +1257,7 @@ ALGORITHM_DISPLAY_KEYS = {
     "meanhsv_s": "debug.algorithm.meanhsv_s",
     "find_circle": "debug.algorithm.find_circle",
     "find_line": "debug.algorithm.find_line",
+    "find_line_subpix": "debug.algorithm.find_line_subpix",
     "line_distance": "debug.algorithm.line_distance",
     "line_distance_ref_normal": "debug.algorithm.line_distance_ref_normal",
 }
@@ -1596,7 +1595,7 @@ class ToolPage(QtWidgets.QWidget):
             ("btn_train_current", tr("debug.calibrate_current_tool")),
             ("btn_test", tr("debug.test_current_image")),
             ("btn_export_test", tr("debug.export_report")),
-            ("btn_clear_session", tr("debug.clear_session")),
+            ("btn_clear_session", tr("debug.test_all_test_samples")),
             ("btn_save", tr("debug.save_annotation")),
             ("btn_clear", tr("debug.clear_annotation")),
             ("btn_set_ref", tr("debug.set_as_reference")),
@@ -3054,13 +3053,9 @@ class ToolPage(QtWidgets.QWidget):
         self.btn_export_test = QtWidgets.QPushButton(_si(SP.SP_DialogSaveButton), tr("debug.export_report"))
         self.btn_export_test.setStyleSheet(_compact_btn)
         self.btn_export_test.clicked.connect(self._export_current_results_csv)
-        self.btn_clear_session = QtWidgets.QPushButton(_si(SP.SP_DialogResetButton), tr("debug.clear_session"))
-        self.btn_clear_session.setStyleSheet(
-            "QPushButton{background:#383838;color:#e06666;border:1px solid #555;"
-            "padding:4px 8px;border-radius:3px;font-size:12px;}"
-            "QPushButton:hover{background:#4a4a4a;}"
-        )
-        self.btn_clear_session.clicked.connect(self._clear_session)
+        self.btn_clear_session = QtWidgets.QPushButton(_si(SP.SP_MediaPlay), tr("debug.test_all_test_samples"))
+        self.btn_clear_session.setStyleSheet(_compact_btn)
+        self.btn_clear_session.clicked.connect(self._run_all_test_samples)
         act_row.addWidget(self.btn_test)
         act_row.addWidget(self.btn_export_test)
         act_row.addWidget(self.btn_clear_session)
@@ -4789,13 +4784,12 @@ class ToolPage(QtWidgets.QWidget):
             if item.enabled and _normalize_camera_role(getattr(item, "camera_id", "")) == current_role
         ]
 
-    def _run_test(self) -> None:
+    def _execute_test_image(self, path: str) -> Dict[str, object]:
         from application import ToolPageRuntimeContext
 
-        p = self.canvas.image_path()
+        p = str(path or "").strip()
         if p is None or not os.path.exists(p):
-            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("debug.open_test_image_first"))
-            return
+            raise FileNotFoundError(p or tr("debug.open_test_image_first"))
         self.canvas.set_overlays([])
 
         target_items = self._test_target_inspection_items()
@@ -4815,8 +4809,7 @@ class ToolPage(QtWidgets.QWidget):
                 )
             )
         except Exception as ex:
-            QtWidgets.QMessageBox.critical(self, tr("debug.test_failed_title"), str(ex))
-            return
+            raise RuntimeError(str(ex)) from ex
 
         rows: List[Dict[str, object]] = []
         log_names: List[str] = []
@@ -4891,6 +4884,88 @@ class ToolPage(QtWidgets.QWidget):
         self.lbl_status.setText(status_text)
         self._load_canvas_image(p)
         self._update_sample_panel_widgets()
+        return {
+            "result": overall_pred,
+            "rows": rows,
+            "log_names": log_names,
+            "status_text": status_text,
+        }
+
+    def _run_test(self) -> None:
+        p = self.canvas.image_path()
+        if p is None or not os.path.exists(p):
+            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("debug.open_test_image_first"))
+            return
+        try:
+            self._execute_test_image(p)
+        except Exception as ex:
+            QtWidgets.QMessageBox.critical(self, tr("debug.test_failed_title"), str(ex))
+
+    def _run_all_test_samples(self) -> None:
+        current_role = _selected_image_list_camera_role(self)
+        paths = list(self._sample_paths_for_kind("test", current_role))
+        if not paths:
+            QtWidgets.QMessageBox.information(self, tr("common.info"), tr("debug.test_all_test_samples_empty"))
+            return
+
+        total = len(paths)
+        ok_count = 0
+        ng_count = 0
+        failed_count = 0
+        failures: List[str] = []
+        buttons = [
+            getattr(self, "btn_clear_session", None),
+            getattr(self, "btn_test", None),
+            getattr(self, "btn_export_test", None),
+        ]
+        old_enabled = {
+            button: bool(button.isEnabled())
+            for button in buttons
+            if button is not None
+        }
+        for button in old_enabled:
+            button.setEnabled(False)
+
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
+        try:
+            for index, path in enumerate(paths, start=1):
+                self.lbl_status.setText(
+                    f"Status: batch test {index}/{total}  {os.path.basename(path)}"
+                )
+                QtWidgets.QApplication.processEvents()
+                try:
+                    result = self._execute_test_image(path)
+                except Exception as ex:
+                    failed_count += 1
+                    if len(failures) < 5:
+                        failures.append(f"{os.path.basename(path)}: {ex}")
+                    continue
+                if str(result.get("result", "") or "").strip().upper() == "OK":
+                    ok_count += 1
+                else:
+                    ng_count += 1
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+            for button, enabled in old_enabled.items():
+                button.setEnabled(enabled)
+
+        message = tr(
+            "debug.test_all_test_samples_done_message",
+            total=total,
+            ok=ok_count,
+            ng=ng_count,
+            failed=failed_count,
+        )
+        if failures:
+            message += "\n\n" + "\n".join(failures)
+        QtWidgets.QMessageBox.information(
+            self,
+            tr("debug.test_all_test_samples_done_title"),
+            message,
+        )
+        self.lbl_status.setText(
+            f"Status: batch test done total={total} OK={ok_count} NG={ng_count} failed={failed_count}"
+        )
 
 
     def _show_tool_dialog(

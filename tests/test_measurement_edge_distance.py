@@ -81,6 +81,87 @@ class EdgeDistanceMeasurementTest(unittest.TestCase):
         self.assertEqual(upper, 26.0)
         self.assertEqual(unit, "px")
 
+    def test_subpixel_find_line_uses_shen_style_detector(self) -> None:
+        edge_x = 35.35
+        xx = np.arange(120, dtype=np.float32)
+        profile = 255.0 / (1.0 + np.exp(-(xx - edge_x) / 1.1))
+        image_gray = np.repeat(profile.reshape(1, -1), 80, axis=0).astype(np.uint8)
+        image = np.repeat(image_gray[:, :, None], 3, axis=2)
+        shape_by_label = {
+            "roi1": {
+                "label": "roi1",
+                "shape_type": "rectangle",
+                "points": [[10.0, 10.0], [100.0, 70.0]],
+            }
+        }
+
+        result = measure_find_line_from_array(
+            image,
+            shape_by_label=shape_by_label,
+            preferred_label="roi1",
+            algorithm="find_line_subpix",
+            params={
+                "line": {
+                    "direction": "left_right",
+                    "edge_threshold": 10,
+                    "scan_step": 2,
+                    "blur_ksize": 0,
+                    "min_points": 20,
+                },
+            },
+        )
+
+        self.assertEqual(result.roi_label, "roi1")
+        self.assertAlmostEqual(result.position_px, 25.85, delta=0.3)
+        self.assertNotAlmostEqual(result.position_px, round(result.position_px), delta=0.05)
+        self.assertGreaterEqual(result.line.point_count, 20)
+        self.assertLess(result.line.residual, 0.5)
+
+    def test_subpixel_find_line_prefers_dominant_peak_over_first_weak_peak(self) -> None:
+        xx = np.arange(140, dtype=np.float32)
+        profile = (
+            55.0 / (1.0 + np.exp(-(xx - 30.0) / 1.0))
+            + 180.0 / (1.0 + np.exp(-(xx - 55.0) / 1.0))
+        )
+        image_gray = np.repeat(profile.reshape(1, -1), 90, axis=0).astype(np.uint8)
+        image = np.repeat(image_gray[:, :, None], 3, axis=2)
+        shape_by_label = {
+            "roi1": {
+                "label": "roi1",
+                "shape_type": "rectangle",
+                "points": [[10.0, 10.0], [120.0, 80.0]],
+            }
+        }
+        base_params = {
+            "line": {
+                "direction": "left_right",
+                "polarity": "dark_to_bright",
+                "edge_threshold": 5,
+                "scan_step": 2,
+                "blur_ksize": 0,
+                "min_points": 20,
+            },
+        }
+
+        first_result = measure_find_line_from_array(
+            image,
+            shape_by_label=shape_by_label,
+            preferred_label="roi1",
+            algorithm="find_line_subpix",
+            params={"line": {**base_params["line"], "peak_selection": "first"}},
+        )
+        dominant_result = measure_find_line_from_array(
+            image,
+            shape_by_label=shape_by_label,
+            preferred_label="roi1",
+            algorithm="find_line_subpix",
+            params=base_params,
+        )
+
+        self.assertLess(first_result.position_px, 30.0)
+        self.assertGreater(dominant_result.position_px, 40.0)
+        self.assertLess(dominant_result.line.residual, 0.5)
+
     def test_find_line_polarity_follows_reverse_horizontal_scan_direction(self) -> None:
         image = np.zeros((80, 120, 3), dtype=np.uint8)
         image[:, 50:, :] = 220

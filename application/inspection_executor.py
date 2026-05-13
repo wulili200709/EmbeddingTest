@@ -782,10 +782,18 @@ class InspectionExecutor:
             if pixel_size <= 0.0:
                 raise RuntimeError("pixel_size_mm is required when line-distance limits use mm")
             value = float(distance_px * pixel_size)
-        value, raw_value, compensation_enabled, compensation_slope, compensation_intercept = cls._compensated_value(
-            value,
-            params,
-        )
+        if unit == "mm":
+            value, raw_value, compensation_enabled, compensation_slope, compensation_intercept = cls._compensated_value(
+                value,
+                params,
+            )
+        else:
+            _ignored_value, raw_value, _configured_compensation_enabled, compensation_slope, compensation_intercept = cls._compensated_value(
+                value,
+                params,
+            )
+            value = raw_value
+            compensation_enabled = False
         reported_value = cls._round_measurement_value(value, unit)
         lower = cls._optional_float(params.get("lower_limit", params.get(f"lower_limit_{unit}")))
         upper = cls._optional_float(params.get("upper_limit", params.get(f"upper_limit_{unit}")))
