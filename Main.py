@@ -14,6 +14,61 @@ except Exception:
 
 
 _SINGLE_INSTANCE_LOCK = None
+_STANDARD_STREAM_LOG = None
+
+
+def _open_standard_stream_log():
+    roots = []
+    if getattr(sys, "frozen", False):
+        roots.append(Path(sys.executable).resolve().parent)
+    roots.extend([Path(__file__).resolve().parent, Path(tempfile.gettempdir())])
+
+    for root in roots:
+        try:
+            log_dir = root / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = (log_dir / "LC_System_runtime.log").open(
+                "a",
+                encoding="utf-8",
+                buffering=1,
+            )
+            log_file.write("\n--- LC System start ---\n")
+            return log_file
+        except OSError:
+            continue
+    return None
+
+
+def _close_standard_stream_log() -> None:
+    global _STANDARD_STREAM_LOG
+    log_file = _STANDARD_STREAM_LOG
+    _STANDARD_STREAM_LOG = None
+    if log_file is None:
+        return
+    try:
+        log_file.close()
+    except Exception:
+        pass
+
+
+def _ensure_standard_streams() -> None:
+    global _STANDARD_STREAM_LOG
+    stdout_ready = callable(getattr(getattr(sys, "stdout", None), "write", None))
+    stderr_ready = callable(getattr(getattr(sys, "stderr", None), "write", None))
+    if stdout_ready and stderr_ready:
+        return
+
+    if _STANDARD_STREAM_LOG is None:
+        _STANDARD_STREAM_LOG = _open_standard_stream_log()
+        if _STANDARD_STREAM_LOG is not None:
+            atexit.register(_close_standard_stream_log)
+
+    if _STANDARD_STREAM_LOG is None:
+        return
+    if not stdout_ready:
+        sys.stdout = _STANDARD_STREAM_LOG
+    if not stderr_ready:
+        sys.stderr = _STANDARD_STREAM_LOG
 
 
 def _is_windows_admin() -> bool:
@@ -120,6 +175,7 @@ def _acquire_single_instance_lock() -> _SingleInstanceLock | None:
 
 
 if __name__ == "__main__":
+    _ensure_standard_streams()
     _SINGLE_INSTANCE_LOCK = _acquire_single_instance_lock()
     if _SINGLE_INSTANCE_LOCK is None:
         sys.exit(0)

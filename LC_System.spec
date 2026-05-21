@@ -15,6 +15,7 @@ SDK_ROOT = REPO_ROOT / "NKDIOLC_SDK"
 RES_ROOT = APP_ROOT / "res"
 CONFIG_ROOT = APP_ROOT / "config"
 SESSION_ROOT = APP_ROOT / ".qr_session"
+ORT_BACKBONE_CACHE_ROOT = APP_ROOT / ".cache" / "ort_backbones"
 MVIMPORT_ROOT = APP_ROOT / "third_party" / "MvImport"
 NKIO_ROOT = APP_ROOT / "third_party" / "nkio"
 NKIO_DLL = NKIO_ROOT / "NKIOLIBx64.dll"
@@ -62,6 +63,10 @@ def _first_existing_path(*paths: Path) -> Path | None:
 
 
 WINRING0X64_SYS = _first_existing_path(
+    SDK_ROOT / "Sample" / "CPP" / "NK_IO_LC_TEST_Console" / "x64" / "Release" / "WinRing0x64.sys",
+    SDK_ROOT / "Sample" / "CPP" / "NK_IO_LC_TEST_Console" / "x64" / "Debug" / "WinRing0x64.sys",
+    SDK_ROOT / "Sample" / "Qt" / "NK_IO_LC_TEST_Qt" / "x64" / "Release" / "WinRing0x64.sys",
+    SDK_ROOT / "Sample" / "Qt" / "NK_IO_LC_TEST_Qt" / "x64" / "Debug" / "WinRing0x64.sys",
     SDK_ROOT / "Sample" / "CPP" / "NK_IO_LC_TEST_Console" / "SDKLib" / "Lib" / "x64" / "WinRing0x64.sys",
     SDK_ROOT / "Sample" / "Qt" / "NK_IO_LC_TEST_Qt" / "SDKLib" / "Lib" / "x64" / "WinRing0x64.sys",
     SDK_ROOT / "Lib" / "x64" / "WinRing0x64.sys",
@@ -108,6 +113,7 @@ datas = []
 for src, dest in (
     (RES_ROOT, "EmbeddingTest/res"),
     (SESSION_ROOT, "EmbeddingTest/.qr_session"),
+    (ORT_BACKBONE_CACHE_ROOT, "EmbeddingTest/.cache/ort_backbones"),
 ):
     if src.exists():
         datas.append(_pair(src, dest))

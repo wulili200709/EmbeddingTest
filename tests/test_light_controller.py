@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import sys
+import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -69,26 +69,25 @@ class LightControllerModeTest(unittest.TestCase):
             io,
             ok_flash_ms=10,
             ng_flash_ms=1000,
-            ng_buzzer_ms=250,
+            ng_buzzer_ms=20,
             idle_blue_delay_s=0,
         )
 
-        def fake_sleep(seconds: float) -> None:
-            io.events.append(("sleep", round(float(seconds), 3)))
+        started_at = time.perf_counter()
+        controller.show_ng()
+        elapsed = time.perf_counter() - started_at
 
-        with patch("devices.tower_light_controller.time.sleep", side_effect=fake_sleep):
-            controller.show_ng()
-
+        self.assertLess(elapsed, 0.1)
         self.assertEqual(
-            io.events[:5],
+            io.events[:3],
             [
                 ("tower", {"tower_red": False, "tower_green": False, "tower_blue": False}),
                 ("tower", {"tower_red": True}),
                 ("buzzer", True),
-                ("sleep", 0.25),
-                ("buzzer", False),
             ],
         )
+        time.sleep(0.05)
+        self.assertIn(("buzzer", False), io.events)
         controller.close()
 
 

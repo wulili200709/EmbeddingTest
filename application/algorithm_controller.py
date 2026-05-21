@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -348,6 +349,8 @@ class AlgorithmController:
         backend_label = str(info.get("backend_label", "") or "").strip() or "TORCH"
         model_path = str(info.get("model_path", "") or "").strip()
         model_hint = f"  model={os.path.basename(model_path)}" if model_path else ""
+        if not callable(getattr(getattr(sys, "stdout", None), "write", None)):
+            return
         print(f"[EmbeddingTest] inference backbone={learning_backbone_storage_code(backbone)} backend={backend_label}{model_hint}")
 
     def get_feat_net(

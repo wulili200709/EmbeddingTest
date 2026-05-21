@@ -6,6 +6,10 @@ $workPath = Join-Path $scriptRoot "dist-build"
 $specPath = Join-Path $scriptRoot "LC_System.spec"
 $sdkRoot = Join-Path $scriptRoot "..\NKDIOLC_SDK"
 $winRingSysCandidates = @(
+    (Join-Path $sdkRoot "Sample\CPP\NK_IO_LC_TEST_Console\x64\Release\WinRing0x64.sys"),
+    (Join-Path $sdkRoot "Sample\CPP\NK_IO_LC_TEST_Console\x64\Debug\WinRing0x64.sys"),
+    (Join-Path $sdkRoot "Sample\Qt\NK_IO_LC_TEST_Qt\x64\Release\WinRing0x64.sys"),
+    (Join-Path $sdkRoot "Sample\Qt\NK_IO_LC_TEST_Qt\x64\Debug\WinRing0x64.sys"),
     (Join-Path $sdkRoot "Sample\CPP\NK_IO_LC_TEST_Console\SDKLib\Lib\x64\WinRing0x64.sys"),
     (Join-Path $sdkRoot "Sample\Qt\NK_IO_LC_TEST_Qt\SDKLib\Lib\x64\WinRing0x64.sys"),
     (Join-Path $sdkRoot "Lib\x64\WinRing0x64.sys"),

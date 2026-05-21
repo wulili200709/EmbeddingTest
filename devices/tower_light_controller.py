@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import threading
-import time
 
 from .io_controller import IoController
 
@@ -26,6 +25,8 @@ class TowerLightController:
         self._lock = threading.Lock()
         self._flash_timer: threading.Timer | None = None
         self._idle_timer: threading.Timer | None = None
+        self._buzzer_timer: threading.Timer | None = None
+        self._buzzer_token: object | None = None
         self._state = "off"
 
     @property
@@ -36,12 +37,14 @@ class TowerLightController:
         with self._lock:
             self._cancel_flash_timer_locked()
             self._cancel_idle_timer_locked()
+            self._cancel_buzzer_timer_locked()
             self._set_buzzer_safely(False)
 
     def all_off(self) -> None:
         with self._lock:
             self._cancel_flash_timer_locked()
             self._cancel_idle_timer_locked()
+            self._cancel_buzzer_timer_locked()
             self.io.tower_all_off()
             self._set_buzzer_safely(False)
             self._state = "off"
@@ -50,6 +53,7 @@ class TowerLightController:
         with self._lock:
             self._cancel_flash_timer_locked()
             self._cancel_idle_timer_locked()
+            self._cancel_buzzer_timer_locked()
             self.io.set_tower_light(red=False, green=False, blue=True)
             self._set_buzzer_safely(False)
             self._state = "waiting"
@@ -58,6 +62,7 @@ class TowerLightController:
         with self._lock:
             self._cancel_flash_timer_locked()
             self._cancel_idle_timer_locked()
+            self._cancel_buzzer_timer_locked()
             self.io.tower_all_off()
             self._set_buzzer_safely(False)
             self._state = "inspecting"
@@ -86,6 +91,8 @@ class TowerLightController:
         with self._lock:
             self._cancel_flash_timer_locked()
             self._cancel_idle_timer_locked()
+            if self._cancel_buzzer_timer_locked():
+                self._set_buzzer_safely(False)
             self.io.tower_all_off()
             if color == "green":
                 self.io.set_tower_light(green=True)
@@ -101,11 +108,27 @@ class TowerLightController:
             timer.start()
 
     def _pulse_buzzer(self, duration_s: float) -> None:
-        try:
+        duration = max(0.0, float(duration_s))
+        with self._lock:
+            self._cancel_buzzer_timer_locked()
+            if duration <= 0.0:
+                self._set_buzzer_safely(False)
+                return
             self._set_buzzer_safely(True)
-            time.sleep(max(0.0, float(duration_s)))
-        finally:
+            token = object()
+            timer = threading.Timer(duration, self._finish_buzzer_pulse, args=(token,))
+            timer.daemon = True
+            self._buzzer_token = token
+            self._buzzer_timer = timer
+            timer.start()
+
+    def _finish_buzzer_pulse(self, token: object) -> None:
+        with self._lock:
+            if token is not self._buzzer_token:
+                return
             self._set_buzzer_safely(False)
+            self._buzzer_timer = None
+            self._buzzer_token = None
 
     def _set_buzzer_safely(self, on: bool) -> None:
         try:
@@ -138,3 +161,11 @@ class TowerLightController:
         if self._idle_timer is not None:
             self._idle_timer.cancel()
             self._idle_timer = None
+
+    def _cancel_buzzer_timer_locked(self) -> bool:
+        had_timer = self._buzzer_timer is not None
+        if self._buzzer_timer is not None:
+            self._buzzer_timer.cancel()
+            self._buzzer_timer = None
+        self._buzzer_token = None
+        return had_timer

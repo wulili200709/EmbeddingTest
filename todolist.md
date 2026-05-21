@@ -2850,6 +2850,12 @@ torchvision
 matplotlib
 pip install opencv-python
 pip install onnx onnxruntime
+## 安装小贴士：
+把requirements.txt放在桌面，打开cmd, cd desktop,py -m pip install -r requirements.txt 
+
+# 新机改网口
+![alt text](image-14.png)
+![alt text](image-15.png)
 
 ## vs code安装python
 打开 VS Code → 左边扩展（Extensions）搜索：
