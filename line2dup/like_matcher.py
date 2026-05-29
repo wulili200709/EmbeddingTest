@@ -26,6 +26,7 @@ import cv2
 import numpy as np
 
 from path_utils import product_relative_path, resolve_product_path
+from safe_io import atomic_write_json, load_json_with_backup
 
 
 @dataclass
@@ -179,8 +180,11 @@ _DEFAULT_OPENCV_BUILD_ROOT = Path(r"C:\Users\ADMIN\tools\opencv\build")
 NATIVE_BACKEND_TO_MODULE = {
     "original": "line2dup_native",
     "fusion": "line2dup_fusion_native",
-    "fusionv2": "line2dup_fusionv2_native",
+    "fusionv2": "match_fusionv2",
     "sim3": "line2dup_sim3_native",
+}
+NATIVE_BACKEND_LEGACY_MODULES = {
+    "fusionv2": ("line2dup_fusionv2_native",),
 }
 _NATIVE_MODULES: Dict[str, Any] = {}
 _OPENCV_DLL_HANDLE: Any = None
@@ -239,9 +243,17 @@ def _warn_native_fallback(backend: str, exc: BaseException) -> None:
     _NATIVE_FALLBACK_WARNED.add(backend)
 
 
+def _native_module_candidates(backend: str) -> tuple[str, ...]:
+    backend = _normalize_backend_name(backend)
+    preferred = NATIVE_BACKEND_TO_MODULE[backend]
+    legacy = tuple(NATIVE_BACKEND_LEGACY_MODULES.get(backend, ()))
+    return (preferred, *(name for name in legacy if name != preferred))
+
+
 def _load_native_matcher(backend: str = "original", required: bool = True) -> Any:
     backend = _normalize_backend_name(backend)
-    module_name = NATIVE_BACKEND_TO_MODULE[backend]
+    module_names = _native_module_candidates(backend)
+    module_name = module_names[0]
     global _OPENCV_DLL_HANDLE
     if backend in _NATIVE_MODULES:
         return _NATIVE_MODULES[backend]
@@ -256,14 +268,22 @@ def _load_native_matcher(backend: str = "original", required: bool = True) -> An
         dll_dir = _opencv_build_root() / "x64" / "vc16" / "bin"
         if dll_dir.exists() and _OPENCV_DLL_HANDLE is None:
             _OPENCV_DLL_HANDLE = os.add_dll_directory(str(dll_dir))
-    try:
-        _NATIVE_MODULES[backend] = importlib.import_module(module_name)
-    except Exception as exc:  # pragma: no cover - exercised via runtime import failures
-        _NATIVE_MODULE_ERRORS[backend] = exc
-        if required:
-            raise RuntimeError(f"{module_name} is unavailable.\n{_native_build_instructions()}\nOriginal import error: {exc}") from exc
-        return None
-    return _NATIVE_MODULES[backend]
+    errors: list[BaseException] = []
+    for candidate in module_names:
+        try:
+            _NATIVE_MODULES[backend] = importlib.import_module(candidate)
+            return _NATIVE_MODULES[backend]
+        except Exception as exc:  # pragma: no cover - exercised via runtime import failures
+            errors.append(exc)
+    exc = errors[-1]
+    _NATIVE_MODULE_ERRORS[backend] = exc
+    if required:
+        attempted = ", ".join(module_names)
+        raise RuntimeError(
+            f"{module_name} is unavailable. Tried: {attempted}.\n"
+            f"{_native_build_instructions()}\nOriginal import error: {exc}"
+        ) from exc
+    return None
 
 
 def ensure_native_backends_available(backends: Sequence[str] = ("original", "fusion", "fusionv2", "sim3")) -> None:
@@ -833,7 +853,7 @@ class Line2DupLikeDetector:
         backend = _normalize_backend_name(backend)
         nfeat = int(num_features) if num_features is not None and num_features > 0 else self.num_features
         self._ensure_class_containers(class_id)
-        native_detector = self._ensure_native_detector_synced(backend=backend, required=(backend != "original"))
+        native_detector = self._ensure_native_detector_synced(backend=backend, required=True)
         if native_detector is not None:
             mask = ensure_mask(object_mask, source.shape[:2]) if object_mask is not None else None
             template_id = int(native_detector.add_template(source, class_id, mask, nfeat))
@@ -902,7 +922,7 @@ class Line2DupLikeDetector:
             tt = base_tp[0].tl_y
             center = (tl + base_tp[0].width * 0.5, tt + base_tp[0].height * 0.5)
 
-        native_detector = self._ensure_native_detector_synced(backend="original", required=False)
+        native_detector = self._ensure_native_detector_synced(backend="original", required=True)
         if native_detector is not None:
             template_id = int(
                 native_detector.add_template_rotate(
@@ -1006,7 +1026,7 @@ class Line2DupLikeDetector:
         if not class_ids:
             return []
 
-        native_detector = self._ensure_native_detector_synced(backend=backend, required=(backend != "original"))
+        native_detector = self._ensure_native_detector_synced(backend=backend, required=True)
         if native_detector is not None:
             align = max((int(t) * (1 << idx)) for idx, t in enumerate(self.T_at_level)) if self.T_at_level else 1
             h, w = source.shape[:2]
@@ -1721,15 +1741,14 @@ def save_detector_model(detector: Line2DupLikeDetector, model_path: str) -> None
     path.parent.mkdir(parents=True, exist_ok=True)
     data = detector_to_dict(detector)
     data = _rewrite_model_source_paths(data, str(path), save_mode=True)
-    text = json.dumps(data, indent=2, ensure_ascii=True)
-    path.write_text(text, encoding="utf-8")
+    atomic_write_json(path, data, ensure_ascii=True, indent=2)
 
 
 def load_detector_model(model_path: str) -> Line2DupLikeDetector:
     path = Path(model_path)
-    if not path.exists():
+    data = load_json_with_backup(path, default=None)
+    if data is None:
         raise FileNotFoundError(f"Model file does not exist: {path}")
-    data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError("Invalid model content.")
     data = _rewrite_model_source_paths(data, str(path), save_mode=False)

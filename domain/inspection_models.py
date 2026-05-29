@@ -22,7 +22,7 @@ class InspectionItemResult:
     algorithm_code: str = ""
     enabled: bool = True
     params: Dict[str, object] = field(default_factory=dict)
-    result: str = "PENDING"  # PENDING/RUNNING/OK/NG/MEASURED/INACTIVE/DISABLED
+    result: str = "PENDING"  # PENDING/RUNNING/OK/NG/PASS/MEASURED/INACTIVE/DISABLED
     detail: str = ""
     value: Optional[float] = None
     unit: str = ""
@@ -33,6 +33,7 @@ class InspectionItemResult:
             "RUNNING": ("running", "检测中"),
             "OK": ("ok", "OK"),
             "NG": ("ng", "NG"),
+            "PASS": ("pass", "PASS"),
             "MEASURED": ("measured", self.detail or "MEASURED"),
             "INACTIVE": ("inactive", "相机未接入"),
             "DISABLED": ("disabled", "已禁用"),

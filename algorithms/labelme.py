@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import json
 import os
 from typing import List, Optional, Tuple
 
 import numpy as np
 from PIL import Image
+
+from safe_io import atomic_write_json, load_json_with_backup
 
 
 def labelme_json_of_image(img_path: str) -> str:
@@ -69,9 +70,8 @@ def read_labelme_json_or_create(
     json_path: Optional[str] = None,
 ) -> Tuple[str, dict]:
     jpath = json_path or labelme_json_of_image(img_path)
-    if os.path.exists(jpath):
-        with open(jpath, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
+    data = load_json_with_backup(jpath, default=None)
+    if isinstance(data, dict):
         data.setdefault("shapes", [])
         data.setdefault("flags", {})
         return jpath, data
@@ -103,8 +103,7 @@ def upsert_labelme_shape(
     data["imageHeight"] = height
     data["imageWidth"] = width
 
-    with open(jpath, "w", encoding="utf-8") as handle:
-        json.dump(data, handle, ensure_ascii=False, indent=2)
+    atomic_write_json(jpath, data, ensure_ascii=False, indent=2)
     return jpath
 
 
@@ -137,17 +136,15 @@ def delete_labelme_shape(
     json_path: Optional[str] = None,
 ) -> bool:
     jpath = json_path or labelme_json_of_image(img_path)
-    if not os.path.exists(jpath):
+    data = load_json_with_backup(jpath, default=None)
+    if not isinstance(data, dict):
         return False
-    with open(jpath, "r", encoding="utf-8") as handle:
-        data = json.load(handle)
     shapes = list(data.get("shapes", []))
     filtered = [shape for shape in shapes if shape.get("label") != label_name]
     if len(filtered) == len(shapes):
         return False
     data["shapes"] = filtered
-    with open(jpath, "w", encoding="utf-8") as handle:
-        json.dump(data, handle, ensure_ascii=False, indent=2)
+    atomic_write_json(jpath, data, ensure_ascii=False, indent=2)
     return True
 
 
@@ -164,8 +161,9 @@ def read_roi_from_labelme(
     labelme_json_path: str,
     label_name: str = "roi",
 ) -> Tuple[int, int, int, int]:
-    with open(labelme_json_path, "r", encoding="utf-8") as handle:
-        data = json.load(handle)
+    data = load_json_with_backup(labelme_json_path, default={})
+    if not isinstance(data, dict):
+        data = {}
 
     for shape in data.get("shapes", []):
         if shape.get("label") != label_name:
@@ -195,8 +193,9 @@ def try_read_xywh_from_labelme(
 
 
 def read_shape_from_labelme(labelme_json_path: str, label_name: str) -> Optional[dict]:
-    with open(labelme_json_path, "r", encoding="utf-8") as handle:
-        data = json.load(handle)
+    data = load_json_with_backup(labelme_json_path, default={})
+    if not isinstance(data, dict):
+        return None
     for shape in data.get("shapes", []):
         if shape.get("label") == label_name:
             return shape
@@ -207,8 +206,9 @@ def list_shapes_from_labelme(
     labelme_json_path: str,
     label_prefix: Optional[str] = None,
 ) -> List[dict]:
-    with open(labelme_json_path, "r", encoding="utf-8") as handle:
-        data = json.load(handle)
+    data = load_json_with_backup(labelme_json_path, default={})
+    if not isinstance(data, dict):
+        data = {}
     shapes: List[dict] = []
     for shape in data.get("shapes", []):
         if not isinstance(shape, dict):
@@ -271,4 +271,3 @@ __all__ = [
     "upsert_labelme_shape",
     "write_labelme_json_for_roi",
 ]
-

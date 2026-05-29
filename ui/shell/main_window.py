@@ -24,6 +24,7 @@ from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from algorithms.proxy import is_ready as is_qr_core_ready
 from application import (
     DEFAULT_RELEASE_PASSWORD,
     ProductRuntimeContext,
@@ -156,6 +157,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._engine_warmup_thread: Optional[QtCore.QThread] = None
         self._brand_banner_source = QtGui.QPixmap(str(_resource_path("logo2.png")))
         self._startup_runtime_auto_connect_done = False
+        self._startup_runtime_auto_connect_attempts = 0
         self._startup_after_show_scheduled = False
         self._startup_after_show_completed = False
         self._allow_initial_tool_session_load = False
@@ -195,7 +197,7 @@ class MainWindow(QtWidgets.QMainWindow):
         QtCore.QTimer.singleShot(80, self.runtime_ctrl.reset_all_camera_triggers_off)
         QtCore.QTimer.singleShot(80, self.runtime_ctrl.initialize_startup_io)
         QtCore.QTimer.singleShot(80, self._start_algorithm_engine_warmup)
-        QtCore.QTimer.singleShot(200, self._startup_auto_connect_runtime_cameras)
+        QtCore.QTimer.singleShot(2000, self._startup_auto_connect_runtime_cameras)
       
     def _on_camera_settings_applied(self, serial: str, settings_payload) -> None:
         self.runtime_ctrl.apply_camera_settings_for_serial(serial, settings_payload)
@@ -325,6 +327,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _connect_signals(self) -> None:
         # ToolPage → MainWindow（跨组件协调）
         self.tool_page.productChangeRequested.connect(self._on_product_change_request)
+        self.tool_page.productDeleteRequested.connect(self._on_product_delete_request)
         self.tool_page.sessionClearRequested.connect(self._on_session_clear_request)
         self.tool_page.sessionLoaded.connect(self._sync_shell_status)
         self.tool_page.sessionLoaded.connect(self._restore_runtime_camera_bindings_from_session)
@@ -625,6 +628,42 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _on_product_change_request(self, new_name: str) -> None:
         _on_product_change_request_impl(self, new_name)
+
+    def _on_product_delete_request(self, product_name: str) -> None:
+        name = str(product_name or "").strip()
+        if not name:
+            return
+        if name == "Default":
+            QtWidgets.QMessageBox.warning(
+                self,
+                "\u5220\u9664\u4ea7\u54c1",
+                "Default \u4ea7\u54c1\u4e0d\u80fd\u5220\u9664",
+            )
+            return
+        if not confirm_admin_password(self, admin_password=self._admin_password):
+            return
+        ret = QtWidgets.QMessageBox.question(
+            self,
+            "\u5220\u9664\u4ea7\u54c1",
+            f"\u786e\u8ba4\u5220\u9664\u4ea7\u54c1 {name}?\n"
+            "\u4ea7\u54c1\u76ee\u5f55\u4f1a\u79fb\u52a8\u5230 _deleted\uff0c\u53ef\u624b\u52a8\u6062\u590d\u3002",
+        )
+        if ret != QtWidgets.QMessageBox.Yes:
+            return
+
+        self.runtime_ctrl.disconnect(silent=True)
+        error = self.session.delete_product(name)
+        if error:
+            QtWidgets.QMessageBox.critical(self, "\u5220\u9664\u4ea7\u54c1", error)
+            return
+
+        self.tool_page.refresh_product_selector()
+        self.tool_page.apply_product_switch(self.session.current_product)
+        if is_qr_core_ready():
+            self._preload_current_embedding_model()
+        self._sync_shell_status()
+        self.runtime_ctrl.refresh_all_status("\u4ea7\u54c1\u5df2\u5220\u9664\uff0c\u8bf7\u91cd\u65b0\u8fde\u63a5\u8fd0\u884c\u94fe\u8def")
+        self._bottom_status_bar.showMessage(f"\u4ea7\u54c1\u5df2\u5220\u9664: {name}", 3000)
 
     def _on_session_clear_request(self) -> None:
         _on_session_clear_request_impl(self)

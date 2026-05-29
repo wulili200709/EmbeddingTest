@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List
 
 from path_utils import product_relative_path, resolve_product_path
+from safe_io import atomic_write_json, load_json_with_backup
 
 
 @dataclass
@@ -97,9 +97,9 @@ def _product_dir_for_recipe_file(path: Path) -> str:
 
 def load_recipe(path: str) -> Line2DupRecipe:
     p = Path(path)
-    if not p.exists():
+    data = load_json_with_backup(p, default=None)
+    if data is None:
         return Line2DupRecipe(model_path=str(p.with_name("line2dup_model.json")))
-    data = json.loads(p.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"Invalid line2dup recipe: {p}")
     recipe = Line2DupRecipe.from_dict(data)
@@ -124,7 +124,7 @@ def save_recipe(recipe: Line2DupRecipe, path: str) -> None:
     base_dir = str(p.parent)
     payload["model_path"] = product_relative_path(payload.get("model_path", ""), base_dir=base_dir)
     payload["reference_image"] = product_relative_path(payload.get("reference_image", ""), base_dir=base_dir)
-    p.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_json(p, payload, ensure_ascii=False, indent=2)
 
 
 __all__ = ["Line2DupRecipe", "load_recipe", "save_recipe"]

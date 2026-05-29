@@ -72,6 +72,7 @@ from ui.i18n import language_code, tr
 from ui.roi_overlay_colors import is_roi_label, overlay_style_for_label
 from ui.runtime import RuntimeImageView
 from path_utils import product_relative_path, resolve_product_path
+from safe_io import atomic_write_json, backup_path_for, load_json_with_backup
 
 
 try:
@@ -1471,6 +1472,7 @@ class ToolPage(QtWidgets.QWidget):
     """
 
     productChangeRequested = QtCore.Signal(str)   # new product name
+    productDeleteRequested = QtCore.Signal(str)
     sessionClearRequested = QtCore.Signal()
     sessionLoaded = QtCore.Signal()
     inspectionItemsChanged = QtCore.Signal()
@@ -1581,6 +1583,7 @@ class ToolPage(QtWidgets.QWidget):
 
         for attr, text in (
             ("btn_new_product", tr("debug.new")),
+            ("btn_delete_product", tr("debug.delete_product")),
             ("btn_import_train", tr("debug.add_external_images")),
             ("btn_train_to_test", tr("debug.move_to_test")),
             ("btn_sample_annotation", tr("debug.sample_annotation")),
@@ -2289,6 +2292,17 @@ class ToolPage(QtWidgets.QWidget):
     def current_product_name(self) -> str:
         return self.session.current_product
 
+    def refresh_product_selector(self) -> None:
+        if not hasattr(self, "cmb_product"):
+            return
+        blocker = QtCore.QSignalBlocker(self.cmb_product)
+        try:
+            self.cmb_product.clear()
+            self.cmb_product.addItems(self.session.product_names)
+            self.cmb_product.setCurrentText(self.session.current_product)
+        finally:
+            del blocker
+
     def _sync_camera_settings_store_path(self) -> None:
         self._camera_settings_store.set_path(self.session.camera_settings_path)
 
@@ -2549,6 +2563,12 @@ class ToolPage(QtWidgets.QWidget):
         self.btn_new_product.setStyleSheet(_compact_btn)
         self.btn_new_product.clicked.connect(self._new_product)
         header_layout.addWidget(self.btn_new_product)
+
+        self.btn_delete_product = QtWidgets.QPushButton(_si(SP.SP_DialogDiscardButton), tr("debug.delete_product"))
+        self.btn_delete_product.setFixedWidth(60)
+        self.btn_delete_product.setStyleSheet(_compact_btn)
+        self.btn_delete_product.clicked.connect(self._request_delete_product)
+        header_layout.addWidget(self.btn_delete_product)
 
         header_layout.addSpacing(10)
         self.lbl_current_camera_caption = QtWidgets.QLabel(tr("debug.current_camera"))
@@ -3637,6 +3657,8 @@ class ToolPage(QtWidgets.QWidget):
             self.cmb_product.setFixedWidth(160 if compact else 180)
         if hasattr(self, "btn_new_product"):
             self.btn_new_product.setFixedWidth(56 if compact else 60)
+        if hasattr(self, "btn_delete_product"):
+            self.btn_delete_product.setFixedWidth(56 if compact else 60)
         if hasattr(self, "cmb_current_camera_role"):
             self.cmb_current_camera_role.setFixedWidth(72 if compact else 84)
         if hasattr(self, "btn_algorithm_picker"):
@@ -3773,12 +3795,10 @@ class ToolPage(QtWidgets.QWidget):
     def _load_sample_roi_annotations(self) -> None:
         self._sample_roi_annotations_by_path = {}
         store_path = self._sample_annotation_store_path()
-        if not store_path or not os.path.exists(store_path):
+        if not store_path:
             return
-        try:
-            with open(store_path, "r", encoding="utf-8") as handle:
-                raw_payload = json.load(handle)
-        except Exception:
+        raw_payload = load_json_with_backup(store_path, default=None)
+        if raw_payload is None:
             return
         image_payload = raw_payload.get("images", raw_payload) if isinstance(raw_payload, dict) else {}
         if not isinstance(image_payload, dict):
@@ -3824,15 +3844,16 @@ class ToolPage(QtWidgets.QWidget):
         if not images_payload:
             self._delete_sample_annotation_file()
             return
-        os.makedirs(self.session.product_dir, exist_ok=True)
-        with open(store_path, "w", encoding="utf-8") as handle:
-            json.dump({"images": images_payload}, handle, ensure_ascii=False, indent=2)
+        atomic_write_json(store_path, {"images": images_payload}, ensure_ascii=False, indent=2)
 
     def _delete_sample_annotation_file(self) -> None:
         store_path = self._sample_annotation_store_path()
         try:
             if store_path and os.path.exists(store_path):
                 os.remove(store_path)
+            backup_path = backup_path_for(store_path) if store_path else None
+            if backup_path is not None and backup_path.exists():
+                backup_path.unlink()
         except Exception:
             pass
 
@@ -4256,6 +4277,12 @@ class ToolPage(QtWidgets.QWidget):
             return
         self.cmb_product.addItem(name.strip())
         self.cmb_product.setCurrentText(name.strip())
+
+    def _request_delete_product(self) -> None:
+        name = str(self.cmb_product.currentText() or self.session.current_product or "").strip()
+        if not name:
+            return
+        self.productDeleteRequested.emit(name)
 
     def _clear_session(self) -> None:
         ret = QtWidgets.QMessageBox.question(
@@ -4835,7 +4862,9 @@ class ToolPage(QtWidgets.QWidget):
                     if self.algo.is_learning_tool(item_result.algorithm_code)
                     else self.algo.resolve_tool_algorithm(item_result.algorithm_code)
                 )
-                row.setdefault("pred", item_result.result)
+                if row.get("pred") is not None and str(row.get("pred", "")).strip() != str(item_result.result or "").strip():
+                    row.setdefault("raw_pred", row.get("pred"))
+                row["pred"] = item_result.result
                 row["match_ms"] = match_ms if match_ms > 0.0 else row.get("match_ms")
                 row["total_ms"] = total_ms if total_ms > 0.0 else row.get("total_ms")
                 row["tool_name"] = display_name
@@ -4868,7 +4897,7 @@ class ToolPage(QtWidgets.QWidget):
         ng_names = [
             str(row.get("tool_name", row.get("roi_label", "")) or "").strip()
             for row in rows
-            if str(row.get("pred", "NG") or "NG") != "OK"
+            if str(row.get("pred", "NG") or "NG").strip().upper() == "NG"
         ]
         status_text = (
             f"Status: TEST={os.path.basename(p)}  overall={overall_pred}"

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from PySide6 import QtWidgets
 
 from app_paths import writable_embedding_test_root
+from safe_io import atomic_write_json, load_json_with_backup
 
 
 DEFAULT_ADMIN_PASSWORD = "admin123"
@@ -57,12 +57,7 @@ class PasswordSettingsStore:
     def load(self) -> dict[str, str]:
         settings = self.default_settings()
         path = self.path()
-        raw: dict = {}
-        if path.exists():
-            try:
-                raw = json.loads(path.read_text(encoding="utf-8"))
-            except Exception:
-                raw = {}
+        raw = load_json_with_backup(path, default={})
 
         if isinstance(raw, dict):
             run_password = str(raw.get("run_password", "")).strip()
@@ -85,10 +80,7 @@ class PasswordSettingsStore:
             "engineer_password": str(settings.get("engineer_password", self._default_admin_password)).strip()
             or self._default_admin_password,
         }
-        self.path().write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        atomic_write_json(self.path(), payload, ensure_ascii=False, indent=2)
 
 
 class TowerLightSettingsStore:
@@ -108,12 +100,7 @@ class TowerLightSettingsStore:
     def load(self) -> dict[str, int]:
         settings = self.default_settings()
         path = self.path()
-        raw: dict = {}
-        if path.exists():
-            try:
-                raw = json.loads(path.read_text(encoding="utf-8"))
-            except Exception:
-                raw = {}
+        raw = load_json_with_backup(path, default={})
 
         if isinstance(raw, dict):
             for key in tuple(settings.keys()):
@@ -137,10 +124,7 @@ class TowerLightSettingsStore:
                 payload[key] = max(0, int(settings.get(key, default_value)))
             except Exception:
                 payload[key] = default_value
-        self.path().write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        atomic_write_json(self.path(), payload, ensure_ascii=False, indent=2)
 
 
 class RuntimeRecordSettingsStore:
@@ -158,12 +142,7 @@ class RuntimeRecordSettingsStore:
     def load(self) -> dict[str, str]:
         settings = self.default_settings()
         path = self.path()
-        raw: dict = {}
-        if path.exists():
-            try:
-                raw = json.loads(path.read_text(encoding="utf-8"))
-            except Exception:
-                raw = {}
+        raw = load_json_with_backup(path, default={})
 
         if isinstance(raw, dict):
             settings["runtime_records_dir"] = str(raw.get("runtime_records_dir", "")).strip()
@@ -180,10 +159,7 @@ class RuntimeRecordSettingsStore:
             "runtime_records_dir": str(settings.get("runtime_records_dir", "")).strip(),
             "runtime_images_dir": str(settings.get("runtime_images_dir", "")).strip(),
         }
-        self.path().write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        atomic_write_json(self.path(), payload, ensure_ascii=False, indent=2)
 
 
 class RuntimeModeSettingsStore:
@@ -200,12 +176,7 @@ class RuntimeModeSettingsStore:
     def load(self) -> dict[str, bool]:
         settings = self.default_settings()
         path = self.path()
-        raw: dict = {}
-        if path.exists():
-            try:
-                raw = json.loads(path.read_text(encoding="utf-8"))
-            except Exception:
-                raw = {}
+        raw = load_json_with_backup(path, default={})
 
         if isinstance(raw, dict):
             raw_value = settings["auto_show_release_dialog_on_ng"]
@@ -235,10 +206,7 @@ class RuntimeModeSettingsStore:
                 default=True,
             ),
         }
-        self.path().write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        atomic_write_json(self.path(), payload, ensure_ascii=False, indent=2)
 
     @staticmethod
     def _as_bool(value: object, *, default: bool) -> bool:

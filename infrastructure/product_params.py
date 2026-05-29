@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict
 
 from algorithms.registry import learning_backbone_storage_code, storage_code_backbone
+from safe_io import atomic_write_json, load_json_with_backup
 
 
 @dataclass
@@ -44,18 +44,16 @@ class ProductRuntimeParams:
 
 def load_product_params(path: str) -> ProductRuntimeParams:
     p = Path(path)
-    if not p.exists():
+    data = load_json_with_backup(p, default=None)
+    if data is None:
         return ProductRuntimeParams()
-    data = json.loads(p.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"Invalid product params: {p}")
     return ProductRuntimeParams.from_dict(data)
 
 
 def save_product_params(params: ProductRuntimeParams, path: str) -> None:
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(params.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_json(path, params.to_dict(), ensure_ascii=False, indent=2)
 
 
 __all__ = ["ProductRuntimeParams", "load_product_params", "save_product_params"]

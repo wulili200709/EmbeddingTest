@@ -6,12 +6,14 @@ product_session.py
 
 from __future__ import annotations
 
-import json
 import os
 import re
+import shutil
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import List, Optional
 
+from safe_io import atomic_write_json, backup_path_for, load_json_with_backup
 from path_utils import (
     product_relative_path,
     resolve_existing_product_path,
@@ -58,7 +60,7 @@ class SessionData:
     runtime_capture_policy: Optional[str] = None
 
 
-PRODUCT_NAME_RE = re.compile(r"^[a-zA-Z0-9_\u4e00-\u9fa5]+$")
+PRODUCT_NAME_RE = re.compile(r"^[a-zA-Z0-9_]+$")
 
 
 class ProductSession:
@@ -122,35 +124,60 @@ class ProductSession:
         return self.line2dup_paths_for_role(camera_role).recipe_path
 
     def load(self) -> None:
-        if os.path.exists(self.products_json):
-            try:
-                with open(self.products_json, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, dict) and "products" in data:
-                    self._products_data = data
-            except Exception:
-                pass
+        data = load_json_with_backup(self.products_json, default={})
+        if isinstance(data, dict) and "products" in data:
+            self._products_data = data
         self._remove_missing_product_entries()
         self.current_product = str(self._products_data.get("current_product", "Default"))
         self._ensure_current_product_in_list()
 
     def save_products(self) -> None:
         os.makedirs(self.session_dir, exist_ok=True)
-        with open(self.products_json, "w", encoding="utf-8") as f:
-            json.dump(self._products_data, f, ensure_ascii=False, indent=2)
+        atomic_write_json(self.products_json, self._products_data, ensure_ascii=False, indent=2)
 
     def create_product(self, name: str) -> str:
         name = name.strip()
         if not name:
-            return "产品名称不能为空"
+            return "\u4ea7\u54c1\u7f16\u53f7\u4e0d\u80fd\u4e3a\u7a7a"
         if not PRODUCT_NAME_RE.match(name):
-            return "产品名称只能包含字母、数字、下划线和中文字符"
+            return "\u4ea7\u54c1\u7f16\u53f7\u53ea\u80fd\u5305\u542b\u82f1\u6587\u3001\u6570\u5b57\u548c\u4e0b\u5212\u7ebf"
         if name in self._products_data["products"]:
             if self._product_dir_exists(name):
-                return "产品名称已存在"
+                return "\u4ea7\u54c1\u7f16\u53f7\u5df2\u5b58\u5728"
             self._remove_product_name(name)
         self._products_data["products"].append(name)
         self.save_products()
+        return ""
+
+    def delete_product(self, name: str) -> str:
+        product_name = str(name or "").strip()
+        if not product_name:
+            return "\u8bf7\u5148\u9009\u62e9\u8981\u5220\u9664\u7684\u4ea7\u54c1"
+        if product_name == "Default":
+            return "Default \u4ea7\u54c1\u4e0d\u80fd\u5220\u9664"
+
+        product_dir = os.path.abspath(os.path.join(self.session_dir, product_name))
+        session_root = os.path.abspath(self.session_dir)
+        if os.path.commonpath([session_root, product_dir]) != session_root:
+            return "\u4ea7\u54c1\u8def\u5f84\u4e0d\u5728\u4f1a\u8bdd\u76ee\u5f55\u5185"
+
+        if os.path.isdir(product_dir):
+            deleted_root = os.path.join(self.session_dir, "_deleted")
+            os.makedirs(deleted_root, exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            target = os.path.join(deleted_root, f"{product_name}_{stamp}")
+            suffix = 1
+            while os.path.exists(target):
+                suffix += 1
+                target = os.path.join(deleted_root, f"{product_name}_{stamp}_{suffix}")
+            try:
+                shutil.move(product_dir, target)
+            except Exception as exc:
+                return f"\u79fb\u52a8\u4ea7\u54c1\u76ee\u5f55\u5931\u8d25: {exc}"
+
+        self._remove_product_name(product_name)
+        self.save_products()
+        self._refresh_paths()
         return ""
 
     def switch_product(self, name: str) -> None:
@@ -162,13 +189,9 @@ class ProductSession:
         if not self.session_json:
             return
         os.makedirs(self.product_dir, exist_ok=True)
-        existing_payload: dict = {}
-        if os.path.exists(self.session_json):
-            try:
-                with open(self.session_json, "r", encoding="utf-8") as f:
-                    existing_payload = json.load(f)
-            except Exception:
-                existing_payload = {}
+        existing_payload = load_json_with_backup(self.session_json, default={})
+        if not isinstance(existing_payload, dict):
+            existing_payload = {}
         payload = {
             "train_files": [product_relative_path(path, base_dir=self.product_dir) for path in data.train_files],
             "ok_files": [product_relative_path(path, base_dir=self.product_dir) for path in data.ok_files],
@@ -192,17 +215,12 @@ class ProductSession:
                 else str(existing_payload.get("runtime_capture_policy", "ng_only")).strip()
             ),
         }
-        with open(self.session_json, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
+        atomic_write_json(self.session_json, payload, ensure_ascii=False, indent=2)
 
     def load_session(self) -> SessionData:
-        raw: dict = {}
-        if self.session_json and os.path.exists(self.session_json):
-            try:
-                with open(self.session_json, "r", encoding="utf-8") as f:
-                    raw = json.load(f)
-            except Exception:
-                raw = {}
+        raw = load_json_with_backup(self.session_json, default={}) if self.session_json else {}
+        if not isinstance(raw, dict):
+            raw = {}
 
         def _filter(xs) -> List[str]:
             return resolve_existing_product_paths(xs, base_dir=self.product_dir, anchor_dir=self.product_dir)
@@ -236,6 +254,9 @@ class ProductSession:
         try:
             if self.session_json and os.path.exists(self.session_json):
                 os.remove(self.session_json)
+            backup_path = backup_path_for(self.session_json) if self.session_json else None
+            if backup_path is not None and backup_path.exists():
+                backup_path.unlink()
         except Exception:
             pass
 

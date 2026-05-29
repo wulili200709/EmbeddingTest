@@ -11,8 +11,11 @@ inspection_executor.py
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+import json
 import math
+import os
 from typing import List, Protocol
 
 import numpy as np
@@ -25,9 +28,30 @@ from algorithms.measurement import (
 )
 from domain import InspectionItem, InspectionItemResult
 
+_DECISION_POLICY_FILENAME = "decision_policy.json"
+_PASS_RESULT = "PASS"
+
 
 def _is_line_distance_item(item: InspectionItem) -> bool:
     return str(getattr(item, "algorithm_code", "") or "").strip() in LINE_DISTANCE_ALGORITHMS
+
+
+def _normalized_result(value: object) -> str:
+    return str(value or "").strip().upper()
+
+
+def _is_passing_result(value: object) -> bool:
+    return _normalized_result(value) in {"OK", _PASS_RESULT}
+
+
+def _append_detail(existing: str, extra: str) -> str:
+    existing_text = str(existing or "").strip()
+    extra_text = str(extra or "").strip()
+    if not existing_text:
+        return extra_text
+    if not extra_text or extra_text in existing_text:
+        return existing_text
+    return f"{existing_text} {extra_text}"
 
 
 class PredictorProtocol(Protocol):
@@ -74,8 +98,9 @@ class InspectionExecutor:
       - 后续再扩展为真正 item 级独立执行
     """
 
-    def __init__(self, predictor: PredictorProtocol) -> None:
+    def __init__(self, predictor: PredictorProtocol, decision_policy: Mapping[str, object] | None = None) -> None:
         self._predictor = predictor
+        self._decision_policy_override = dict(decision_policy) if isinstance(decision_policy, Mapping) else None
 
     def execute(self, request: InspectionExecutionRequest) -> InspectionExecutionResponse:
         if not request.items:
@@ -228,9 +253,10 @@ class InspectionExecutor:
                 for item in enabled_item_results
                 if str(item.result or "").strip().upper() in {"OK", "NG"}
             ]
+            self._apply_decision_policy(request, decision_item_results)
         final_result = (
             "OK"
-            if not decision_item_results or all(item.result == "OK" for item in decision_item_results)
+            if not decision_item_results or all(_is_passing_result(item.result) for item in decision_item_results)
             else "NG"
         )
         match_ms = max(
@@ -297,6 +323,113 @@ class InspectionExecutor:
             fallback_kwargs = dict(kwargs)
             fallback_kwargs.pop("params_override", None)
             return self._predictor.predict_image(path, **fallback_kwargs)
+
+    def _apply_decision_policy(
+        self,
+        request: InspectionExecutionRequest,
+        decision_item_results: List[InspectionItemResult],
+    ) -> None:
+        policy = self._load_decision_policy()
+        if not bool(policy.get("enabled", False)):
+            return
+        groups = policy.get("groups", [])
+        if not isinstance(groups, list):
+            return
+        for raw_group in groups:
+            if not isinstance(raw_group, Mapping):
+                continue
+            self._apply_decision_group_policy(request, decision_item_results, raw_group)
+
+    def _apply_decision_group_policy(
+        self,
+        request: InspectionExecutionRequest,
+        decision_item_results: List[InspectionItemResult],
+        group: Mapping[str, object],
+    ) -> None:
+        camera_id = str(group.get("camera_id", "") or "").strip()
+        if camera_id and camera_id != str(request.camera_id or "").strip():
+            return
+        target_labels = self._normalized_string_list(
+            group.get("roi_labels", group.get("item_ids", group.get("items", [])))
+        )
+        if not target_labels:
+            return
+        min_ok = self._positive_int(group.get("min_ok"), default=len(target_labels))
+        if min_ok <= 0:
+            return
+        by_label = {
+            str(item.roi_label or "").strip(): item
+            for item in decision_item_results
+            if str(item.roi_label or "").strip()
+        }
+        by_item_id = {
+            str(item.item_id or "").strip(): item
+            for item in decision_item_results
+            if str(item.item_id or "").strip()
+        }
+        group_items: List[InspectionItemResult] = []
+        for target in target_labels:
+            item = by_label.get(target) or by_item_id.get(target)
+            if item is None:
+                return
+            if _normalized_result(item.result) not in {"OK", "NG", _PASS_RESULT}:
+                return
+            group_items.append(item)
+        if len(set(id(item) for item in group_items)) != len(target_labels):
+            return
+
+        ok_count = sum(1 for item in group_items if _is_passing_result(item.result))
+        if ok_count < min_ok:
+            return
+        ng_items = [item for item in group_items if _normalized_result(item.result) == "NG"]
+        if not ng_items:
+            return
+        group_name = str(group.get("name", "") or "decision_group").strip() or "decision_group"
+        reason = f"{group_name} {ok_count}/{len(group_items)} OK, min_ok={min_ok}"
+        for item in ng_items:
+            item.result = _PASS_RESULT
+            item.detail = _append_detail(item.detail, f"raw=NG {reason}")
+
+    def _load_decision_policy(self) -> dict:
+        if self._decision_policy_override is not None:
+            return dict(self._decision_policy_override)
+        path = self._decision_policy_path()
+        if not path:
+            return {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+        except Exception:
+            return {}
+        return raw if isinstance(raw, dict) else {}
+
+    def _decision_policy_path(self) -> str:
+        product_dir = self._product_dir_from_predictor()
+        if not product_dir:
+            return ""
+        return os.path.join(product_dir, _DECISION_POLICY_FILENAME)
+
+    def _product_dir_from_predictor(self) -> str:
+        session = getattr(self._predictor, "session", None)
+        if session is None:
+            tool_page = getattr(self._predictor, "tool_page", None)
+            session = getattr(tool_page, "session", None)
+        product_dir = str(getattr(session, "product_dir", "") or "").strip()
+        return product_dir if product_dir and os.path.isdir(product_dir) else ""
+
+    @staticmethod
+    def _normalized_string_list(value: object) -> List[str]:
+        if not isinstance(value, (list, tuple)):
+            return []
+        return [str(item or "").strip() for item in value if str(item or "").strip()]
+
+    @staticmethod
+    def _positive_int(value: object, *, default: int) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            parsed = int(default)
+        return parsed if parsed > 0 else int(default)
 
     @staticmethod
     def _optional_float(value: object) -> float | None:
@@ -926,6 +1059,7 @@ class InspectionExecutor:
     ) -> str:
         parts: List[str] = []
         ng_items = [item for item in item_results if item.result == "NG"]
+        pass_items = [item for item in item_results if _normalized_result(item.result) == _PASS_RESULT]
         measured_items = [item for item in item_results if str(item.result or "").strip().upper() == "MEASURED"]
         if ng_items:
             parts.append(
@@ -938,6 +1072,20 @@ class InspectionExecutor:
                 detail = InspectionExecutor._strip_timing_tokens(ng_items[0].detail)
                 if detail:
                     parts.append(detail)
+        elif pass_items:
+            parts.append(
+                "PASS: " + ", ".join(
+                    item.display_name or item.item_id or item.roi_label or "item"
+                    for item in pass_items
+                )
+            )
+            detail = "; ".join(
+                InspectionExecutor._strip_timing_tokens(item.detail)
+                for item in pass_items
+                if InspectionExecutor._strip_timing_tokens(item.detail)
+            )
+            if detail:
+                parts.append(detail)
         elif measured_items and len(measured_items) == len(item_results):
             parts.append(
                 "; ".join(

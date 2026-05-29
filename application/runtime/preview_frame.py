@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,6 +8,7 @@ import cv2
 import numpy as np
 
 from algorithms.labelme import labelme_json_of_image
+from safe_io import atomic_write_json, load_json_with_backup
 
 
 @dataclass(frozen=True)
@@ -61,12 +61,8 @@ def read_exported_runtime_preview_shapes(image_path: str) -> tuple[RuntimePrevie
     if not path_text:
         return ()
     json_path = Path(labelme_json_of_image(path_text))
-    if not json_path.exists():
-        return ()
-    try:
-        with json_path.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except Exception:
+    payload = load_json_with_backup(json_path, default=None)
+    if not isinstance(payload, dict):
         return ()
 
     shapes: list[RuntimePreviewShape] = []
@@ -102,12 +98,8 @@ def read_exported_runtime_preview_measurements(image_path: str) -> tuple[dict, .
     if not path_text:
         return ()
     json_path = Path(labelme_json_of_image(path_text))
-    if not json_path.exists():
-        return ()
-    try:
-        with json_path.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except Exception:
+    payload = load_json_with_backup(json_path, default=None)
+    if not isinstance(payload, dict):
         return ()
     flags = payload.get("flags", {})
     if not isinstance(flags, dict):
@@ -187,7 +179,7 @@ def _write_runtime_preview_json(image_path: Path, frame: RuntimePreviewFrame) ->
         "imageWidth": int(width),
     }
     json_path = Path(labelme_json_of_image(str(image_path)))
-    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_json(json_path, payload, ensure_ascii=False, indent=2)
 
 
 __all__ = [

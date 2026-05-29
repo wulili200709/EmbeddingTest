@@ -14,11 +14,11 @@ import pybind11
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
 PATCHED_BACKEND_ROOT = SCRIPT_ROOT / "build" / "_patched_backends"
-OPENCV_ROOT = Path(r"C:\Users\ADMIN\tools\opencv\build")
+OPENCV_ROOT = Path(os.environ.get("LINE2DUP_OPENCV_BUILD", r"C:\Users\ADMIN\tools\opencv\build")).expanduser()
 OPENCV_INCLUDE_DIR = OPENCV_ROOT / "include"
 OPENCV_LIB_DIR = OPENCV_ROOT / "x64" / "vc16" / "lib"
 OPENCV_BIN_DIR = OPENCV_ROOT / "x64" / "vc16" / "bin"
-OPENCV_WORLD_LIB = "opencv_world4130"
+OPENCV_WORLD_LIB = os.environ.get("LINE2DUP_OPENCV_WORLD_LIB", "opencv_world4130")
 
 ORIGINAL_ROOT = SCRIPT_ROOT / "vendor" / "_third_party_shape_based_matching"
 FUSION_ROOT = SCRIPT_ROOT / "vendor" / "_third_party_shape_based_matching_fusion_fix_memo"
@@ -58,7 +58,7 @@ def _remove_readonly(func, path: str, _exc) -> None:
 
 
 def prepare_backend_root(module_name: str, backend_root: Path) -> Path:
-    if module_name not in {"line2dup_fusion_native", "line2dup_fusionv2_native", "line2dup_sim3_native"}:
+    if module_name not in {"line2dup_fusion_native", "line2dup_fusionv2_native", "match_fusionv2", "line2dup_sim3_native"}:
         return backend_root
 
     patched_root = PATCHED_BACKEND_ROOT / module_name
@@ -66,7 +66,7 @@ def prepare_backend_root(module_name: str, backend_root: Path) -> Path:
         shutil.rmtree(patched_root, onerror=_remove_readonly)
     shutil.copytree(backend_root, patched_root, ignore=shutil.ignore_patterns(".git", "build_bench"))
 
-    if module_name in {"line2dup_fusion_native", "line2dup_fusionv2_native"}:
+    if module_name in {"line2dup_fusion_native", "line2dup_fusionv2_native", "match_fusionv2"}:
         line2dup_cpp = patched_root / "line2Dup.cpp"
         text = line2dup_cpp.read_text(encoding="utf-8")
         openmp_old = """#pragma omp declare reduction \\
@@ -208,7 +208,7 @@ def build_extensions() -> list[Extension]:
             extra_link_args=openmp_link_args(),
         ),
         build_backend_extension(
-            module_name="line2dup_fusionv2_native",
+            module_name="match_fusionv2",
             backend_root=FUSION_ROOT,
             extra_compile_args=openmp_compile_args(),
             extra_link_args=openmp_link_args(),

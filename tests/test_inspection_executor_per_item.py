@@ -120,6 +120,52 @@ class InspectionExecutorPerItemTest(unittest.TestCase):
         self.assertEqual(item_results["roi3"].result, "DISABLED")
         self.assertEqual(item_results["roi2"].algorithm_code, "meanintensity")
 
+    def test_decision_policy_marks_single_ng_as_pass_when_group_min_ok_is_met(self) -> None:
+        class _SealPredictor:
+            def predict_image(self, path: str, **kwargs) -> dict:
+                label = kwargs.get("labels_override", [""])[0]
+                return {
+                    "pred": "NG" if label == "roi2" else "OK",
+                    "diff": -0.03 if label == "roi2" else 0.10,
+                }
+
+        executor = InspectionExecutor(
+            _SealPredictor(),
+            decision_policy={
+                "enabled": True,
+                "groups": [
+                    {
+                        "name": "seal",
+                        "camera_id": "cam1",
+                        "roi_labels": ["roi1", "roi2", "roi3", "roi4"],
+                        "min_ok": 3,
+                    }
+                ],
+            },
+        )
+
+        response = executor.execute(
+            InspectionExecutionRequest(
+                camera_id="cam1",
+                image_path="demo.png",
+                items=[
+                    InspectionItem(
+                        item_id=f"roi{index}",
+                        display_name=f"Seal{index}",
+                        camera_id="cam1",
+                        roi_label=f"roi{index}",
+                        algorithm_code="shared_backbone_register",
+                    )
+                    for index in range(1, 5)
+                ],
+            )
+        )
+
+        self.assertEqual(response.result, "OK")
+        self.assertEqual([item.result for item in response.item_results], ["OK", "PASS", "OK", "OK"])
+        self.assertIn("PASS: Seal2", response.detail)
+        self.assertIn("raw=NG seal 3/4 OK", response.item_results[1].detail)
+
     def test_measurement_item_result_participates_in_ok_ng(self) -> None:
         class _MeasurementPredictor:
             def predict_image(self, path: str, **kwargs) -> dict:

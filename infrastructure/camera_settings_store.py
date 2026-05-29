@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Mapping
 
 from app_paths import writable_embedding_test_root
+from safe_io import atomic_write_json, load_json_with_backup
 
 
 _CAMERA_SETTINGS_FILENAME = "camera_settings.json"
@@ -111,11 +111,7 @@ class CameraSettingsStore:
             by_serial = {}
             payload["by_serial"] = by_serial
         by_serial[serial_text] = _normalize_settings_payload(settings)
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        atomic_write_json(self._path, payload, ensure_ascii=False, indent=2)
 
     def load_for_role(self, role: str, *, serial: str = "") -> dict[str, Any] | None:
         role_text = str(role).strip()
@@ -152,11 +148,7 @@ class CameraSettingsStore:
                 by_serial = {}
                 payload["by_serial"] = by_serial
             by_serial[serial_text] = normalized
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        atomic_write_json(self._path, payload, ensure_ascii=False, indent=2)
 
     def serial_for_role(self, role: str) -> str:
         role_text = str(role).strip()
@@ -172,12 +164,7 @@ class CameraSettingsStore:
         return str(raw.get("serial", "")).strip()
 
     def _load_all(self) -> dict[str, Any]:
-        if not self._path.exists():
-            return {}
-        try:
-            raw = json.loads(self._path.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
+        raw = load_json_with_backup(self._path, default={})
         return raw if isinstance(raw, dict) else {}
 
 

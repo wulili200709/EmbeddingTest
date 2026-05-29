@@ -5,7 +5,18 @@ from typing import Optional
 from PySide6 import QtCore
 
 from algorithms.proxy import is_ready as is_qr_core_ready
+from infrastructure.camera_settings_store import CameraSettingsStore
 from ui.window_common import update_runtime_preview
+
+
+_STARTUP_AUTO_CONNECT_RETRY_DELAYS_MS = (5000, 10000, 15000, 30000)
+
+
+def _stored_camera_serial_for_role(window, role: str) -> str:
+    try:
+        return CameraSettingsStore(window.session.camera_settings_path).serial_for_role(role)
+    except Exception:
+        return ""
 
 
 def prepare_runtime_for_debug_camera(window, serial: str) -> None:
@@ -22,8 +33,17 @@ def prepare_runtime_for_debug_camera(window, serial: str) -> None:
 
 def restore_runtime_camera_bindings_from_session(window) -> None:
     session_data = window.session.load_session()
-    window.runtime_page.edit_cam1_serial.setText(session_data.runtime_cam1_serial or "")
-    window.runtime_page.edit_cam2_serial.setText(session_data.runtime_cam2_serial or "")
+    cam1_serial = str(session_data.runtime_cam1_serial or "").strip() or _stored_camera_serial_for_role(window, "cam1")
+    cam2_serial = str(session_data.runtime_cam2_serial or "").strip() or _stored_camera_serial_for_role(window, "cam2")
+    window.runtime_page.edit_cam1_serial.setText(cam1_serial)
+    window.runtime_page.edit_cam2_serial.setText(cam2_serial)
+    if (
+        cam1_serial != str(session_data.runtime_cam1_serial or "").strip()
+        or cam2_serial != str(session_data.runtime_cam2_serial or "").strip()
+    ):
+        session_data.runtime_cam1_serial = cam1_serial
+        session_data.runtime_cam2_serial = cam2_serial
+        window.session.save_session(session_data)
     sync_configured_roles = getattr(window, "_sync_configured_camera_roles", None)
     if callable(sync_configured_roles):
         sync_configured_roles()
@@ -35,8 +55,16 @@ def persist_runtime_camera_bindings(
 ) -> None:
     session_data = window.session.load_session()
     current_bindings = dict(bindings or window.runtime_page.camera_bindings())
-    session_data.runtime_cam1_serial = str(current_bindings.get("cam1", "")).strip()
-    session_data.runtime_cam2_serial = str(current_bindings.get("cam2", "")).strip()
+    session_data.runtime_cam1_serial = (
+        str(current_bindings.get("cam1", "")).strip()
+        or str(session_data.runtime_cam1_serial or "").strip()
+        or _stored_camera_serial_for_role(window, "cam1")
+    )
+    session_data.runtime_cam2_serial = (
+        str(current_bindings.get("cam2", "")).strip()
+        or str(session_data.runtime_cam2_serial or "").strip()
+        or _stored_camera_serial_for_role(window, "cam2")
+    )
     window.session.save_session(session_data)
 
 
@@ -101,20 +129,43 @@ def restore_runtime_capture_policy_from_session(window) -> None:
 def startup_auto_connect_runtime_cameras(window, *, import_error) -> None:
     if window._startup_runtime_auto_connect_done:
         return
-    window._startup_runtime_auto_connect_done = True
     if import_error is not None:
+        window._startup_runtime_auto_connect_done = True
         return
     if window.runtime_ctrl.connected_roles():
+        window._startup_runtime_auto_connect_done = True
         return
 
     bindings = window.runtime_page.camera_bindings()
     if not bindings:
+        restore_runtime_camera_bindings_from_session(window)
+        bindings = window.runtime_page.camera_bindings()
+    if not bindings:
+        window._startup_runtime_auto_connect_done = True
         return
 
+    attempt = int(getattr(window, "_startup_runtime_auto_connect_attempts", 0) or 0) + 1
+    window._startup_runtime_auto_connect_attempts = attempt
     if window.runtime_ctrl.try_connect_cameras(bindings):
-        window._bottom_status_bar.showMessage("已自动连接运行相机", 3000)
+        window._startup_runtime_auto_connect_done = True
+        window._startup_runtime_auto_connect_attempts = 0
+        window._bottom_status_bar.showMessage("\u5df2\u81ea\u52a8\u8fde\u63a5\u8fd0\u884c\u76f8\u673a", 3000)
         return
 
+    max_attempts = len(_STARTUP_AUTO_CONNECT_RETRY_DELAYS_MS) + 1
+    if attempt < max_attempts:
+        delay_ms = _STARTUP_AUTO_CONNECT_RETRY_DELAYS_MS[
+            min(attempt - 1, len(_STARTUP_AUTO_CONNECT_RETRY_DELAYS_MS) - 1)
+        ]
+        window._bottom_status_bar.showMessage(
+            f"\u76f8\u673a\u81ea\u52a8\u8fde\u63a5\u5931\u8d25\uff0c{delay_ms // 1000}\u79d2\u540e\u91cd\u8bd5",
+            3000,
+        )
+        QtCore.QTimer.singleShot(delay_ms, window._startup_auto_connect_runtime_cameras)
+        return
+
+    window._startup_runtime_auto_connect_done = True
+    window._startup_runtime_auto_connect_attempts = 0
     QtCore.QTimer.singleShot(0, window._show_connect_dialog)
 
 

@@ -41,6 +41,7 @@ _TEXT_LIGHT = "#e0e0e0"
 _TEXT_DIM = "#888888"
 _OK_GREEN = "#379b37"
 _NG_RED = "#dc1e1e"
+_PASS_YELLOW = "#2f8f46"
 _PENDING_GRAY = "#666666"
 _RUNNING_YELLOW = "#eab308"
 
@@ -151,6 +152,7 @@ class _ItemIndicator(QtWidgets.QFrame):
         color_map = {
             "ok": _OK_GREEN,
             "ng": _NG_RED,
+            "pass": _PASS_YELLOW,
             "pending": _PENDING_GRAY,
             "running": _RUNNING_YELLOW,
             "measured": "#2563eb",
