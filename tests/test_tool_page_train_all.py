@@ -45,6 +45,12 @@ class _FakeAlgo:
     def resolve_tool_algorithm(self, code) -> str:
         return str(code or "").strip()
 
+    def is_embedding_algorithm(self, algorithm) -> bool:
+        return str(algorithm or "").strip() == "efficientnet_b0"
+
+    def embedding_cache_dir(self, algorithm, product_dir) -> str:
+        return os.path.join(str(product_dir), "embedding_cache", str(algorithm))
+
     def train(
         self,
         ok_files,
@@ -54,6 +60,8 @@ class _FakeAlgo:
         product_dir,
         label_names,
         model_key,
+        progress_callback=None,
+        embedding_cache_dir=None,
     ):
         self.train_calls.append(
             {
@@ -77,7 +85,15 @@ class _TrainAllHarness:
     _train_sample_paths_for_role = ToolPage._train_sample_paths_for_role
     _training_camera_roles_in_lists = ToolPage._training_camera_roles_in_lists
     _warn_mixed_training_camera_samples = ToolPage._warn_mixed_training_camera_samples
+    _training_roi_ready_signature = ToolPage._training_roi_ready_signature
     _missing_training_roi_paths = ToolPage._missing_training_roi_paths
+    _training_item_display_name = staticmethod(ToolPage._training_item_display_name)
+    _build_training_task_for_item = ToolPage._build_training_task_for_item
+    _training_payload = ToolPage._training_payload
+    _set_training_running = ToolPage._set_training_running
+    _on_training_progress = ToolPage._on_training_progress
+    _start_training_worker = ToolPage._start_training_worker
+    _on_training_finished = ToolPage._on_training_finished
     _train_inspection_item = ToolPage._train_inspection_item
     _train_all_tools = ToolPage._train_all_tools
     _train = ToolPage._train
@@ -120,6 +136,15 @@ class _TrainAllHarness:
         self.saved_session = 0
         self.refresh_count = 0
         self.update_count = 0
+        self._training_in_progress = False
+        self._training_thread = None
+        self._training_worker = None
+        self._training_roi_ready_signatures = {}
+        self._training_roi_pending_actions = {}
+        self._training_roi_confirmed_signatures = {}
+        self._line2dup_match_ms_by_image = {}
+        self._line2dup_autogen_ms_by_image = {}
+        self.ref_image = None
 
     def _selected_inspection_item(self):
         if 0 <= self._selected_index < len(self.inspection_items):
@@ -156,6 +181,9 @@ class _TrainAllHarness:
 
     def _ensure_training_roi_reviewed(self, _camera_role, *, action_name: str, action_key: str = ""):
         return True
+
+    def _refresh_current_image_after_roi_update(self, candidate_paths):
+        return None
 
 
 class ToolPageTrainAllTest(unittest.TestCase):
@@ -287,3 +315,46 @@ class ToolPageTrainAllTest(unittest.TestCase):
             self.assertEqual(len(harness.algo.train_calls), 2)
             self.assertTrue(info.called)
             self.assertFalse(warning.called)
+
+    def test_confirmed_line2dup_review_is_reused_for_same_signature(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ok_path = Path(tmpdir) / "cam1_ok.png"
+            ng_path = Path(tmpdir) / "cam1_ng.png"
+            for path in (ok_path, ng_path):
+                path.write_bytes(b"x")
+                path.with_suffix(".json").write_text(
+                    '{"shapes":[{"label":"roi1"},{"label":"roi2"}]}',
+                    encoding="utf-8",
+                )
+
+            harness = _TrainAllHarness(tmpdir, [str(ok_path)], [str(ng_path)])
+            harness._ensure_training_roi_reviewed = ToolPage._ensure_training_roi_reviewed.__get__(harness, _TrainAllHarness)
+            harness.line2dup_recipe_path_for_role = lambda _role=None: ""
+            harness.line2dup_model_path_for_role = lambda _role=None: ""
+            harness.line2dup_recipe_for_role = lambda _role=None, force_reload=False: type(
+                "Recipe",
+                (),
+                {"reference_image": str(ok_path)},
+            )()
+            harness.ref_image = str(ok_path)
+            autogen_calls: list[str] = []
+
+            def _fake_autogen(**kwargs):
+                autogen_calls.append(os.path.basename(str(kwargs.get("tgt_img_path", ""))))
+                return type("Run", (), {"total_ms": 1.0})()
+
+            with (
+                mock.patch("ui.debug.tool_page.page.line2dup_locator.autogen_roi_json_from_line2dup_timed", side_effect=_fake_autogen),
+                mock.patch("PySide6.QtWidgets.QMessageBox.information"),
+                mock.patch("PySide6.QtWidgets.QMessageBox.warning"),
+            ):
+                harness._train_all_tools()
+                self.assertEqual(len(harness.algo.train_calls), 0)
+                self.assertEqual(len(autogen_calls), 2)
+
+                harness._train_all_tools()
+                self.assertEqual(len(harness.algo.train_calls), 2)
+
+                harness._train_all_tools()
+                self.assertEqual(len(harness.algo.train_calls), 4)
+                self.assertEqual(len(autogen_calls), 2)

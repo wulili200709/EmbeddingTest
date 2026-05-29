@@ -3896,7 +3896,49 @@ raw=NG seal 3/4 OK, min_ok=3
 
 
 待改：
-1.产品名字不能是中文，中文的时候模板保存报错
-2.产品现在只能新建，不能删除，考虑删除是否有权限才能删？
-3.突然断电，相机连接失败的问题？
+
 4.皮带线误判问题，以及训练慢的问题优化，还有自动roi的时候需要和手工线一样有进度提示
+
+
+# 训练缓存
+假如只有一个roi变了 剩下的roi没有变  这时候embeding会怎么样？是只有变得roi重新提取特征 还是所有的roi特征都重新提取
+按现在的实现：只有对应 ROI 的缓存会失效，其他 ROI 不会重新提取。
+
+原因是 cache key 里包含：
+
+图片路径
+图片修改时间
+labelme JSON 修改时间
+ROI label，比如 roi1 / roi2 / roi3
+backbone，比如 b0
+但是这里有个细节：如果你改了一个 ROI，labelme JSON 文件的修改时间会变。因为 key 里包含 JSON 修改时间，所以同一张图里的其他 ROI 也会因为 JSON 修改时间变化而失效。
+
+所以实际效果是：
+
+如果你改的是 roi3
+这张图的 labelme JSON 被重新保存
+那么这张图上的 roi1/roi2/roi3/roi4 cache key 都会变
+但其他没有改过 JSON 的图片不会受影响
+也就是说，不是“所有训练图片全部重提”，而是“被重新保存过 JSON 的那些图片，相关 ROI 缓存都会重新生成”。
+
+如果要做到真正只让 roi3 失效，代码要把 key 从“整个 JSON 修改时间”改成“单个 ROI shape 的内容 hash”。这样改一个 ROI，不影响同一张图里的其他 ROI。
+第一次未命中缓存：显示 embedding OK/NG ...
+第二次命中缓存：显示 cache OK/NG ...
+我也验证过：
+
+first=  embedding OK..., embedding NG...
+second= cache OK..., cache NG...
+
+现在 cache key 里包含这些信息：
+
+图片绝对路径
+图片大小
+图片修改时间 mtime_ns
+labelme JSON 绝对路径
+labelme JSON 大小
+labelme JSON 修改时间 mtime_ns
+backbone，例如 b0
+ROI label，例如 roi1
+所以只要你重新保存了标注 JSON，通常它的修改时间会变，文件大小也可能变，生成出来的 hash 就不同，程序就不会用旧的 .npz，而是重新提取 embedding 并生成新的 cache。
+
+对应代码在 algorithms/embedding.py (line 514) 附近：_file_cache_signature() 读取 os.stat(path)，然后 _embedding_cache_file() 把图片签名和 JSON 签名一起算 SHA256。

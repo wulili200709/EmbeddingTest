@@ -23,7 +23,7 @@ import re
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from algorithms.traditional import (
     TRADITIONAL_ALGORITHMS,
@@ -272,6 +272,10 @@ class AlgorithmController:
             return os.path.join(product_dir, f"{normalized_key}_register_model_{algorithm}.npz")
         return os.path.join(product_dir, f"register_model_{algorithm}.npz")
 
+    def embedding_cache_dir(self, algorithm: str, product_dir: str) -> str:
+        storage_code = learning_backbone_storage_code(algorithm)
+        return os.path.join(product_dir, "embedding_cache", storage_code)
+
     def traditional_model_storage_key(self, algorithm: str, *, model_key: object = "") -> str:
         normalized_key = self.tool_model_key(model_key)
         if normalized_key:
@@ -489,6 +493,8 @@ class AlgorithmController:
         product_dir: str,
         label_names: List[str],
         model_key: object = "",
+        progress_callback: Optional[Callable[[str], None]] = None,
+        embedding_cache_dir: Optional[str] = None,
     ) -> TrainResult:
         """
         训练 embedding 或传统阈值模型。
@@ -503,6 +509,8 @@ class AlgorithmController:
         topk = int(self.product_params.topk)
 
         if self.is_embedding_algorithm(algorithm):
+            device = qr_core.get_device()
+            feat_net = self.get_feat_net(algorithm, device)
             model = qr_core.train_register_model(
                 ok_files,
                 ng_files,
@@ -512,6 +520,10 @@ class AlgorithmController:
                 topk=topk,
                 label_name=label_names[0],
                 label_names=label_names,
+                progress_callback=progress_callback,
+                cache_dir=embedding_cache_dir or self.embedding_cache_dir(algorithm, product_dir),
+                device=device,
+                feat_net=feat_net,
             )
             saved_path = self.embedding_model_path(algorithm, product_dir, model_key=normalized_model_key)
             qr_core.save_register_model_npz(model, saved_path)
