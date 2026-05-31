@@ -10,7 +10,7 @@ from PySide6 import QtGui
 import algorithms.proxy as qr_core
 
 from domain import output_labels_from_line2dup_recipe
-from line2dup.core import locator as line2dup_locator
+from shape.core import locator as line2dup_locator
 from ui.debug import OverlayShape
 from ui.roi_overlay_colors import (
     SEARCH_REGION_COLOR,

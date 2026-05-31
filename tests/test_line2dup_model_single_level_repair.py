@@ -12,7 +12,7 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 
-from line2dup.like_matcher import (
+from shape.like_matcher import (
     Feature,
     TemplateLevel,
     detector_from_dict,

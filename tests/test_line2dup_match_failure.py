@@ -13,7 +13,7 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 
-from line2dup.core.roi_follow import _best_match
+from shape.core.roi_follow import _best_match
 
 
 class _NoMatchDetector:

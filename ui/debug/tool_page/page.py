@@ -62,8 +62,8 @@ from domain import (
     sync_items_with_labels,
     output_labels_from_line2dup_recipe,
 )
-from line2dup.core import locator as line2dup_locator
-from line2dup.core.recipe import Line2DupRecipe
+from shape.core import locator as line2dup_locator
+from shape.core.recipe import Line2DupRecipe
 from ui.debug import (
     OverlayShape,
     RoiCanvas,

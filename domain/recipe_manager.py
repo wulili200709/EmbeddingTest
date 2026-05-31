@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List, Tuple
 
-from line2dup.core.recipe import Line2DupRecipe
+from shape.core.recipe import Line2DupRecipe
 
 
 def inspection_item_specs_from_line2dup_recipe(recipe: Line2DupRecipe | None) -> List[Dict[str, str]]:

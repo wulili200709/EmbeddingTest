@@ -22,7 +22,7 @@ import numpy as np
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from line2dup.like_matcher import (
+from shape.like_matcher import (
     ColorGradientPyramid,
     Line2DupLikeDetector,
     Match,

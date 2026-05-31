@@ -3942,3 +3942,62 @@ ROI label，例如 roi1
 所以只要你重新保存了标注 JSON，通常它的修改时间会变，文件大小也可能变，生成出来的 hash 就不同，程序就不会用旧的 .npz，而是重新提取 embedding 并生成新的 cache。
 
 对应代码在 algorithms/embedding.py (line 514) 附近：_file_cache_signature() 读取 os.stat(path)，然后 _embedding_cache_file() 把图片签名和 JSON 签名一起算 SHA256。
+
+
+
+# tips
+重点检查这些：
+
+Python 版本必须一致
+你的 .pyd 是：
+
+cp312-win_amd64
+服务器必须是：
+
+Python 3.12 64-bit
+Windows x64
+不能用 Python 3.10、3.11，也不能用 32 位 Python。
+
+必须带这 4 个 native pyd
+shape_original.cp312-win_amd64.pyd
+shape_fusion.cp312-win_amd64.pyd
+shape_fusionv2.cp312-win_amd64.pyd
+shape_sim3.cp312-win_amd64.pyd
+必须带 OpenCV DLL
+opencv_world4130.dll
+放在 exe 同目录，或者 Python 启动目录能找到的位置。
+
+NumPy 版本尽量一致
+当前本机 Python 3.12 是：
+
+numpy 2.3.2
+服务器建议也装同版本：
+
+py -3.12 -m pip install numpy==2.3.2
+Visual C++ 运行库
+服务器需要有 MSVC runtime。通常装：
+
+Microsoft Visual C++ Redistributable 2015-2022 x64
+否则 .pyd 或 OpenCV DLL 可能加载失败。
+
+PyInstaller 打包时只收集新 pyd
+当前应该只打包：
+
+shape_original.cp312-win_amd64.pyd
+shape_fusion.cp312-win_amd64.pyd
+shape_fusionv2.cp312-win_amd64.pyd
+shape_sim3.cp312-win_amd64.pyd
+不要把旧的这些打进去：
+
+line2dup_*.pyd
+shape.cp312-win_amd64.pyd
+服务器快速自检命令
+在服务器的 EmbeddingTest 目录运行：
+
+py -3.12 -c "import shape; import shape_original, shape_fusion, shape_fusionv2, shape_sim3; print('ok')"
+再测业务映射：
+
+py -3.12 -c "from shape.like_matcher import ensure_native_backends_available, _NATIVE_MODULES; ensure_native_backends_available(('original','fusion','fusionv2','sim3')); print({k:v.__name__ for k,v in _NATIVE_MODULES.items()})"
+期望输出：
+
+{'original': 'shape_original', 'fusion': 'shape_fusion', 'fusionv2': 'shape_fusionv2', 'sim3': 'shape_sim3'}

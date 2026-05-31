@@ -168,7 +168,7 @@ hiddenimports = sorted(
         + collect_submodules("devices")
         + collect_submodules("domain")
         + collect_submodules("infrastructure")
-        + collect_submodules("line2dup")
+        + collect_submodules("shape")
         + collect_submodules("services")
         + collect_submodules("ui")
         + [
@@ -197,7 +197,7 @@ hiddenimports = sorted(
             "ui.debug.tool_page.page",
             "ui.runtime.runtime_mode_pyside6",
             "ui.runtime.run_main_window",
-            "line2dup.ui.template_page_pyside6",
+            "shape.ui.template_page_pyside6",
             "CameraParams_const",
             "CameraParams_header",
             "MvCameraControl_class",

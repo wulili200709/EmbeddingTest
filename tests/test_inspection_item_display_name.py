@@ -11,7 +11,7 @@ if str(PROJECT_DIR) not in sys.path:
 
 from domain.inspection_items import InspectionItem, sync_items_with_labels
 from domain.recipe_manager import inspection_item_specs_from_line2dup_recipe
-from line2dup.core.recipe import Line2DupRecipe
+from shape.core.recipe import Line2DupRecipe
 
 
 class InspectionItemDisplayNameTest(unittest.TestCase):

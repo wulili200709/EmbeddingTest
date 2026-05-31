@@ -26,7 +26,7 @@ from domain import (
     save_inspection_items,
     sync_items_with_labels,
 )
-from line2dup.core import locator as line2dup_locator
+from shape.core import locator as line2dup_locator
 
 if TYPE_CHECKING:
     from application import AlgorithmController, ProductSession

@@ -33,7 +33,7 @@ class ProductPaths:
 
     @classmethod
     def build(cls, product_dir: str) -> "ProductPaths":
-        from line2dup.core.locator import product_paths
+        from shape.core.locator import product_paths
 
         paths = product_paths(product_dir, "cam1")
         return cls(
@@ -110,10 +110,10 @@ class ProductSession:
 
     def line2dup_paths_for_role(self, camera_role: str):
         if not self.product_dir:
-            from line2dup.core.locator import product_paths
+            from shape.core.locator import product_paths
 
             return product_paths("", camera_role)
-        from line2dup.core.locator import product_paths
+        from shape.core.locator import product_paths
 
         return product_paths(self.product_dir, camera_role)
 

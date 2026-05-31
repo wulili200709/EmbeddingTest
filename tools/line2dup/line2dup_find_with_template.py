@@ -16,7 +16,7 @@ import cv2
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from line2dup.like_matcher import (
+from shape.like_matcher import (
     draw_matches,
     load_detector_model,
     nms_matches,

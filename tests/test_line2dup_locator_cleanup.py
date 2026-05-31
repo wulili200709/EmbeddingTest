@@ -11,8 +11,8 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from line2dup.core.locator import _delete_stale_line2dup_roi_shapes
-from line2dup.core.recipe import Line2DupRecipe
+from shape.core.locator import _delete_stale_line2dup_roi_shapes
+from shape.core.recipe import Line2DupRecipe
 
 
 class Line2DupLocatorCleanupTest(unittest.TestCase):

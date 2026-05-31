@@ -11,7 +11,7 @@ from typing import Dict, List, Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from algorithms.registry import learning_backbone_storage_code
-from line2dup.core import locator as line2dup_locator
+from shape.core import locator as line2dup_locator
 
 
 def _predict_image(

@@ -11,23 +11,23 @@ root_str = str(ROOT)
 if root_str not in sys.path:
     sys.path.insert(0, root_str)
 
-from line2dup.core.locator import (
+from shape.core.locator import (
     load_recipe_for_product,
     product_paths,
     resolved_model_path_for_product,
     resolved_recipe_path_for_product,
     save_recipe_for_product,
 )
-from line2dup.core.recipe import Line2DupRecipe, save_recipe
+from shape.core.recipe import Line2DupRecipe, save_recipe
 
 
 class Line2DupLocatorRolesTest(unittest.TestCase):
-    def test_role_paths_are_split_under_line2dup_role_dirs(self) -> None:
+    def test_role_paths_are_split_under_shape_role_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             product_dir = str(Path(tmp) / "product")
             paths = product_paths(product_dir, "cam2")
-            self.assertTrue(paths.model_path.endswith("line2dup\\cam2\\model.json"))
-            self.assertTrue(paths.recipe_path.endswith("line2dup\\cam2\\recipe.json"))
+            self.assertTrue(paths.model_path.endswith("shape\\cam2\\model.json"))
+            self.assertTrue(paths.recipe_path.endswith("shape\\cam2\\recipe.json"))
 
     def test_save_and_load_recipe_use_role_specific_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -39,7 +39,7 @@ class Line2DupLocatorRolesTest(unittest.TestCase):
 
             save_recipe_for_product(str(product_dir), recipe, "cam2")
 
-            recipe_json = json.loads((product_dir / "line2dup" / "cam2" / "recipe.json").read_text(encoding="utf-8"))
+            recipe_json = json.loads((product_dir / "shape" / "cam2" / "recipe.json").read_text(encoding="utf-8"))
             self.assertEqual(recipe_json["model_path"], "model.json")
             self.assertEqual(recipe_json["reference_image"], "../../debug_capture/cam2_ref.png")
 
@@ -80,7 +80,7 @@ class Line2DupLocatorRolesTest(unittest.TestCase):
             Path(paths.recipe_path).write_text(
                 json.dumps(
                     {
-                        "model_path": r"E:\old_root\product\line2dup\cam1\model.json",
+                        "model_path": r"E:\old_root\product\shape\cam1\model.json",
                         "reference_image": r"E:\old_root\product\debug_capture\moved_ref.png",
                         "class_id": "demo",
                     },
