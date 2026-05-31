@@ -7,3 +7,4 @@ dist-fast/
 dist-build-fast/
 *.pyd
 *.dll
+EmbeddingTestold/
