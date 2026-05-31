@@ -178,14 +178,12 @@ SIMILARITY_LUT = _load_similarity_lut()
 
 _DEFAULT_OPENCV_BUILD_ROOT = Path(r"C:\Users\ADMIN\tools\opencv\build")
 NATIVE_BACKEND_TO_MODULE = {
-    "original": "line2dup_native",
-    "fusion": "line2dup_fusion_native",
-    "fusionv2": "match_fusionv2",
-    "sim3": "line2dup_sim3_native",
+    "original": "shape_original",
+    "fusion": "shape_fusion",
+    "fusionv2": "shape",
+    "sim3": "shape_sim3",
 }
-NATIVE_BACKEND_LEGACY_MODULES = {
-    "fusionv2": ("line2dup_fusionv2_native",),
-}
+NATIVE_BACKEND_LEGACY_MODULES = {}
 _NATIVE_MODULES: Dict[str, Any] = {}
 _OPENCV_DLL_HANDLE: Any = None
 _NATIVE_MODULE_ERRORS: Dict[str, BaseException] = {}
@@ -1706,7 +1704,7 @@ def detector_from_dict(data: Dict[str, Any]) -> Line2DupLikeDetector:
 
 
 def _product_dir_for_model_file(path: Path) -> str:
-    if path.parent.parent.name.lower() == "line2dup":
+    if path.parent.parent.name.lower() in {"shape", "line2dup"}:
         return str(path.parent.parent.parent)
     return str(path.parent)
 

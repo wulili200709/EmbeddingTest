@@ -79,7 +79,7 @@ def _normalize_camera_role(camera_role: str) -> str:
 
 def product_paths(product_dir: str, camera_role: str = "cam1") -> ProductLine2DupPaths:
     normalized_role = _normalize_camera_role(camera_role)
-    role_dir = os.path.join(product_dir, "line2dup", normalized_role)
+    role_dir = os.path.join(product_dir, "shape", normalized_role)
     return ProductLine2DupPaths(
         product_dir=product_dir,
         camera_role=normalized_role,

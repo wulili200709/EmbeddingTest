@@ -90,7 +90,7 @@ class Line2DupRecipe:
 
 
 def _product_dir_for_recipe_file(path: Path) -> str:
-    if path.parent.parent.name.lower() == "line2dup":
+    if path.parent.parent.name.lower() in {"shape", "line2dup"}:
         return str(path.parent.parent.parent)
     return str(path.parent)
 
@@ -99,7 +99,7 @@ def load_recipe(path: str) -> Line2DupRecipe:
     p = Path(path)
     data = load_json_with_backup(p, default=None)
     if data is None:
-        return Line2DupRecipe(model_path=str(p.with_name("line2dup_model.json")))
+        return Line2DupRecipe(model_path=str(p.with_name("model.json")))
     if not isinstance(data, dict):
         raise ValueError(f"Invalid line2dup recipe: {p}")
     recipe = Line2DupRecipe.from_dict(data)
@@ -113,7 +113,7 @@ def load_recipe(path: str) -> Line2DupRecipe:
         prefer_existing=True,
     )
     if not recipe.model_path:
-        recipe.model_path = str(p.with_name("line2dup_model.json"))
+        recipe.model_path = str(p.with_name("model.json"))
     return recipe
 
 
