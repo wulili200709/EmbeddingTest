@@ -160,6 +160,113 @@ def _filter_paths_for_camera(tool_page, paths: List[str], camera_id: object) -> 
         return list(paths)
     return [path for path in paths if _camera_role_from_path(path) == role]
 
+
+class _TrainingJobWorker(QtCore.QObject):
+    progressChanged = QtCore.Signal(str)
+    finished = QtCore.Signal(object)
+
+    def __init__(
+        self,
+        algo: AlgorithmController,
+        payload: dict,
+        parent: Optional[QtCore.QObject] = None,
+    ) -> None:
+        super().__init__(parent)
+        self._algo = algo
+        self._payload = dict(payload or {})
+
+    @QtCore.Slot()
+    def run(self) -> None:
+        try:
+            result = self._run_training()
+        except Exception as exc:
+            result = {
+                "mode": str(self._payload.get("mode", "") or ""),
+                "success_names": [],
+                "failure_messages": [str(exc)],
+                "task_results": [],
+                "display_rows": [],
+                "last_status_message": "",
+                "last_dialog_message": "",
+                "fatal": str(exc),
+            }
+        self.finished.emit(result)
+
+    def _run_training(self) -> dict:
+        tasks = [dict(task or {}) for task in self._payload.get("tasks", [])]
+        mode = str(self._payload.get("mode", "") or "")
+        success_names: list[str] = []
+        failure_messages: list[str] = [
+            str(message)
+            for message in self._payload.get("failure_messages", [])
+            if str(message)
+        ]
+        task_results: list[dict[str, object]] = []
+        display_rows: list[dict[str, object]] = []
+        last_status_message = ""
+        last_dialog_message = ""
+        total = len(tasks)
+
+        for index, task in enumerate(tasks, start=1):
+            display_name = str(task.get("display_name", "") or "tool").strip() or "tool"
+            self.progressChanged.emit(f"training {index}/{total} {display_name}")
+
+            def _progress(message: str, *, _index: int = index, _total: int = total, _name: str = display_name) -> None:
+                self.progressChanged.emit(f"training {_index}/{_total} {_name}: {message}")
+
+            try:
+                result = self._execute_task(task, progress_callback=_progress)
+                success_names.append(display_name)
+                last_status_message = str(result.status_message or "")
+                last_dialog_message = str(result.dialog_message or "")
+                task_results.append({"task": task, "result": result})
+                if not result.is_embedding and result.result_rows and not display_rows:
+                    display_rows = list(result.result_rows)
+            except Exception as exc:
+                failure_messages.append(f"{display_name}: {exc}")
+
+        return {
+            "mode": mode,
+            "success_names": success_names,
+            "failure_messages": failure_messages,
+            "task_results": task_results,
+            "display_rows": display_rows,
+            "last_status_message": last_status_message,
+            "last_dialog_message": last_dialog_message,
+            "selected_item_id": str(self._payload.get("selected_item_id", "") or ""),
+            "selected_item_group_key": str(self._payload.get("selected_item_group_key", "") or ""),
+            "fatal": "",
+        }
+
+    def _execute_task(
+        self,
+        task: dict,
+        *,
+        progress_callback=None,
+    ) -> TrainResult:
+        runtime_params = dict(task.get("runtime_params", {}) or {})
+        product_params = getattr(self._algo, "product_params", None)
+        algorithm = str(task.get("algorithm", "") or "").strip()
+        if product_params is not None:
+            if algorithm:
+                product_params.algorithm = algorithm
+            if bool(runtime_params.get("embedding", False)):
+                product_params.score_mode = str(runtime_params.get("score_mode", "proto") or "proto")
+                product_params.margin = float(runtime_params.get("margin", 0.02))
+                product_params.topk = int(runtime_params.get("topk", 3))
+        return self._algo.train(
+            list(task.get("ok_files", []) or []),
+            list(task.get("ng_files", []) or []),
+            algorithm=algorithm,
+            product_dir=str(task.get("product_dir", "") or ""),
+            label_names=list(task.get("label_names", []) or []),
+            model_key=task.get("model_key", ""),
+            ok_samples=list(task.get("ok_samples", []) or []),
+            ng_samples=list(task.get("ng_samples", []) or []),
+            progress_callback=progress_callback,
+            embedding_cache_dir=str(task.get("embedding_cache_dir", "") or ""),
+        )
+
 class _SampleAnnotationCanvas(QtWidgets.QWidget):
     imagePressed = QtCore.Signal(int, int, int)
 
@@ -375,7 +482,11 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
         self._tool_page = preview_dialog._tool_page
         self.setWindowTitle("自动生成 ROI 工具")
         self.setModal(False)
-        self.resize(760, 180)
+        self.resize(760, 230)
+        self._autogen_running = False
+        self._autogen_progress_total = 0
+        self._autogen_progress_ok = 0
+        self._autogen_progress_errors = 0
 
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(10, 10, 10, 10)
@@ -406,6 +517,22 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
         self.chk_only_missing = QtWidgets.QCheckBox("仅缺失ROI")
         self.chk_only_missing.setChecked(True)
         root.addWidget(self.chk_only_missing, 0, QtCore.Qt.AlignmentFlag.AlignRight)
+
+        self.lbl_status = QtWidgets.QLabel("状态：等待生成")
+        self.lbl_status.setStyleSheet("color:#7ee787;font-size:12px;")
+        root.addWidget(self.lbl_status)
+
+        self.progress_autogen = QtWidgets.QProgressBar()
+        self.progress_autogen.setRange(0, 1)
+        self.progress_autogen.setValue(0)
+        self.progress_autogen.setTextVisible(True)
+        self.progress_autogen.setFormat("等待生成")
+        self.progress_autogen.setStyleSheet(
+            "QProgressBar{background:#2f2f2f;color:#d0d0d0;border:1px solid #505050;"
+            "border-radius:3px;text-align:center;height:18px;}"
+            "QProgressBar::chunk{background:#2ea043;border-radius:2px;}"
+        )
+        root.addWidget(self.progress_autogen)
 
         row = QtWidgets.QHBoxLayout()
         row.setSpacing(8)
@@ -472,9 +599,12 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
             self.lbl_ref.setText(f"参考图：{os.path.basename(ref_image) if ref_image else '未设置'}")
             self.lbl_ref.setToolTip(ref_image)
         has_scope = bool(paths)
-        self.btn_autogen_current.setEnabled(has_scope and can_autogen)
-        self.btn_clear_current.setEnabled(has_scope)
-        self.btn_autogen_current_image.setEnabled(bool(current_path) and can_autogen)
+        running = bool(getattr(self, "_autogen_running", False))
+        self.cmb_loc_method.setEnabled(not running)
+        self.chk_only_missing.setEnabled(not running)
+        self.btn_autogen_current.setEnabled(not running and has_scope and can_autogen)
+        self.btn_clear_current.setEnabled(not running and has_scope)
+        self.btn_autogen_current_image.setEnabled(not running and bool(current_path) and can_autogen)
 
     def _on_loc_method_changed(self, method: str) -> None:
         method = str(method or "").strip() or "line2dup"
@@ -488,20 +618,91 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
     def _sync_tool_page_role(self) -> None:
         self._tool_page._set_current_camera_role(self._camera_role(), sync_debug_role=True)
 
+    def _set_autogen_running(self, running: bool) -> None:
+        self._autogen_running = bool(running)
+        self._refresh_scope()
+
+    def _prepare_autogen_progress(self, total_hint: int) -> None:
+        total = max(1, int(total_hint or 0))
+        self._autogen_progress_total = 0
+        self._autogen_progress_ok = 0
+        self._autogen_progress_errors = 0
+        self.progress_autogen.setRange(0, total)
+        self.progress_autogen.setValue(0)
+        self.progress_autogen.setFormat("准备中")
+        self.lbl_status.setText(f"状态：正在准备 {int(total_hint or 0)} 张图片")
+
+    def _on_autogen_progress(
+        self,
+        index: int,
+        total: int,
+        path: str,
+        ok_count: int,
+        err_count: int,
+    ) -> None:
+        total = max(1, int(total or 0))
+        index = max(0, min(int(index or 0), total))
+        self._autogen_progress_total = total
+        self._autogen_progress_ok = max(0, int(ok_count or 0))
+        self._autogen_progress_errors = max(0, int(err_count or 0))
+        self.progress_autogen.setRange(0, total)
+        self.progress_autogen.setValue(index)
+        percent = int(round((index / total) * 100)) if total else 0
+        self.progress_autogen.setFormat(f"{index}/{total}  {percent}%")
+        if index <= 0:
+            self.lbl_status.setText(f"状态：准备处理 {total} 张图片")
+        else:
+            image_name = os.path.basename(str(path or ""))
+            self.lbl_status.setText(
+                f"处理中... {index}/{total} {image_name} / "
+                f"成功 {self._autogen_progress_ok} / 失败 {self._autogen_progress_errors}"
+            )
+        QtWidgets.QApplication.processEvents()
+
+    def _finish_autogen_progress(self) -> None:
+        total = int(getattr(self, "_autogen_progress_total", 0) or 0)
+        if total <= 0:
+            self.progress_autogen.setRange(0, 1)
+            self.progress_autogen.setValue(0)
+            self.progress_autogen.setFormat("未处理")
+            self.lbl_status.setText("状态：未处理图片")
+            return
+        self.progress_autogen.setRange(0, total)
+        self.progress_autogen.setValue(total)
+        self.progress_autogen.setFormat(f"{total}/{total}  100%")
+        self.lbl_status.setText(
+            f"状态：ROI 生成完成，成功 {self._autogen_progress_ok} 张，"
+            f"失败 {self._autogen_progress_errors} 张"
+        )
+
+    def _run_autogen_paths(self, paths: List[str], *, only_missing: bool, preferred_path: str) -> None:
+        self._prepare_autogen_progress(len(paths))
+        self._set_autogen_running(True)
+        try:
+            self._tool_page._autogen_roi_for_images(
+                paths,
+                only_missing=only_missing,
+                silent=False,
+                camera_role=self._camera_role(),
+                progress_callback=self._on_autogen_progress,
+            )
+        finally:
+            self._set_autogen_running(False)
+        self._finish_autogen_progress()
+        self._preview_dialog._reload_samples(preferred_path=preferred_path)
+        self._refresh_scope()
+
     def _run_autogen_current_list(self) -> None:
         paths = self._scope_paths()
         if not paths:
             QtWidgets.QMessageBox.information(self, "提示", "当前列表没有可处理的图片")
             return
         self._sync_tool_page_role()
-        self._tool_page._autogen_roi_for_images(
+        self._run_autogen_paths(
             paths,
             only_missing=self.chk_only_missing.isChecked(),
-            silent=False,
-            camera_role=self._camera_role(),
+            preferred_path=self._current_path(),
         )
-        self._preview_dialog._reload_samples(preferred_path=self._current_path())
-        self._refresh_scope()
 
     def _run_autogen_current_image(self) -> None:
         path = self._current_path()
@@ -509,14 +710,7 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
             QtWidgets.QMessageBox.information(self, "提示", "当前没有选中图片")
             return
         self._sync_tool_page_role()
-        self._tool_page._autogen_roi_for_images(
-            [path],
-            only_missing=True,
-            silent=False,
-            camera_role=self._camera_role(),
-        )
-        self._preview_dialog._reload_samples(preferred_path=path)
-        self._refresh_scope()
+        self._run_autogen_paths([path], only_missing=True, preferred_path=path)
 
     def _run_clear_current_list(self) -> None:
         paths = self._scope_paths()
@@ -1211,6 +1405,10 @@ class ToolPage(QtWidgets.QWidget):
         self._line2dup_recipes_by_role: Dict[str, Optional[Line2DupRecipe]] = {}
         self._training_roi_ready_signatures: Dict[str, str] = {}
         self._training_roi_pending_actions: Dict[str, str] = {}
+        self._training_roi_confirmed_signatures: Dict[str, str] = {}
+        self._training_thread: Optional[QtCore.QThread] = None
+        self._training_worker: Optional[_TrainingJobWorker] = None
+        self._training_in_progress = False
         self.inspection_items: List[InspectionItem] = []
         self._visible_inspection_item_indexes: List[int] = []
         self._inspection_items_table_loading = False
@@ -1282,6 +1480,21 @@ class ToolPage(QtWidgets.QWidget):
             roles.insert(0, "cam1")
         return roles
 
+    def _prune_unconfigured_inspection_items(self, *, persist: bool = True) -> bool:
+        allowed_roles = set(self.configured_camera_roles())
+        items = list(getattr(self, "inspection_items", []) or [])
+        kept = [
+            item
+            for item in items
+            if _normalize_camera_role(getattr(item, "camera_id", "")) in allowed_roles
+        ]
+        if len(kept) == len(items):
+            return False
+        self.inspection_items = kept
+        if persist and getattr(self.session, "inspection_items_path", ""):
+            save_inspection_items(self.inspection_items, self.session.inspection_items_path)
+        return True
+
     def set_configured_camera_roles(self, roles: List[str]) -> None:
         normalized: List[str] = []
         for role in roles:
@@ -1294,6 +1507,10 @@ class ToolPage(QtWidgets.QWidget):
             normalized.insert(0, "cam1")
         self._configured_camera_roles = normalized
         self._apply_configured_camera_roles_to_ui()
+        if self._prune_unconfigured_inspection_items(persist=True):
+            if hasattr(self, "inspection_items_table"):
+                self._refresh_inspection_items_table()
+            self.inspectionItemsChanged.emit()
 
     def current_camera_role(self) -> str:
         combo = getattr(self, "cmb_current_camera_role", None)
@@ -1655,10 +1872,12 @@ class ToolPage(QtWidgets.QWidget):
         if camera_role is None:
             self._training_roi_ready_signatures = {}
             self._training_roi_pending_actions = {}
+            self._training_roi_confirmed_signatures = {}
         else:
             role = _normalize_camera_role(camera_role) or "cam1"
             self._training_roi_ready_signatures.pop(role, None)
             self._training_roi_pending_actions.pop(role, None)
+            self._training_roi_confirmed_signatures.pop(role, None)
         self._update_runtime_widgets()
 
     def _sync_training_action_buttons(self) -> None:
@@ -1722,12 +1941,15 @@ class ToolPage(QtWidgets.QWidget):
             return True
 
         signature = self._training_roi_ready_signature(role)
+        if self._training_roi_confirmed_signatures.get(role) == signature:
+            return True
         if (
             self._training_roi_ready_signatures.get(role) == signature
             and self._training_roi_pending_actions.get(role) == action_key
         ):
             self._training_roi_ready_signatures.pop(role, None)
             self._training_roi_pending_actions.pop(role, None)
+            self._training_roi_confirmed_signatures[role] = signature
             self._update_runtime_widgets()
             return True
 
@@ -1796,6 +2018,9 @@ class ToolPage(QtWidgets.QWidget):
 
     def _set_current_camera_role(self, role: object, *, sync_debug_role: bool = True) -> None:
         normalized = _normalize_camera_role(role) or "cam1"
+        allowed_roles = self.configured_camera_roles()
+        if normalized not in set(allowed_roles):
+            normalized = allowed_roles[0]
         previous = getattr(self, "_current_camera_role", "cam1")
         self._current_camera_role = normalized
 
@@ -3868,7 +4093,7 @@ class ToolPage(QtWidgets.QWidget):
         if tool_stats_label is not None:
             tool_stats_label.setText(f"  {self._current_tool_sample_stats_text()}")
         validation_label = getattr(self, "lbl_training_validation", None)
-        if validation_label is not None:
+        if validation_label is not None and not getattr(self, "_training_in_progress", False):
             validation_label.setText(self._training_validation_text())
 
         selected_path = self._current_selected_path()
@@ -4409,6 +4634,8 @@ class ToolPage(QtWidgets.QWidget):
         embedding_button = getattr(self, "btn_embedding_analysis", None)
         if embedding_button is not None:
             embedding_button.setEnabled(embedding and not anomaly)
+        if getattr(self, "_training_in_progress", False):
+            self._set_training_running(True)
         self._sync_training_action_buttons()
         self._update_sample_panel_widgets()
 
@@ -4542,7 +4769,17 @@ class ToolPage(QtWidgets.QWidget):
                 pass
         return missing_paths
 
-    def _train_inspection_item(self, inspection_item: InspectionItem) -> TrainResult:
+    @staticmethod
+    def _training_item_display_name(inspection_item: InspectionItem) -> str:
+        group_name = str(getattr(inspection_item, "task_group", "") or "").strip()
+        return group_name or str(
+            inspection_item.display_name
+            or inspection_item.roi_label
+            or inspection_item.item_id
+            or "tool"
+        ).strip() or "tool"
+
+    def _prepare_training_task_for_item(self, inspection_item: InspectionItem) -> dict:
         if not inspection_item.enabled:
             raise RuntimeError("selected tool is disabled")
 
@@ -4580,19 +4817,42 @@ class ToolPage(QtWidgets.QWidget):
 
         runtime_params = sync_item_runtime_params_to_controller(self, inspection_item, algorithm=algorithm)
         self._clear_previous_training_output(inspection_item)
-        result = self.algo.train(
-            training_ok_files,
-            training_ng_files,
-            algorithm=algorithm,
-            product_dir=self.session.product_dir,
-            label_names=label_names,
-            model_key=str(training_context.get("model_key", "") or self._effective_model_key_for_item(inspection_item)),
-            ok_samples=training_ok_samples,
-            ng_samples=training_ng_samples,
-        )
+        embedding_cache_dir = ""
+        is_embedding = bool(getattr(self.algo, "is_embedding_algorithm", lambda _code: False)(algorithm))
+        if is_embedding and not is_anomaly:
+            cache_dir_getter = getattr(self.algo, "embedding_cache_dir", None)
+            if callable(cache_dir_getter):
+                embedding_cache_dir = str(cache_dir_getter(algorithm, self.session.product_dir) or "")
+        return {
+            "inspection_item": inspection_item,
+            "item_id": str(getattr(inspection_item, "item_id", "") or ""),
+            "display_name": self._training_item_display_name(inspection_item),
+            "algorithm": algorithm,
+            "product_dir": self.session.product_dir,
+            "label_names": label_names,
+            "model_key": str(training_context.get("model_key", "") or self._effective_model_key_for_item(inspection_item)),
+            "ok_files": training_ok_files,
+            "ng_files": training_ng_files,
+            "ok_samples": training_ok_samples,
+            "ng_samples": training_ng_samples,
+            "runtime_params": dict(runtime_params),
+            "is_anomaly": is_anomaly,
+            "embedding_cache_dir": embedding_cache_dir,
+        }
+
+    def _execute_training_task(self, task: dict, *, progress_callback=None) -> TrainResult:
+        worker = _TrainingJobWorker(self.algo, {"tasks": []})
+        return worker._execute_task(task, progress_callback=progress_callback)
+
+    def _finalize_training_task_result(self, task: dict, result: TrainResult) -> None:
+        inspection_item = task.get("inspection_item")
+        if inspection_item is None:
+            return
+        algorithm = str(task.get("algorithm", "") or "").strip()
+        runtime_params = dict(task.get("runtime_params", {}) or {})
         if not result.is_embedding:
             expected_model_key = str(
-                training_context.get("model_key", "") or self._effective_model_key_for_item(inspection_item)
+                task.get("model_key", "") or self._effective_model_key_for_item(inspection_item)
             ).strip()
             grouped_traditional = bool(str(getattr(inspection_item, "task_group", "") or "").strip())
             if isinstance(result.traditional_model_dict, dict):
@@ -4639,7 +4899,7 @@ class ToolPage(QtWidgets.QWidget):
             trained_score_mode = runtime_params["score_mode"]
             trained_margin = runtime_params["margin"]
             trained_topk = runtime_params["topk"]
-            if is_anomaly:
+            if bool(task.get("is_anomaly", False)):
                 trained_score_mode = "topk"
                 trained_margin = float(getattr(trained_model, "threshold", trained_margin))
                 trained_topk = max(1, int(getattr(trained_model, "topk", trained_topk)))
@@ -4654,12 +4914,166 @@ class ToolPage(QtWidgets.QWidget):
                 margin=trained_margin,
                 topk=trained_topk,
             )
+
+    def _train_inspection_item(self, inspection_item: InspectionItem) -> TrainResult:
+        task = self._prepare_training_task_for_item(inspection_item)
+        result = self._execute_training_task(task)
+        self._finalize_training_task_result(task, result)
         return result
+
+    def _training_payload(
+        self,
+        mode: str,
+        tasks: List[dict],
+        *,
+        selected_item_id: str = "",
+        selected_item_group_key: str = "",
+        failures: Optional[List[str]] = None,
+    ) -> dict:
+        return {
+            "mode": mode,
+            "tasks": list(tasks),
+            "selected_item_id": str(selected_item_id or ""),
+            "selected_item_group_key": str(selected_item_group_key or ""),
+            "failure_messages": list(failures or []),
+        }
+
+    def _set_training_running(self, running: bool) -> None:
+        self._training_in_progress = bool(running)
+        for attr in ("btn_train", "btn_train_current", "btn_test", "btn_export_test", "btn_clear_session"):
+            button = getattr(self, attr, None)
+            if button is not None:
+                button.setEnabled(not running)
+
+    def _on_training_progress(self, message: str) -> None:
+        text = str(message or "").strip()
+        if not text:
+            return
+        status_text = f"Status: {text}"
+        status_label = getattr(self, "lbl_status", None)
+        if status_label is not None:
+            status_label.setText(status_text)
+        validation_label = getattr(self, "lbl_training_validation", None)
+        if validation_label is not None:
+            validation_label.setText(status_text)
+
+    def _start_training_worker(self, payload: dict) -> None:
+        if getattr(self, "_training_in_progress", False):
+            QtWidgets.QMessageBox.information(self, "Info", "Training is already running.")
+            return
+
+        self._set_training_running(True)
+        self._on_training_progress("training queued")
+
+        if not isinstance(self, QtCore.QObject):
+            worker = _TrainingJobWorker(self.algo, payload)
+            result = worker._run_training()
+            self._on_training_finished(result)
+            return
+
+        thread = QtCore.QThread(self)
+        worker = _TrainingJobWorker(self.algo, payload)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progressChanged.connect(self._on_training_progress)
+        worker.finished.connect(self._on_training_finished)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        self._training_thread = thread
+        self._training_worker = worker
+        thread.start()
+
+    def _on_training_finished(self, payload: object) -> None:
+        result_payload = dict(payload or {}) if isinstance(payload, dict) else {}
+        self._training_thread = None
+        self._training_worker = None
+        self._set_training_running(False)
+
+        success_names = [str(name) for name in result_payload.get("success_names", []) if str(name)]
+        failure_messages = [str(message) for message in result_payload.get("failure_messages", []) if str(message)]
+        selected_item_id = str(result_payload.get("selected_item_id", "") or "")
+        selected_item_group_key = str(result_payload.get("selected_item_group_key", "") or "")
+        mode = str(result_payload.get("mode", "") or "")
+        display_rows = list(result_payload.get("display_rows", []) or [])
+        last_status_message = str(result_payload.get("last_status_message", "") or "")
+        last_dialog_message = str(result_payload.get("last_dialog_message", "") or "")
+
+        for item in list(result_payload.get("task_results", []) or []):
+            if not isinstance(item, dict):
+                continue
+            task = dict(item.get("task", {}) or {})
+            train_result = item.get("result")
+            if not isinstance(train_result, TrainResult):
+                continue
+            try:
+                self._finalize_training_task_result(task, train_result)
+                if not train_result.is_embedding and train_result.result_rows:
+                    inspection_item = task.get("inspection_item")
+                    item_id = str(getattr(inspection_item, "item_id", "") or "")
+                    item_group_key = self._effective_model_key_for_item(inspection_item)
+                    if item_id == selected_item_id or (
+                        selected_item_group_key
+                        and item_group_key == selected_item_group_key
+                    ):
+                        display_rows = list(train_result.result_rows)
+                    elif not display_rows:
+                        display_rows = list(train_result.result_rows)
+            except Exception as exc:
+                failure_messages.append(f"{task.get('display_name', 'tool')}: {exc}")
+
+        if last_status_message:
+            self.lbl_status.setText(last_status_message)
+            if hasattr(self, "lbl_training_validation"):
+                self.lbl_training_validation.setText(last_status_message)
+        if display_rows:
+            self._populate_results_table(display_rows)
+
+        persist_items = getattr(self, "_persist_inspection_items", None)
+        if callable(persist_items):
+            persist_items()
+        if success_names:
+            self._save_runtime_params()
+            self._reload_runtime_params_from_disk()
+            self._save_session()
+        self._refresh_inspection_items_table()
+        self._update_runtime_widgets()
+
+        if failure_messages:
+            summary_lines: List[str] = []
+            if success_names:
+                summary_lines.append(
+                    f"Succeeded: {len(success_names)} tool(s) - " + ", ".join(success_names)
+                )
+            summary_lines.append(f"Failed: {len(failure_messages)} tool(s)")
+            summary_lines.extend(failure_messages[:20])
+            self.lbl_status.setText(
+                f"Status: partial train done, success={len(success_names)}, failed={len(failure_messages)}"
+            )
+            QtWidgets.QMessageBox.warning(self, "Train Result", "\n".join(summary_lines))
+            return
+
+        if mode == "current":
+            QtWidgets.QMessageBox.information(
+                self,
+                "Train complete",
+                last_dialog_message or "Training is complete. You can start testing now.",
+            )
+            return
+
+        QtWidgets.QMessageBox.information(
+            self,
+            "Train Result",
+            f"Finished training/calibrating {len(success_names)} enabled tool/group(s).",
+        )
 
     def _train_all_tools(self) -> None:
         self.algo.model = None
         self.table.setRowCount(0)
         self._current_result_rows = []
+        if getattr(self, "_training_in_progress", False):
+            QtWidgets.QMessageBox.information(self, "Info", "Training is already running.")
+            return
         if self._warn_mixed_training_camera_samples(self.current_camera_role()):
             return
         if not self._ensure_training_roi_reviewed(
@@ -4694,69 +5108,45 @@ class ToolPage(QtWidgets.QWidget):
                 continue
             seen_train_targets.add(train_signature)
             train_targets.append(inspection_item)
-        display_rows: List[Dict[str, object]] = []
-        success_names: List[str] = []
+        tasks: List[dict] = []
         failure_messages: List[str] = []
-        last_status_message = ""
 
         for inspection_item in train_targets:
-            group_name = str(getattr(inspection_item, "task_group", "") or "").strip()
-            display_name = group_name or str(
-                inspection_item.display_name or inspection_item.roi_label or inspection_item.item_id or "tool"
-            ).strip()
+            display_name = self._training_item_display_name(inspection_item)
             try:
-                result = self._train_inspection_item(inspection_item)
-                success_names.append(display_name)
-                last_status_message = result.status_message
-                if not result.is_embedding and result.result_rows:
-                    if inspection_item.item_id == selected_item_id or (
-                        selected_item_group_key
-                        and self._effective_model_key_for_item(inspection_item) == selected_item_group_key
-                    ):
-                        display_rows = result.result_rows
-                    elif not display_rows:
-                        display_rows = result.result_rows
+                tasks.append(self._prepare_training_task_for_item(inspection_item))
             except Exception as exc:
                 failure_messages.append(f"{display_name}: {exc}")
 
-        if last_status_message:
-            self.lbl_status.setText(last_status_message)
-        if display_rows:
-            self._populate_results_table(display_rows)
-
-        persist_items = getattr(self, "_persist_inspection_items", None)
-        if callable(persist_items):
-            persist_items()
-        self._save_runtime_params()
-        self._reload_runtime_params_from_disk()
-        self._refresh_inspection_items_table()
-        self._save_session()
-        self._update_runtime_widgets()
-
-        if failure_messages:
-            summary_lines: List[str] = []
-            if success_names:
-                summary_lines.append(
-                    f"Succeeded: {len(success_names)} tool(s) - " + ", ".join(success_names)
+        if not tasks:
+            if failure_messages:
+                self.lbl_status.setText("Status: train failed")
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Train Result",
+                    "\n".join([f"Failed: {len(failure_messages)} tool(s)", *failure_messages[:20]]),
                 )
-            summary_lines.append(f"Failed: {len(failure_messages)} tool(s)")
-            summary_lines.extend(failure_messages[:20])
-            self.lbl_status.setText(
-                f"Status: partial train done, success={len(success_names)}, failed={len(failure_messages)}"
-            )
-            QtWidgets.QMessageBox.warning(self, "Train Result", "\n".join(summary_lines))
+            else:
+                QtWidgets.QMessageBox.information(self, "Info", f"Please enable at least one inspection tool for {current_role}.")
             return
 
-        QtWidgets.QMessageBox.information(
-            self,
-            "Train Result",
-            f"Finished training/calibrating {len(success_names)} enabled tool/group(s).",
+        self._start_training_worker(
+            self._training_payload(
+                "all",
+                tasks,
+                selected_item_id=selected_item_id,
+                selected_item_group_key=selected_item_group_key,
+                failures=failure_messages,
+            )
         )
 
     def _train(self) -> None:
         self.algo.model = None
         self.table.setRowCount(0)
         self._current_result_rows = []
+        if getattr(self, "_training_in_progress", False):
+            QtWidgets.QMessageBox.information(self, "Info", "Training is already running.")
+            return
         inspection_item = self._selected_inspection_item()
         if inspection_item is None:
             QtWidgets.QMessageBox.information(self, "Info", "Please select one inspection tool in the table first.")
@@ -4774,7 +5164,7 @@ class ToolPage(QtWidgets.QWidget):
             return
         self._prune_stale_traditional_models_for_role(inspection_item.camera_id)
         try:
-            result = self._train_inspection_item(inspection_item)
+            task = self._prepare_training_task_for_item(inspection_item)
         except RuntimeError as exc:
             QtWidgets.QMessageBox.warning(self, "Train failed", str(exc))
             return
@@ -4782,18 +5172,14 @@ class ToolPage(QtWidgets.QWidget):
             QtWidgets.QMessageBox.critical(self, "Train failed", str(exc))
             return
 
-        self.lbl_status.setText(result.status_message)
-        if not result.is_embedding and result.result_rows:
-            self._populate_results_table(result.result_rows)
-        persist_items = getattr(self, "_persist_inspection_items", None)
-        if callable(persist_items):
-            persist_items()
-        self._save_runtime_params()
-        self._reload_runtime_params_from_disk()
-        self._refresh_inspection_items_table()
-        self._save_session()
-        self._update_runtime_widgets()
-        QtWidgets.QMessageBox.information(self, "Train complete", result.dialog_message)
+        self._start_training_worker(
+            self._training_payload(
+                "current",
+                [task],
+                selected_item_id=str(inspection_item.item_id or ""),
+                selected_item_group_key=self._effective_model_key_for_item(inspection_item),
+            )
+        )
 
     def _test_target_inspection_items(self) -> List[InspectionItem]:
         current_role = self.current_camera_role()

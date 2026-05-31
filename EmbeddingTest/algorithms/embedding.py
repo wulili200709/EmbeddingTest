@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import glob
+import hashlib
 import json
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
-from typing import List, Optional, Sequence, Tuple
+from typing import Any, Callable, List, Optional, Sequence, Tuple
 
 import numpy as np
 from PIL import Image
@@ -38,6 +40,8 @@ _ORT_OPSET = 17
 _ORT_CACHE_LOCK = RLock()
 _ORT_BACKBONE_CACHE: dict[tuple[str, str], "_OnnxRuntimeFeatureNet"] = {}
 _ORT_LOGGED_EVENTS: set[tuple[str, str, str]] = set()
+_EMBEDDING_CACHE_VERSION = "v1"
+_EMBEDDING_BATCH_CACHE_CHUNK = 64
 _IMAGENET_MEAN = np.asarray([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
 _IMAGENET_STD = np.asarray([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
 
@@ -529,6 +533,118 @@ def embed_many(
     return vector
 
 
+def _normalized_cache_path_text(path: str) -> str:
+    return os.path.normcase(os.path.abspath(str(path or "")))
+
+
+def _file_cache_signature(path: str) -> dict[str, object]:
+    normalized = _normalized_cache_path_text(path)
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return {
+            "path": normalized,
+            "exists": False,
+        }
+    return {
+        "path": normalized,
+        "exists": True,
+        "size": int(stat.st_size),
+        "mtime_ns": int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))),
+    }
+
+
+def _embedding_cache_file(
+    cache_dir: str,
+    *,
+    img_path: str,
+    backbone: str,
+    labels: Sequence[str],
+) -> str:
+    labelme_path = labelme_json_of_image(img_path)
+    normalized_labels = [str(label or "").strip() for label in labels if str(label or "").strip()]
+    payload = {
+        "version": _EMBEDDING_CACHE_VERSION,
+        "backbone": normalize_learning_backbone(backbone),
+        "labels": normalized_labels,
+        "image": _file_cache_signature(img_path),
+        "labelme": _file_cache_signature(labelme_path),
+    }
+    raw = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    digest = hashlib.sha256(raw).hexdigest()
+    return os.path.join(cache_dir, f"{digest}.npz")
+
+
+def _load_cached_embedding(cache_file: str) -> Optional[np.ndarray]:
+    try:
+        if not os.path.exists(cache_file):
+            return None
+        with np.load(cache_file, allow_pickle=False) as data:
+            if "embedding" not in data.files:
+                return None
+            vector = np.asarray(data["embedding"], dtype=np.float32)
+        if vector.ndim != 1 or vector.size == 0:
+            return None
+        return vector
+    except Exception:
+        return None
+
+
+def _save_cached_embedding(cache_file: str, vector: np.ndarray) -> None:
+    directory = os.path.dirname(cache_file)
+    os.makedirs(directory or ".", exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".embedding_", suffix=".npz.tmp", dir=directory or ".")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            np.savez_compressed(handle, embedding=np.asarray(vector, dtype=np.float32))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, cache_file)
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def _embed_many_cached(
+    img_path: str,
+    feat_net,
+    labels: Sequence[str],
+    *,
+    backbone: str,
+    device: Optional[str] = None,
+    cache_dir: Optional[str] = None,
+    progress_callback: Optional[Callable[[str], None]] = None,
+    progress_label: str = "",
+) -> np.ndarray:
+    label = str(progress_label or os.path.basename(str(img_path or ""))).strip()
+    if not cache_dir:
+        if callable(progress_callback):
+            progress_callback(f"embedding {label}".strip())
+        return embed_many(img_path, feat_net, labels, device=device)
+    cache_file = _embedding_cache_file(
+        cache_dir,
+        img_path=img_path,
+        backbone=backbone,
+        labels=labels,
+    )
+    cached = _load_cached_embedding(cache_file)
+    if cached is not None:
+        if callable(progress_callback):
+            progress_callback(f"cache {label}".strip())
+        return cached
+    if callable(progress_callback):
+        progress_callback(f"embedding {label}".strip())
+    vector = embed_many(img_path, feat_net, labels, device=device)
+    try:
+        _save_cached_embedding(cache_file, vector)
+    except Exception:
+        pass
+    return vector
+
+
 @torch.no_grad()
 def embed_batch_from_array(
     image_bgr: np.ndarray,
@@ -755,17 +871,48 @@ def train_register_model(
     label_names: Optional[Sequence[str]] = None,
     collapse_to_proto: bool = False,
     device: Optional[str] = None,
+    progress_callback: Optional[Callable[[str], None]] = None,
+    cache_dir: Optional[str] = None,
+    feat_net: Any = None,
 ) -> RegisterModel:
     if not ok_files or not ng_files:
         raise RuntimeError("Both OK and NG samples are required")
     device = device or get_device()
-    feat_net, _ = load_backbone(backbone, device=device)
+    backbone = normalize_learning_backbone(backbone)
+    if feat_net is None:
+        feat_net, _ = load_backbone(backbone, device=device)
     labels = [str(name) for name in (label_names or [label_name]) if str(name).strip()]
     if not labels:
         labels = ["roi"]
 
-    ok_emb = np.stack([embed_many(path, feat_net, labels, device=device) for path in ok_files])
-    ng_emb = np.stack([embed_many(path, feat_net, labels, device=device) for path in ng_files])
+    total = len(ok_files) + len(ng_files)
+
+    def _emit(message: str) -> None:
+        if callable(progress_callback):
+            progress_callback(message)
+
+    def _stack_group(files: Sequence[str], group: str, offset: int) -> np.ndarray:
+        vectors: list[np.ndarray] = []
+        group_total = len(files)
+        for index, path in enumerate(files, start=1):
+            overall_index = offset + index
+            progress_label = f"{group} {index}/{group_total} ({overall_index}/{total}) {os.path.basename(path)}"
+            vectors.append(
+                _embed_many_cached(
+                    path,
+                    feat_net,
+                    labels,
+                    backbone=backbone,
+                    device=device,
+                    cache_dir=cache_dir,
+                    progress_callback=_emit,
+                    progress_label=progress_label,
+                )
+            )
+        return np.stack(vectors)
+
+    ok_emb = _stack_group(ok_files, "OK", 0)
+    ng_emb = _stack_group(ng_files, "NG", len(ok_files))
 
     ok_proto = ok_emb.mean(axis=0, keepdims=True)
     ok_proto = ok_proto / np.linalg.norm(ok_proto, axis=1, keepdims=True)
@@ -828,6 +975,125 @@ def _analysis_sample_name(
     return base or label or "sample"
 
 
+def _analysis_batch_name(img_path: str, labels: Sequence[str]) -> str:
+    normalized_labels = [str(label or "").strip() for label in labels if str(label or "").strip()]
+    if len(normalized_labels) == 1:
+        return _analysis_sample_name(img_path, normalized_labels[0])
+    base = os.path.basename(str(img_path or "").strip()) or "sample"
+    return f"{base} [{len(normalized_labels)} ROIs]"
+
+
+def _sample_progress_label(
+    *,
+    group: str,
+    entry_indices: Sequence[int],
+    group_total: int,
+    offset: int,
+    total: int,
+    img_path: str,
+    labels: Sequence[str],
+) -> str:
+    sorted_indices = sorted(int(index) for index in entry_indices)
+    first = sorted_indices[0] + 1
+    last = sorted_indices[-1] + 1
+    group_progress = f"{first}/{group_total}" if first == last else f"{first}-{last}/{group_total}"
+    return f"{group} {group_progress} ({offset + last}/{total}) {_analysis_batch_name(img_path, labels)}"
+
+
+def _stack_sample_group_cached(
+    samples: Sequence[Tuple[str, str]],
+    *,
+    feat_net,
+    backbone: str,
+    device: str,
+    cache_dir: Optional[str],
+    group: str,
+    offset: int,
+    total: int,
+    progress_callback: Optional[Callable[[str], None]],
+) -> np.ndarray:
+    vectors: list[Optional[np.ndarray]] = [None] * len(samples)
+    grouped_by_image: list[dict[str, object]] = []
+    grouped_index: dict[str, dict[str, object]] = {}
+    for entry_index, (path, label) in enumerate(samples):
+        key = _normalized_cache_path_text(path)
+        bucket = grouped_index.get(key)
+        if bucket is None:
+            bucket = {"path": path, "entries": []}
+            grouped_index[key] = bucket
+            grouped_by_image.append(bucket)
+        bucket_entries = bucket["entries"]
+        if isinstance(bucket_entries, list):
+            bucket_entries.append((entry_index, label))
+
+    def _emit(prefix: str, img_path: str, entries: Sequence[Tuple[int, str]]) -> None:
+        if not callable(progress_callback) or not entries:
+            return
+        entry_indices = [entry_index for entry_index, _label in entries]
+        labels = [label for _entry_index, label in entries]
+        progress_callback(
+            f"{prefix} "
+            + _sample_progress_label(
+                group=group,
+                entry_indices=entry_indices,
+                group_total=len(samples),
+                offset=offset,
+                total=total,
+                img_path=img_path,
+                labels=labels,
+            )
+        )
+
+    for bucket in grouped_by_image:
+        img_path = str(bucket.get("path", ""))
+        entries_obj = bucket.get("entries", [])
+        entries = list(entries_obj) if isinstance(entries_obj, list) else []
+        cached_entries: list[Tuple[int, str]] = []
+        missing_entries: list[Tuple[int, str, Optional[str]]] = []
+        for entry_index, label in entries:
+            cache_file: Optional[str] = None
+            if cache_dir:
+                cache_file = _embedding_cache_file(
+                    cache_dir,
+                    img_path=img_path,
+                    backbone=backbone,
+                    labels=[label],
+                )
+                cached = _load_cached_embedding(cache_file)
+                if cached is not None:
+                    vectors[entry_index] = cached
+                    cached_entries.append((entry_index, label))
+                    continue
+            missing_entries.append((entry_index, label, cache_file))
+
+        _emit("cache", img_path, cached_entries)
+
+        chunk_size = max(1, int(_EMBEDDING_BATCH_CACHE_CHUNK))
+        for start in range(0, len(missing_entries), chunk_size):
+            chunk = missing_entries[start : start + chunk_size]
+            chunk_entries = [(entry_index, label) for entry_index, label, _cache_file in chunk]
+            chunk_labels = [label for _entry_index, label, _cache_file in chunk]
+            _emit("embedding", img_path, chunk_entries)
+            batch_vectors = np.asarray(embed_batch(img_path, feat_net, chunk_labels, device=device), dtype=np.float32)
+            if batch_vectors.ndim == 1 and len(chunk) == 1:
+                batch_vectors = batch_vectors.reshape(1, -1)
+            if batch_vectors.ndim != 2 or batch_vectors.shape[0] != len(chunk):
+                raise RuntimeError("Embedding batch returned unexpected shape")
+            for row_index, (entry_index, _label, cache_file) in enumerate(chunk):
+                vector = np.asarray(batch_vectors[row_index], dtype=np.float32)
+                vectors[entry_index] = vector
+                if cache_file:
+                    try:
+                        _save_cached_embedding(cache_file, vector)
+                    except Exception:
+                        pass
+
+    missing = [index for index, vector in enumerate(vectors) if vector is None]
+    if missing:
+        raise RuntimeError("Embedding extraction did not produce all sample vectors")
+    return np.stack([np.asarray(vector, dtype=np.float32) for vector in vectors if vector is not None])
+
+
 def train_register_model_from_samples(
     ok_samples: Sequence[Tuple[str, str]],
     ng_samples: Sequence[Tuple[str, str]],
@@ -839,6 +1105,9 @@ def train_register_model_from_samples(
     label_names: Optional[Sequence[str]] = None,
     collapse_to_proto: bool = False,
     device: Optional[str] = None,
+    progress_callback: Optional[Callable[[str], None]] = None,
+    cache_dir: Optional[str] = None,
+    feat_net: Any = None,
 ) -> RegisterModel:
     normalized_ok_samples = _normalize_sample_entries(ok_samples, fallback_label=label_name)
     normalized_ng_samples = _normalize_sample_entries(ng_samples, fallback_label=label_name)
@@ -846,7 +1115,9 @@ def train_register_model_from_samples(
         raise RuntimeError("Both OK and NG samples are required")
 
     device = device or get_device()
-    feat_net, _ = load_backbone(backbone, device=device)
+    backbone = normalize_learning_backbone(backbone)
+    if feat_net is None:
+        feat_net, _ = load_backbone(backbone, device=device)
     labels = [str(name) for name in (label_names or []) if str(name).strip()]
     if not labels:
         labels = list(
@@ -857,18 +1128,27 @@ def train_register_model_from_samples(
     if not labels:
         labels = [str(label_name or "roi").strip() or "roi"]
 
-    ok_emb = np.stack(
-        [
-            embed_one(path, feat_net, label_name=label, device=device)
-            for path, label in normalized_ok_samples
-        ]
-    )
-    ng_emb = np.stack(
-        [
-            embed_one(path, feat_net, label_name=label, device=device)
-            for path, label in normalized_ng_samples
-        ]
-    )
+    total = len(normalized_ok_samples) + len(normalized_ng_samples)
+
+    def _emit(message: str) -> None:
+        if callable(progress_callback):
+            progress_callback(message)
+
+    def _stack_sample_group(samples: Sequence[Tuple[str, str]], group: str, offset: int) -> np.ndarray:
+        return _stack_sample_group_cached(
+            samples,
+            feat_net=feat_net,
+            backbone=backbone,
+            device=device,
+            cache_dir=cache_dir,
+            group=group,
+            offset=offset,
+            total=total,
+            progress_callback=_emit,
+        )
+
+    ok_emb = _stack_sample_group(normalized_ok_samples, "OK", 0)
+    ng_emb = _stack_sample_group(normalized_ng_samples, "NG", len(normalized_ok_samples))
 
     ok_proto = ok_emb.mean(axis=0, keepdims=True)
     ok_proto = ok_proto / np.linalg.norm(ok_proto, axis=1, keepdims=True)

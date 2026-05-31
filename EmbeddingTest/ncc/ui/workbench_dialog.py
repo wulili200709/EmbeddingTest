@@ -254,6 +254,57 @@ def _region_info_text(region: NccReferenceRegion) -> str:
     return region.shape_type
 
 
+class _NccFindWorker(QtCore.QObject):
+    itemFinished = QtCore.Signal(int, str, object, str)
+    progressChanged = QtCore.Signal(str)
+    finished = QtCore.Signal()
+
+    def __init__(
+        self,
+        *,
+        model_path: str,
+        model: NccMatchModel,
+        scene_paths: Sequence[str],
+        options: NccMatchOptions,
+        search_roi: Optional[Tuple[int, int, int, int]],
+        parent: Optional[QtCore.QObject] = None,
+    ) -> None:
+        super().__init__(parent)
+        self._model_path = str(model_path)
+        self._model = model.normalized()
+        self._scene_paths = [str(path or "").strip() for path in scene_paths if str(path or "").strip()]
+        self._options = options.normalized()
+        self._search_roi = search_roi
+
+    @QtCore.Slot()
+    def run(self) -> None:
+        compiled: Optional[NccCompiledModel] = None
+        try:
+            compiled = NccCompiledModel(self._model_path, self._model)
+            total = len(self._scene_paths)
+            for index, scene_path in enumerate(self._scene_paths):
+                self.progressChanged.emit(f"matching {index + 1}/{total}: {Path(scene_path).name}")
+                try:
+                    scene = imread(scene_path, cv2.IMREAD_COLOR)
+                    if scene is None:
+                        raise RuntimeError(f"failed to read scene image: {scene_path}")
+                    response = compiled.match(
+                        scene,
+                        options=self._options,
+                        search_roi=self._search_roi,
+                    )
+                    self.itemFinished.emit(index, scene_path, response, "")
+                except Exception as exc:
+                    self.itemFinished.emit(index, scene_path, None, str(exc))
+        finally:
+            if compiled is not None:
+                try:
+                    compiled.close()
+                except Exception:
+                    pass
+            self.finished.emit()
+
+
 class NccMatchWorkbenchDialog(QtWidgets.QDialog):
     modelSaved = QtCore.Signal(str)
 
@@ -296,6 +347,18 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._reference_move_start: Optional[Tuple[float, float]] = None
         self._reference_move_original: Dict[int, List[Tuple[float, float]]] = {}
         self._loading_model = False
+        self._find_running = False
+        self._find_thread: Optional[QtCore.QThread] = None
+        self._find_worker: Optional[_NccFindWorker] = None
+        self._find_options_save_timer = QtCore.QTimer(self)
+        self._find_options_save_timer.setSingleShot(True)
+        self._find_options_save_timer.setInterval(250)
+        self._find_options_save_timer.timeout.connect(self._save_find_options_to_model)
+        self._find_elapsed_timer = QtCore.QElapsedTimer()
+        self._find_progress_timer = QtCore.QTimer(self)
+        self._find_progress_timer.setInterval(100)
+        self._find_progress_timer.timeout.connect(self._update_find_progress_elapsed)
+        self._find_active_paths: List[str] = []
 
         self._build_ui()
         self._load_model()
@@ -764,14 +827,14 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             self.spn_angle_start,
             self.spn_angle_end,
         ):
-            spin.valueChanged.connect(self._save_find_options_to_model)
+            spin.valueChanged.connect(self._schedule_find_options_save)
         for checkbox in (
             self.chk_use_simd,
             self.chk_use_subpixel,
             self.chk_bitwise_not,
             self.chk_stop_layer1,
         ):
-            checkbox.toggled.connect(self._save_find_options_to_model)
+            checkbox.toggled.connect(self._schedule_find_options_save)
         return page
 
     def _finalize_ui(self) -> None:
@@ -1141,6 +1204,18 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         save_model(self._model_path, self._model)
         self._refresh_model_summary()
         self.modelSaved.emit(self._model_path)
+
+    def _schedule_find_options_save(self, *_args) -> None:
+        if getattr(self, "_loading_model", False):
+            return
+        self._sync_model_without_template_roi_from_ui()
+        self._find_options_save_timer.start()
+
+    def _flush_find_options_save(self) -> None:
+        timer = getattr(self, "_find_options_save_timer", None)
+        if timer is not None and timer.isActive():
+            timer.stop()
+        self._save_find_options_to_model()
 
     def _stored_search_roi_xywh(self) -> Optional[Tuple[int, int, int, int]]:
         if self._model.search_roi is None:
@@ -1944,7 +2019,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         scene = imread(scene_path, cv2.IMREAD_COLOR)
         if scene is None:
             raise RuntimeError(f"无法读取场景图：{scene_path}")
-        self._save_find_options_to_model()
+        self._flush_find_options_save()
         compiled: Optional[NccCompiledModel] = None
         try:
             compiled = NccCompiledModel(self._model_path, self._model)
@@ -1982,6 +2057,140 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         item.setText(f"{basename} | ERROR: {message}")
         item.setToolTip(f"{scene_path}\nERROR: {message}")
         item.setForeground(QtGui.QBrush(QtGui.QColor(200, 40, 40)))
+
+    def _find_item_for_scene_path(self, scene_path: str) -> Optional[QtWidgets.QListWidgetItem]:
+        target = str(scene_path or "").strip()
+        for index in range(self.list_find_images.count()):
+            item = self.list_find_images.item(index)
+            if item is None:
+                continue
+            if str(item.data(QtCore.Qt.ItemDataRole.UserRole) or "").strip() == target:
+                return item
+        return None
+
+    def _set_find_running(self, running: bool) -> None:
+        self._find_running = bool(running)
+        for button in (
+            self.btn_pick_scene,
+            self.btn_remove_find_image,
+            self.btn_clear_find_images,
+            self.btn_run_match,
+            self.btn_run_all,
+            self.btn_writeback,
+            self.btn_writeback_regions,
+        ):
+            button.setEnabled(not running)
+
+    def _running_find_summary_text(self) -> str:
+        elapsed_ms = float(self._find_elapsed_timer.elapsed()) if self._find_elapsed_timer.isValid() else 0.0
+        count = len(getattr(self, "_find_active_paths", []) or [])
+        current_path = ""
+        current_item = self.list_find_images.currentItem()
+        if current_item is not None:
+            current_path = str(current_item.data(QtCore.Qt.ItemDataRole.UserRole) or "")
+        if not current_path and count == 1:
+            current_path = self._find_active_paths[0]
+        lines = [
+            "backend=native-ncc",
+            "status=running",
+            f"elapsed_ms={elapsed_ms:.0f}",
+            f"queued={count}",
+        ]
+        if current_path:
+            lines.append(f"image={Path(current_path).name}")
+        return "\n".join(lines)
+
+    def _update_find_progress_elapsed(self) -> None:
+        if not self._find_running:
+            return
+        self.txt_find_summary.setPlainText(self._running_find_summary_text())
+
+    def _start_find_worker(self, scene_paths: Sequence[str]) -> None:
+        if self._find_running:
+            self._set_status("NCC find is already running")
+            return
+        paths = [str(path or "").strip() for path in scene_paths if str(path or "").strip()]
+        if not paths:
+            return
+        self._flush_find_options_save()
+        self._latest_response = None
+        self._find_active_paths = list(paths)
+        self._find_elapsed_timer.restart()
+        self._set_find_running(True)
+        self._update_find_progress_elapsed()
+        self._find_progress_timer.start()
+        for scene_path in paths:
+            item = self._find_item_for_scene_path(scene_path)
+            if item is None:
+                continue
+            item.setText(f"{Path(scene_path).name} | RUNNING")
+            item.setForeground(QtGui.QBrush(QtGui.QColor(220, 180, 60)))
+        self._set_status(f"NCC find running: {len(paths)} image(s)")
+
+        thread = QtCore.QThread(self)
+        worker = _NccFindWorker(
+            model_path=self._model_path,
+            model=self._model,
+            scene_paths=paths,
+            options=self._current_find_options(),
+            search_roi=self._effective_search_roi(),
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progressChanged.connect(self._set_status)
+        worker.itemFinished.connect(self._on_find_worker_item_finished)
+        worker.finished.connect(self._on_find_worker_finished)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        self._find_thread = thread
+        self._find_worker = worker
+        thread.start()
+
+    @QtCore.Slot(int, str, object, str)
+    def _on_find_worker_item_finished(
+        self,
+        _index: int,
+        scene_path: str,
+        response_obj: object,
+        error_message: str,
+    ) -> None:
+        item = self._find_item_for_scene_path(scene_path)
+        if error_message or not isinstance(response_obj, NccMatchResponse):
+            message = str(error_message or "NCC find failed")
+            if item is not None:
+                self._set_find_item_error(item, message)
+            self._find_result_cache[scene_path] = {
+                "response": None,
+                "summary_text": f"ERROR: {message}",
+            }
+            if self.list_find_images.currentItem() is item:
+                self._latest_response = None
+                self._show_find_scene(scene_path, summary_text=f"ERROR: {message}")
+            self._set_status(f"NCC find failed: {message}")
+            return
+
+        response = response_obj
+        summary_text = self._summary_text_for_response(response)
+        if item is not None:
+            self._set_find_item_success(item, response)
+        self._find_result_cache[scene_path] = {
+            "response": response,
+            "summary_text": summary_text,
+        }
+        if self.list_find_images.currentItem() is item:
+            self._latest_response = response
+            self._show_find_scene(scene_path, response=response, summary_text=summary_text)
+        self._set_status(f"{Path(scene_path).name} NCC find done")
+
+    @QtCore.Slot()
+    def _on_find_worker_finished(self) -> None:
+        self._find_thread = None
+        self._find_worker = None
+        self._find_progress_timer.stop()
+        self._find_active_paths = []
+        self._set_find_running(False)
+        self._set_status("NCC find finished")
 
     def _run_find_for_item(self, item: QtWidgets.QListWidgetItem) -> None:
         scene_path = str(item.data(QtCore.Qt.ItemDataRole.UserRole) or "")
@@ -2045,6 +2254,38 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             self.list_find_images.setCurrentItem(item)
             self._run_find_for_item(item)
             QtWidgets.QApplication.processEvents()
+
+    def _run_find_for_item(self, item: QtWidgets.QListWidgetItem) -> None:
+        scene_path = str(item.data(QtCore.Qt.ItemDataRole.UserRole) or "")
+        if not scene_path:
+            return
+        self._start_find_worker([scene_path])
+
+    def _run_match(self) -> None:
+        current_item = self.list_find_images.currentItem()
+        if current_item is not None:
+            self._run_find_for_item(current_item)
+            return
+
+        scene_path = self.edt_scene_path.text().strip()
+        if not scene_path:
+            QtWidgets.QMessageBox.warning(self, "NCC", "Please load a scene image first.")
+            return
+        self._start_find_worker([scene_path])
+
+    def _run_all_find(self) -> None:
+        if self.list_find_images.count() <= 0:
+            QtWidgets.QMessageBox.information(self, "NCC", "Please add test images first.")
+            return
+        paths: List[str] = []
+        for index in range(self.list_find_images.count()):
+            item = self.list_find_images.item(index)
+            if item is None:
+                continue
+            scene_path = str(item.data(QtCore.Qt.ItemDataRole.UserRole) or "").strip()
+            if scene_path:
+                paths.append(scene_path)
+        self._start_find_worker(paths)
 
     def _writeback_top1(self) -> None:
         scene_path = self.edt_scene_path.text().strip()

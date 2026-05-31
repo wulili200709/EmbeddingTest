@@ -866,10 +866,19 @@ class ProductRuntimeContext:
         self._loc_method = str(session_data.loc_method or "line2dup").strip() or "line2dup"
         self._ref_image = str(session_data.ref_image or "").strip()
         self._recipes_by_role = {}
-        items = load_inspection_items(self.session.inspection_items_path)
+        configured_roles = {"cam1"}
+        if str(getattr(session_data, "runtime_cam2_serial", "") or "").strip():
+            configured_roles.add("cam2")
+        items = [
+            item
+            for item in load_inspection_items(self.session.inspection_items_path)
+            if str(getattr(item, "camera_id", "") or "").strip() in configured_roles
+        ]
         synced_items: List[InspectionItem] = []
         remaining_items: List[InspectionItem] = []
         for role in ("cam1", "cam2"):
+            if role not in configured_roles:
+                continue
             role_items = [
                 item for item in items
                 if str(getattr(item, "camera_id", "") or "").strip() == role

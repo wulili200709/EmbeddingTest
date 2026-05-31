@@ -216,6 +216,7 @@ def _autogen_roi_for_images(
     silent: bool = False,
     *,
     camera_role=None,
+    progress_callback=None,
 ) -> None:
     if not paths:
         if not silent:
@@ -304,6 +305,11 @@ def _autogen_roi_for_images(
             QtWidgets.QMessageBox.information(self, "提示", "这些图片已存在 ROI")
         return
 
+    def _emit_progress(index: int, path: str, ok_count: int, err_count: int) -> None:
+        if progress_callback is None:
+            return
+        progress_callback(index, len(todo), path, ok_count, err_count)
+
     line2dup_detector = None
     ncc_model_path = ""
     ncc_model = None
@@ -330,6 +336,7 @@ def _autogen_roi_for_images(
     ok = 0
     errs: List[str] = []
     try:
+        _emit_progress(0, "", ok, len(errs))
         for index, p in enumerate(todo, start=1):
             try:
                 if method == "line2dup":
@@ -364,6 +371,7 @@ def _autogen_roi_for_images(
                 if method == "ncc":
                     self._line2dup_match_ms_by_image.pop(p, None)
                     self._line2dup_autogen_ms_by_image.pop(p, None)
+            _emit_progress(index, p, ok, len(errs))
             if not silent:
                 self.lbl_status.setText(f"状态：自动 ROI {index}/{len(todo)}，成功 {ok}，失败 {len(errs)}")
                 QtWidgets.QApplication.processEvents()

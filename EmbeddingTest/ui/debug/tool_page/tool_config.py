@@ -24,6 +24,23 @@ def _current_camera_role(tool_page) -> str:
     return "cam1"
 
 
+def _configured_camera_roles(tool_page) -> list[str]:
+    getter = getattr(tool_page, "configured_camera_roles", None)
+    if callable(getter):
+        roles = [
+            str(role).strip()
+            for role in getter()
+            if str(role).strip() in SUPPORTED_CAMERA_IDS
+        ]
+    else:
+        roles = ["cam1"]
+    if not roles:
+        roles = ["cam1"]
+    if "cam1" not in roles:
+        roles.insert(0, "cam1")
+    return list(dict.fromkeys(roles))
+
+
 def _visible_inspection_item_indexes(tool_page) -> list[int]:
     current_role = _current_camera_role(tool_page)
     visible: list[int] = []
@@ -42,6 +59,12 @@ def _actual_inspection_item_index(tool_page, visible_row: int) -> int:
 
 
 def _persist_inspection_items(tool_page) -> None:
+    allowed_roles = set(_configured_camera_roles(tool_page))
+    tool_page.inspection_items = [
+        item
+        for item in list(getattr(tool_page, "inspection_items", []) or [])
+        if str(getattr(item, "camera_id", "") or "").strip() in allowed_roles
+    ]
     save_inspection_items(tool_page.inspection_items, tool_page.session.inspection_items_path)
     save_runtime_params = getattr(tool_page, "_save_runtime_params", None)
     if callable(save_runtime_params):
@@ -322,7 +345,8 @@ def _refresh_inspection_items_table(tool_page) -> None:
 
             camera_combo = QtWidgets.QComboBox(table)
             camera_combo.setStyleSheet(_inspection_combo_style(False))
-            for camera_id in SUPPORTED_CAMERA_IDS:
+            allowed_camera_ids = _configured_camera_roles(tool_page)
+            for camera_id in allowed_camera_ids:
                 camera_combo.addItem(camera_id, camera_id)
             camera_index = max(0, camera_combo.findData(inspection_item.camera_id))
             camera_combo.setCurrentIndex(camera_index)
@@ -501,8 +525,9 @@ def _on_inspection_item_camera_changed(tool_page, row: int, camera_id: str) -> N
     if row < 0 or row >= len(tool_page.inspection_items):
         return
     normalized = str(camera_id or "cam1").strip() or "cam1"
-    if normalized not in SUPPORTED_CAMERA_IDS:
-        normalized = "cam1"
+    allowed_roles = _configured_camera_roles(tool_page)
+    if normalized not in set(allowed_roles):
+        normalized = allowed_roles[0]
     tool_page.inspection_items[row].camera_id = normalized
     _persist_inspection_items(tool_page)
     _refresh_inspection_items_table(tool_page)

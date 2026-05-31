@@ -53,6 +53,9 @@ class _FakeAlgo:
     def is_embedding_algorithm(self, algorithm) -> bool:
         return str(algorithm or "").strip() == "b0"
 
+    def embedding_cache_dir(self, algorithm, product_dir) -> str:
+        return os.path.join(str(product_dir), "embedding_cache", str(algorithm or ""))
+
     def traditional_model_storage_key(self, algorithm: str, *, model_key: object = "") -> str:
         normalized = str(model_key or "").strip()
         if normalized:
@@ -75,6 +78,8 @@ class _FakeAlgo:
         model_key,
         ok_samples=None,
         ng_samples=None,
+        progress_callback=None,
+        embedding_cache_dir=None,
     ):
         self.train_calls.append(
             {
@@ -143,6 +148,15 @@ class _TrainAllHarness:
     _training_camera_roles_in_lists = ToolPage._training_camera_roles_in_lists
     _warn_mixed_training_camera_samples = ToolPage._warn_mixed_training_camera_samples
     _missing_training_roi_paths = ToolPage._missing_training_roi_paths
+    _training_item_display_name = staticmethod(ToolPage._training_item_display_name)
+    _prepare_training_task_for_item = ToolPage._prepare_training_task_for_item
+    _execute_training_task = ToolPage._execute_training_task
+    _finalize_training_task_result = ToolPage._finalize_training_task_result
+    _training_payload = ToolPage._training_payload
+    _set_training_running = ToolPage._set_training_running
+    _on_training_progress = ToolPage._on_training_progress
+    _start_training_worker = ToolPage._start_training_worker
+    _on_training_finished = ToolPage._on_training_finished
     _train_inspection_item = ToolPage._train_inspection_item
     _train_all_tools = ToolPage._train_all_tools
     _train = ToolPage._train
@@ -186,6 +200,9 @@ class _TrainAllHarness:
         self.refresh_count = 0
         self.update_count = 0
         self.reload_count = 0
+        self._training_in_progress = False
+        self._training_thread = None
+        self._training_worker = None
 
     def _selected_inspection_item(self):
         if 0 <= self._selected_index < len(self.inspection_items):
@@ -256,6 +273,7 @@ class _TrainingConfirmHarness:
         self.lbl_status = QtWidgets.QLabel("")
         self._training_roi_ready_signatures = {}
         self._training_roi_pending_actions = {}
+        self._training_roi_confirmed_signatures = {}
         self._train_action_btn_style = "default-all"
         self._train_current_btn_style = "default-current"
         self._train_confirm_btn_style = "confirm"

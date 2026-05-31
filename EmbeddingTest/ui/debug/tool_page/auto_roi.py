@@ -66,6 +66,16 @@ def _reload_inspection_items(tool_page) -> None:
     path = tool_page.session.inspection_items_path
     current_role_getter = getattr(tool_page, "current_camera_role", None)
     current_role = str(current_role_getter() if callable(current_role_getter) else "cam1").strip() or "cam1"
+    configured_roles_getter = getattr(tool_page, "configured_camera_roles", None)
+    allowed_roles = [
+        str(role).strip()
+        for role in (configured_roles_getter() if callable(configured_roles_getter) else ["cam1"])
+        if str(role).strip()
+    ]
+    if not allowed_roles:
+        allowed_roles = ["cam1"]
+    if current_role not in set(allowed_roles):
+        current_role = allowed_roles[0]
     labels = tool_page._current_loc_output_labels(current_role)
     display_names_by_label = {}
     if tool_page.loc_method == "line2dup":
@@ -80,7 +90,11 @@ def _reload_inspection_items(tool_page) -> None:
             tool_page.session.product_dir,
             current_role,
         )
-    existing_items = load_inspection_items(path)
+    existing_items = [
+        item
+        for item in load_inspection_items(path)
+        if str(getattr(item, "camera_id", "") or "").strip() in set(allowed_roles)
+    ]
     current_role_items = [
         item for item in existing_items
         if str(getattr(item, "camera_id", "") or "").strip() == current_role
