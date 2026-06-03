@@ -4,3 +4,6 @@ build/temp.win-amd64-cpython-312/Release/Git/
 dist/
 dist-build/
 _dev_only/
+__pycache__/
+*.pyc
+*.pyo

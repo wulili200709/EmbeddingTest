@@ -6,7 +6,7 @@ from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from algorithms.registry import algorithm_display_name
+from ui.algorithm_labels import algorithm_display_name
 from ui.i18n import tr
 
 FigureCanvas = None

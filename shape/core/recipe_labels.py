@@ -1,10 +1,8 @@
-﻿"""Recipe helpers for inspection item and ROI label synchronization."""
-
 from __future__ import annotations
 
 from typing import Dict, Iterable, List, Tuple
 
-from shape.core.recipe import ShapeRecipe
+from .recipe import ShapeRecipe
 
 
 def inspection_item_specs_from_shape_recipe(recipe: ShapeRecipe | None) -> List[Dict[str, str]]:
@@ -13,7 +11,7 @@ def inspection_item_specs_from_shape_recipe(recipe: ShapeRecipe | None) -> List[
 
     specs: List[Dict[str, str]] = []
     seen_labels: set[str] = set()
-    for region in (recipe.reference_regions or []):
+    for region in recipe.reference_regions or []:
         if not isinstance(region, dict):
             continue
         roi_label = str(region.get("output_label") or region.get("reference_label") or "").strip()
@@ -101,4 +99,3 @@ __all__ = [
     "output_labels_from_shape_recipe",
     "clearable_roi_labels",
 ]
-

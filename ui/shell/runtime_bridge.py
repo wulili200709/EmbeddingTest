@@ -4,7 +4,7 @@ from typing import Optional
 
 from PySide6 import QtCore
 
-from algorithms.proxy import is_ready as is_qr_core_ready
+from algorithms.lazy_api import is_ready as is_qr_core_ready
 from infrastructure.camera_settings_store import CameraSettingsStore
 from ui.window_common import update_runtime_preview
 

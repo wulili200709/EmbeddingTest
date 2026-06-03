@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from common import labelme_io
+
 from . import page as page_module
 from ui.i18n import tr
 
@@ -210,7 +212,7 @@ def _autogen_roi_for_images(
         if labels:
             missing_labels = [label for label in labels if label not in recipe_region_labels]
             if missing_labels:
-                ref_json = qr_core.labelme_json_of_image(ref_image) if ref_image else ""
+                ref_json = labelme_io.labelme_json_of_image(ref_image) if ref_image else ""
                 if not ref_json or not os.path.exists(ref_json):
                     QtWidgets.QMessageBox.warning(
                         self,
@@ -220,7 +222,7 @@ def _autogen_roi_for_images(
                     return
                 missing_labels = [
                     label for label in missing_labels
-                    if qr_core.read_shape_from_labelme(ref_json, label) is None
+                    if labelme_io.read_shape_from_labelme(ref_json, label) is None
                 ]
                 if missing_labels:
                     QtWidgets.QMessageBox.warning(
@@ -233,14 +235,14 @@ def _autogen_roi_for_images(
         if not ref_image or not os.path.exists(ref_image):
             QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("auto.set_reference_first"))
             return
-        ref_json = qr_core.labelme_json_of_image(ref_image)
+        ref_json = labelme_io.labelme_json_of_image(ref_image)
         if not os.path.exists(ref_json):
             QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("auto.reference_missing_json"))
             return
-        if qr_core.try_read_xywh_from_labelme(ref_json, "anchor") is None:
+        if labelme_io.try_read_xywh_from_labelme(ref_json, "anchor") is None:
             QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("auto.reference_missing_anchor"))
             return
-        if qr_core.try_read_xywh_from_labelme(ref_json, "roi") is None:
+        if labelme_io.try_read_xywh_from_labelme(ref_json, "roi") is None:
             QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("auto.reference_missing_roi"))
             return
 
@@ -330,7 +332,7 @@ def _clear_roi_for_images(
         any_removed = False
         for label in labels:
             try:
-                if qr_core.delete_labelme_shape(path, label):
+                if labelme_io.delete_labelme_shape(path, label):
                     removed += 1
                     any_removed = True
             except Exception:

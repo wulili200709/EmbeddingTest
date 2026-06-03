@@ -11,8 +11,8 @@ from typing import Dict, List, Tuple
 import cv2
 import numpy as np
 
-import algorithms.proxy as qr_core
-from algorithms.registry import learning_backbone_storage_code
+from common.algorithm_codes import learning_backbone_storage_code
+from common import labelme_io
 
 
 def _storage_algorithm_code(value: object) -> str:
@@ -197,15 +197,15 @@ def _current_tab_paths_and_name(tool_page) -> Tuple[List[str], str]:
 
 
 def _load_roi_mask_crop(tool_page, img_path: str, preferred_label: str = "roi1") -> Dict[str, object]:
-    jpath = qr_core.labelme_json_of_image(img_path)
+    jpath = labelme_io.labelme_json_of_image(img_path)
     if not os.path.exists(jpath):
         raise FileNotFoundError(f"missing labelme json: {jpath}")
 
     label_name = preferred_label
-    shape = qr_core.read_shape_from_labelme(jpath, preferred_label)
+    shape = labelme_io.read_shape_from_labelme(jpath, preferred_label)
     if shape is None:
         label_name = "roi"
-        shape = qr_core.read_shape_from_labelme(jpath, label_name)
+        shape = labelme_io.read_shape_from_labelme(jpath, label_name)
     if shape is None:
         raise RuntimeError(f"{os.path.basename(img_path)} missing {preferred_label}/roi annotation")
 

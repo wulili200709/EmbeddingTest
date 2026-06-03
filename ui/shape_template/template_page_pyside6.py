@@ -9,17 +9,17 @@ import cv2
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
-import algorithms.proxy as qr_core
+from common import labelme_io
 
-from ..core.bootstrap import ensure_repo_root_on_path
-from ..core.locator import (
+from shape.core.bootstrap import ensure_repo_root_on_path
+from shape.core.locator import (
     product_paths,
     resolved_model_path_for_product,
     resolved_recipe_path_for_product,
 )
-from ..core.recipe import ShapeRecipe, load_recipe, save_recipe
-from ..core.roi_follow import FollowResult, locate_and_follow
-from ..core.template_core import (
+from shape.core.recipe import ShapeRecipe, load_recipe, save_recipe
+from shape.core.roi_follow import FollowResult, locate_and_follow
+from shape.core.template_core import (
     BACKEND_ITEMS,
     BACKEND_KEY_TO_LABEL,
     BACKEND_LABEL_TO_KEY,
@@ -42,7 +42,7 @@ from ui.i18n import tr
 
 ensure_repo_root_on_path()
 
-from ..like_matcher import (  # noqa: E402
+from shape.like_matcher import (  # noqa: E402
     Feature,
     ShapeLikeDetector,
     TemplateLevel,
@@ -1954,7 +1954,7 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
             if not silent:
                 QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.load_reference_first"))
             return
-        jpath = qr_core.labelme_json_of_image(self.image_path)
+        jpath = labelme_io.labelme_json_of_image(self.image_path)
         if not os.path.exists(jpath):
             self._reference_regions = []
             self._selected_reference_idx = None
@@ -1965,7 +1965,7 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
             return
         try:
             regions: List[Dict[str, object]] = []
-            for shape in qr_core.list_shapes_from_labelme(jpath, label_prefix="roi"):
+            for shape in labelme_io.list_shapes_from_labelme(jpath, label_prefix="roi"):
                 label_name = str(shape.get("label", "")).strip()
                 if not label_name:
                     continue
@@ -2029,7 +2029,7 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
             }
             for label_name in old_labels - new_labels:
                 if label_name:
-                    qr_core.delete_labelme_shape(self.image_path, label_name=label_name)
+                    labelme_io.delete_labelme_shape(self.image_path, label_name=label_name)
             for region in self._reference_regions:
                 label_name = str(region.get("output_label") or region.get("reference_label") or "").strip()
                 shape_type = str(region.get("shape_type", "rectangle"))
@@ -2041,11 +2041,11 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
                 if not label_name or len(points) < 2:
                     continue
                 if shape_type == "polygon" and len(points) >= 3:
-                    qr_core.upsert_labelme_polygon(self.image_path, points, label_name=label_name)
+                    labelme_io.upsert_labelme_polygon(self.image_path, points, label_name=label_name)
                 else:
                     x0, y0 = points[0]
                     x1, y1 = points[1]
-                    qr_core.upsert_labelme_rect(
+                    labelme_io.upsert_labelme_rect(
                         self.image_path,
                         (
                             int(round(min(x0, x1))),

@@ -10,7 +10,7 @@ try:
 except Exception:  # pragma: no cover
     cv2 = None
 
-from .labelme import (
+from common.labelme_io import (
     labelme_json_of_image,
     read_roi_from_labelme,
     try_read_polygon_points_from_labelme,
@@ -205,4 +205,3 @@ __all__ = [
     "transfer_roi_by_homography",
     "transfer_roi_by_translation",
 ]
-

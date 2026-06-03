@@ -6,7 +6,7 @@ from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from algorithms.proxy import preload as preload_qr_core
+from algorithms.lazy_api import preload as preload_qr_core
 from ui.window_common import embedding_test_root
 
 

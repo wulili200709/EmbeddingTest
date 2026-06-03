@@ -7,9 +7,9 @@ from typing import Optional, Tuple
 
 import cv2
 
-import algorithms.proxy as qr_core
-from domain import clearable_roi_labels, output_labels_from_shape_recipe
+from common import labelme_io
 
+from .recipe_labels import clearable_roi_labels, output_labels_from_shape_recipe
 from .recipe import ShapeRecipe, load_recipe, save_recipe
 from .roi_follow import FollowResult
 from .services import RuntimeDetectedShape, ShapeLocateService, runtime_shapes_from_follow_result
@@ -46,11 +46,11 @@ _LOCATE_SERVICE = ShapeLocateService()
 
 
 def _delete_stale_shape_roi_shapes(tgt_img_path: str, recipe: ShapeRecipe) -> list[str]:
-    jpath = qr_core.labelme_json_of_image(tgt_img_path)
+    jpath = labelme_io.labelme_json_of_image(tgt_img_path)
     if not os.path.exists(jpath):
         return []
     current_labels = output_labels_from_shape_recipe(recipe)
-    existing_labels = qr_core.sorted_label_names_from_labelme(jpath, label_prefix="roi")
+    existing_labels = labelme_io.sorted_label_names_from_labelme(jpath, label_prefix="roi")
     labels_to_clear, clear_mode = clearable_roi_labels(
         current_labels,
         existing_labels,
@@ -61,7 +61,7 @@ def _delete_stale_shape_roi_shapes(tgt_img_path: str, recipe: ShapeRecipe) -> li
     removed: list[str] = []
     for label in labels_to_clear:
         try:
-            if qr_core.delete_labelme_shape(tgt_img_path, label_name=label):
+            if labelme_io.delete_labelme_shape(tgt_img_path, label_name=label):
                 removed.append(label)
         except Exception:
             continue
@@ -168,13 +168,13 @@ def autogen_roi_json_from_shape_timed(
     jpath = ""
     for region in result.regions:
         if region.source_shape_type == "polygon":
-            jpath = qr_core.upsert_labelme_polygon(
+            jpath = labelme_io.upsert_labelme_polygon(
                 tgt_img_path,
                 [(float(x), float(y)) for x, y in region.points],
                 label_name=region.label_name,
             )
         else:
-            jpath = qr_core.upsert_labelme_rect(tgt_img_path, region.bbox, label_name=region.label_name)
+            jpath = labelme_io.upsert_labelme_rect(tgt_img_path, region.bbox, label_name=region.label_name)
     total_ms = (time.perf_counter() - total_t0) * 1000.0
     return ShapeAutogenRun(jpath=jpath, result=result, locate_ms=locate_ms, total_ms=total_ms)
 

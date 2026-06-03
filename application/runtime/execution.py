@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from domain import aggregate_runtime_outcome, recipe_name_from_path
-from algorithms.registry import learning_backbone_storage_code
+from common.algorithm_codes import learning_backbone_storage_code
 
 from .capture_policy import normalize_capture_retention_policy
 from .preview_frame import RuntimePreviewFrame, build_runtime_preview_frame, export_runtime_preview_frame

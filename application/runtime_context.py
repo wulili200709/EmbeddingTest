@@ -6,8 +6,9 @@ import re
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Protocol
 
-import algorithms.proxy as qr_core
+import algorithms.lazy_api as qr_core
 import numpy as np
+from common.algorithm_codes import learning_backbone_storage_code
 from algorithms.measurement import (
     FIND_LINE_ALGORITHMS,
     LINE_DISTANCE_ALGORITHMS,
@@ -15,18 +16,17 @@ from algorithms.measurement import (
     measure_edge_distance_from_array,
     measure_find_line_from_array,
 )
-from algorithms.registry import learning_backbone_storage_code
 from algorithms.traditional import TraditionalThresholdModel, compute_roi_metrics_from_array, metric_value
+from common import labelme_io
 from application.runtime.preview_frame import RuntimePreviewShape
 from domain import (
     InspectionItem,
-    inspection_item_specs_from_shape_recipe,
     load_inspection_items,
-    output_labels_from_shape_recipe,
     save_inspection_items,
     sync_items_with_labels,
 )
 from shape.core import locator as shape_locator
+from shape.core.recipe_labels import inspection_item_specs_from_shape_recipe, output_labels_from_shape_recipe
 
 if TYPE_CHECKING:
     from application import AlgorithmController, ProductSession
@@ -146,7 +146,7 @@ def _predict_learning_items_batch_rows(
         algorithm = algo.resolve_tool_algorithm(item.algorithm_code)
         learning_groups.setdefault(algorithm, []).append(item)
 
-    json_name = os.path.basename(qr_core.labelme_json_of_image(path))
+    json_name = os.path.basename(labelme_io.labelme_json_of_image(path))
     for algorithm, group in learning_groups.items():
         if not str(algorithm or "").strip():
             raise RuntimeError("please choose a learning tool subtype first")

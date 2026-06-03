@@ -7,12 +7,12 @@ import re
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from common import labelme_io
 from common.app_paths import packaged_embedding_test_root, writable_embedding_test_root
 from application import AlgorithmController, ProductSession
 from application.runtime.preview_frame import RuntimePreviewFrame, RuntimePreviewShape
 from application.runtime.preview_frame import read_exported_runtime_preview_measurements
 from shape.core import locator as shape_locator
-import algorithms.proxy as qr_core
 from ui.i18n import tr
 from ui.roi_overlay_colors import overlay_style_for_label, search_region_style
 
@@ -465,11 +465,11 @@ def _runtime_source_shapes(source: str | RuntimePreviewFrame) -> tuple[RuntimePr
     path = str(source or "").strip()
     if not path:
         return ()
-    jpath = qr_core.labelme_json_of_image(path)
+    jpath = labelme_io.labelme_json_of_image(path)
     if not Path(jpath).exists():
         return ()
     shapes: list[RuntimePreviewShape] = []
-    for shape in qr_core.list_shapes_from_labelme(jpath):
+    for shape in labelme_io.list_shapes_from_labelme(jpath):
         label = str(shape.get("label", "")).strip()
         if not label:
             continue

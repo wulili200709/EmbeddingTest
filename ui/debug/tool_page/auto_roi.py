@@ -5,15 +5,17 @@ from __future__ import annotations
 import os
 from typing import List, Tuple
 
-import algorithms.proxy as qr_core
+from common import labelme_io
 
 from domain import (
-    clearable_roi_labels,
-    inspection_item_specs_from_shape_recipe,
     load_inspection_items,
-    output_labels_from_shape_recipe,
     save_inspection_items,
     sync_items_with_labels,
+)
+from shape.core.recipe_labels import (
+    clearable_roi_labels,
+    inspection_item_specs_from_shape_recipe,
+    output_labels_from_shape_recipe,
 )
 
 
@@ -67,11 +69,11 @@ def _missing_roi_files(tool_page, paths: List[str], camera_role=None) -> List[st
     missing: List[str] = []
     labels = tool_page._shape_output_labels(camera_role) if tool_page.loc_method == "shape" else ["roi"]
     for p in paths:
-        j = qr_core.labelme_json_of_image(p)
+        j = labelme_io.labelme_json_of_image(p)
         if not os.path.exists(j):
             missing.append(p)
             continue
-        if any(qr_core.read_shape_from_labelme(j, label) is None for label in labels):
+        if any(labelme_io.read_shape_from_labelme(j, label) is None for label in labels):
             missing.append(p)
     return missing
 
@@ -80,11 +82,11 @@ def _existing_roi_like_labels(tool_page, paths: List[str]) -> List[str]:
     labels: List[str] = []
     seen: set[str] = set()
     for path in paths:
-        jpath = qr_core.labelme_json_of_image(path)
+        jpath = labelme_io.labelme_json_of_image(path)
         if not os.path.exists(jpath):
             continue
         try:
-            shapes = qr_core.list_shapes_from_labelme(jpath)
+            shapes = labelme_io.list_shapes_from_labelme(jpath)
         except Exception:
             continue
         for shape in shapes:

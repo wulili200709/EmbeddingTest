@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from algorithms.proxy import is_ready as is_qr_core_ready
+from algorithms.lazy_api import is_ready as is_qr_core_ready
 from ui.i18n import LANG_EN, LANG_ZH, language_code, set_language, tr
 
 from .support import APP_NAME, APP_VERSION, shell_icon

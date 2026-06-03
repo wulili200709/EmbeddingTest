@@ -7,7 +7,7 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 import cv2
 import numpy as np
 
-from .labelme import labelme_json_of_image, read_shape_from_labelme
+from common.labelme_io import labelme_json_of_image, read_shape_from_labelme
 
 
 TRADITIONAL_ALGORITHMS = ["meanintensity", "meanstd", "meanhsv_h", "meanhsv_v", "meanhsv_s"]

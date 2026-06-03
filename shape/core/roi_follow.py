@@ -8,7 +8,7 @@ from typing import List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 
-import algorithms.proxy as qr_core
+from common import labelme_io
 
 from .bootstrap import ensure_repo_root_on_path
 from .recipe import ShapeRecipe
@@ -51,7 +51,7 @@ class FollowResult:
 
 
 def _shape_points_from_labelme(labelme_json_path: str, label_name: str) -> Tuple[str, List[Point]]:
-    shape = qr_core.read_shape_from_labelme(labelme_json_path, label_name=label_name)
+    shape = labelme_io.read_shape_from_labelme(labelme_json_path, label_name=label_name)
     if not shape:
         raise RuntimeError(f"Reference json does not contain label '{label_name}'")
     shape_type = str(shape.get("shape_type", "rectangle"))
@@ -114,7 +114,7 @@ def _region_specs_from_recipe(
         shape_type, ref_points = recipe_shape
         return [(str(recipe.output_label or "roi"), shape_type, ref_points)]
 
-    ref_json = qr_core.labelme_json_of_image(ref_img_path)
+    ref_json = labelme_io.labelme_json_of_image(ref_img_path)
     if ref_img_path and os.path.exists(ref_json):
         try:
             shape_type, ref_points = _shape_points_from_labelme(ref_json, recipe.reference_label)

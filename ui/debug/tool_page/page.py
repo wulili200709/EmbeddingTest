@@ -29,8 +29,9 @@ import cv2
 import numpy as np
 
 from PySide6 import QtCore, QtGui, QtWidgets
-import algorithms.proxy as qr_core
-from algorithms.registry import learning_backbone_storage_code
+import algorithms.lazy_api as qr_core
+from common.algorithm_codes import learning_backbone_storage_code
+from common import labelme_io
 
 from infrastructure.camera_settings_store import (
     CameraSettingsStore,
@@ -49,15 +50,17 @@ from application import (
 )
 from domain import (
     InspectionItem,
-    clearable_roi_labels,
-    inspection_item_specs_from_shape_recipe,
     load_inspection_items,
     save_inspection_items,
     sync_items_with_labels,
-    output_labels_from_shape_recipe,
 )
 from shape.core import locator as shape_locator
 from shape.core.recipe import ShapeRecipe
+from shape.core.recipe_labels import (
+    clearable_roi_labels,
+    inspection_item_specs_from_shape_recipe,
+    output_labels_from_shape_recipe,
+)
 from ui.debug import (
     OverlayShape,
     RoiCanvas,
@@ -518,7 +521,7 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
             if labels:
                 missing_labels = [label for label in labels if label not in recipe_region_labels]
                 if missing_labels:
-                    ref_json = qr_core.labelme_json_of_image(ref_image) if ref_image else ""
+                    ref_json = labelme_io.labelme_json_of_image(ref_image) if ref_image else ""
                     if not ref_json or not os.path.exists(ref_json):
                         QtWidgets.QMessageBox.warning(
                             self,
@@ -528,7 +531,7 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
                         return None
                     missing_labels = [
                         label for label in missing_labels
-                        if qr_core.read_shape_from_labelme(ref_json, label) is None
+                        if labelme_io.read_shape_from_labelme(ref_json, label) is None
                     ]
                     if missing_labels:
                         QtWidgets.QMessageBox.warning(
@@ -542,14 +545,14 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
             if not ref_image or not os.path.exists(ref_image):
                 QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("auto.set_reference_first"))
                 return None
-            ref_json = qr_core.labelme_json_of_image(ref_image)
+            ref_json = labelme_io.labelme_json_of_image(ref_image)
             if not os.path.exists(ref_json):
                 QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("auto.reference_missing_json"))
                 return None
-            if qr_core.try_read_xywh_from_labelme(ref_json, "anchor") is None:
+            if labelme_io.try_read_xywh_from_labelme(ref_json, "anchor") is None:
                 QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("auto.reference_missing_anchor"))
                 return None
-            if qr_core.try_read_xywh_from_labelme(ref_json, "roi") is None:
+            if labelme_io.try_read_xywh_from_labelme(ref_json, "roi") is None:
                 QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("auto.reference_missing_roi"))
                 return None
 
@@ -1073,7 +1076,7 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         self._refresh_canvas_overlays(path, camera_role)
 
     def _refresh_canvas_overlays(self, path: str, camera_role: str) -> None:
-        jpath = qr_core.labelme_json_of_image(path)
+        jpath = labelme_io.labelme_json_of_image(path)
         labels = self._tool_page._inspection_label_names_for_role(camera_role)
         overlays: list[OverlayShape] = []
         shape_entries: list[dict[str, object]] = []
@@ -1082,8 +1085,8 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
             self.preview_canvas.set_overlays([])
             return
         for label in labels:
-            poly_points = qr_core.try_read_polygon_points_from_labelme(jpath, label)
-            xywh = qr_core.try_read_xywh_from_labelme(jpath, label)
+            poly_points = labelme_io.try_read_polygon_points_from_labelme(jpath, label)
+            xywh = labelme_io.try_read_xywh_from_labelme(jpath, label)
             if poly_points and len(poly_points) >= 3:
                 status = self._tool_page._sample_roi_status_for_path(path, camera_role, label).lower()
                 color, width, dash = overlay_style_for_label(label, status=status)
@@ -1429,14 +1432,14 @@ class _SampleAutoRoiWorker(QtCore.QObject):
     def _missing_roi_files(paths: list[str], labels: list[str]) -> list[str]:
         missing: list[str] = []
         for path in paths:
-            json_path = qr_core.labelme_json_of_image(path)
+            json_path = labelme_io.labelme_json_of_image(path)
             if not os.path.exists(json_path):
                 missing.append(path)
                 continue
             try:
                 existing_labels = {
                     str(shape.get("label", "") or "").strip()
-                    for shape in qr_core.list_shapes_from_labelme(json_path)
+                    for shape in labelme_io.list_shapes_from_labelme(json_path)
                     if isinstance(shape, dict)
                 }
             except Exception:
@@ -3959,11 +3962,11 @@ class ToolPage(QtWidgets.QWidget):
     def _path_has_roi_geometry(self, path: str, label_name: str) -> bool:
         if not path or not label_name:
             return False
-        json_path = qr_core.labelme_json_of_image(path)
+        json_path = labelme_io.labelme_json_of_image(path)
         if not os.path.exists(json_path):
             return False
         try:
-            return qr_core.read_shape_from_labelme(json_path, label_name) is not None
+            return labelme_io.read_shape_from_labelme(json_path, label_name) is not None
         except Exception:
             return False
 
@@ -4428,7 +4431,7 @@ class ToolPage(QtWidgets.QWidget):
         p = self.canvas.image_path()
         if p is not None:
             try:
-                deleted = qr_core.delete_labelme_shape(p, label_name=self._current_label())
+                deleted = labelme_io.delete_labelme_shape(p, label_name=self._current_label())
             except Exception:
                 deleted = False
             if deleted:
@@ -4453,12 +4456,12 @@ class ToolPage(QtWidgets.QWidget):
             if st.xywh is None:
                 QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("debug.draw_rect_first"))
                 return
-            jpath = qr_core.upsert_labelme_rect(p, st.xywh, label_name=label_name)
+            jpath = labelme_io.upsert_labelme_rect(p, st.xywh, label_name=label_name)
         else:
             if not st.points or len(st.points) < 3:
                 QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("debug.polygon_min_points"))
                 return
-            jpath = qr_core.upsert_labelme_polygon(p, st.points, label_name=label_name)
+            jpath = labelme_io.upsert_labelme_polygon(p, st.points, label_name=label_name)
 
         QtWidgets.QMessageBox.information(
             self,
@@ -4647,19 +4650,19 @@ class ToolPage(QtWidgets.QWidget):
     def _missing_training_roi_paths(self, roi_label: str, candidate_paths: List[str]) -> List[str]:
         missing_paths: List[str] = []
         for path in candidate_paths:
-            json_path = qr_core.labelme_json_of_image(path)
+            json_path = labelme_io.labelme_json_of_image(path)
             if not os.path.exists(json_path):
                 missing_paths.append(path)
                 continue
-            if qr_core.read_shape_from_labelme(json_path, roi_label) is None:
+            if labelme_io.read_shape_from_labelme(json_path, roi_label) is None:
                 missing_paths.append(path)
         if missing_paths and self.loc_method == "shape":
             try:
                 self._autogen_roi_for_images(missing_paths, only_missing=False, silent=True)
                 refreshed_missing_paths: List[str] = []
                 for path in candidate_paths:
-                    json_path = qr_core.labelme_json_of_image(path)
-                    if not os.path.exists(json_path) or qr_core.read_shape_from_labelme(json_path, roi_label) is None:
+                    json_path = labelme_io.labelme_json_of_image(path)
+                    if not os.path.exists(json_path) or labelme_io.read_shape_from_labelme(json_path, roi_label) is None:
                         refreshed_missing_paths.append(path)
                 missing_paths = refreshed_missing_paths
             except Exception:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from algorithms.proxy import is_ready as is_qr_core_ready
+from algorithms.lazy_api import is_ready as is_qr_core_ready
 from ui.i18n import tr
 
 from .support import AlgorithmEngineWarmupThread

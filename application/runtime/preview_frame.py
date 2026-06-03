@@ -7,7 +7,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from algorithms.labelme import labelme_json_of_image
+from common.labelme_io import labelme_json_of_image
 from common.safe_io import atomic_write_json, load_json_with_backup
 
 

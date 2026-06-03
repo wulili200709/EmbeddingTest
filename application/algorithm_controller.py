@@ -25,26 +25,29 @@ from algorithms.measurement import (
     measure_edge_distance,
     measure_find_line,
 )
-from algorithms.registry import (
+from common.algorithm_codes import (
     DEFAULT_LEARNING_BACKBONE,
     LEARNING_BACKBONES,
     SHARED_BACKBONE_ALGORITHM_CODE,
-    algorithm_display_name,
-    get_tool_algorithm_spec,
-    is_learning_tool_algorithm,
-    is_measurement_tool_algorithm,
-    is_traditional_tool_algorithm,
     learning_backbone_storage_code,
     learning_backbone_storage_codes,
     normalize_tool_algorithm_code,
     storage_code_backbone,
+)
+from algorithms.registry import (
+    get_tool_algorithm_spec,
+    is_learning_tool_algorithm,
+    is_measurement_tool_algorithm,
+    is_traditional_tool_algorithm,
 )
 from infrastructure.product_params import (
     ProductRuntimeParams,
     load_product_params,
     save_product_params,
 )
-import algorithms.proxy as qr_core
+import algorithms.lazy_api as qr_core
+from common import labelme_io
+from ui.algorithm_labels import algorithm_display_name
 
 
 SUPPORTED_EMBEDDING_ALGORITHMS = list(LEARNING_BACKBONES)
@@ -546,7 +549,7 @@ class AlgorithmController:
                     "match_ms": None,
                     "total_ms": None,
                     "json_name": os.path.basename(
-                        qr_core.labelme_json_of_image(str(sample.get("file_path", "")))
+                        labelme_io.labelme_json_of_image(str(sample.get("file_path", "")))
                     ),
                 })
             storage_key = self.traditional_model_storage_key(algorithm, model_key=normalized_model_key)
@@ -614,7 +617,7 @@ class AlgorithmController:
             self.apply_params_to_model()
 
             if len(labels) == 1 and roi is None:
-                j = qr_core.labelme_json_of_image(path)
+                j = labelme_io.labelme_json_of_image(path)
                 if not os.path.exists(j):
                     raise FileNotFoundError(f"缺少 labelme json: {j}")
 
@@ -697,7 +700,7 @@ class AlgorithmController:
             threshold=float(threshold) if threshold is not None else None,
             match_ms=match_ms,
             total_ms=float(total_ms),
-            json_name=os.path.basename(qr_core.labelme_json_of_image(path)),
+            json_name=os.path.basename(labelme_io.labelme_json_of_image(path)),
             detail=locals().get("detail", ""),
             measurement=measurement_payload,
         )

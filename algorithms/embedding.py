@@ -33,12 +33,13 @@ except Exception:  # pragma: no cover
     ort = None
 
 from common.app_paths import writable_embedding_test_root
-from .embedding_core import compute_prototypes, predict_one, score_topk
-from .registry import learning_backbone_storage_code, storage_code_backbone
-from .labelme import (
+from common.algorithm_codes import learning_backbone_storage_code, storage_code_backbone
+from common.labelme_io import (
     clamp_roi_xywh,
     labelme_json_of_image,
 )
+
+from .embedding_core import compute_prototypes, predict_one, score_topk
 
 
 _BACKBONE_OUTPUT_CHANNELS = {

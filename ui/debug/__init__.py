@@ -7,11 +7,11 @@ from importlib import import_module
 
 _SYMBOL_TO_MODULE = {
     "EmbeddingAnalysisDialog": ".embedding_analysis_dialog",
-    "ShapeTemplateDialog": "shape.ui.template_page_pyside6",
+    "ShapeTemplateDialog": "ui.shape_template.template_page_pyside6",
     "OverlayShape": ".roi_canvas_pyside6",
     "RoiCanvas": ".roi_canvas_pyside6",
     "pixmap_from_path": ".roi_canvas_pyside6",
-    "ToolPage": ".tool_page_pyside6",
+    "ToolPage": ".tool_page",
 }
 
 __all__ = sorted(_SYMBOL_TO_MODULE.keys())

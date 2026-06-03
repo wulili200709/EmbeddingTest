@@ -870,7 +870,7 @@ def measure_edge_distance(
 ) -> EdgeDistanceResult:
     if not os.path.exists(img_path):
         raise FileNotFoundError(img_path)
-    from .labelme import labelme_json_of_image, read_shape_from_labelme
+    from common.labelme_io import labelme_json_of_image, read_shape_from_labelme
 
     jpath = labelme_json_of_image(img_path)
     if not os.path.exists(jpath):
@@ -902,7 +902,7 @@ def measure_find_line(
 ) -> FindLineMeasurementResult:
     if not os.path.exists(img_path):
         raise FileNotFoundError(img_path)
-    from .labelme import labelme_json_of_image, read_shape_from_labelme
+    from common.labelme_io import labelme_json_of_image, read_shape_from_labelme
 
     jpath = labelme_json_of_image(img_path)
     if not os.path.exists(jpath):

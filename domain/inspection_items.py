@@ -5,7 +5,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Iterable, List, Mapping
 
-from algorithms.registry import (
+from common.algorithm_codes import (
     SHARED_BACKBONE_ALGORITHM_CODE,
     normalize_tool_algorithm_code,
 )

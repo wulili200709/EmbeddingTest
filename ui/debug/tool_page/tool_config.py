@@ -13,7 +13,8 @@ from algorithms.measurement import (
     FIND_LINE_SUBPIX_ALGORITHM,
     LINE_DISTANCE_ALGORITHMS,
 )
-from algorithms.registry import list_tool_algorithm_specs, normalize_tool_algorithm_code
+from common.algorithm_codes import normalize_tool_algorithm_code
+from algorithms.registry import list_tool_algorithm_specs
 from domain import InspectionItem, SUPPORTED_CAMERA_IDS, save_inspection_items
 from ui.i18n import tr
 

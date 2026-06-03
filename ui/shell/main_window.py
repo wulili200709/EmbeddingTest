@@ -6,7 +6,7 @@ from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from algorithms.proxy import is_ready as is_qr_core_ready
+from algorithms.lazy_api import is_ready as is_qr_core_ready
 from application import (
     DEFAULT_RELEASE_PASSWORD,
     ProductRuntimeContext,

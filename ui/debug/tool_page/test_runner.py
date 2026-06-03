@@ -10,7 +10,7 @@ from typing import Dict, List, Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from algorithms.registry import learning_backbone_storage_code
+from common.algorithm_codes import learning_backbone_storage_code
 from shape.core import locator as shape_locator
 
 

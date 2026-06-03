@@ -7,10 +7,10 @@ from typing import List, Optional, Tuple
 
 from PySide6 import QtGui
 
-import algorithms.proxy as qr_core
+from common import labelme_io
 
-from domain import output_labels_from_shape_recipe
 from shape.core import locator as shape_locator
+from shape.core.recipe_labels import output_labels_from_shape_recipe
 from ui.debug import OverlayShape
 from ui.roi_overlay_colors import (
     SEARCH_REGION_COLOR,
@@ -190,7 +190,7 @@ def _update_save_label_text(tool_page) -> None:
 
 
 def _set_overlay_shapes(tool_page, img_path: str, current_label: str) -> None:
-    j = qr_core.labelme_json_of_image(img_path)
+    j = labelme_io.labelme_json_of_image(img_path)
     overlays: List[OverlayShape] = []
     visible_roi_labels: Optional[set[str]] = None
 
@@ -238,16 +238,16 @@ def _set_overlay_shapes(tool_page, img_path: str, current_label: str) -> None:
         return
 
     def add_shape(label: str, color: QtGui.QColor, *, width: float, dash: bool = False) -> None:
-        poly_pts = qr_core.try_read_polygon_points_from_labelme(j, label)
+        poly_pts = labelme_io.try_read_polygon_points_from_labelme(j, label)
         if poly_pts and len(poly_pts) >= 3:
             overlays.append(OverlayShape(shape_type="polygon", points=poly_pts, color=color, width=width, dash=dash))
             return
-        xywh = qr_core.try_read_xywh_from_labelme(j, label)
+        xywh = labelme_io.try_read_xywh_from_labelme(j, label)
         if xywh:
             overlays.append(OverlayShape(shape_type="rect", xywh=xywh, color=color, width=width, dash=dash))
 
     seen_labels: set[str] = set()
-    for label in qr_core.sorted_label_names_from_labelme(j, label_prefix="roi"):
+    for label in labelme_io.sorted_label_names_from_labelme(j, label_prefix="roi"):
         if visible_roi_labels is not None and label not in visible_roi_labels:
             continue
         if label == current_label:
@@ -275,15 +275,15 @@ def _load_shape_for_label(tool_page, img_path: str, label_name: str) -> None:
         roi_width=roi_width,
         preview_width=roi_width,
     )
-    j = qr_core.labelme_json_of_image(img_path)
+    j = labelme_io.labelme_json_of_image(img_path)
     loaded = False
     if os.path.exists(j):
-        poly_pts = qr_core.try_read_polygon_points_from_labelme(j, label_name)
+        poly_pts = labelme_io.try_read_polygon_points_from_labelme(j, label_name)
         if poly_pts and len(poly_pts) >= 3:
             tool_page.canvas.set_roi_polygon(poly_pts)
             tool_page.cmb_shape.setCurrentText("polygon")
             loaded = True
-        xywh = qr_core.try_read_xywh_from_labelme(j, label_name)
+        xywh = labelme_io.try_read_xywh_from_labelme(j, label_name)
         if xywh:
             tool_page.canvas.set_roi_rect(xywh)
             tool_page.cmb_shape.setCurrentText("rect")
@@ -309,9 +309,9 @@ def _roi_xywh_from_canvas(tool_page) -> Optional[Tuple[int, int, int, int]]:
         return roi
     p = tool_page.canvas.image_path()
     if p:
-        j = qr_core.labelme_json_of_image(p)
+        j = labelme_io.labelme_json_of_image(p)
         if os.path.exists(j):
-            xywh = qr_core.try_read_xywh_from_labelme(j, "roi")
+            xywh = labelme_io.try_read_xywh_from_labelme(j, "roi")
             if xywh:
                 return xywh
     return None

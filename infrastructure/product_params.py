@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict
 
-from algorithms.registry import learning_backbone_storage_code, storage_code_backbone
+from common.algorithm_codes import learning_backbone_storage_code, storage_code_backbone
 from common.safe_io import atomic_write_json, load_json_with_backup
 
 
