@@ -1,4 +1,4 @@
-"""ROI-related ToolPage helpers."""
+﻿"""ROI-related ToolPage helpers."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from PySide6 import QtGui
 
 import algorithms.proxy as qr_core
 
-from domain import output_labels_from_line2dup_recipe
-from shape.core import locator as line2dup_locator
+from domain import output_labels_from_shape_recipe
+from shape.core import locator as shape_locator
 from ui.debug import OverlayShape
 from ui.roi_overlay_colors import (
     SEARCH_REGION_COLOR,
@@ -165,8 +165,8 @@ def _load_canvas_image(tool_page, path: str) -> None:
 
 
 def _set_status_for_current_image(tool_page, path: str) -> None:
-    match_ms = tool_page._line2dup_match_ms_by_image.get(path)
-    total_ms = tool_page._line2dup_autogen_ms_by_image.get(path)
+    match_ms = tool_page._shape_match_ms_by_image.get(path)
+    total_ms = tool_page._shape_autogen_ms_by_image.get(path)
     if match_ms is None and total_ms is None:
         updater = getattr(tool_page, "_update_sample_panel_widgets", None)
         if callable(updater):
@@ -176,7 +176,7 @@ def _set_status_for_current_image(tool_page, path: str) -> None:
     if match_ms is not None:
         parts.append(f"模板匹配={match_ms:.1f}ms")
     if total_ms is not None:
-        parts.append(f"生成ROI={total_ms:.1f}ms")
+        parts.append(f"生成 ROI={total_ms:.1f}ms")
     tool_page.lbl_status.setText("状态: " + "  ".join(parts))
 
 
@@ -186,7 +186,7 @@ def _current_label(tool_page) -> str:
 
 def _update_save_label_text(tool_page) -> None:
     label = tool_page._current_label()
-    tool_page.btn_save.setText(f"保存标注({label}) -> labelme json")
+    tool_page.btn_save.setText(f"淇濆瓨鏍囨敞({label}) -> labelme json")
 
 
 def _set_overlay_shapes(tool_page, img_path: str, current_label: str) -> None:
@@ -194,12 +194,12 @@ def _set_overlay_shapes(tool_page, img_path: str, current_label: str) -> None:
     overlays: List[OverlayShape] = []
     visible_roi_labels: Optional[set[str]] = None
 
-    recipe = tool_page.line2dup_recipe_for_role(tool_page.current_camera_role())
-    if tool_page.loc_method == "line2dup":
-        labels = [str(label).strip() for label in output_labels_from_line2dup_recipe(recipe) if str(label).strip()]
+    recipe = tool_page.shape_recipe_for_role(tool_page.current_camera_role())
+    if tool_page.loc_method == "shape":
+        labels = [str(label).strip() for label in output_labels_from_shape_recipe(recipe) if str(label).strip()]
         visible_roi_labels = set(labels) if labels else None
 
-    if tool_page.loc_method == "line2dup" and recipe is not None and recipe.search_points:
+    if tool_page.loc_method == "shape" and recipe is not None and recipe.search_points:
         points = [
             (float(pt[0]), float(pt[1]))
             for pt in (recipe.search_points or [])
@@ -315,3 +315,6 @@ def _roi_xywh_from_canvas(tool_page) -> Optional[Tuple[int, int, int, int]]:
             if xywh:
                 return xywh
     return None
+
+
+

@@ -1,4 +1,4 @@
-"""Execution-oriented RuntimeController helpers."""
+﻿"""Execution-oriented RuntimeController helpers."""
 
 from __future__ import annotations
 
@@ -20,13 +20,13 @@ _INVALID_PATH_SEGMENT_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
 
 
 def _recipe_path_for_role(runtime, role: str) -> str:
-    getter = getattr(runtime._session, "line2dup_recipe_path_for_role", None)
+    getter = getattr(runtime._session, "shape_recipe_path_for_role", None)
     if callable(getter):
         try:
             return str(getter(role) or "")
         except Exception:
-            return str(getattr(runtime._session, "line2dup_recipe_path", "") or "")
-    return str(getattr(runtime._session, "line2dup_recipe_path", "") or "")
+            return str(getattr(runtime._session, "shape_recipe_path", "") or "")
+    return str(getattr(runtime._session, "shape_recipe_path", "") or "")
 
 
 def _recipe_name_for_roles(runtime, roles) -> str:
@@ -35,7 +35,7 @@ def _recipe_name_for_roles(runtime, roles) -> str:
         path = _recipe_path_for_role(runtime, role)
         if path:
             return recipe_name_from_path(path)
-    return recipe_name_from_path(str(getattr(runtime._session, "line2dup_recipe_path", "") or ""))
+    return recipe_name_from_path(str(getattr(runtime._session, "shape_recipe_path", "") or ""))
 
 
 def _outcome_roles(outcome) -> tuple[str, ...]:
@@ -348,8 +348,8 @@ def _precheck_for_roles(runtime, roles) -> tuple[bool, str]:
     if runtime._frame_grab_service is None or not runtime._frame_grab_service.roles():
         return False, "camera not connected"
 
-    if runtime._runtime_context.loc_method != "line2dup":
-        return False, "runtime currently only supports line2dup localization"
+    if runtime._runtime_context.loc_method != "shape":
+        return False, "runtime currently only supports shape localization"
 
     active_roles = {
         str(role).strip()
@@ -371,8 +371,8 @@ def _precheck_for_roles(runtime, roles) -> tuple[bool, str]:
     ]
     if missing_recipe_roles:
         if len(missing_recipe_roles) == 1:
-            return False, f"please generate and save a line2dup template first for {missing_recipe_roles[0]}"
-        return False, "please generate and save line2dup templates first for connected cameras"
+            return False, f"please generate and save a shape template first for {missing_recipe_roles[0]}"
+        return False, "please generate and save shape templates first for connected cameras"
     enabled_items = [
         item
         for item in runtime._runtime_context.inspection_items
@@ -538,3 +538,5 @@ def _reload_runtime_context(runtime) -> None:
         runtime._runtime_context.reload()
     except Exception as exc:
         runtime.logAppended.emit(f"[runtime] failed to reload runtime context: {exc}")
+
+

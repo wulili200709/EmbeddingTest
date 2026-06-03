@@ -1,16 +1,3 @@
-"""
-result_aggregator.py
-
-把运行链路相机级结果，转换成 UI 可消费的：
-  - item 级结果
-  - camera 级结果
-  - final 级结果
-
-当前第一版限制：
-  - InspectionRuntime 只返回相机级结果
-  - 因此 item 级结果先继承所属相机结果
-"""
-
 from __future__ import annotations
 
 import os

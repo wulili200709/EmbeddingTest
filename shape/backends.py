@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any, Sequence
 
 
-_DEFAULT_OPENCV_BUILD_ROOT = Path(r"C:\Users\ADMIN\tools\opencv\build")
+APP_ROOT = Path(__file__).resolve().parents[1]
+_DEFAULT_OPENCV_BUILD_ROOT = APP_ROOT
 NATIVE_BACKEND_TO_MODULE = {
     "original": "shape_original",
     "fusion": "shape_fusion",
@@ -22,7 +23,10 @@ _NATIVE_FALLBACK_WARNED: set[str] = set()
 
 
 def _opencv_build_root() -> Path:
-    override = os.environ.get("LINE2DUP_OPENCV_BUILD", "").strip()
+    override = (
+        os.environ.get("SHAPE_OPENCV_BUILD", "").strip()
+        or os.environ.get("LINE2DUP_OPENCV_BUILD", "").strip()
+    )
     if override:
         return Path(override).expanduser()
     return _DEFAULT_OPENCV_BUILD_ROOT
@@ -33,8 +37,9 @@ def _native_build_instructions() -> str:
         "To enable the OpenCV-backed accelerators:\n"
         "py -3 -m pip install -U setuptools wheel pybind11\n"
         "py -3.12 EmbeddingTest\\_dev_only\\setup.py build_ext --inplace\n"
-        f"Set LINE2DUP_OPENCV_BUILD if OpenCV is not installed at {_DEFAULT_OPENCV_BUILD_ROOT}.\n"
-        "Optional: set LINE2DUP_OPENCV_WORLD_LIB when your OpenCV world library name is not auto-detected."
+        "Set SHAPE_OPENCV_BUILD when OpenCV is not available beside the application.\n"
+        "Optional: set SHAPE_OPENCV_WORLD_LIB when your OpenCV world library name is not auto-detected.\n"
+        "Legacy LINE2DUP_OPENCV_BUILD and LINE2DUP_OPENCV_WORLD_LIB are still accepted."
     )
 
 

@@ -1,21 +1,3 @@
-"""
-ui.shell.main_window
-
-MainWindow — Step 4 重构后的极简薄壳。
-
-职责：
-  ① 创建 ProductSession / AlgorithmController / ToolPage / RuntimeController
-  ② 连接所有跨边界 Signal（RuntimeModePage ↔ RuntimeController ↔ ToolPage）
-  ③ 弹出对话框（RuntimeController 只发 Signal，由此处响应）
-  ④ 处理产品切换 / 会话清空的跨组件协调
-  ⑤ 窗口生命周期（closeEvent）
-
-业务逻辑完全委托给：
-  - ProductSession      — 产品 / 路径 / session.json
-  - AlgorithmController — 算法参数 / 模型 / 训练 / 推理
-  - ToolPage            — ROI 标注 / 自动定位 / 预测 / 分析
-  - RuntimeController   — 相机连接 / 触发检测 / 放行
-"""
 
 from __future__ import annotations
 

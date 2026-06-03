@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import math
 import os
@@ -17,7 +17,7 @@ from ..core.locator import (
     resolved_model_path_for_product,
     resolved_recipe_path_for_product,
 )
-from ..core.recipe import Line2DupRecipe, load_recipe, save_recipe
+from ..core.recipe import ShapeRecipe, load_recipe, save_recipe
 from ..core.roi_follow import FollowResult, locate_and_follow
 from ..core.template_core import (
     BACKEND_ITEMS,
@@ -44,7 +44,7 @@ ensure_repo_root_on_path()
 
 from ..like_matcher import (  # noqa: E402
     Feature,
-    Line2DupLikeDetector,
+    ShapeLikeDetector,
     TemplateLevel,
     load_detector_model,
     match_quad,
@@ -150,7 +150,7 @@ def _overlay_follow_result(
     return canvas
 
 
-def _draw_match_overlay(detector: Line2DupLikeDetector, image_bgr: np.ndarray, match) -> np.ndarray:
+def _draw_match_overlay(detector: ShapeLikeDetector, image_bgr: np.ndarray, match) -> np.ndarray:
     out = image_bgr.copy()
     color = (0, 255, 0)
     t0 = detector.get_templates(match.class_id, match.template_id, backend=match.backend)[0]
@@ -255,7 +255,7 @@ QLabel {
 _DEFAULT_FIND_BACKEND_LABEL = "Fusion V2"
 
 
-class Line2DupTemplateDialog(QtWidgets.QDialog):
+class ShapeTemplateDialog(QtWidgets.QDialog):
     modelSaved = QtCore.Signal(str, str)
     referenceRegionsChanged = QtCore.Signal()
 
@@ -289,9 +289,9 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.image_path = initial_image_path
         self.image_bgr: Optional[np.ndarray] = None
 
-        self.detector: Optional[Line2DupLikeDetector] = None
+        self.detector: Optional[ShapeLikeDetector] = None
         self.detector_path: str = ""
-        self.find_detector: Optional[Line2DupLikeDetector] = None
+        self.find_detector: Optional[ShapeLikeDetector] = None
         self.find_detector_path: str = ""
         self.find_model_path = self._resolved_model_path
 
@@ -1002,7 +1002,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             else:
                 self.cmb_backend_find.setCurrentText(_DEFAULT_FIND_BACKEND_LABEL)
 
-    def _recipe_from_controls(self, *, use_find_values: bool = False) -> Line2DupRecipe:
+    def _recipe_from_controls(self, *, use_find_values: bool = False) -> ShapeRecipe:
         if use_find_values:
             backend = BACKEND_LABEL_TO_KEY.get(self.cmb_backend_find.currentText(), "original")
             threshold = float(self.spin_threshold_find.value())
@@ -1041,7 +1041,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         reference_points = list((first_region or {}).get("points", self._recipe_reference_points))
         reference_label = str((first_region or {}).get("reference_label", "roi") or "roi")
         output_label = str((first_region or {}).get("output_label", reference_label) or reference_label)
-        return Line2DupRecipe(
+        return ShapeRecipe(
             model_path=self.paths.model_path,
             reference_image=self.image_path,
             class_id=self.edit_class_id.text().strip() or self.product_name or "object",
@@ -1199,7 +1199,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             tr("template.status_loaded_model", model=os.path.basename(self.paths.model_path), count=self._feature_count)
         )
 
-    def _apply_detector_template_params(self, detector: Line2DupLikeDetector, source_info: object) -> None:
+    def _apply_detector_template_params(self, detector: ShapeLikeDetector, source_info: object) -> None:
         pose_ui = {}
         if isinstance(source_info, dict):
             pose_info_block = source_info.get("pose_infos", {})
@@ -1241,7 +1241,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             weak_threshold = float(self.spin_weak.value())
             strong_threshold = float(self.spin_strong.value())
             roi_mask = build_mask_from_rects(roi_img.shape[1], roi_img.shape[0], self.mask_rects)
-            detector = Line2DupLikeDetector(
+            detector = ShapeLikeDetector(
                 num_features=num_features,
                 T_levels=levels,
                 weak_threshold=weak_threshold,
@@ -1758,13 +1758,13 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
                 if isinstance(pt, (list, tuple)) and len(pt) >= 2
             ]
             if shape_type == "polygon":
-                info_text = f"Polygon · {len(points)} pts"
+                info_text = f"Polygon 路 {len(points)} pts"
             elif len(points) >= 2:
                 x0, y0 = float(points[0][0]), float(points[0][1])
                 x1, y1 = float(points[1][0]), float(points[1][1])
                 w = max(1, int(round(abs(x1 - x0))))
                 h = max(1, int(round(abs(y1 - y0))))
-                info_text = f"Rect · {w}x{h}"
+                info_text = f"Rect 路 {w}x{h}"
             else:
                 info_text = "Rect"
             row = self.table_reference_regions.rowCount()
@@ -2016,7 +2016,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         try:
             if not self._reference_regions:
                 raise RuntimeError(tr("template.no_reference_roi_to_save"))
-            old_recipe = load_recipe(self.paths.recipe_path) if os.path.exists(self.paths.recipe_path) else Line2DupRecipe()
+            old_recipe = load_recipe(self.paths.recipe_path) if os.path.exists(self.paths.recipe_path) else ShapeRecipe()
             old_labels = {
                 str(region.get("output_label") or region.get("reference_label") or "")
                 for region in (old_recipe.reference_regions or [])
@@ -2220,7 +2220,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self._apply_search_roi_to_find_canvas()
         self.lbl_find_status.setText(tr("template.status_find_switched", image=os.path.basename(scene_path)))
 
-    def _get_detector_for_model(self, model_path: str, *, reuse_shared: bool = True) -> Line2DupLikeDetector:
+    def _get_detector_for_model(self, model_path: str, *, reuse_shared: bool = True) -> ShapeLikeDetector:
         if reuse_shared and self.detector is not None and os.path.abspath(model_path) == os.path.abspath(self.detector_path or ""):
             return self.detector
         if self.find_detector is not None and os.path.abspath(model_path) == os.path.abspath(self.find_detector_path or ""):
@@ -2279,7 +2279,11 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
                     used_threshold = float(threshold)
                     break
                 except RuntimeError as exc:
-                    if "match failure" in str(exc) or "line2dup did not find any match" in str(exc):
+                    exc_text = str(exc)
+                    if (
+                        "match failure" in exc_text
+                        or "shape did not find any match" in exc_text
+                    ):
                         last_exc = exc
                         continue
                     raise
@@ -2335,4 +2339,6 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         super().closeEvent(event)
 
 
-__all__ = ["Line2DupTemplateDialog"]
+__all__ = ["ShapeTemplateDialog"]
+
+

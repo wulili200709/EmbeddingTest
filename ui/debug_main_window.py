@@ -1,8 +1,3 @@
-"""
-独立调试主窗口。
-
-当前第一版只承载 ToolPage，运行链路入口由 RunMainWindow 负责。
-"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
@@ -12,7 +12,7 @@ ensure_repo_root_on_path()
 
 from ..like_matcher import (  # noqa: E402
     Feature,
-    Line2DupLikeDetector,
+    ShapeLikeDetector,
     TemplateLevel,
     clone_template_levels,
     create_native_detector,
@@ -419,7 +419,7 @@ def make_class_source_payload(
 
 
 def load_class_source_assets(
-    detector: Line2DupLikeDetector,
+    detector: ShapeLikeDetector,
     class_id: str,
 ) -> Tuple[dict, np.ndarray, np.ndarray, RoiRect, List[MaskRect]]:
     source_info = detector.get_class_source(class_id)
@@ -464,11 +464,11 @@ def build_multi_backend_detector(
     original_mode: str,
     original_editor_levels: Optional[Sequence[TemplateLevel]] = None,
     source_image_path: str = "",
-) -> Tuple[Line2DupLikeDetector, int, int]:
+) -> Tuple[ShapeLikeDetector, int, int]:
     ensure_native_backends_available(("original", "fusion", "fusionv2", "sim3"))
     roi_mask = build_mask_from_rects(roi_img.shape[1], roi_img.shape[0], mask_rects)
 
-    detector = Line2DupLikeDetector(
+    detector = ShapeLikeDetector(
         num_features=num_features,
         T_levels=levels,
         weak_threshold=weak_threshold,
@@ -506,7 +506,7 @@ def build_multi_backend_detector(
             raise RuntimeError("Failed to extract the base Original template from ROI.")
         editor_levels_raw = original_native_for_editor.export_template_pyramid(class_id, editor_tid)
         base_editor_levels = normalize_extracted_levels_to_roi(
-            Line2DupLikeDetector._template_pyramid_from_native(editor_levels_raw),
+            ShapeLikeDetector._template_pyramid_from_native(editor_levels_raw),
             roi_img,
         )
     detector.set_original_editor_levels(class_id, base_editor_levels)
@@ -567,7 +567,7 @@ def build_multi_backend_detector(
             if original_tid < 0:
                 skipped += 1
                 continue
-            original_tp = Line2DupLikeDetector._template_pyramid_from_native(
+            original_tp = ShapeLikeDetector._template_pyramid_from_native(
                 original_native.export_template_pyramid(class_id, original_tid)
             )
 
@@ -584,13 +584,13 @@ def build_multi_backend_detector(
             skipped += 1
             continue
 
-        fusion_tp = Line2DupLikeDetector._template_pyramid_from_native(
+        fusion_tp = ShapeLikeDetector._template_pyramid_from_native(
             fusion_native.export_template_pyramid(class_id, fusion_tid)
         )
-        fusionv2_tp = Line2DupLikeDetector._template_pyramid_from_native(
+        fusionv2_tp = ShapeLikeDetector._template_pyramid_from_native(
             fusionv2_native.export_template_pyramid(class_id, fusionv2_tid)
         )
-        sim3_tp = Line2DupLikeDetector._template_pyramid_from_native(
+        sim3_tp = ShapeLikeDetector._template_pyramid_from_native(
             sim3_native.export_template_pyramid(class_id, sim3_tid)
         )
 
@@ -625,7 +625,7 @@ def build_multi_backend_detector(
     return detector, kept, skipped
 
 
-def copy_detector_class(src: Line2DupLikeDetector, dst: Line2DupLikeDetector, class_id: str) -> None:
+def copy_detector_class(src: ShapeLikeDetector, dst: ShapeLikeDetector, class_id: str) -> None:
     source_info = src.get_class_source(class_id)
     if source_info:
         dst.set_class_source(class_id, source_info)
@@ -661,3 +661,4 @@ __all__ = [
     "transform_image_and_mask_expanded",
     "transform_levels_for_pose",
 ]
+

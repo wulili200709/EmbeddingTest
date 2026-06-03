@@ -1,22 +1,16 @@
 ﻿"""
-tool_page_pyside6.py
+Tool page UI for template setup, ROI review, training, and testing.
 
-??? QWidget??? ROI ???????????????????? UI ??????
+Main workflow groups:
+  1. ROI editing: _load_canvas_image / _save_current_rect / _on_select_ok
+  2. Shape localization: _autogen_roi_for_images / _open_shape_template_page
+  3. Testing: _predict_image / _run_test / _populate_results_table / _append_test_log
+  4. Validation: _suggest_margin_from_rows / _run_margin_validation / _run_traditional_baseline_debug
 
-????
-  1. ROI ??: _load_canvas_image / _save_current_rect / _on_select_ok
-  2. ?? ROI / ??: _autogen_roi_for_images / _open_line2dup_template_page
-  3. ?? / ??: _predict_image / _run_test / _populate_results_table / _append_test_log
-  4. ?? / ??: _suggest_margin_from_rows / _run_margin_validation / _run_traditional_baseline_debug
-
-?? Signal ? MainWindow ????????
-  productChangeRequested(str): ????????? MainWindow ??????????? apply_product_switch()
-  sessionClearRequested(): ????????????? MainWindow ??????????? reset_for_clear()
-  sessionLoaded(): ???????????? MainWindow ???????
-
-????
-  - ????????????????
-  - RuntimeModePage ???
+Signals consumed by MainWindow:
+  productChangeRequested(str): ask MainWindow to switch products through apply_product_switch()
+  sessionClearRequested(): ask MainWindow to clear state through reset_for_clear()
+  sessionLoaded(): notify MainWindow that session state was loaded
 """
 
 from __future__ import annotations
@@ -56,14 +50,14 @@ from application import (
 from domain import (
     InspectionItem,
     clearable_roi_labels,
-    inspection_item_specs_from_line2dup_recipe,
+    inspection_item_specs_from_shape_recipe,
     load_inspection_items,
     save_inspection_items,
     sync_items_with_labels,
-    output_labels_from_line2dup_recipe,
+    output_labels_from_shape_recipe,
 )
-from shape.core import locator as line2dup_locator
-from shape.core.recipe import Line2DupRecipe
+from shape.core import locator as shape_locator
+from shape.core.recipe import ShapeRecipe
 from ui.debug import (
     OverlayShape,
     RoiCanvas,
@@ -98,7 +92,7 @@ except Exception:
     frame_to_rgb_image = None  # type: ignore[assignment]
 
 
-SUPPORTED_LOC_MODES = ["line2dup"]
+SUPPORTED_LOC_MODES = ["shape"]
 SUPPORTED_SHAPES = ["rect", "polygon"]
 ROI_OVERLAY_PALETTE = [
     QtGui.QColor(255, 215, 0),
@@ -433,7 +427,7 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
             tr("sample.current_scope", role=camera_role, sample=sample_text, count=len(paths))
             + (tr("sample.current_image_suffix", image=os.path.basename(current_path)) if current_path else "")
         )
-        recipe = self._tool_page.line2dup_recipe_for_role(camera_role, force_reload=False)
+        recipe = self._tool_page.shape_recipe_for_role(camera_role, force_reload=False)
         ref_image = ""
         if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
             ref_image = str(recipe.reference_image)
@@ -488,11 +482,11 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
         labels: List[str]
         pre_resolved = False
 
-        if method == "line2dup":
+        if method == "shape":
             try:
-                recipe = tool_page.line2dup_recipe_for_role(role, force_reload=True)
+                recipe = tool_page.shape_recipe_for_role(role, force_reload=True)
                 if role == tool_page.current_camera_role():
-                    tool_page.line2dup_recipe = recipe
+                    tool_page.shape_recipe = recipe
             except Exception as exc:
                 QtWidgets.QMessageBox.warning(self, "Info", f"Failed to load template recipe: {exc}")
                 return None
@@ -508,10 +502,10 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
                                 f"{tr('debug.reference_image')}: {os.path.basename(ref_image)}"
                             )
                             tool_page.lbl_ref.setToolTip(ref_image)
-            if not os.path.exists(tool_page.line2dup_model_path_for_role(role)):
+            if not os.path.exists(tool_page.shape_model_path_for_role(role)):
                 QtWidgets.QMessageBox.warning(self, "Info", "Current product has no template model. Create a template first.")
                 return None
-            labels = tool_page._line2dup_output_labels(role)
+            labels = tool_page._shape_output_labels(role)
             recipe_region_labels = {
                 str(region.get("output_label") or region.get("reference_label") or "").strip()
                 for region in (recipe.reference_regions or [])
@@ -586,7 +580,7 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
         if self._autogen_running:
             return
         if getattr(self._tool_page, "_sample_auto_roi_jobs", []):
-            QtWidgets.QMessageBox.information(self, tr("common.info"), "自动ROI正在处理，请等待")
+            QtWidgets.QMessageBox.information(self, tr("common.info"), "自动 ROI 正在处理，请等待")
             return
         payload = self._prepare_autogen_payload(paths, only_missing=only_missing)
         if payload is None:
@@ -637,8 +631,8 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
                 value = float(elapsed_ms)
             except Exception:
                 continue
-            tool_page._line2dup_match_ms_by_image[str(path)] = value
-            tool_page._line2dup_autogen_ms_by_image[str(path)] = value
+            tool_page._shape_match_ms_by_image[str(path)] = value
+            tool_page._shape_autogen_ms_by_image[str(path)] = value
 
         ok = int(result.get("ok", 0) or 0)
         errs = [str(err) for err in result.get("errs", []) or [] if str(err)]
@@ -1401,8 +1395,8 @@ class _SampleAutoRoiWorker(QtCore.QObject):
         for index, path in enumerate(todo, start=1):
             self.progressChanged.emit(f"{index}/{total} {os.path.basename(path)}")
             try:
-                if method == "line2dup":
-                    run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
+                if method == "shape":
+                    run = shape_locator.autogen_roi_json_from_shape_timed(
                         tgt_img_path=path,
                         ref_img_path=str(self._payload.get("ref_image", "") or ""),
                         product_dir=str(self._payload.get("product_dir", "") or ""),
@@ -1555,15 +1549,15 @@ class _TrainingJobWorker(QtCore.QObject):
 
 class ToolPage(QtWidgets.QWidget):
     """
-    ?????? QWidget?
+    Main debug tool page widget.
 
-    ?????MainWindow ??::
+    Typical MainWindow integration:
 
         self.tool_page = ToolPage(self.session, self.algo)
         self.tool_page.productChangeRequested.connect(self._on_product_change_request)
         self.tool_page.sessionClearRequested.connect(self._on_session_clear_request)
-        self.tool_page.sessionLoaded.connect(lambda: self._refresh_runtime_status_ui("????????"))
-        self.main_pages.addTab(self.tool_page, "???")
+        self.tool_page.sessionLoaded.connect(lambda: self._refresh_runtime_status_ui("session loaded"))
+        self.main_pages.addTab(self.tool_page, "Debug")
         self.tool_page.load_session()
     """
 
@@ -1594,16 +1588,16 @@ class ToolPage(QtWidgets.QWidget):
         self.ng_files: List[str] = []
         self.test_files: List[str] = []
         self.ref_image: Optional[str] = None
-        self.loc_method: str = "line2dup"
-        self.line2dup_recipe: Optional[Line2DupRecipe] = None
-        self._line2dup_recipes_by_role: Dict[str, Optional[Line2DupRecipe]] = {}
+        self.loc_method: str = "shape"
+        self.shape_recipe: Optional[ShapeRecipe] = None
+        self._shape_recipes_by_role: Dict[str, Optional[ShapeRecipe]] = {}
         self._training_roi_ready_signatures: Dict[str, str] = {}
         self._training_roi_pending_actions: Dict[str, str] = {}
         self.inspection_items: List[InspectionItem] = []
         self._visible_inspection_item_indexes: List[int] = []
         self._inspection_items_table_loading = False
-        self._line2dup_match_ms_by_image: Dict[str, float] = {}
-        self._line2dup_autogen_ms_by_image: Dict[str, float] = {}
+        self._shape_match_ms_by_image: Dict[str, float] = {}
+        self._shape_autogen_ms_by_image: Dict[str, float] = {}
         self._current_result_rows: List[Dict[str, object]] = []
         self._roi_results_by_image: Dict[str, Dict[str, str]] = {}
         self._sample_roi_annotations_by_path: Dict[str, Dict[str, str]] = {}
@@ -1633,7 +1627,7 @@ class ToolPage(QtWidgets.QWidget):
         self._debug_io_timer.timeout.connect(self._refresh_debug_io_snapshot)
         self._camera_settings_store = CameraSettingsStore(self.session.camera_settings_path)
         self._current_camera_role = "cam1"
-        # ?? setValue/????????????????????
+        # Guard against recursive setValue/apply callbacks in camera controls.
         self._debug_camera_block_spin_apply = False
         self._main_right_panel: Optional[QtWidgets.QFrame] = None
         self._algorithm_picker_style_default = ""
@@ -1652,7 +1646,7 @@ class ToolPage(QtWidgets.QWidget):
         self.destroyed.connect(lambda *_: self._cleanup_debug_hardware())
 
     # ------------------------------------------------------------------
-    # 鍏紑鎺ュ彛锛圡ainWindow 璋冪敤锛?
+    # Public API used by MainWindow
     # ------------------------------------------------------------------
 
     def retranslate_ui(self) -> None:
@@ -1924,53 +1918,53 @@ class ToolPage(QtWidgets.QWidget):
         if dialog is not None and hasattr(dialog, "sync_camera_roles"):
             dialog.sync_camera_roles(allowed_roles)
 
-    def line2dup_paths_for_role(self, camera_role: object = None):
+    def shape_paths_for_role(self, camera_role: object = None):
         role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
-        return self.session.line2dup_paths_for_role(role)
+        return self.session.shape_paths_for_role(role)
 
-    def load_line2dup_recipe_for_role(
+    def load_shape_recipe_for_role(
         self,
         camera_role: object = None,
         *,
         force_reload: bool = False,
-    ) -> Optional[Line2DupRecipe]:
+    ) -> Optional[ShapeRecipe]:
         role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
-        if not force_reload and role in self._line2dup_recipes_by_role:
-            recipe = self._line2dup_recipes_by_role.get(role)
+        if not force_reload and role in self._shape_recipes_by_role:
+            recipe = self._shape_recipes_by_role.get(role)
         else:
-            paths = self.line2dup_paths_for_role(role)
+            paths = self.shape_paths_for_role(role)
             if not (os.path.exists(paths.recipe_path) or os.path.exists(paths.legacy_recipe_path)):
                 recipe = None
             else:
                 try:
-                    recipe = line2dup_locator.load_recipe_for_product(self.session.product_dir, role)
+                    recipe = shape_locator.load_recipe_for_product(self.session.product_dir, role)
                 except Exception:
                     recipe = None
-            self._line2dup_recipes_by_role[role] = recipe
+            self._shape_recipes_by_role[role] = recipe
         if role == self.current_camera_role():
-            self.line2dup_recipe = recipe
+            self.shape_recipe = recipe
         return recipe
 
-    def line2dup_recipe_for_role(
+    def shape_recipe_for_role(
         self,
         camera_role: object = None,
         *,
         force_reload: bool = False,
-    ) -> Optional[Line2DupRecipe]:
-        return self.load_line2dup_recipe_for_role(camera_role, force_reload=force_reload)
+    ) -> Optional[ShapeRecipe]:
+        return self.load_shape_recipe_for_role(camera_role, force_reload=force_reload)
 
-    def line2dup_model_path_for_role(self, camera_role: object = None) -> str:
+    def shape_model_path_for_role(self, camera_role: object = None) -> str:
         role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
-        paths = self.line2dup_paths_for_role(role)
-        return line2dup_locator.resolved_model_path_for_product(self.session.product_dir, role)
+        paths = self.shape_paths_for_role(role)
+        return shape_locator.resolved_model_path_for_product(self.session.product_dir, role)
 
-    def line2dup_recipe_path_for_role(self, camera_role: object = None) -> str:
+    def shape_recipe_path_for_role(self, camera_role: object = None) -> str:
         role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
-        return line2dup_locator.resolved_recipe_path_for_product(self.session.product_dir, role)
+        return shape_locator.resolved_recipe_path_for_product(self.session.product_dir, role)
 
     def _apply_current_role_recipe_state(self) -> None:
-        recipe = self.load_line2dup_recipe_for_role(self.current_camera_role())
-        self.line2dup_recipe = recipe
+        recipe = self.load_shape_recipe_for_role(self.current_camera_role())
+        self.shape_recipe = recipe
         ref_image = ""
         if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
             ref_image = str(recipe.reference_image)
@@ -2015,8 +2009,8 @@ class ToolPage(QtWidgets.QWidget):
     def _training_roi_ready_signature(self, camera_role: object = None) -> str:
         role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
         candidate_paths = self._train_sample_paths_for_role(role)
-        recipe_path = self.line2dup_recipe_path_for_role(role)
-        model_path = self.line2dup_model_path_for_role(role)
+        recipe_path = self.shape_recipe_path_for_role(role)
+        model_path = self.shape_model_path_for_role(role)
         recipe_mtime = os.path.getmtime(recipe_path) if recipe_path and os.path.exists(recipe_path) else -1.0
         model_mtime = os.path.getmtime(model_path) if model_path and os.path.exists(model_path) else -1.0
         return "|".join(
@@ -2101,7 +2095,7 @@ class ToolPage(QtWidgets.QWidget):
 
     def _ensure_training_roi_reviewed(self, camera_role: object, *, action_name: str, action_key: str) -> bool:
         role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
-        if self.loc_method != "line2dup":
+        if self.loc_method != "shape":
             return True
         candidate_paths = self._train_sample_paths_for_role(role)
         if not candidate_paths:
@@ -2120,7 +2114,7 @@ class ToolPage(QtWidgets.QWidget):
             self._update_runtime_widgets()
             return True
 
-        recipe = self.line2dup_recipe_for_role(role, force_reload=True)
+        recipe = self.shape_recipe_for_role(role, force_reload=True)
         if recipe is None:
             QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("debug.recipe_missing", role=role))
             return False
@@ -2135,14 +2129,14 @@ class ToolPage(QtWidgets.QWidget):
         errors: List[str] = []
         for path in candidate_paths:
             try:
-                run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
+                run = shape_locator.autogen_roi_json_from_shape_timed(
                     tgt_img_path=path,
                     ref_img_path=ref_image,
                     product_dir=self.session.product_dir,
                     camera_role=role,
                 )
-                self._line2dup_match_ms_by_image[path] = float(run.total_ms)
-                self._line2dup_autogen_ms_by_image[path] = float(run.total_ms)
+                self._shape_match_ms_by_image[path] = float(run.total_ms)
+                self._shape_autogen_ms_by_image[path] = float(run.total_ms)
                 ok_count += 1
             except Exception as exc:
                 errors.append(f"{os.path.basename(path)}: {exc}")
@@ -2330,7 +2324,7 @@ class ToolPage(QtWidgets.QWidget):
         self._apply_runtime_io_debug_state()
 
     def open_template_editor_dialog(self) -> None:
-        self._open_line2dup_template_page()
+        self._open_shape_template_page()
 
     def runtime_controller(self):
         parent = self.parent()
@@ -2526,7 +2520,7 @@ class ToolPage(QtWidgets.QWidget):
         self.test_files = sd.test_files
         self._load_sample_roi_annotations()
         self.loc_method = sd.loc_method
-        self._line2dup_recipes_by_role = {}
+        self._shape_recipes_by_role = {}
         self._clear_training_roi_review_state()
         self.cmb_loc.setCurrentText(self.loc_method)
         self._apply_current_role_recipe_state()
@@ -2556,12 +2550,12 @@ class ToolPage(QtWidgets.QWidget):
         self._sync_camera_settings_store_path()
 
         self.algo.model = None
-        self.line2dup_recipe = None
-        self._line2dup_recipes_by_role = {}
+        self.shape_recipe = None
+        self._shape_recipes_by_role = {}
         self._clear_training_roi_review_state()
         self.ref_image = None
-        self._line2dup_match_ms_by_image = {}
-        self._line2dup_autogen_ms_by_image = {}
+        self._shape_match_ms_by_image = {}
+        self._shape_autogen_ms_by_image = {}
         self.train_files = []
         self.ok_files = []
         self.ng_files = []
@@ -2591,12 +2585,12 @@ class ToolPage(QtWidgets.QWidget):
         self.test_files = []
         self._sample_roi_annotations_by_path = {}
         self.algo.model = None
-        self.line2dup_recipe = None
-        self._line2dup_recipes_by_role = {}
+        self.shape_recipe = None
+        self._shape_recipes_by_role = {}
         self._clear_training_roi_review_state()
         self.ref_image = None
-        self._line2dup_match_ms_by_image = {}
-        self._line2dup_autogen_ms_by_image = {}
+        self._shape_match_ms_by_image = {}
+        self._shape_autogen_ms_by_image = {}
         self.lbl_ref.setText(tr("debug.reference_image_not_set"))
         self.lbl_status.setText(tr("debug.status_untrained"))
         self.table.setRowCount(0)
@@ -2609,7 +2603,7 @@ class ToolPage(QtWidgets.QWidget):
         self._sync_footer()
 
     # ------------------------------------------------------------------
-    # UI 构建
+    # UI 鏋勫缓
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
@@ -2645,7 +2639,7 @@ class ToolPage(QtWidgets.QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # 鈹€鈹€ 椤舵爮 鈹€鈹€
+        # Header
         header = QtWidgets.QFrame()
         header.setFixedHeight(44)
         header.setStyleSheet(f"background:{_HEADER_BG};border-bottom:1px solid #505050;")
@@ -2695,12 +2689,12 @@ class ToolPage(QtWidgets.QWidget):
 
         root.addWidget(header)
 
-        # ???Canvas + ????
+        # Main canvas and side panels
         body = QtWidgets.QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
 
-        # 左侧：Canvas + 结果表格
+        # Left side: canvas and result table
         canvas_frame = QtWidgets.QWidget()
         canvas_frame.setStyleSheet(f"background:{_DARK_BG};")
         canvas_vbox = QtWidgets.QVBoxLayout(canvas_frame)
@@ -2729,7 +2723,7 @@ class ToolPage(QtWidgets.QWidget):
 
         body.addWidget(canvas_frame, 3)
 
-        # 右侧面板
+        # 鍙充晶闈㈡澘
         right_panel = QtWidgets.QFrame()
         self._main_right_panel = right_panel
         right_panel.setStyleSheet(f"background:{_PANEL_BG};border-left:1px solid #505050;")
@@ -2737,7 +2731,7 @@ class ToolPage(QtWidgets.QWidget):
         right_vbox.setContentsMargins(0, 0, 0, 0)
         right_vbox.setSpacing(0)
 
-        # --- 图片列表 ---
+        # --- Image list ---
         self.lbl_images_section = QtWidgets.QLabel(tr("debug.image_list"))
         self.lbl_images_section.setFixedHeight(28)
         self.lbl_images_section.setStyleSheet(_section_style)
@@ -2831,7 +2825,7 @@ class ToolPage(QtWidgets.QWidget):
         )
         right_vbox.addWidget(self.lbl_current_image_sample_state)
 
-        # --- 算法参数 ---
+        # --- 绠楁硶鍙傛暟 ---
         self.btn_toggle_algo = QtWidgets.QToolButton()
         self.btn_toggle_algo.setText(tr("debug.algorithm_params"))
         self.btn_toggle_algo.setCheckable(True)
@@ -3098,7 +3092,7 @@ class ToolPage(QtWidgets.QWidget):
         right_vbox.addWidget(self.lbl_current_tool_sample_stats)
         self._update_learning_backbone_hint()
 
-        # --- 操作按钮 ---
+        # --- 鎿嶄綔鎸夐挳 ---
         self.lbl_action_section = QtWidgets.QLabel(tr("debug.actions"))
         sec_action = self.lbl_action_section
         sec_action.setFixedHeight(28)
@@ -3145,7 +3139,7 @@ class ToolPage(QtWidgets.QWidget):
         self.btn_train.clicked.connect(self._train_all_tools)
         train_row.addWidget(self.btn_train, 1)
 
-        self.btn_train_cancel = QtWidgets.QPushButton("×")
+        self.btn_train_cancel = QtWidgets.QPushButton("脳")
         self.btn_train_cancel.setToolTip(tr("debug.cancel_train_confirm"))
         self.btn_train_cancel.setStyleSheet(_cancel_action_btn)
         self.btn_train_cancel.setVisible(False)
@@ -3162,7 +3156,7 @@ class ToolPage(QtWidgets.QWidget):
         self.btn_train_current.clicked.connect(self._train)
         train_current_row.addWidget(self.btn_train_current, 1)
 
-        self.btn_train_current_cancel = QtWidgets.QPushButton("×")
+        self.btn_train_current_cancel = QtWidgets.QPushButton("脳")
         self.btn_train_current_cancel.setToolTip(tr("debug.cancel_current_confirm"))
         self.btn_train_current_cancel.setStyleSheet(_cancel_action_btn)
         self.btn_train_current_cancel.setVisible(False)
@@ -3191,7 +3185,7 @@ class ToolPage(QtWidgets.QWidget):
         body.addWidget(right_panel, 0)
         root.addLayout(body, 1)
 
-        # 鈹€鈹€ 搴曟爮 鈹€鈹€
+        # Footer
         footer = QtWidgets.QFrame()
         footer.setFixedHeight(28)
         footer.setStyleSheet(f"background:{_HEADER_BG};border-top:1px solid #505050;")
@@ -3211,9 +3205,9 @@ class ToolPage(QtWidgets.QWidget):
         footer_layout.addWidget(self.lbl_footer_product_dir)
         root.addWidget(footer)
 
-        # 鈹€鈹€ 闅愯棌/瀵硅瘽妗嗕笓鐢ㄦ帶浠讹紙淇濇寔鎺ュ彛鍏煎锛?鈹€鈹€
+        # Hidden controls kept for dialog/API compatibility
 
-        # ROI 鏍囨敞宸ュ叿鏍忥紙闅愯棌锛?
+        # Hidden ROI annotation toolbar
         roi_bar_w = QtWidgets.QWidget(self)
         roi_bar = QtWidgets.QHBoxLayout(roi_bar_w)
         self._manual_roi_bar = roi_bar
@@ -3239,7 +3233,7 @@ class ToolPage(QtWidgets.QWidget):
         roi_bar.addWidget(self.btn_clear)
         roi_bar_w.hide()
 
-        # 自动 ROI（对话框用）
+        # 自动 ROI 对话框
         auto_box = QtWidgets.QGroupBox(tr("debug.auto_roi"))
         auto_l = QtWidgets.QGridLayout(auto_box)
         self._auto_roi_layout = auto_l
@@ -3278,14 +3272,14 @@ class ToolPage(QtWidgets.QWidget):
         self.template_match_box = auto_box
         self._update_loc_ui()
 
-        # ???????????MVS ??????
+        # Camera debug page, laid out in the same style as the MVS page
         self.camera_debug_page = QtWidgets.QWidget()
         self.camera_debug_page.setStyleSheet(f"background:{_DARK_BG};color:{_TEXT_LIGHT};")
         cam_main = QtWidgets.QHBoxLayout(self.camera_debug_page)
         cam_main.setContentsMargins(0, 0, 0, 0)
         cam_main.setSpacing(0)
 
-        # 鈹€鈹€ 宸︿晶锛氳澶囧垪琛?+ 璁惧淇℃伅 鈹€鈹€
+        # Left side: device list and device information
         cam_left = QtWidgets.QFrame()
         cam_left.setFixedWidth(220)
         cam_left.setStyleSheet(f"QFrame{{background:{_PANEL_BG};border-right:1px solid #505050;}}")
@@ -3341,7 +3335,7 @@ class ToolPage(QtWidgets.QWidget):
         cam_left_vbox.addStretch(1)
         cam_main.addWidget(cam_left)
 
-        # ?????? + ???? + ???
+        # Preview area, toolbar, and camera controls
         cam_center = QtWidgets.QWidget()
         cam_center_vbox = QtWidgets.QVBoxLayout(cam_center)
         cam_center_vbox.setContentsMargins(0, 0, 0, 0)
@@ -3404,7 +3398,7 @@ class ToolPage(QtWidgets.QWidget):
         cam_center_vbox.addWidget(cam_statusbar)
         cam_main.addWidget(cam_center, 1)
 
-        # ???????
+        # Right side: camera parameter controls
         cam_right = QtWidgets.QFrame()
         cam_right.setFixedWidth(240)
         cam_right.setStyleSheet(f"QFrame{{background:{_PANEL_BG};border-left:1px solid #505050;}}")
@@ -3456,7 +3450,7 @@ class ToolPage(QtWidgets.QWidget):
         self._debug_shift_row_label = tr("debug.digital_shift")
         cam_params_form.addRow(self._debug_shift_row_label, self.spin_debug_digital_shift)
 
-        # ????????????????????? autoDefault ???Enter ??????????????
+        # Avoid QPushButton auto-default behavior stealing Enter from spin boxes.
         self.spin_debug_exposure.setKeyboardTracking(False)
         self.spin_debug_gain.setKeyboardTracking(False)
         self.spin_debug_digital_shift.setKeyboardTracking(False)
@@ -3474,7 +3468,7 @@ class ToolPage(QtWidgets.QWidget):
         self.cmb_debug_trigger_mode.setStyleSheet(_input_style)
         self._debug_trigger_row_label = tr("debug.trigger_mode")
         cam_params_form.addRow(self._debug_trigger_row_label, self.cmb_debug_trigger_mode)
-        # activated?????????????? setCurrentIndex ???
+        # Use activated so programmatic setCurrentIndex calls do not apply hardware changes.
         self.cmb_debug_trigger_mode.activated.connect(self._on_debug_camera_trigger_activated)
 
         self.cmb_debug_light_source_mode = QtWidgets.QComboBox()
@@ -3509,7 +3503,7 @@ class ToolPage(QtWidgets.QWidget):
         cam_right_vbox.addStretch(1)
         cam_main.addWidget(cam_right)
 
-        # IO 璋冭瘯锛堝璇濇鐢級鈥?MVS 椋庢牸甯冨眬
+        # IO debug page, laid out in the same style as the MVS page
         self.io_debug_page = QtWidgets.QWidget()
         self.io_debug_page.setStyleSheet(f"background:{_DARK_BG};color:{_TEXT_LIGHT};")
         io_main = QtWidgets.QHBoxLayout(self.io_debug_page)
@@ -3773,7 +3767,7 @@ class ToolPage(QtWidgets.QWidget):
 
 
     # ------------------------------------------------------------------
-    # 底栏同步
+    # 搴曟爮鍚屾
     # ------------------------------------------------------------------
 
     def _sync_footer(self) -> None:
@@ -3876,7 +3870,7 @@ class ToolPage(QtWidgets.QWidget):
             labels.append(label)
             seen.add(label)
         if not labels:
-            labels_getter = getattr(self, "_line2dup_output_labels", None)
+            labels_getter = getattr(self, "_shape_output_labels", None)
             if callable(labels_getter):
                 for label in labels_getter():
                     text = str(label or "").strip()
@@ -4400,7 +4394,7 @@ class ToolPage(QtWidgets.QWidget):
         self.sessionClearRequested.emit()
 
     # ------------------------------------------------------------------
-    # Canvas / ROI
+    # Auto ROI
     # ------------------------------------------------------------------
 
 
@@ -4474,17 +4468,17 @@ class ToolPage(QtWidgets.QWidget):
         self._load_canvas_image(p)
 
     # ------------------------------------------------------------------
-    # ??? / ??
+    # Training / calibration
     # ------------------------------------------------------------------
 
 
     # ------------------------------------------------------------------
-    # 自动 ROI
+    # Auto ROI
     # ------------------------------------------------------------------
 
 
     # ------------------------------------------------------------------
-    # 算法参数
+    # 绠楁硶鍙傛暟
 
     def _is_embedding_algorithm(self, algorithm: Optional[str] = None) -> bool:
         normalized = str(algorithm or self.current_algorithm() or "").strip()
@@ -4615,7 +4609,7 @@ class ToolPage(QtWidgets.QWidget):
             self.lbl_status.setText(f"Status: failed to load tool {display_name} - {exc}")
 
     # ------------------------------------------------------------------
-    # 训练
+    # 璁粌
     # ------------------------------------------------------------------
 
     def _resolve_training_algorithm(self, inspection_item: InspectionItem) -> str:
@@ -4659,7 +4653,7 @@ class ToolPage(QtWidgets.QWidget):
                 continue
             if qr_core.read_shape_from_labelme(json_path, roi_label) is None:
                 missing_paths.append(path)
-        if missing_paths and self.loc_method == "line2dup":
+        if missing_paths and self.loc_method == "shape":
             try:
                 self._autogen_roi_for_images(missing_paths, only_missing=False, silent=True)
                 refreshed_missing_paths: List[str] = []
@@ -4816,7 +4810,10 @@ class ToolPage(QtWidgets.QWidget):
             self._populate_results_table(display_rows)
 
         if success_names:
-            self._save_runtime_params()
+            try:
+                self._save_runtime_params()
+            except Exception as exc:
+                self.lbl_status.setText(f"Status: training done, but saving runtime params failed: {exc}")
             self._save_session()
         self._refresh_inspection_items_table()
         self._update_runtime_widgets()
@@ -4996,7 +4993,7 @@ class ToolPage(QtWidgets.QWidget):
         )
 
     # ------------------------------------------------------------------
-    # 预测 / 测试
+    # 棰勬祴 / 娴嬭瘯
     # ------------------------------------------------------------------
 
     def _test_target_inspection_items(self) -> List[InspectionItem]:
@@ -5078,8 +5075,8 @@ class ToolPage(QtWidgets.QWidget):
             row["match_ms"] = match_ms if match_ms > 0.0 else row.get("match_ms")
             row["total_ms"] = total_ms if total_ms > 0.0 else row.get("total_ms")
             labels_override = (
-                self._line2dup_output_labels()
-                if self.loc_method == "line2dup"
+                self._shape_output_labels()
+                if self.loc_method == "shape"
                 else ["roi"]
             )
             for roi_label in labels_override:
@@ -5214,7 +5211,7 @@ class ToolPage(QtWidgets.QWidget):
             self._tool_dialogs[key] = dialog
         dialog.setWindowTitle(self._tool_dialog_title(key))
         if key == "camera_debug":
-            # ??????????? Enter ???????????????????????
+            # Prevent Enter in parameter editors from triggering dialog buttons.
             for _btn in dialog.findChildren(QtWidgets.QPushButton):
                 _btn.setAutoDefault(False)
                 _btn.setDefault(False)
@@ -5475,3 +5472,8 @@ class ToolPage(QtWidgets.QWidget):
             f"Completed baseline metrics for {display_name} ({roi_label}) in {tab_name}.\n"
             f"Success: {ok}/{len(paths)}\n\nJSON:\n{json_path}\n\nCSV:\n{csv_path}",
         )
+
+
+
+
+

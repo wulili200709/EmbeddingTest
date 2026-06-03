@@ -1,4 +1,4 @@
-"""ToolPage helper binding registry."""
+﻿"""ToolPage helper binding registry."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ _TOOL_PAGE_BINDINGS = (
     (
         auto_roi,
         (
-            "_line2dup_output_labels",
+            "_shape_output_labels",
             "_inspection_item_labels",
             "_reload_inspection_items",
             "_missing_roi_files",
@@ -44,11 +44,11 @@ _TOOL_PAGE_BINDINGS = (
             "_set_reference",
             "_set_ref_from_current",
             "_pick_ref_image",
-            "_open_line2dup_template_page",
+            "_open_shape_template_page",
             "_on_template_editor_dialog_destroyed",
-            "_on_line2dup_model_saved",
-            "_on_line2dup_reference_regions_changed",
-            "_sync_line2dup_recipe_and_items",
+            "_on_shape_model_saved",
+            "_on_shape_reference_regions_changed",
+            "_sync_shape_recipe_and_items",
             "_update_loc_ui",
             "_on_loc_method_changed",
             "_resolve_autogen_targets",
@@ -162,3 +162,4 @@ def bind_tool_page(cls):
         for name in names:
             setattr(cls, name, getattr(module, name))
     return cls
+

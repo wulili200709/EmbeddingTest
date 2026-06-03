@@ -1,11 +1,31 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict
 
 from algorithms.registry import learning_backbone_storage_code, storage_code_backbone
 from common.safe_io import atomic_write_json, load_json_with_backup
+
+
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if hasattr(value, "item"):
+        try:
+            return _json_safe(value.item())
+        except Exception:
+            pass
+    if hasattr(value, "tolist"):
+        try:
+            return _json_safe(value.tolist())
+        except Exception:
+            pass
+    return str(value)
 
 
 @dataclass
@@ -36,10 +56,14 @@ class ProductRuntimeParams:
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        payload = asdict(self)
-        payload["algorithm"] = learning_backbone_storage_code(payload.get("algorithm", ""))
-        payload["learning_backbone"] = learning_backbone_storage_code(payload.get("learning_backbone", ""))
-        return payload
+        return {
+            "algorithm": learning_backbone_storage_code(self.algorithm),
+            "learning_backbone": learning_backbone_storage_code(self.learning_backbone),
+            "score_mode": str(self.score_mode or "proto"),
+            "margin": float(self.margin),
+            "topk": int(self.topk),
+            "traditional_models": _json_safe(self.traditional_models),
+        }
 
 
 def load_product_params(path: str) -> ProductRuntimeParams:

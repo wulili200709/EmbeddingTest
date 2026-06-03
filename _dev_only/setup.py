@@ -15,11 +15,19 @@ import pybind11
 SCRIPT_ROOT = Path(__file__).resolve().parent
 APP_ROOT = SCRIPT_ROOT.parent
 PATCHED_BACKEND_ROOT = SCRIPT_ROOT / "build" / "_patched_backends"
-OPENCV_ROOT = Path(os.environ.get("LINE2DUP_OPENCV_BUILD", r"C:\Users\ADMIN\tools\opencv\build")).expanduser()
+OPENCV_ROOT = Path(
+    os.environ.get("SHAPE_OPENCV_BUILD", "").strip()
+    or os.environ.get("LINE2DUP_OPENCV_BUILD", "").strip()
+    or r"C:\Users\ADMIN\tools\opencv\build"
+).expanduser()
 OPENCV_INCLUDE_DIR = OPENCV_ROOT / "include"
 OPENCV_LIB_DIR = OPENCV_ROOT / "x64" / "vc16" / "lib"
 OPENCV_BIN_DIR = OPENCV_ROOT / "x64" / "vc16" / "bin"
-OPENCV_WORLD_LIB = os.environ.get("LINE2DUP_OPENCV_WORLD_LIB", "opencv_world4130")
+OPENCV_WORLD_LIB = (
+    os.environ.get("SHAPE_OPENCV_WORLD_LIB", "").strip()
+    or os.environ.get("LINE2DUP_OPENCV_WORLD_LIB", "").strip()
+    or "opencv_world4130"
+)
 
 ORIGINAL_ROOT = SCRIPT_ROOT / "vendor" / "_third_party_shape_based_matching"
 FUSION_ROOT = SCRIPT_ROOT / "vendor" / "_third_party_shape_based_matching_fusion_fix_memo"

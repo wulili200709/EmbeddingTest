@@ -1,8 +1,4 @@
-"""
-product_session.py
-
-产品与会话管理，纯文件 I/O，零 UI 依赖。
-"""
+﻿"""Product/session persistence without UI dependencies."""
 
 from __future__ import annotations
 
@@ -28,8 +24,8 @@ class ProductPaths:
     product_params_path: str
     inspection_items_path: str
     camera_settings_path: str
-    line2dup_model_path: str
-    line2dup_recipe_path: str
+    shape_model_path: str
+    shape_recipe_path: str
 
     @classmethod
     def build(cls, product_dir: str) -> "ProductPaths":
@@ -42,8 +38,8 @@ class ProductPaths:
             product_params_path=os.path.join(product_dir, "product_params.json"),
             inspection_items_path=os.path.join(product_dir, "inspection_items.json"),
             camera_settings_path=os.path.join(product_dir, "camera_settings.json"),
-            line2dup_model_path=paths.model_path,
-            line2dup_recipe_path=paths.recipe_path,
+            shape_model_path=paths.model_path,
+            shape_recipe_path=paths.recipe_path,
         )
 
 
@@ -54,7 +50,7 @@ class SessionData:
     ng_files: List[str] = field(default_factory=list)
     test_files: List[str] = field(default_factory=list)
     ref_image: Optional[str] = None
-    loc_method: str = "line2dup"
+    loc_method: str = "shape"
     runtime_cam1_serial: Optional[str] = None
     runtime_cam2_serial: Optional[str] = None
     runtime_capture_policy: Optional[str] = None
@@ -101,14 +97,14 @@ class ProductSession:
         return self.paths.camera_settings_path if self.paths else ""
 
     @property
-    def line2dup_model_path(self) -> str:
-        return self.paths.line2dup_model_path if self.paths else ""
+    def shape_model_path(self) -> str:
+        return self.paths.shape_model_path if self.paths else ""
 
     @property
-    def line2dup_recipe_path(self) -> str:
-        return self.paths.line2dup_recipe_path if self.paths else ""
+    def shape_recipe_path(self) -> str:
+        return self.paths.shape_recipe_path if self.paths else ""
 
-    def line2dup_paths_for_role(self, camera_role: str):
+    def shape_paths_for_role(self, camera_role: str):
         if not self.product_dir:
             from shape.core.locator import product_paths
 
@@ -117,11 +113,11 @@ class ProductSession:
 
         return product_paths(self.product_dir, camera_role)
 
-    def line2dup_model_path_for_role(self, camera_role: str) -> str:
-        return self.line2dup_paths_for_role(camera_role).model_path
+    def shape_model_path_for_role(self, camera_role: str) -> str:
+        return self.shape_paths_for_role(camera_role).model_path
 
-    def line2dup_recipe_path_for_role(self, camera_role: str) -> str:
-        return self.line2dup_paths_for_role(camera_role).recipe_path
+    def shape_recipe_path_for_role(self, camera_role: str) -> str:
+        return self.shape_paths_for_role(camera_role).recipe_path
 
     def load(self) -> None:
         data = load_json_with_backup(self.products_json, default={})
@@ -228,9 +224,11 @@ class ProductSession:
         ref = raw.get("ref_image", "")
         ref_image = resolve_existing_product_path(ref, base_dir=self.product_dir, anchor_dir=self.product_dir)
 
-        loc_method = str(raw.get("loc_method", "line2dup")).strip() or "line2dup"
-        if loc_method != "line2dup":
-            loc_method = "line2dup"
+        loc_method = str(raw.get("loc_method", "shape")).strip() or "shape"
+        if loc_method == "line2dup":
+            loc_method = "shape"
+        if loc_method != "shape":
+            loc_method = "shape"
 
         legacy_ok_files = _filter(raw.get("ok_files", []))
         legacy_ng_files = _filter(raw.get("ng_files", []))
@@ -308,3 +306,5 @@ class ProductSession:
         current = str(self._products_data.get("current_product", "Default")).strip() or "Default"
         if current not in kept:
             self._products_data["current_product"] = kept[0]
+
+

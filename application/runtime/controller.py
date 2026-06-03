@@ -1,18 +1,3 @@
-"""
-runtime_controller.py
-
-运行链路业务控制器，零 UI 直接调用，通过 Signal 驱动 RuntimeModePage 和 MainWindow。
-
-职责：
-  - 持有并管理所有运行服务对象（HikCameraManager / FrameGrabService /
-    InspectionRuntime / InspectionScheduler / PermissionManager / TestRecordService）
-  - 提供公开操作方法：refresh_cameras / connect_cameras / disconnect / trigger / release
-  - 通过细粒度 Signal 把状态变化推给 UI（RuntimeModePage）
-
-不负责：
-  - 任何 QWidget / QDialog 操作（由 MainWindow 监听 warningOccurred 等信号弹框）
-  - 工具页业务（ROI / 训练 / 产品切换），通过构造时传入的 ToolPage 引用调用
-"""
 
 from __future__ import annotations
 

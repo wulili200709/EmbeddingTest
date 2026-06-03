@@ -1,13 +1,3 @@
-"""
-inspection_executor.py
-
-运行检测执行器。
-
-当前阶段：
-  - 仍复用 `ToolPage.predict_image()` 作为底层推理入口
-  - 但已把“相机检测执行”从 RuntimeController 中下沉到本模块
-  - item 级结果暂按“所属相机结果继承”生成
-"""
 
 from __future__ import annotations
 

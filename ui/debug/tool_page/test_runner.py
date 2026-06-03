@@ -1,4 +1,4 @@
-"""Prediction and test-result helpers for ToolPage."""
+﻿"""Prediction and test-result helpers for ToolPage."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Dict, List, Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from algorithms.registry import learning_backbone_storage_code
-from shape.core import locator as line2dup_locator
+from shape.core import locator as shape_locator
 
 
 def _predict_image(
@@ -37,28 +37,28 @@ def _predict_image(
     )
 
     match_ms: Optional[float] = None
-    if tool_page.loc_method == "line2dup":
+    if tool_page.loc_method == "shape":
         camera_role = tool_page.current_camera_role()
-        recipe = tool_page.line2dup_recipe_for_role(camera_role)
+        recipe = tool_page.shape_recipe_for_role(camera_role)
         ref_image = tool_page.ref_image
         if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
             ref_image = recipe.reference_image
         if ref_image and os.path.exists(ref_image):
-            run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
+            run = shape_locator.autogen_roi_json_from_shape_timed(
                 tgt_img_path=path,
                 ref_img_path=ref_image,
                 product_dir=tool_page.session.product_dir,
                 camera_role=camera_role,
             )
             match_ms = float(run.total_ms)
-            tool_page._line2dup_match_ms_by_image[path] = match_ms
-            tool_page._line2dup_autogen_ms_by_image[path] = float(run.total_ms)
+            tool_page._shape_match_ms_by_image[path] = match_ms
+            tool_page._shape_autogen_ms_by_image[path] = float(run.total_ms)
     elif tool_page.ref_image and os.path.exists(tool_page.ref_image):
         tool_page._autogen_roi_for_images([path], only_missing=True, silent=True)
 
     labels = [str(label).strip() for label in (labels_override or []) if str(label).strip()]
     if not labels:
-        labels = tool_page._line2dup_output_labels() if tool_page.loc_method == "line2dup" else ["roi"]
+        labels = tool_page._shape_output_labels() if tool_page.loc_method == "shape" else ["roi"]
     roi = None
     if prefer_canvas_roi and len(labels) == 1 and tool_page.canvas.image_path() == path:
         roi = tool_page._roi_xywh_from_canvas()
@@ -173,3 +173,6 @@ def _append_test_log(tool_page, row: Dict[str, object]) -> str:
             "json_name": row.get("json_name", ""),
         })
     return csv_path
+
+
+

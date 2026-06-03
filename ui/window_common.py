@@ -11,7 +11,7 @@ from common.app_paths import packaged_embedding_test_root, writable_embedding_te
 from application import AlgorithmController, ProductSession
 from application.runtime.preview_frame import RuntimePreviewFrame, RuntimePreviewShape
 from application.runtime.preview_frame import read_exported_runtime_preview_measurements
-from shape.core import locator as line2dup_locator
+from shape.core import locator as shape_locator
 import algorithms.proxy as qr_core
 from ui.i18n import tr
 from ui.roi_overlay_colors import overlay_style_for_label, search_region_style
@@ -212,7 +212,7 @@ def _draw_runtime_search_region(painter: QtGui.QPainter, source: str | RuntimePr
     if not product_dir:
         return
     try:
-        recipe = line2dup_locator.load_recipe_for_product(product_dir, camera_role)
+        recipe = shape_locator.load_recipe_for_product(product_dir, camera_role)
     except Exception:
         return
 

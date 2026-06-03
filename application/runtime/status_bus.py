@@ -1,4 +1,4 @@
-"""Status emission helpers for RuntimeController."""
+﻿"""Status emission helpers for RuntimeController."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ from domain import build_pending_result, recipe_name_from_path
 
 _RUN_STATE_ZH_FOR_STATUS = {
     "WaitingTrigger": "等待触发",
-    "ReleasedPendingConsume": "已放行，待消耗",
+    "ReleasedPendingConsume": "已放行，待消费",
     "CapturingCam1": "采集中(相机1)",
     "CapturingCam2": "采集中(相机2)",
     "Inspecting": "检测中",
-    "Aggregating": "汇总结论",
+    "Aggregating": "汇总结果",
     "CompletedOk": "本轮完成 OK",
     "CompletedNg": "本轮 NG",
     "LockedByNg": "NG 锁定",
@@ -20,15 +20,14 @@ _RUN_STATE_ZH_FOR_STATUS = {
     "Unavailable": "服务不可用",
 }
 
-
 def _recipe_path_for_role(runtime, role: str) -> str:
-    getter = getattr(runtime._session, "line2dup_recipe_path_for_role", None)
+    getter = getattr(runtime._session, "shape_recipe_path_for_role", None)
     if callable(getter):
         try:
             return str(getter(role) or "")
         except Exception:
-            return str(getattr(runtime._session, "line2dup_recipe_path", "") or "")
-    return str(getattr(runtime._session, "line2dup_recipe_path", "") or "")
+            return str(getattr(runtime._session, "shape_recipe_path", "") or "")
+    return str(getattr(runtime._session, "shape_recipe_path", "") or "")
 
 
 def _runtime_recipe_name(runtime) -> str:
@@ -36,7 +35,7 @@ def _runtime_recipe_name(runtime) -> str:
         path = _recipe_path_for_role(runtime, role)
         if path:
             return recipe_name_from_path(path)
-    return recipe_name_from_path(str(getattr(runtime._session, "line2dup_recipe_path", "") or ""))
+    return recipe_name_from_path(str(getattr(runtime._session, "shape_recipe_path", "") or ""))
 
 
 def _update_status(runtime, message=None) -> None:
@@ -61,11 +60,11 @@ def _update_status(runtime, message=None) -> None:
     if runtime._permission_manager is not None:
         release_status = runtime._permission_manager.status()
         if release_status.is_locked:
-            permission_text = "NG锁定"
+            permission_text = "NG 锁定"
         elif release_status.has_pending_release:
-            permission_text = "已放行，待消耗"
+            permission_text = "已放行，待消费"
         elif release_status.release_consumed:
-            permission_text = "已消耗一次放行"
+            permission_text = "已消费一次放行"
         else:
             permission_text = "未锁定"
     else:
@@ -86,7 +85,6 @@ def _update_status(runtime, message=None) -> None:
     runtime.towerLightStatusChanged.emit(tower_text_map.get(tower_state, str(tower_state)))
     runtime.statusMessageChanged.emit(message or _RUN_STATE_ZH_FOR_STATUS.get(state_text, state_text))
     runtime.recordPathChanged.emit(runtime._last_record_path or "-")
-
 
 def _connected_roles(runtime) -> list[str]:
     roles: list[str] = []
@@ -193,3 +191,6 @@ def _current_runtime_state_text(runtime) -> str:
         return "Uninitialized"
     state_value = runtime._scheduler.state
     return state_value.value if hasattr(state_value, "value") else str(state_value)
+
+
+

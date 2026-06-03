@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import time
 from dataclasses import dataclass
@@ -6,9 +6,9 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from .recipe import Line2DupRecipe
+from .recipe import ShapeRecipe
 from .roi_follow import FollowResult, locate_and_follow
-from ..like_matcher import Line2DupLikeDetector, load_detector_model
+from ..like_matcher import ShapeLikeDetector, load_detector_model
 
 
 @dataclass(frozen=True)
@@ -58,14 +58,14 @@ def runtime_shapes_from_follow_result(result: FollowResult) -> tuple[RuntimeDete
 class ShapeRunner:
     """Cached model runner for repeated locate calls with one model."""
 
-    def __init__(self, model_path: str, detector: Optional[Line2DupLikeDetector] = None) -> None:
+    def __init__(self, model_path: str, detector: Optional[ShapeLikeDetector] = None) -> None:
         self.model_path = str(model_path)
         self.detector = detector or load_detector_model(self.model_path)
 
     def locate(
         self,
         scene_bgr: np.ndarray,
-        recipe: Line2DupRecipe,
+        recipe: ShapeRecipe,
         *,
         ref_img_path: str = "",
         scene_mask: Optional[np.ndarray] = None,
@@ -90,7 +90,7 @@ class ShapeRunner:
     def locate_runtime_shapes(
         self,
         scene_bgr: np.ndarray,
-        recipe: Line2DupRecipe,
+        recipe: ShapeRecipe,
         *,
         ref_img_path: str = "",
         scene_mask: Optional[np.ndarray] = None,
@@ -128,7 +128,7 @@ class ShapeLocateService:
     def locate(
         self,
         scene_bgr: np.ndarray,
-        recipe: Line2DupRecipe,
+        recipe: ShapeRecipe,
         *,
         ref_img_path: str = "",
         scene_mask: Optional[np.ndarray] = None,
@@ -145,7 +145,7 @@ class ShapeLocateService:
     def locate_runtime_shapes(
         self,
         scene_bgr: np.ndarray,
-        recipe: Line2DupRecipe,
+        recipe: ShapeRecipe,
         *,
         ref_img_path: str = "",
         scene_mask: Optional[np.ndarray] = None,
@@ -171,3 +171,5 @@ __all__ = [
     "ShapeRuntimeResult",
     "runtime_shapes_from_follow_result",
 ]
+
+

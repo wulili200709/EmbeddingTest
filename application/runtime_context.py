@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 import os
@@ -20,13 +20,13 @@ from algorithms.traditional import TraditionalThresholdModel, compute_roi_metric
 from application.runtime.preview_frame import RuntimePreviewShape
 from domain import (
     InspectionItem,
-    inspection_item_specs_from_line2dup_recipe,
+    inspection_item_specs_from_shape_recipe,
     load_inspection_items,
-    output_labels_from_line2dup_recipe,
+    output_labels_from_shape_recipe,
     save_inspection_items,
     sync_items_with_labels,
 )
-from shape.core import locator as line2dup_locator
+from shape.core import locator as shape_locator
 
 if TYPE_CHECKING:
     from application import AlgorithmController, ProductSession
@@ -353,21 +353,21 @@ class ToolPageRuntimeContext:
         ) or "cam1"
 
         match_ms = None
-        if tool_page.loc_method == "line2dup":
-            recipe = tool_page.line2dup_recipe_for_role(camera_role)
+        if tool_page.loc_method == "shape":
+            recipe = tool_page.shape_recipe_for_role(camera_role)
             ref_image = tool_page.ref_image
             if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
                 ref_image = recipe.reference_image
             if ref_image and os.path.exists(ref_image):
-                run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
+                run = shape_locator.autogen_roi_json_from_shape_timed(
                     tgt_img_path=path,
                     ref_img_path=ref_image,
                     product_dir=tool_page.session.product_dir,
                     camera_role=camera_role,
                 )
                 match_ms = float(run.total_ms)
-                tool_page._line2dup_match_ms_by_image[path] = match_ms
-                tool_page._line2dup_autogen_ms_by_image[path] = float(run.total_ms)
+                tool_page._shape_match_ms_by_image[path] = match_ms
+                tool_page._shape_autogen_ms_by_image[path] = float(run.total_ms)
         elif tool_page.ref_image and os.path.exists(tool_page.ref_image):
             tool_page._autogen_roi_for_images([path], only_missing=True, silent=True)
 
@@ -412,12 +412,12 @@ class ProductRuntimeContext:
     algo: "AlgorithmController"
 
     def __post_init__(self) -> None:
-        self._loc_method = "line2dup"
+        self._loc_method = "shape"
         self._inspection_items: List[InspectionItem] = []
         self._recipe = None
         self._recipes_by_role: Dict[str, object] = {}
         self._ref_image = ""
-        self._line2dup_match_ms_by_image: Dict[str, float] = {}
+        self._shape_match_ms_by_image: Dict[str, float] = {}
         self.reload()
 
     @property
@@ -450,22 +450,22 @@ class ProductRuntimeContext:
         total_t0 = time.perf_counter()
         match_ms = None
         camera_role = _camera_role_from_path(path)
-        if self.loc_method == "line2dup":
+        if self.loc_method == "shape":
             recipe = self._ensure_recipe_loaded(camera_role)
             ref_image = self._reference_image(recipe)
             if ref_image and os.path.exists(ref_image):
-                run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
+                run = shape_locator.autogen_roi_json_from_shape_timed(
                     tgt_img_path=path,
                     ref_img_path=ref_image,
                     product_dir=self.session.product_dir,
                     camera_role=camera_role,
                 )
                 match_ms = float(run.total_ms)
-                self._line2dup_match_ms_by_image[path] = match_ms
+                self._shape_match_ms_by_image[path] = match_ms
 
         labels = list(labels_override or [])
         if not labels:
-            labels = self._line2dup_output_labels() if self.loc_method == "line2dup" else ["roi"]
+            labels = self._shape_output_labels() if self.loc_method == "shape" else ["roi"]
         effective_algorithm = ""
         if str(algorithm_override or "").strip():
             effective_algorithm = self.algo.resolve_tool_algorithm(algorithm_override)
@@ -522,18 +522,18 @@ class ProductRuntimeContext:
 
         match_ms = None
         camera_role = str(enabled_items[0].camera_id or "cam1").strip() if enabled_items else "cam1"
-        if self.loc_method == "line2dup":
+        if self.loc_method == "shape":
             recipe = self._ensure_recipe_loaded(camera_role)
             ref_image = self._reference_image(recipe)
             if ref_image and os.path.exists(ref_image):
-                run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
+                run = shape_locator.autogen_roi_json_from_shape_timed(
                     tgt_img_path=path,
                     ref_img_path=ref_image,
                     product_dir=self.session.product_dir,
                     camera_role=camera_role,
                 )
                 match_ms = float(run.total_ms)
-                self._line2dup_match_ms_by_image[path] = match_ms
+                self._shape_match_ms_by_image[path] = match_ms
 
         rows_by_key = _predict_learning_items_batch_rows(
             path=path,
@@ -594,11 +594,11 @@ class ProductRuntimeContext:
         role = str(camera_role or "cam1").strip() or "cam1"
         match_ms = 0.0
         roi_shapes: tuple[RuntimePreviewShape, ...] = ()
-        if self.loc_method == "line2dup":
+        if self.loc_method == "shape":
             recipe = self._ensure_recipe_loaded(role)
             ref_image = self._reference_image(recipe)
             if ref_image and os.path.exists(ref_image):
-                run = line2dup_locator.autogen_runtime_roi_shapes_timed(
+                run = shape_locator.autogen_runtime_roi_shapes_timed(
                     scene_bgr=image,
                     ref_img_path=ref_image,
                     product_dir=self.session.product_dir,
@@ -708,9 +708,9 @@ class ProductRuntimeContext:
 
     def reload(self) -> None:
         self.algo.load_params(self.session.product_params_path)
-        self._line2dup_match_ms_by_image = {}
+        self._shape_match_ms_by_image = {}
         session_data = self.session.load_session()
-        self._loc_method = str(session_data.loc_method or "line2dup").strip() or "line2dup"
+        self._loc_method = str(session_data.loc_method or "shape").strip() or "shape"
         self._ref_image = str(session_data.ref_image or "").strip()
         self._recipes_by_role = {}
         items = load_inspection_items(self.session.inspection_items_path)
@@ -725,7 +725,7 @@ class ProductRuntimeContext:
             ]
             if recipe is None and not role_items:
                 continue
-            specs = inspection_item_specs_from_line2dup_recipe(recipe)
+            specs = inspection_item_specs_from_shape_recipe(recipe)
             labels = [
                 str(spec.get("roi_label", "")).strip()
                 for spec in specs
@@ -755,11 +755,11 @@ class ProductRuntimeContext:
         self._inspection_items = synced_items
 
     def _load_recipe_if_available(self, camera_role: str = "cam1"):
-        recipe_path = line2dup_locator.resolved_recipe_path_for_product(self.session.product_dir, camera_role)
+        recipe_path = shape_locator.resolved_recipe_path_for_product(self.session.product_dir, camera_role)
         if not os.path.exists(recipe_path):
             return None
         try:
-            return line2dup_locator.load_recipe_for_product(self.session.product_dir, camera_role)
+            return shape_locator.load_recipe_for_product(self.session.product_dir, camera_role)
         except Exception:
             return None
 
@@ -771,8 +771,8 @@ class ProductRuntimeContext:
             self._recipe = self._recipes_by_role.get(role)
         return self._recipes_by_role.get(role)
 
-    def _line2dup_output_labels(self, camera_role: str = "cam1") -> List[str]:
-        return output_labels_from_line2dup_recipe(self._ensure_recipe_loaded(camera_role))
+    def _shape_output_labels(self, camera_role: str = "cam1") -> List[str]:
+        return output_labels_from_shape_recipe(self._ensure_recipe_loaded(camera_role))
 
     def _reference_image(self, recipe) -> str:
         if self._ref_image and os.path.exists(self._ref_image):
@@ -788,3 +788,7 @@ __all__ = [
     "RuntimePredictorProtocol",
     "ToolPageRuntimeContext",
 ]
+
+
+
+

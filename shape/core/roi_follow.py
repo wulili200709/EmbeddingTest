@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import math
 import os
@@ -11,7 +11,7 @@ import numpy as np
 import algorithms.proxy as qr_core
 
 from .bootstrap import ensure_repo_root_on_path
-from .recipe import Line2DupRecipe
+from .recipe import ShapeRecipe
 from .template_core import (
     apply_affine_to_points,
     expanded_pose_affine,
@@ -21,7 +21,7 @@ from .template_core import (
 ensure_repo_root_on_path()
 
 from ..like_matcher import (  # noqa: E402
-    Line2DupLikeDetector,
+    ShapeLikeDetector,
     Match,
     load_detector_model,
     match_bbox,
@@ -65,7 +65,7 @@ def _shape_points_from_labelme(labelme_json_path: str, label_name: str) -> Tuple
     return shape_type, points
 
 
-def _shape_points_from_recipe(recipe: Line2DupRecipe) -> Optional[Tuple[str, List[Point]]]:
+def _shape_points_from_recipe(recipe: ShapeRecipe) -> Optional[Tuple[str, List[Point]]]:
     raw_points = recipe.reference_points or []
     if not raw_points:
         return None
@@ -84,7 +84,7 @@ def _shape_points_from_recipe(recipe: Line2DupRecipe) -> Optional[Tuple[str, Lis
 
 
 def _region_specs_from_recipe(
-    recipe: Line2DupRecipe,
+    recipe: ShapeRecipe,
     ref_img_path: str,
     template_roi_rect,
 ) -> List[Tuple[str, str, List[Point]]]:
@@ -142,16 +142,16 @@ def _bbox_from_points(points: Sequence[Point], image_shape: Tuple[int, int]) -> 
     return x1, y1, max(1, x2 - x1), max(1, y2 - y1)
 
 
-def _class_ids_for_recipe(detector: Line2DupLikeDetector, recipe: Line2DupRecipe) -> List[str]:
+def _class_ids_for_recipe(detector: ShapeLikeDetector, recipe: ShapeRecipe) -> List[str]:
     if recipe.class_id:
         return [recipe.class_id]
     return detector.class_ids()
 
 
 def _best_match(
-    detector: Line2DupLikeDetector,
+    detector: ShapeLikeDetector,
     scene_bgr: np.ndarray,
-    recipe: Line2DupRecipe,
+    recipe: ShapeRecipe,
     scene_mask: Optional[np.ndarray] = None,
 ) -> Match:
     backend = str(recipe.backend or "original").strip().lower()
@@ -185,7 +185,7 @@ def _rect_points(x: float, y: float, w: float, h: float) -> List[Point]:
 
 
 def _search_bbox_from_recipe(
-    recipe: Line2DupRecipe,
+    recipe: ShapeRecipe,
     image_shape: Tuple[int, int],
 ) -> Optional[Tuple[int, int, int, int]]:
     raw_points = recipe.search_points or []
@@ -204,7 +204,7 @@ def _search_bbox_from_recipe(
 
 
 def _translate_match_to_scene(
-    detector: Line2DupLikeDetector,
+    detector: ShapeLikeDetector,
     match: Match,
     dx: int,
     dy: int,
@@ -231,7 +231,7 @@ def _translate_match_to_scene(
 
 
 def _follow_by_bbox(
-    detector: Line2DupLikeDetector,
+    detector: ShapeLikeDetector,
     match: Match,
     image_shape: Tuple[int, int],
     *,
@@ -261,9 +261,9 @@ def _follow_by_bbox(
 
 
 def _follow_by_affine_roi(
-    detector: Line2DupLikeDetector,
+    detector: ShapeLikeDetector,
     match: Match,
-    recipe: Line2DupRecipe,
+    recipe: ShapeRecipe,
     ref_img_path: str,
     image_shape: Tuple[int, int],
 ) -> FollowResult:
@@ -307,9 +307,9 @@ def _follow_by_affine_roi(
 def locate_and_follow(
     scene_bgr: np.ndarray,
     ref_img_path: str,
-    recipe: Line2DupRecipe,
+    recipe: ShapeRecipe,
     *,
-    detector: Optional[Line2DupLikeDetector] = None,
+    detector: Optional[ShapeLikeDetector] = None,
     scene_mask: Optional[np.ndarray] = None,
 ) -> FollowResult:
     det = detector or load_detector_model(recipe.model_path)
@@ -339,3 +339,5 @@ def locate_and_follow(
 
 
 __all__ = ["FollowRegion", "FollowResult", "locate_and_follow"]
+
+

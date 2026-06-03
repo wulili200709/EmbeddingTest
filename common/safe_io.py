@@ -50,16 +50,6 @@ def atomic_write_text(
             pass
 
 
-def _path_contains_valid_json(path: Path, *, encoding: str = "utf-8") -> bool:
-    if not path.exists():
-        return False
-    try:
-        json.loads(path.read_text(encoding=encoding))
-    except Exception:
-        return False
-    return True
-
-
 def atomic_write_json(
     path: str | Path,
     payload: Any,
@@ -70,7 +60,7 @@ def atomic_write_json(
 ) -> None:
     p = Path(path)
     text = json.dumps(payload, ensure_ascii=ensure_ascii, indent=indent)
-    update_backup = _path_contains_valid_json(p, encoding=encoding)
+    update_backup = p.exists()
     atomic_write_text(p, text, encoding=encoding, update_backup=update_backup)
 
 

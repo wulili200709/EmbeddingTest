@@ -1,10 +1,3 @@
-"""
-独立运行主窗口。
-
-当前第一版只显示 RuntimeModePage；
-内部持有一个隐藏 ToolPage，作为运行配置、检测项和预测入口来源。
-"""
-
 from __future__ import annotations
 
 from PySide6 import QtGui, QtWidgets

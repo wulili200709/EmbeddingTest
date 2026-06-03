@@ -1,18 +1,13 @@
-"""
-recipe_manager.py
-
-配方/检测项的轻量辅助层。
-当前先提供 line2dup recipe 中 ROI 标签提取能力，后续逐步扩展。
-"""
+﻿"""Recipe helpers for inspection item and ROI label synchronization."""
 
 from __future__ import annotations
 
 from typing import Dict, Iterable, List, Tuple
 
-from shape.core.recipe import Line2DupRecipe
+from shape.core.recipe import ShapeRecipe
 
 
-def inspection_item_specs_from_line2dup_recipe(recipe: Line2DupRecipe | None) -> List[Dict[str, str]]:
+def inspection_item_specs_from_shape_recipe(recipe: ShapeRecipe | None) -> List[Dict[str, str]]:
     if recipe is None or not recipe.reference_regions:
         return [{"roi_label": "roi", "display_name": "roi"}]
 
@@ -40,8 +35,8 @@ def inspection_item_specs_from_line2dup_recipe(recipe: Line2DupRecipe | None) ->
     return specs or [{"roi_label": "roi", "display_name": "roi"}]
 
 
-def output_labels_from_line2dup_recipe(recipe: Line2DupRecipe | None) -> List[str]:
-    return [spec["roi_label"] for spec in inspection_item_specs_from_line2dup_recipe(recipe)]
+def output_labels_from_shape_recipe(recipe: ShapeRecipe | None) -> List[str]:
+    return [spec["roi_label"] for spec in inspection_item_specs_from_shape_recipe(recipe)]
 
 
 def clearable_roi_labels(
@@ -102,7 +97,8 @@ def clearable_roi_labels(
 
 
 __all__ = [
-    "inspection_item_specs_from_line2dup_recipe",
-    "output_labels_from_line2dup_recipe",
+    "inspection_item_specs_from_shape_recipe",
+    "output_labels_from_shape_recipe",
     "clearable_roi_labels",
 ]
+

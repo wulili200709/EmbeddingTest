@@ -1,10 +1,4 @@
-#!/usr/bin/env python3
-"""
-line2Dup/shape_based_matching style matcher in Python (OpenCV + NumPy).
-
-This follows the core ideas from:
-https://github.com/meiqua/shape_based_matching
-"""
+﻿
 
 from __future__ import annotations
 
@@ -582,7 +576,7 @@ def similarity_local(
     return dst
 
 
-class Line2DupLikeDetector:
+class ShapeLikeDetector:
     def __init__(
         self,
         num_features: int = 128,
@@ -1124,7 +1118,7 @@ def _apply_affine_transform_point(transform: np.ndarray, x: float, y: float) -> 
 
 
 def _display_canvas_size_for_template(
-    detector: Line2DupLikeDetector,
+    detector: ShapeLikeDetector,
     class_id: str,
     template_id: int,
     backend: str,
@@ -1146,7 +1140,7 @@ def _display_canvas_size_for_template(
 
 
 def _template_display_quad(
-    detector: Line2DupLikeDetector,
+    detector: ShapeLikeDetector,
     class_id: str,
     template_id: int,
     backend: str,
@@ -1167,7 +1161,7 @@ def _template_display_quad(
 
 
 def refine_matches_sim3(
-    detector: Line2DupLikeDetector,
+    detector: ShapeLikeDetector,
     source: np.ndarray,
     matches: Sequence[Match],
 ) -> float:
@@ -1175,7 +1169,7 @@ def refine_matches_sim3(
         return 0.0
     native_detector = detector._ensure_native_detector_synced(backend="sim3", required=True)
     if not hasattr(native_detector, "refine_match"):
-        raise RuntimeError("line2dup_sim3_native does not expose refine_match(). Rebuild native extensions.")
+        raise RuntimeError("shape_sim3 native backend does not expose refine_match(). Rebuild native extensions.")
 
     started = time.perf_counter()
     for match in matches:
@@ -1336,7 +1330,7 @@ def decode_png_base64(data: str, flags: int = cv2.IMREAD_UNCHANGED) -> Optional[
     return image
 
 
-def detector_to_dict(detector: Line2DupLikeDetector) -> Dict[str, Any]:
+def detector_to_dict(detector: ShapeLikeDetector) -> Dict[str, Any]:
     classes: Dict[str, Any] = {}
     for class_id in detector.class_ids():
         metas = detector.class_meta.get(class_id, [])
@@ -1379,7 +1373,7 @@ def detector_to_dict(detector: Line2DupLikeDetector) -> Dict[str, Any]:
         }
 
     return {
-        "format": "line2dup_like_model_v2",
+        "format": "shape_like_model_v2",
         "params": {
             "num_features": int(detector.num_features),
             "T_levels": [int(t) for t in detector.T_at_level],
@@ -1466,15 +1460,15 @@ def _expand_single_level_template(
     return out
 
 
-def detector_from_dict(data: Dict[str, Any]) -> Line2DupLikeDetector:
+def detector_from_dict(data: Dict[str, Any]) -> ShapeLikeDetector:
     model_format = str(data.get("format", "")).strip()
     if model_format == "line2dup_like_model_v1":
         raise ValueError("Model format line2dup_like_model_v1 is no longer supported. Recreate the model as v2.")
-    if model_format != "line2dup_like_model_v2":
+    if model_format not in {"shape_like_model_v2", "line2dup_like_model_v2"}:
         raise ValueError(f"Unsupported model format: {model_format or '(missing format)'}")
 
     params = data.get("params", {})
-    detector = Line2DupLikeDetector(
+    detector = ShapeLikeDetector(
         num_features=int(params.get("num_features", 128)),
         T_levels=[int(x) for x in params.get("T_levels", [4, 8])],
         weak_threshold=float(params.get("weak_threshold", 30.0)),
@@ -1615,7 +1609,7 @@ def _rewrite_model_source_paths(data: Dict[str, Any], model_path: str, *, save_m
     return data
 
 
-def save_detector_model(detector: Line2DupLikeDetector, model_path: str) -> None:
+def save_detector_model(detector: ShapeLikeDetector, model_path: str) -> None:
     path = Path(model_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     data = detector_to_dict(detector)
@@ -1623,7 +1617,7 @@ def save_detector_model(detector: Line2DupLikeDetector, model_path: str) -> None
     atomic_write_json(path, data, ensure_ascii=True, indent=2)
 
 
-def load_detector_model(model_path: str) -> Line2DupLikeDetector:
+def load_detector_model(model_path: str) -> ShapeLikeDetector:
     path = Path(model_path)
     data = load_json_with_backup(path, default=None)
     if data is None:
@@ -1634,7 +1628,7 @@ def load_detector_model(model_path: str) -> Line2DupLikeDetector:
     return detector_from_dict(data)
 
 
-def match_quad(detector: Line2DupLikeDetector, match: Match) -> List[Tuple[float, float]]:
+def match_quad(detector: ShapeLikeDetector, match: Match) -> List[Tuple[float, float]]:
     corners = _template_display_quad(
         detector,
         match.class_id,
@@ -1650,7 +1644,7 @@ def match_quad(detector: Line2DupLikeDetector, match: Match) -> List[Tuple[float
     return corners
 
 
-def match_bbox(detector: Line2DupLikeDetector, match: Match) -> List[int]:
+def match_bbox(detector: ShapeLikeDetector, match: Match) -> List[int]:
     quad = match_quad(detector, match)
     xs = [float(x) for x, _y in quad]
     ys = [float(y) for _x, y in quad]
@@ -1662,7 +1656,7 @@ def match_bbox(detector: Line2DupLikeDetector, match: Match) -> List[int]:
 
 
 def nms_matches(
-    detector: Line2DupLikeDetector,
+    detector: ShapeLikeDetector,
     matches: Sequence[Match],
     iou_threshold: float,
     score_threshold: float = 0.0,
@@ -1691,7 +1685,7 @@ def nms_matches(
 
 
 def draw_matches(
-    detector: Line2DupLikeDetector,
+    detector: ShapeLikeDetector,
     image_bgr: np.ndarray,
     matches: Sequence[Match],
     topk: int,
@@ -1775,7 +1769,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scene", required=True, help="Scene image path.")
     parser.add_argument("--template-mask", default="", help="Template mask path (optional).")
     parser.add_argument("--scene-mask", default="", help="Scene mask path (optional).")
-    parser.add_argument("--out", default="line2dup_like_result.png", help="Output visualization path.")
+    parser.add_argument("--out", default="shape_like_result.png", help="Output visualization path.")
     parser.add_argument("--threshold", type=float, default=90.0, help="Similarity threshold in [0, 100].")
     parser.add_argument("--num-features", type=int, default=128, help="Requested feature count per template.")
     parser.add_argument("--weak-thresh", type=float, default=30.0, help="Weak threshold for quantization.")
@@ -1815,7 +1809,7 @@ def main() -> int:
             raise FileNotFoundError(f"Failed to read scene mask: {args.scene_mask}")
 
     levels = parse_levels(args.levels)
-    detector = Line2DupLikeDetector(
+    detector = ShapeLikeDetector(
         num_features=args.num_features,
         T_levels=levels,
         weak_threshold=args.weak_thresh,
@@ -1876,3 +1870,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

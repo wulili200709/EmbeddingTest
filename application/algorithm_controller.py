@@ -1,20 +1,3 @@
-"""
-algorithm_controller.py
-
-算法参数管理 + 模型加载 + 训练 + 单图预测，零 UI 依赖。
-
-职责：
-  - 持有 ProductRuntimeParams（算法名、score_mode、margin、topk、传统模型字典）
-  - load_params / save_params
-  - load_model_for_algorithm → 返回 (model | None, 状态文字)
-  - train → 返回 TrainResult
-  - predict_image → 返回预测结果 dict（供 MainWindow 填表 / 记 CSV）
-
-不负责：
-  - 任何 Qt Widget 操作
-  - 定位（line2dup）逻辑（由调用方传入 labels / roi 等）
-  - CSV 写入 / test_log（由调用方处理返回值）
-"""
 
 from __future__ import annotations
 
@@ -603,7 +586,7 @@ class AlgorithmController:
     ) -> PredictResult:
         """
         对单张已定位好 ROI 的图做推理。
-        调用方负责：定位（line2dup）/ 获取 labels / 传入 roi。
+        调用方负责：定位（shape）/ 获取 labels / 传入 roi。
         """
         if not os.path.exists(path):
             raise FileNotFoundError(path)

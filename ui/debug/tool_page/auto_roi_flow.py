@@ -1,4 +1,4 @@
-"""Auto ROI workflow helpers for ToolPage."""
+﻿"""Auto ROI workflow helpers for ToolPage."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ os = page_module.os
 QtCore = page_module.QtCore
 QtWidgets = page_module.QtWidgets
 qr_core = page_module.qr_core
-line2dup_locator = page_module.line2dup_locator
+shape_locator = page_module.shape_locator
 _filter_paths_for_camera = page_module._filter_paths_for_camera
 
 
@@ -23,15 +23,15 @@ def _set_reference(self, path: str) -> None:
         self.lbl_ref.setText(f"{tr('debug.reference_image')}: {os.path.basename(path)}")
         self.lbl_ref.setToolTip(path)
     try:
-        recipe = self.line2dup_recipe_for_role(camera_role) or line2dup_locator.load_recipe_for_product(
+        recipe = self.shape_recipe_for_role(camera_role) or shape_locator.load_recipe_for_product(
             self.session.product_dir,
             camera_role,
         )
         recipe.reference_image = path
-        recipe.model_path = self.line2dup_model_path_for_role(camera_role)
-        line2dup_locator.save_recipe_for_product(self.session.product_dir, recipe, camera_role)
-        self._line2dup_recipes_by_role[camera_role] = recipe
-        self.line2dup_recipe = recipe
+        recipe.model_path = self.shape_model_path_for_role(camera_role)
+        shape_locator.save_recipe_for_product(self.session.product_dir, recipe, camera_role)
+        self._shape_recipes_by_role[camera_role] = recipe
+        self.shape_recipe = recipe
     except Exception:
         pass
     self._save_session()
@@ -52,15 +52,15 @@ def _pick_ref_image(self) -> None:
         return
     self._set_reference(p)
 
-def _open_line2dup_template_page(self) -> None:
-    from ui.debug import Line2DupTemplateDialog
+def _open_shape_template_page(self) -> None:
+    from ui.debug import ShapeTemplateDialog
 
     if self._template_editor_dialog is not None and self._template_editor_dialog.isVisible():
         self._template_editor_dialog.raise_()
         self._template_editor_dialog.activateWindow()
         return
     initial = self.ref_image or self.canvas.image_path() or ""
-    dlg = Line2DupTemplateDialog(
+    dlg = ShapeTemplateDialog(
         product_name=self.session.current_product,
         product_dir=self.session.product_dir,
         camera_role=self.current_camera_role(),
@@ -69,42 +69,44 @@ def _open_line2dup_template_page(self) -> None:
     )
     dlg.setModal(False)
     dlg.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
-    dlg.modelSaved.connect(self._on_line2dup_model_saved)
-    dlg.referenceRegionsChanged.connect(self._on_line2dup_reference_regions_changed)
+    dlg.modelSaved.connect(self._on_shape_model_saved)
+    dlg.referenceRegionsChanged.connect(self._on_shape_reference_regions_changed)
     dlg.destroyed.connect(self._on_template_editor_dialog_destroyed)
     self._template_editor_dialog = dlg
     dlg.show()
     dlg.raise_()
     dlg.activateWindow()
 
+
 def _on_template_editor_dialog_destroyed(self, *_args) -> None:
     self._template_editor_dialog = None
 
-def _on_line2dup_model_saved(self, model_path: str, recipe_path: str) -> None:
+def _on_shape_model_saved(self, model_path: str, recipe_path: str) -> None:
     camera_role = self.current_camera_role()
     self._clear_training_roi_review_state(camera_role)
     try:
-        self.line2dup_recipe = self.line2dup_recipe_for_role(camera_role, force_reload=True)
+        self.shape_recipe = self.shape_recipe_for_role(camera_role, force_reload=True)
     except Exception:
-        self.line2dup_recipe = None
+        self.shape_recipe = None
     self._reload_inspection_items()
     self._apply_current_role_recipe_state()
     self.lbl_status.setText(f"Status: template model saved {os.path.basename(model_path)}")
 
-def _on_line2dup_reference_regions_changed(self) -> None:
+def _on_shape_reference_regions_changed(self) -> None:
     self._clear_training_roi_review_state(self.current_camera_role())
-    self._sync_line2dup_recipe_and_items()
+    self._sync_shape_recipe_and_items()
     current_path = self.canvas.image_path()
     if current_path and os.path.exists(current_path):
         self._load_canvas_image(current_path)
     self.lbl_status.setText("Status: reference ROI synchronized to runtime")
 
-def _sync_line2dup_recipe_and_items(self) -> None:
+def _sync_shape_recipe_and_items(self) -> None:
     try:
-        self.line2dup_recipe = self.line2dup_recipe_for_role(self.current_camera_role(), force_reload=True)
+        self.shape_recipe = self.shape_recipe_for_role(self.current_camera_role(), force_reload=True)
     except Exception:
-        self.line2dup_recipe = None
+        self.shape_recipe = None
     self._reload_inspection_items()
+
 
 def _update_loc_ui(self) -> None:
     return None
@@ -174,11 +176,11 @@ def _autogen_roi_for_images(
     ref_image = self.ref_image
     method = self.loc_method
     role = self.current_camera_role() if camera_role is None else str(camera_role)
-    if method == "line2dup":
+    if method == "shape":
         try:
-            recipe = self.line2dup_recipe_for_role(role, force_reload=True)
+            recipe = self.shape_recipe_for_role(role, force_reload=True)
             if role == self.current_camera_role():
-                self.line2dup_recipe = recipe
+                self.shape_recipe = recipe
         except Exception as exc:
             QtWidgets.QMessageBox.warning(self, "Info", f"Failed to load template recipe: {exc}")
             return
@@ -192,10 +194,10 @@ def _autogen_roi_for_images(
                     if getattr(self, "lbl_ref", None) is not None:
                         self.lbl_ref.setText(f"{tr('debug.reference_image')}: {os.path.basename(ref_image)}")
                         self.lbl_ref.setToolTip(ref_image)
-        if not os.path.exists(self.line2dup_model_path_for_role(role)):
+        if not os.path.exists(self.shape_model_path_for_role(role)):
             QtWidgets.QMessageBox.warning(self, "Info", "Current product has no template model. Create a template first.")
             return
-        labels = self._line2dup_output_labels(role)
+        labels = self._shape_output_labels(role)
         recipe_region_labels = {
             str(region.get("output_label") or region.get("reference_label") or "").strip()
             for region in (recipe.reference_regions or [])
@@ -255,14 +257,14 @@ def _autogen_roi_for_images(
     errs: List[str] = []
     for p in todo:
         try:
-            if method == "line2dup":
-                run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
+            if method == "shape":
+                run = shape_locator.autogen_roi_json_from_shape_timed(
                     tgt_img_path=p, ref_img_path=ref_image,
                     product_dir=self.session.product_dir,
                     camera_role=role,
                 )
-                self._line2dup_match_ms_by_image[p] = float(run.total_ms)
-                self._line2dup_autogen_ms_by_image[p] = float(run.total_ms)
+                self._shape_match_ms_by_image[p] = float(run.total_ms)
+                self._shape_autogen_ms_by_image[p] = float(run.total_ms)
             else:
                 qr_core.autogen_roi_json_from_reference(
                     tgt_img_path=p, ref_img_path=ref_image,
@@ -335,8 +337,8 @@ def _clear_roi_for_images(
                 pass
         if any_removed:
             touched += 1
-            self._line2dup_match_ms_by_image.pop(path, None)
-            self._line2dup_autogen_ms_by_image.pop(path, None)
+            self._shape_match_ms_by_image.pop(path, None)
+            self._shape_autogen_ms_by_image.pop(path, None)
 
     cur = self.canvas.image_path()
     if cur and cur in paths:
@@ -384,3 +386,6 @@ def _clear_roi_current_tab(self) -> None:
     if reply != QtWidgets.QMessageBox.StandardButton.Yes:
         return
     self._clear_roi_for_images(paths, labels=labels, silent=False)
+
+
+

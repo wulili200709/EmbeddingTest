@@ -10,11 +10,6 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 try:
-    import matplotlib.pyplot as plt
-except Exception:  # pragma: no cover - optional for GUI-only usage
-    plt = None
-
-try:
     from sklearn.manifold import TSNE
 except Exception:  # pragma: no cover - fallback to PCA
     TSNE = None
@@ -468,6 +463,10 @@ def load_product_analysis(
 
 
 def visualize_analysis_matplotlib(result: EmbeddingAnalysisResult):
+    try:
+        import matplotlib.pyplot as plt
+    except Exception as exc:  # pragma: no cover - optional for GUI-only usage
+        raise RuntimeError("matplotlib is not available") from exc
     if plt is None:
         raise RuntimeError("matplotlib is not available")
     coords = result.point_coords

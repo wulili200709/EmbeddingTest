@@ -1,11 +1,3 @@
-"""
-inspection_items.py
-
-检测项配置层：
-  - 每个 ROI 对应一个 InspectionItem
-  - 负责 inspection_items.json 的读写
-  - 负责按当前 ROI 标签集合生成/同步默认检测项
-"""
 
 from __future__ import annotations
 

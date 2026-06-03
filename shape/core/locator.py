@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 import time
@@ -8,15 +8,15 @@ from typing import Optional, Tuple
 import cv2
 
 import algorithms.proxy as qr_core
-from domain import clearable_roi_labels, output_labels_from_line2dup_recipe
+from domain import clearable_roi_labels, output_labels_from_shape_recipe
 
-from .recipe import Line2DupRecipe, load_recipe, save_recipe
+from .recipe import ShapeRecipe, load_recipe, save_recipe
 from .roi_follow import FollowResult
 from .services import RuntimeDetectedShape, ShapeLocateService, runtime_shapes_from_follow_result
 
 
 @dataclass
-class ProductLine2DupPaths:
+class ProductShapePaths:
     product_dir: str
     camera_role: str
     role_dir: str
@@ -27,7 +27,7 @@ class ProductLine2DupPaths:
 
 
 @dataclass
-class Line2DupAutogenRun:
+class ShapeAutogenRun:
     jpath: str
     result: FollowResult
     locate_ms: float
@@ -45,11 +45,11 @@ class RuntimeRoiAutogenRun:
 _LOCATE_SERVICE = ShapeLocateService()
 
 
-def _delete_stale_line2dup_roi_shapes(tgt_img_path: str, recipe: Line2DupRecipe) -> list[str]:
+def _delete_stale_shape_roi_shapes(tgt_img_path: str, recipe: ShapeRecipe) -> list[str]:
     jpath = qr_core.labelme_json_of_image(tgt_img_path)
     if not os.path.exists(jpath):
         return []
-    current_labels = output_labels_from_line2dup_recipe(recipe)
+    current_labels = output_labels_from_shape_recipe(recipe)
     existing_labels = qr_core.sorted_label_names_from_labelme(jpath, label_prefix="roi")
     labels_to_clear, clear_mode = clearable_roi_labels(
         current_labels,
@@ -73,10 +73,10 @@ def _normalize_camera_role(camera_role: str) -> str:
     return role if role in {"cam1", "cam2"} else "cam1"
 
 
-def product_paths(product_dir: str, camera_role: str = "cam1") -> ProductLine2DupPaths:
+def product_paths(product_dir: str, camera_role: str = "cam1") -> ProductShapePaths:
     normalized_role = _normalize_camera_role(camera_role)
     role_dir = os.path.join(product_dir, "shape", normalized_role)
-    return ProductLine2DupPaths(
+    return ProductShapePaths(
         product_dir=product_dir,
         camera_role=normalized_role,
         role_dir=role_dir,
@@ -87,7 +87,7 @@ def product_paths(product_dir: str, camera_role: str = "cam1") -> ProductLine2Du
     )
 
 
-def _resolve_recipe_file(paths: ProductLine2DupPaths) -> str:
+def _resolve_recipe_file(paths: ProductShapePaths) -> str:
     if os.path.exists(paths.recipe_path):
         return paths.recipe_path
     if os.path.exists(paths.legacy_recipe_path):
@@ -95,7 +95,7 @@ def _resolve_recipe_file(paths: ProductLine2DupPaths) -> str:
     return paths.recipe_path
 
 
-def _resolve_model_file(paths: ProductLine2DupPaths) -> str:
+def _resolve_model_file(paths: ProductShapePaths) -> str:
     if os.path.exists(paths.model_path):
         return paths.model_path
     if os.path.exists(paths.legacy_model_path):
@@ -103,7 +103,7 @@ def _resolve_model_file(paths: ProductLine2DupPaths) -> str:
     return paths.model_path
 
 
-def load_recipe_for_product(product_dir: str, camera_role: str = "cam1") -> Line2DupRecipe:
+def load_recipe_for_product(product_dir: str, camera_role: str = "cam1") -> ShapeRecipe:
     paths = product_paths(product_dir, camera_role)
     recipe = load_recipe(_resolve_recipe_file(paths))
     recipe.model_path = _resolve_model_file(paths)
@@ -118,7 +118,7 @@ def resolved_model_path_for_product(product_dir: str, camera_role: str = "cam1")
     return _resolve_model_file(product_paths(product_dir, camera_role))
 
 
-def save_recipe_for_product(product_dir: str, recipe: Line2DupRecipe, camera_role: str = "cam1") -> None:
+def save_recipe_for_product(product_dir: str, recipe: ShapeRecipe, camera_role: str = "cam1") -> None:
     paths = product_paths(product_dir, camera_role)
     os.makedirs(paths.role_dir, exist_ok=True)
     recipe.model_path = paths.model_path
@@ -132,20 +132,20 @@ def recipe_is_ready(product_dir: str, camera_role: str = "cam1") -> bool:
     return os.path.exists(model_path) and os.path.exists(recipe_path)
 
 
-def autogen_roi_json_from_line2dup_timed(
+def autogen_roi_json_from_shape_timed(
     tgt_img_path: str,
     ref_img_path: str,
     product_dir: str,
     *,
     camera_role: str = "cam1",
     scene_mask_path: str = "",
-) -> Line2DupAutogenRun:
+) -> ShapeAutogenRun:
     total_t0 = time.perf_counter()
     paths = product_paths(product_dir, camera_role)
     model_path = _resolve_model_file(paths)
     recipe_path = _resolve_recipe_file(paths)
     if not os.path.exists(model_path):
-        raise FileNotFoundError(f"Missing line2dup model: {model_path}")
+        raise FileNotFoundError(f"Missing shape model: {model_path}")
     recipe = load_recipe(recipe_path)
     recipe.model_path = model_path
     if (not ref_img_path) and recipe.reference_image:
@@ -164,7 +164,7 @@ def autogen_roi_json_from_line2dup_timed(
     locate_run = _LOCATE_SERVICE.locate(scene, recipe, ref_img_path=ref_img_path, scene_mask=scene_mask)
     result = locate_run.result
     locate_ms = locate_run.locate_ms
-    _delete_stale_line2dup_roi_shapes(tgt_img_path, recipe)
+    _delete_stale_shape_roi_shapes(tgt_img_path, recipe)
     jpath = ""
     for region in result.regions:
         if region.source_shape_type == "polygon":
@@ -176,7 +176,7 @@ def autogen_roi_json_from_line2dup_timed(
         else:
             jpath = qr_core.upsert_labelme_rect(tgt_img_path, region.bbox, label_name=region.label_name)
     total_ms = (time.perf_counter() - total_t0) * 1000.0
-    return Line2DupAutogenRun(jpath=jpath, result=result, locate_ms=locate_ms, total_ms=total_ms)
+    return ShapeAutogenRun(jpath=jpath, result=result, locate_ms=locate_ms, total_ms=total_ms)
 
 
 def autogen_runtime_roi_shapes_timed(
@@ -192,7 +192,7 @@ def autogen_runtime_roi_shapes_timed(
     model_path = _resolve_model_file(paths)
     recipe_path = _resolve_recipe_file(paths)
     if not os.path.exists(model_path):
-        raise FileNotFoundError(f"Missing line2dup model: {model_path}")
+        raise FileNotFoundError(f"Missing shape model: {model_path}")
     recipe = load_recipe(recipe_path)
     recipe.model_path = model_path
     if (not ref_img_path) and recipe.reference_image:
@@ -212,7 +212,7 @@ def autogen_runtime_roi_shapes_timed(
     )
 
 
-def autogen_roi_json_from_line2dup(
+def autogen_roi_json_from_shape(
     tgt_img_path: str,
     ref_img_path: str,
     product_dir: str,
@@ -220,7 +220,7 @@ def autogen_roi_json_from_line2dup(
     camera_role: str = "cam1",
     scene_mask_path: str = "",
 ) -> Tuple[str, FollowResult]:
-    run = autogen_roi_json_from_line2dup_timed(
+    run = autogen_roi_json_from_shape_timed(
         tgt_img_path,
         ref_img_path,
         product_dir,
@@ -231,12 +231,12 @@ def autogen_roi_json_from_line2dup(
 
 
 __all__ = [
-    "ProductLine2DupPaths",
-    "Line2DupAutogenRun",
+    "ProductShapePaths",
+    "ShapeAutogenRun",
     "RuntimeDetectedShape",
     "RuntimeRoiAutogenRun",
-    "autogen_roi_json_from_line2dup",
-    "autogen_roi_json_from_line2dup_timed",
+    "autogen_roi_json_from_shape",
+    "autogen_roi_json_from_shape_timed",
     "autogen_runtime_roi_shapes_timed",
     "load_recipe_for_product",
     "product_paths",
@@ -245,3 +245,4 @@ __all__ = [
     "resolved_recipe_path_for_product",
     "save_recipe_for_product",
 ]
+

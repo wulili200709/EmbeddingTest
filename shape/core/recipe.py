@@ -9,7 +9,7 @@ from common.safe_io import atomic_write_json, load_json_with_backup
 
 
 @dataclass
-class Line2DupRecipe:
+class ShapeRecipe:
     model_path: str = ""
     reference_image: str = ""
     class_id: str = ""
@@ -32,7 +32,7 @@ class Line2DupRecipe:
     search_points: List[List[float]] | None = None
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "Line2DupRecipe":
+    def from_dict(cls, data: Dict[str, Any]) -> "ShapeRecipe":
         return cls(
             model_path=str(data.get("model_path", "")),
             reference_image=str(data.get("reference_image", "")),
@@ -95,14 +95,14 @@ def _product_dir_for_recipe_file(path: Path) -> str:
     return str(path.parent)
 
 
-def load_recipe(path: str) -> Line2DupRecipe:
+def load_recipe(path: str) -> ShapeRecipe:
     p = Path(path)
     data = load_json_with_backup(p, default=None)
     if data is None:
-        return Line2DupRecipe(model_path=str(p.with_name("model.json")))
+        return ShapeRecipe(model_path=str(p.with_name("model.json")))
     if not isinstance(data, dict):
-        raise ValueError(f"Invalid line2dup recipe: {p}")
-    recipe = Line2DupRecipe.from_dict(data)
+        raise ValueError(f"Invalid shape recipe: {p}")
+    recipe = ShapeRecipe.from_dict(data)
     base_dir = str(p.parent)
     anchor_dir = _product_dir_for_recipe_file(p)
     recipe.model_path = resolve_product_path(recipe.model_path, base_dir=base_dir, anchor_dir=anchor_dir, prefer_existing=False)
@@ -117,7 +117,7 @@ def load_recipe(path: str) -> Line2DupRecipe:
     return recipe
 
 
-def save_recipe(recipe: Line2DupRecipe, path: str) -> None:
+def save_recipe(recipe: ShapeRecipe, path: str) -> None:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     payload = recipe.to_dict()
@@ -127,4 +127,4 @@ def save_recipe(recipe: Line2DupRecipe, path: str) -> None:
     atomic_write_json(p, payload, ensure_ascii=False, indent=2)
 
 
-__all__ = ["Line2DupRecipe", "load_recipe", "save_recipe"]
+__all__ = ["ShapeRecipe", "load_recipe", "save_recipe"]

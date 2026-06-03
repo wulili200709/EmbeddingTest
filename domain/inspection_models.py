@@ -1,9 +1,3 @@
-"""
-inspection_models.py
-
-运行检测结果的数据模型。
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
