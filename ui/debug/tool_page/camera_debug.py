@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PySide6 import QtGui
 
-from app_paths import packaged_embedding_test_root, packaged_repo_root
+from common.app_paths import packaged_embedding_test_root, packaged_repo_root
 from infrastructure.camera_settings_store import (
     LIGHT_SOURCE_MODE_BOARD_IO,
     light_source_mode_from_mapping,

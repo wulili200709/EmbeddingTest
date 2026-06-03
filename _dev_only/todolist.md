@@ -4133,3 +4133,5 @@ EmbeddingTest/path_utils.py
 EmbeddingTest/safe_io.py
 EmbeddingTest/requirements.txt
 重点：vendor/ 可以不传，third_party/ 不建议不传。vendor 是编译 .pyd 用的 C++ 源码，third_party 里有相机和 IO 运行依赖。
+
+powershell -ExecutionPolicy Bypass -File .\EmbeddingTest\build_py312.ps1

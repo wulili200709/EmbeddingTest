@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 
-from app_paths import packaged_embedding_test_root, packaged_repo_root
+from common.app_paths import packaged_embedding_test_root, packaged_repo_root
 
 EMBEDDING_TEST_DIR = packaged_embedding_test_root(__file__)
 REPO_ROOT = packaged_repo_root(__file__)

@@ -4,5 +4,7 @@ PySide6
 torch
 torchvision
 matplotlib
-pip install opencv-python
-pip install onnx onnxruntime
+onnx
+onnxruntime
+scikit-learn
+

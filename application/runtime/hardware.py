@@ -10,7 +10,7 @@ from typing import Optional
 
 from PySide6 import QtCore
 
-from app_paths import packaged_embedding_test_root, packaged_repo_root
+from common.app_paths import packaged_embedding_test_root, packaged_repo_root
 from .capture_policy import DEFAULT_LIGHT_STABLE_MS
 
 

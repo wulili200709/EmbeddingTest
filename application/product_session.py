@@ -13,8 +13,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional
 
-from safe_io import atomic_write_json, backup_path_for, load_json_with_backup
-from path_utils import (
+from common.safe_io import atomic_write_json, backup_path_for, load_json_with_backup
+from common.path_utils import (
     product_relative_path,
     resolve_existing_product_path,
     resolve_existing_product_paths,

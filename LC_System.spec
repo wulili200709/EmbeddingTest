@@ -164,6 +164,7 @@ hiddenimports = sorted(
         collect_submodules("algorithms")
         + collect_submodules("application")
         + collect_submodules("application.runtime")
+        + collect_submodules("common")
         + collect_submodules("config")
         + collect_submodules("devices")
         + collect_submodules("domain")
@@ -174,6 +175,7 @@ hiddenimports = sorted(
         + [
             "algorithms.api",
             "algorithms.embedding",
+            "algorithms.embedding_core",
             "algorithms.localization",
             "algorithms.traditional",
             "application.algorithm_controller",
@@ -183,6 +185,9 @@ hiddenimports = sorted(
             "application.runtime.controller",
             "application.runtime_context",
             "application.runtime_controller",
+            "common.app_paths",
+            "common.path_utils",
+            "common.safe_io",
             "domain.inspection_items",
             "domain.inspection_models",
             "domain.recipe_manager",

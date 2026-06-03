@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app_paths import writable_embedding_test_root
+from common.app_paths import writable_embedding_test_root
 
 
 LANG_ZH = "zh_CN"

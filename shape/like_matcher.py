@@ -22,8 +22,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 
-from path_utils import product_relative_path, resolve_product_path
-from safe_io import atomic_write_json, load_json_with_backup
+from common.path_utils import product_relative_path, resolve_product_path
+from common.safe_io import atomic_write_json, load_json_with_backup
 
 from .backends import (
     NATIVE_BACKEND_TO_MODULE,

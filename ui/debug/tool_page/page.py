@@ -71,8 +71,8 @@ from ui.debug import (
 from ui.i18n import language_code, tr
 from ui.roi_overlay_colors import is_roi_label, overlay_style_for_label
 from ui.runtime import RuntimeImageView
-from path_utils import product_relative_path, resolve_product_path
-from safe_io import atomic_write_json, backup_path_for, load_json_with_backup
+from common.path_utils import product_relative_path, resolve_product_path
+from common.safe_io import atomic_write_json, backup_path_for, load_json_with_backup
 
 
 try:
@@ -1472,13 +1472,14 @@ class _TrainingJobWorker(QtCore.QObject):
         try:
             result = self._run_training()
         except Exception as exc:
+            detail = traceback.format_exc()
             result = {
                 "mode": str(self._payload.get("mode", "") or ""),
                 "success_names": [],
-                "failure_messages": [str(exc)],
+                "failure_messages": [f"{exc}\n\n{detail}"],
                 "display_rows": [],
                 "last_status_message": "",
-                "fatal": str(exc),
+                "fatal": f"{exc}\n\n{detail}",
             }
         self.finished.emit(result)
 
@@ -1535,7 +1536,7 @@ class _TrainingJobWorker(QtCore.QObject):
                     elif not display_rows:
                         display_rows = list(result.result_rows)
             except Exception as exc:
-                failure_messages.append(f"{display_name}: {exc}")
+                failure_messages.append(f"{display_name}: {exc}\n{traceback.format_exc()}")
 
         return {
             "mode": mode,

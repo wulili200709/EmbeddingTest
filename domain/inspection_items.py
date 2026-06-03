@@ -17,7 +17,7 @@ from algorithms.registry import (
     SHARED_BACKBONE_ALGORITHM_CODE,
     normalize_tool_algorithm_code,
 )
-from safe_io import atomic_write_json, load_json_with_backup
+from common.safe_io import atomic_write_json, load_json_with_backup
 
 
 SUPPORTED_CAMERA_IDS = ("cam1", "cam2")

@@ -4,8 +4,8 @@ from pathlib import Path
 
 from PySide6 import QtWidgets
 
-from app_paths import writable_embedding_test_root
-from safe_io import atomic_write_json, load_json_with_backup
+from common.app_paths import writable_embedding_test_root
+from common.safe_io import atomic_write_json, load_json_with_backup
 
 
 DEFAULT_ADMIN_PASSWORD = "admin123"

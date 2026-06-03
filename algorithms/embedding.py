@@ -32,7 +32,8 @@ try:
 except Exception:  # pragma: no cover
     ort = None
 
-from app_paths import writable_embedding_test_root
+from common.app_paths import writable_embedding_test_root
+from .embedding_core import compute_prototypes, predict_one, score_topk
 from .registry import learning_backbone_storage_code, storage_code_backbone
 from .labelme import (
     clamp_roi_xywh,
@@ -674,17 +675,6 @@ def embed_one_from_array(
     return embeddings[0]
 
 
-def score_topk(e: np.ndarray, bank: np.ndarray, k: int = 3) -> float:
-    sims = bank @ e
-    if sims.size == 0:
-        return float("-inf")
-    if k <= 0:
-        raise ValueError("k must be >= 1")
-    if k >= sims.size:
-        return float(np.mean(sims))
-    return float(np.mean(np.sort(sims)[-k:]))
-
-
 @dataclass
 class RegisterModel:
     backbone: str
@@ -812,10 +802,7 @@ def train_register_model(
     ok_emb = _stack_group(ok_files, "OK", 0)
     ng_emb = _stack_group(ng_files, "NG", len(ok_files))
 
-    ok_proto = ok_emb.mean(axis=0, keepdims=True)
-    ok_proto = ok_proto / np.linalg.norm(ok_proto, axis=1, keepdims=True)
-    ng_proto = ng_emb.mean(axis=0, keepdims=True)
-    ng_proto = ng_proto / np.linalg.norm(ng_proto, axis=1, keepdims=True)
+    ok_proto, ng_proto = compute_prototypes(ok_emb, ng_emb)
 
     return RegisterModel(
         backbone=backbone,
@@ -844,42 +831,16 @@ def predict_one_with_model(
     ng_bank = model.ng_bank
     assert ok_proto is not None and ng_proto is not None and ok_bank is not None and ng_bank is not None
 
-    if model.score_mode == "proto":
-        sim_ok = float(e @ ok_proto[0])
-        sim_ng = float(e @ ng_proto[0])
-    elif model.score_mode == "topk":
-        sim_ok = score_topk(e, ok_bank, k=min(model.topk, len(ok_bank)))
-        sim_ng = score_topk(e, ng_bank, k=min(model.topk, len(ng_bank)))
-    else:
-        raise ValueError(f"Unknown score mode: {model.score_mode}")
-
-    diff = sim_ok - sim_ng
-    pred = "OK" if diff >= model.margin else "NG"
-    return pred, float(diff), sim_ok, sim_ng
-
-
-def predict_one(
-    e: np.ndarray,
-    ok_proto: np.ndarray,
-    ng_proto: np.ndarray,
-    ok_bank: np.ndarray,
-    ng_bank: np.ndarray,
-    mode: str,
-    margin: float,
-    topk: int,
-) -> Tuple[str, float, float, float]:
-    if mode == "proto":
-        sim_ok = float(e @ ok_proto[0])
-        sim_ng = float(e @ ng_proto[0])
-    elif mode == "topk":
-        sim_ok = score_topk(e, ok_bank, k=min(topk, len(ok_bank)))
-        sim_ng = score_topk(e, ng_bank, k=min(topk, len(ng_bank)))
-    else:
-        raise ValueError(f"Unknown score mode: {mode}")
-
-    diff = sim_ok - sim_ng
-    pred = "OK" if diff >= margin else "NG"
-    return pred, float(diff), sim_ok, sim_ng
+    return predict_one(
+        e,
+        ok_proto,
+        ng_proto,
+        ok_bank,
+        ng_bank,
+        model.score_mode,
+        model.margin,
+        model.topk,
+    )
 
 
 __all__ = [

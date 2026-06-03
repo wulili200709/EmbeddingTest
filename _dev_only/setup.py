@@ -13,6 +13,7 @@ import pybind11
 
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
+APP_ROOT = SCRIPT_ROOT.parent
 PATCHED_BACKEND_ROOT = SCRIPT_ROOT / "build" / "_patched_backends"
 OPENCV_ROOT = Path(os.environ.get("LINE2DUP_OPENCV_BUILD", r"C:\Users\ADMIN\tools\opencv\build")).expanduser()
 OPENCV_INCLUDE_DIR = OPENCV_ROOT / "include"
@@ -57,8 +58,21 @@ def _remove_readonly(func, path: str, _exc) -> None:
     func(path)
 
 
+FUSION_PATCH_MODULES = {
+    "shape_fusion",
+    "shape_fusionv2",
+    "line2dup_fusion_native",
+    "line2dup_fusionv2_native",
+    "match_fusionv2",
+}
+SIM3_PATCH_MODULES = {
+    "shape_sim3",
+    "line2dup_sim3_native",
+}
+
+
 def prepare_backend_root(module_name: str, backend_root: Path) -> Path:
-    if module_name not in {"line2dup_fusion_native", "line2dup_fusionv2_native", "match_fusionv2", "line2dup_sim3_native"}:
+    if module_name not in FUSION_PATCH_MODULES | SIM3_PATCH_MODULES:
         return backend_root
 
     patched_root = PATCHED_BACKEND_ROOT / module_name
@@ -66,7 +80,7 @@ def prepare_backend_root(module_name: str, backend_root: Path) -> Path:
         shutil.rmtree(patched_root, onerror=_remove_readonly)
     shutil.copytree(backend_root, patched_root, ignore=shutil.ignore_patterns(".git", "build_bench"))
 
-    if module_name in {"line2dup_fusion_native", "line2dup_fusionv2_native", "match_fusionv2"}:
+    if module_name in FUSION_PATCH_MODULES:
         line2dup_cpp = patched_root / "line2Dup.cpp"
         text = line2dup_cpp.read_text(encoding="utf-8")
         openmp_old = """#pragma omp declare reduction \\
@@ -120,7 +134,7 @@ def prepare_backend_root(module_name: str, backend_root: Path) -> Path:
             text = _replace_once(text, plain_insert, critical_named, label="fusion msvc critical section")
         line2dup_cpp.write_text(text, encoding="utf-8")
 
-    if module_name == "line2dup_sim3_native":
+    if module_name in SIM3_PATCH_MODULES:
         edge_scene_cpp = patched_root / "cuda_icp" / "scene" / "edge_scene" / "edge_scene.cpp"
         text = edge_scene_cpp.read_text(encoding="utf-8")
         text = _replace_once(
@@ -198,17 +212,17 @@ def build_extensions() -> list[Extension]:
     require_path(EIGEN_VENDOR_ROOT / "Eigen", "vendored Eigen headers")
     extensions = [
         build_backend_extension(
-            module_name="line2dup_native",
+            module_name="shape_original",
             backend_root=ORIGINAL_ROOT,
         ),
         build_backend_extension(
-            module_name="line2dup_fusion_native",
+            module_name="shape_fusion",
             backend_root=FUSION_ROOT,
             extra_compile_args=openmp_compile_args(),
             extra_link_args=openmp_link_args(),
         ),
         build_backend_extension(
-            module_name="match_fusionv2",
+            module_name="shape_fusionv2",
             backend_root=FUSION_ROOT,
             extra_compile_args=openmp_compile_args(),
             extra_link_args=openmp_link_args(),
@@ -217,7 +231,7 @@ def build_extensions() -> list[Extension]:
             ],
         ),
         build_backend_extension(
-            module_name="line2dup_sim3_native",
+            module_name="shape_sim3",
             backend_root=SIM3_ROOT,
             extra_sources=[
                 "cuda_icp/icp.cpp",
@@ -242,13 +256,15 @@ class BuildExtWithOpenCVDll(build_ext):
         dll_src = require_path(OPENCV_BIN_DIR / dll_name, "OpenCV runtime DLL")
         for ext in self.extensions:
             ext_path = Path(self.get_ext_fullpath(ext.name)).resolve()
-            target_dir = ext_path.parent
-            shutil.copy2(dll_src, target_dir / dll_name)
+            runtime_ext_path = APP_ROOT / ext_path.name
+            if ext_path != runtime_ext_path:
+                shutil.copy2(ext_path, runtime_ext_path)
+            shutil.copy2(dll_src, APP_ROOT / dll_name)
 
 
 setup(
-    name="line2dup_native_backends",
-    version="0.0.4",
+    name="shape_native_backends",
+    version="0.0.5",
     ext_modules=build_extensions(),
     cmdclass={"build_ext": BuildExtWithOpenCVDll},
 )

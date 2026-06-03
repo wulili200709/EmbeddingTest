@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 
 from algorithms.labelme import labelme_json_of_image
-from safe_io import atomic_write_json, load_json_with_backup
+from common.safe_io import atomic_write_json, load_json_with_backup
 
 
 @dataclass(frozen=True)

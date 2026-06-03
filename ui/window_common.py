@@ -7,7 +7,7 @@ import re
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from app_paths import packaged_embedding_test_root, writable_embedding_test_root
+from common.app_paths import packaged_embedding_test_root, writable_embedding_test_root
 from application import AlgorithmController, ProductSession
 from application.runtime.preview_frame import RuntimePreviewFrame, RuntimePreviewShape
 from application.runtime.preview_frame import read_exported_runtime_preview_measurements

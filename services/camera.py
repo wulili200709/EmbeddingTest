@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from app_paths import packaged_embedding_test_root
+from common.app_paths import packaged_embedding_test_root
 
 
 SDK_OK = 0

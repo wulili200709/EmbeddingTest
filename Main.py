@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import atexit
+import faulthandler
 import tempfile
 from pathlib import Path
 import subprocess
@@ -15,6 +16,7 @@ except Exception:
 
 _SINGLE_INSTANCE_LOCK = None
 _STANDARD_STREAM_LOG = None
+_FAULT_HANDLER_LOG = None
 
 
 def _open_standard_stream_log():
@@ -49,6 +51,49 @@ def _close_standard_stream_log() -> None:
         log_file.close()
     except Exception:
         pass
+
+
+def _close_fault_handler_log() -> None:
+    global _FAULT_HANDLER_LOG
+    log_file = _FAULT_HANDLER_LOG
+    _FAULT_HANDLER_LOG = None
+    if log_file is None:
+        return
+    try:
+        faulthandler.disable()
+    except Exception:
+        pass
+    try:
+        log_file.close()
+    except Exception:
+        pass
+
+
+def _enable_fault_handler_log() -> None:
+    global _FAULT_HANDLER_LOG
+    if _FAULT_HANDLER_LOG is not None:
+        return
+    roots = []
+    if getattr(sys, "frozen", False):
+        roots.append(Path(sys.executable).resolve().parent)
+    roots.extend([Path(__file__).resolve().parent, Path(tempfile.gettempdir())])
+
+    for root in roots:
+        try:
+            log_dir = root / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = (log_dir / "LC_System_crash.log").open(
+                "a",
+                encoding="utf-8",
+                buffering=1,
+            )
+            log_file.write("\n--- LC System fault handler start ---\n")
+            faulthandler.enable(file=log_file, all_threads=True)
+            _FAULT_HANDLER_LOG = log_file
+            atexit.register(_close_fault_handler_log)
+            return
+        except Exception:
+            continue
 
 
 def _ensure_standard_streams() -> None:
@@ -176,6 +221,7 @@ def _acquire_single_instance_lock() -> _SingleInstanceLock | None:
 
 if __name__ == "__main__":
     _ensure_standard_streams()
+    _enable_fault_handler_log()
     _SINGLE_INSTANCE_LOCK = _acquire_single_instance_lock()
     if _SINGLE_INSTANCE_LOCK is None:
         sys.exit(0)

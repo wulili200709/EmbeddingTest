@@ -32,7 +32,7 @@ def _native_build_instructions() -> str:
     return (
         "To enable the OpenCV-backed accelerators:\n"
         "py -3 -m pip install -U setuptools wheel pybind11\n"
-        "py -3 EmbeddingTest\\setup.py build_ext --inplace\n"
+        "py -3.12 EmbeddingTest\\_dev_only\\setup.py build_ext --inplace\n"
         f"Set LINE2DUP_OPENCV_BUILD if OpenCV is not installed at {_DEFAULT_OPENCV_BUILD_ROOT}.\n"
         "Optional: set LINE2DUP_OPENCV_WORLD_LIB when your OpenCV world library name is not auto-detected."
     )

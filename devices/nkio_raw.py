@@ -7,7 +7,7 @@ from ctypes import POINTER, byref, c_char_p, c_int, c_ubyte, c_ushort
 from pathlib import Path
 from typing import Iterable
 
-from app_paths import packaged_embedding_test_root, packaged_repo_root
+from common.app_paths import packaged_embedding_test_root, packaged_repo_root
 
 
 def _repo_root() -> Path:
