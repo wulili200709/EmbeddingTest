@@ -1,1 +1,0 @@
-"""Standalone template-matching tools."""

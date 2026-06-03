@@ -189,7 +189,7 @@ hiddenimports = sorted(
             "domain.result_aggregator",
             "matplotlib.backends.backend_qtagg",
             "matplotlib.figure",
-            "tools.visualize_embeddings",
+            "ui.debug.embedding_analysis",
             "ui.debug.embedding_analysis_dialog",
             "ui.debug.roi_canvas_pyside6",
             "ui.debug.tool_page_pyside6",

@@ -17,7 +17,7 @@ except Exception:  # pragma: no cover - handled in UI
     Figure = None
     mpl_font_manager = None
 
-from tools.visualize_embeddings import (
+from .embedding_analysis import (
     EmbeddingAnalysisResult,
     EmbeddingModelEntry,
     list_available_embedding_models,

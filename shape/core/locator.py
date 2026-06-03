@@ -11,7 +11,8 @@ import algorithms.proxy as qr_core
 from domain import clearable_roi_labels, output_labels_from_line2dup_recipe
 
 from .recipe import Line2DupRecipe, load_recipe, save_recipe
-from .roi_follow import FollowResult, locate_and_follow
+from .roi_follow import FollowResult
+from .services import RuntimeDetectedShape, ShapeLocateService, runtime_shapes_from_follow_result
 
 
 @dataclass
@@ -34,19 +35,14 @@ class Line2DupAutogenRun:
 
 
 @dataclass(frozen=True)
-class RuntimeDetectedShape:
-    label_name: str
-    shape_type: str
-    points: tuple[Tuple[float, float], ...]
-    bbox: Tuple[int, int, int, int]
-
-
-@dataclass(frozen=True)
 class RuntimeRoiAutogenRun:
     result: FollowResult
     roi_shapes: tuple[RuntimeDetectedShape, ...]
     locate_ms: float
     total_ms: float
+
+
+_LOCATE_SERVICE = ShapeLocateService()
 
 
 def _delete_stale_line2dup_roi_shapes(tgt_img_path: str, recipe: Line2DupRecipe) -> list[str]:
@@ -136,28 +132,6 @@ def recipe_is_ready(product_dir: str, camera_role: str = "cam1") -> bool:
     return os.path.exists(model_path) and os.path.exists(recipe_path)
 
 
-def _runtime_shapes_from_follow_result(result: FollowResult) -> tuple[RuntimeDetectedShape, ...]:
-    shapes: list[RuntimeDetectedShape] = []
-    for region in result.regions:
-        points = tuple((float(x), float(y)) for x, y in region.points)
-        if not points:
-            continue
-        shape_type = str(region.source_shape_type or "rectangle")
-        if shape_type == "rectangle" and len(points) == 4:
-            shape_points = (points[0], points[2])
-        else:
-            shape_points = points
-        shapes.append(
-            RuntimeDetectedShape(
-                label_name=str(region.label_name or "").strip() or "roi",
-                shape_type=shape_type,
-                points=shape_points,
-                bbox=tuple(int(value) for value in region.bbox),
-            )
-        )
-    return tuple(shapes)
-
-
 def autogen_roi_json_from_line2dup_timed(
     tgt_img_path: str,
     ref_img_path: str,
@@ -187,9 +161,9 @@ def autogen_roi_json_from_line2dup_timed(
         if scene_mask is None:
             raise FileNotFoundError(scene_mask_path)
 
-    locate_t0 = time.perf_counter()
-    result = locate_and_follow(scene, ref_img_path, recipe, scene_mask=scene_mask)
-    locate_ms = (time.perf_counter() - locate_t0) * 1000.0
+    locate_run = _LOCATE_SERVICE.locate(scene, recipe, ref_img_path=ref_img_path, scene_mask=scene_mask)
+    result = locate_run.result
+    locate_ms = locate_run.locate_ms
     _delete_stale_line2dup_roi_shapes(tgt_img_path, recipe)
     jpath = ""
     for region in result.regions:
@@ -226,13 +200,13 @@ def autogen_runtime_roi_shapes_timed(
     if scene_bgr is None:
         raise ValueError("scene_bgr is required")
 
-    locate_t0 = time.perf_counter()
-    result = locate_and_follow(scene_bgr, ref_img_path, recipe, scene_mask=scene_mask)
-    locate_ms = (time.perf_counter() - locate_t0) * 1000.0
+    locate_run = _LOCATE_SERVICE.locate(scene_bgr, recipe, ref_img_path=ref_img_path, scene_mask=scene_mask)
+    result = locate_run.result
+    locate_ms = locate_run.locate_ms
     total_ms = (time.perf_counter() - total_t0) * 1000.0
     return RuntimeRoiAutogenRun(
         result=result,
-        roi_shapes=_runtime_shapes_from_follow_result(result),
+        roi_shapes=runtime_shapes_from_follow_result(result),
         locate_ms=locate_ms,
         total_ms=total_ms,
     )
