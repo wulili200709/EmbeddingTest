@@ -4788,14 +4788,19 @@ class ToolPage(QtWidgets.QWidget):
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(lambda: self._forget_training_job(thread, worker))
         self._training_thread = thread
         self._training_worker = worker
         thread.start()
 
+    def _forget_training_job(self, thread: QtCore.QThread, worker: _TrainingJobWorker) -> None:
+        if self._training_thread is thread:
+            self._training_thread = None
+        if self._training_worker is worker:
+            self._training_worker = None
+
     def _on_training_finished(self, payload: object) -> None:
         result = dict(payload or {}) if isinstance(payload, dict) else {}
-        self._training_thread = None
-        self._training_worker = None
         self._set_training_running(False)
 
         last_status_message = str(result.get("last_status_message", "") or "")

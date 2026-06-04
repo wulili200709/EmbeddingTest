@@ -13,6 +13,10 @@ def backup_path_for(path: str | Path) -> Path:
     return p.with_name(p.name + ".bak")
 
 
+def _is_debug_capture_path(path: Path) -> bool:
+    return any(part.lower() == "debug_capture" for part in path.parts)
+
+
 def atomic_write_text(
     path: str | Path,
     text: str,
@@ -57,10 +61,11 @@ def atomic_write_json(
     ensure_ascii: bool = False,
     indent: int | None = 2,
     encoding: str = "utf-8",
+    create_backup: bool = True,
 ) -> None:
     p = Path(path)
     text = json.dumps(payload, ensure_ascii=ensure_ascii, indent=indent)
-    update_backup = p.exists()
+    update_backup = bool(create_backup) and p.exists() and not _is_debug_capture_path(p)
     atomic_write_text(p, text, encoding=encoding, update_backup=update_backup)
 
 

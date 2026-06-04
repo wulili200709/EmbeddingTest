@@ -1,0 +1,40 @@
+
+--- LC System fault handler start ---
+
+--- LC System fault handler start ---
+Fatal Python error: Aborted
+
+Thread 0x00003ce8 (most recent call first):
+  File "C:\Users\goney\AppData\Local\Programs\Python\Python312\Lib\dataclasses.py", line 1013 in _asdict_inner
+  File "C:\Users\goney\AppData\Local\Programs\Python\Python312\Lib\pathlib.py", line 1027 in read_text
+  File "c:\Users\goney\Desktop\MatchTemplate2\EmbeddingTest\common\safe_io.py", line 57 in _path_contains_valid_json
+  File "c:\Users\goney\Desktop\MatchTemplate2\EmbeddingTest\common\safe_io.py", line 73 in atomic_write_json
+  File "c:\Users\goney\Desktop\MatchTemplate2\EmbeddingTest\infrastructure\product_params.py", line 56 in save_product_params
+  File "c:\Users\goney\Desktop\MatchTemplate2\EmbeddingTest\application\algorithm_controller.py", line 179 in save_params
+  File "c:\Users\goney\Desktop\MatchTemplate2\EmbeddingTest\ui\debug\tool_page\page.py", line 4493 in _save_runtime_params
+  File "c:\Users\goney\Desktop\MatchTemplate2\EmbeddingTest\ui\debug\tool_page\page.py", line 4813 in _on_training_finished
+  File "c:\Users\goney\Desktop\MatchTemplate2\EmbeddingTest\ui\shell\main_window.py", line 732 in main
+  File "c:\Users\goney\Desktop\MatchTemplate2\EmbeddingTest\Main.py", line 233 in <module>
+
+Extension modules: shiboken6.Shiboken, PySide6.QtCore, PySide6.QtGui, PySide6.QtWidgets, numpy._core._multiarray_umath, numpy.linalg._umath_linalg, _wmi, PIL._imaging, torch._C, torch._C._dynamo.autograd_compiler, torch._C._dynamo.eval_frame, torch._C._dynamo.guards, torch._C._dynamo.utils, torch._C._fft, torch._C._linalg, torch._C._nested, torch._C._nn, torch._C._sparse, torch._C._special, PIL._imagingft, numpy.random._common, numpy.random.bit_generator, numpy.random._bounded_integers, numpy.random._pcg64, numpy.random._mt19937, numpy.random._generator, numpy.random._philox, numpy.random._sfc64, numpy.random.mtrand, google._upb._message (total: 30)
+
+--- LC System fault handler start ---
+
+--- LC System fault handler start ---
+
+--- LC System fault handler start ---
+
+--- LC System fault handler start ---
+Fatal Python error: Aborted
+
+Thread 0x00004a34 (most recent call first):
+  File "c:\Users\goney\Desktop\MatchTemplate2\EmbeddingTest\ui\debug\tool_page\page.py", line 4817 in _on_training_finished
+  File "c:\Users\goney\Desktop\MatchTemplate2\EmbeddingTest\ui\shell\main_window.py", line 714 in main
+  File "c:\Users\goney\Desktop\MatchTemplate2\EmbeddingTest\Main.py", line 233 in <module>
+
+Extension modules: shiboken6.Shiboken, PySide6.QtCore, PySide6.QtGui, PySide6.QtWidgets, numpy._core._multiarray_umath, numpy.linalg._umath_linalg, _wmi, PIL._imaging, torch._C, torch._C._dynamo.autograd_compiler, torch._C._dynamo.eval_frame, torch._C._dynamo.guards, torch._C._dynamo.utils, torch._C._fft, torch._C._linalg, torch._C._nested, torch._C._nn, torch._C._sparse, torch._C._special, PIL._imagingft, numpy.random._common, numpy.random.bit_generator, numpy.random._bounded_integers, numpy.random._pcg64, numpy.random._mt19937, numpy.random._generator, numpy.random._philox, numpy.random._sfc64, numpy.random.mtrand, google._upb._message (total: 30)
+
+--- LC System fault handler start: 2026-06-04 09:25:02.656 ---
+mode: source
+executable: C:\Users\goney\AppData\Local\Programs\Python\Python312\python.exe
+cwd: C:\Users\goney\Desktop\MatchTemplate2\EmbeddingTest

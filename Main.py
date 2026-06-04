@@ -4,6 +4,7 @@ import ctypes
 import atexit
 import faulthandler
 import tempfile
+from datetime import datetime
 from pathlib import Path
 import subprocess
 import sys
@@ -17,6 +18,18 @@ except Exception:
 _SINGLE_INSTANCE_LOCK = None
 _STANDARD_STREAM_LOG = None
 _FAULT_HANDLER_LOG = None
+
+
+def _log_timestamp() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+
+def _write_log_header(log_file, label: str) -> None:
+    mode = "exe" if getattr(sys, "frozen", False) else "source"
+    log_file.write(f"\n--- LC System {label}: {_log_timestamp()} ---\n")
+    log_file.write(f"mode: {mode}\n")
+    log_file.write(f"executable: {sys.executable}\n")
+    log_file.write(f"cwd: {Path.cwd()}\n")
 
 
 def _open_standard_stream_log():
@@ -34,7 +47,7 @@ def _open_standard_stream_log():
                 encoding="utf-8",
                 buffering=1,
             )
-            log_file.write("\n--- LC System start ---\n")
+            _write_log_header(log_file, "start")
             return log_file
         except OSError:
             continue
@@ -87,7 +100,7 @@ def _enable_fault_handler_log() -> None:
                 encoding="utf-8",
                 buffering=1,
             )
-            log_file.write("\n--- LC System fault handler start ---\n")
+            _write_log_header(log_file, "fault handler start")
             faulthandler.enable(file=log_file, all_threads=True)
             _FAULT_HANDLER_LOG = log_file
             atexit.register(_close_fault_handler_log)
