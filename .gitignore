@@ -7,3 +7,4 @@ _dev_only/
 __pycache__/
 *.pyc
 *.pyo
+logs/
