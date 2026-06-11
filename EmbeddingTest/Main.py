@@ -1,14 +1,64 @@
 from __future__ import annotations
 
 import ctypes
+import faulthandler
+import os
 import subprocess
 import sys
+import threading
+import traceback
+from datetime import datetime
 
 from ui.shell.main_window import main
 
 
 _SINGLE_INSTANCE_MUTEX_NAME = "Local\\LCSystem.EmbeddingTest.SingleInstance"
 _SINGLE_INSTANCE_MUTEX_HANDLE = None
+_CRASH_LOG_HANDLE = None
+
+
+def _enable_crash_diagnostics() -> None:
+    global _CRASH_LOG_HANDLE
+    if _CRASH_LOG_HANDLE is not None:
+        return
+    try:
+        log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".qr_session")
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, "crash.log")
+        _CRASH_LOG_HANDLE = open(log_path, "a", encoding="utf-8", buffering=1)
+        _CRASH_LOG_HANDLE.write(
+            f"\n[{datetime.now().isoformat(timespec='seconds')}] application start\n"
+        )
+        faulthandler.enable(file=_CRASH_LOG_HANDLE, all_threads=True)
+
+        previous_excepthook = sys.excepthook
+
+        def _log_uncaught_exception(exc_type, exc_value, exc_traceback) -> None:
+            traceback.print_exception(
+                exc_type,
+                exc_value,
+                exc_traceback,
+                file=_CRASH_LOG_HANDLE,
+            )
+            _CRASH_LOG_HANDLE.flush()
+            previous_excepthook(exc_type, exc_value, exc_traceback)
+
+        sys.excepthook = _log_uncaught_exception
+        previous_threading_excepthook = threading.excepthook
+
+        def _log_thread_exception(args) -> None:
+            traceback.print_exception(
+                args.exc_type,
+                args.exc_value,
+                args.exc_traceback,
+                file=_CRASH_LOG_HANDLE,
+            )
+            _CRASH_LOG_HANDLE.flush()
+            previous_threading_excepthook(args)
+
+        threading.excepthook = _log_thread_exception
+    except Exception:
+        _CRASH_LOG_HANDLE = None
 
 
 def _is_windows_admin() -> bool:
@@ -107,4 +157,5 @@ if __name__ == "__main__":
     if not _acquire_single_instance_mutex():
         _show_already_running_message()
         sys.exit(0)
+    _enable_crash_diagnostics()
     main()

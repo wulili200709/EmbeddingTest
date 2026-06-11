@@ -450,7 +450,7 @@ class ToolPageRuntimeContext:
                     product_dir=tool_page.session.product_dir,
                     camera_role=camera_role,
                 )
-                match_ms = float(run.total_ms)
+                match_ms = float(run.locate_ms)
                 tool_page._line2dup_match_ms_by_image[path] = match_ms
                 tool_page._line2dup_autogen_ms_by_image[path] = float(run.total_ms)
         elif tool_page.loc_method == "ncc":
@@ -525,7 +525,7 @@ class ToolPageRuntimeContext:
                     product_dir=tool_page.session.product_dir,
                     camera_role=role,
                 )
-                match_ms = float(run.total_ms)
+                match_ms = float(run.locate_ms)
                 roi_shapes = _preview_shapes_from_detected_shapes(run.roi_shapes)
 
         rows_by_key = _predict_learning_items_batch_rows_from_frame(
@@ -649,7 +649,7 @@ class ProductRuntimeContext:
                     product_dir=self.session.product_dir,
                     camera_role=camera_role,
                 )
-                match_ms = float(run.total_ms)
+                match_ms = float(run.locate_ms)
                 self._line2dup_match_ms_by_image[path] = match_ms
         elif self.loc_method == "ncc":
             run = ncc_locator.autogen_roi_json_from_ncc_timed(
@@ -718,7 +718,7 @@ class ProductRuntimeContext:
                     product_dir=self.session.product_dir,
                     camera_role=camera_role,
                 )
-                match_ms = float(run.total_ms)
+                match_ms = float(run.locate_ms)
                 self._line2dup_match_ms_by_image[path] = match_ms
         elif self.loc_method == "ncc":
             run = ncc_locator.autogen_roi_json_from_ncc_timed(
@@ -776,7 +776,7 @@ class ProductRuntimeContext:
                     product_dir=self.session.product_dir,
                     camera_role=role,
                 )
-                match_ms = float(run.total_ms)
+                match_ms = float(run.locate_ms)
                 roi_shapes = tuple(
                     RuntimePreviewShape(
                         label=str(shape.label_name or "").strip() or "roi",

@@ -4,6 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
+
+import numpy as np
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -110,6 +113,12 @@ class _Harness:
     def _load_canvas_image(self, path: str) -> None:
         self.loaded_paths.append(path)
 
+    def _apply_runtime_roi_overlays(self, _path: str, _roi_shapes) -> None:
+        return None
+
+    def _sync_sample_selection_to_path(self, _path: str, *, switch_tab: bool) -> None:
+        return None
+
     def current_algorithm(self) -> str:
         return "b0"
 
@@ -155,6 +164,7 @@ class _FakeInspectionExecutor:
                     result="NG",
                 ),
             ],
+            roi_shapes=(),
         )
 
 
@@ -195,6 +205,7 @@ class _FakeAnomalyInspectionExecutor:
                     result="NG",
                 ),
             ],
+            roi_shapes=(),
         )
 
 
@@ -207,13 +218,16 @@ class ToolPageRunTestAllItemsTest(unittest.TestCase):
         original_executor = page_module.InspectionExecutor
         try:
             page_module.InspectionExecutor = _FakeInspectionExecutor
-            harness._run_test()
+            expected_frame = np.zeros((8, 12, 3), dtype=np.uint8)
+            with mock.patch.object(page_module, "imread", return_value=expected_frame):
+                harness._run_test()
         finally:
             page_module.InspectionExecutor = original_executor
             os.unlink(image_path)
 
         request = _FakeInspectionExecutor.last_request
         self.assertIsNotNone(request)
+        self.assertIs(request.image_bgr, expected_frame)
         self.assertEqual(request.camera_id, "cam1")
         self.assertEqual([item.item_id for item in request.items], ["roi1", "roi2"])
         self.assertEqual(

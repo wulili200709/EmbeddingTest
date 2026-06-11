@@ -5,6 +5,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +16,7 @@ if root_str not in sys.path:
 
 
 from application.runtime_context import ToolPageRuntimeContext
+from line2dup.core.recipe import Line2DupRecipe
 
 
 class _DummyAlgo:
@@ -52,6 +55,18 @@ class _ToolPageHarness:
         raise AssertionError("no embedding model should be loaded when there are no enabled items")
 
 
+class _Line2DupToolPageHarness(_ToolPageHarness):
+    def __init__(self, image_path: str) -> None:
+        super().__init__()
+        self.loc_method = "line2dup"
+        self.ref_image = image_path
+        self.session = SimpleNamespace(product_dir=str(Path(image_path).parent))
+        self._recipe = Line2DupRecipe(reference_image=image_path)
+
+    def line2dup_recipe_for_role(self, _camera_role: str):
+        return self._recipe
+
+
 class ToolPageRuntimeContextNccTest(unittest.TestCase):
     def test_ncc_path_prediction_forces_roi_rematch(self) -> None:
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
@@ -82,6 +97,25 @@ class ToolPageRuntimeContextNccTest(unittest.TestCase):
 
         self.assertEqual(harness._line2dup_match_ms_by_image[image_path], 6.5)
         self.assertEqual(harness._line2dup_autogen_ms_by_image[image_path], 12.5)
+
+    def test_line2dup_path_prediction_uses_locate_time_as_match_time(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
+            image_path = handle.name
+
+        harness = _Line2DupToolPageHarness(image_path)
+        run = SimpleNamespace(locate_ms=23.5, total_ms=912.0)
+        try:
+            with mock.patch(
+                "application.runtime_context.line2dup_locator.autogen_roi_json_from_line2dup_timed",
+                return_value=run,
+            ):
+                rows = ToolPageRuntimeContext(harness).predict_items_batch(image_path, items=[])
+        finally:
+            os.unlink(image_path)
+
+        self.assertEqual(rows, [])
+        self.assertEqual(harness._line2dup_match_ms_by_image[image_path], 23.5)
+        self.assertEqual(harness._line2dup_autogen_ms_by_image[image_path], 912.0)
 
 
 if __name__ == "__main__":

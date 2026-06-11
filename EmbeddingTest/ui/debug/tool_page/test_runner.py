@@ -92,7 +92,7 @@ def _predict_image(
                 product_dir=tool_page.session.product_dir,
                 camera_role=camera_role,
             )
-            match_ms = float(run.total_ms)
+            match_ms = float(run.locate_ms)
             tool_page._line2dup_match_ms_by_image[path] = match_ms
             tool_page._line2dup_autogen_ms_by_image[path] = float(run.total_ms)
     elif tool_page.loc_method == "ncc":
@@ -146,10 +146,12 @@ def _populate_results_table(tool_page, rows: List[Dict[str, object]]) -> None:
     tool_page._current_result_rows = list(rows)
     tool_page.table.setRowCount(0)
     tool_page.table.setHorizontalHeaderLabels(
-        ["文件", "GT", "Pred", "diff", "sim_ok", "sim_ng", "score/value", "threshold", "match_ms", "total_ms", "json"]
+        ["文件", "GT", "Pred", "diff", "sim_ok", "sim_ng", "score/value", "threshold", "match_ms", "整图total_ms", "json"]
     )
     tool_page.table.setToolTip(
-        "学习工具: diff = sim_ok - sim_ng；PatchCore Lite: score/value 越大越异常，score 超过 threshold 才判 NG。"
+        "match_ms 是整张图的位置匹配时间；整图total_ms 是这张图全部启用工具完成检测的总时间，"
+        "因此同一张图的每一行数值相同。学习工具: diff = sim_ok - sim_ng；"
+        "PatchCore Lite: score/value 越大越异常，score 超过 threshold 才判 NG。"
     )
     for row_idx, row in enumerate(rows):
         tool_page.table.insertRow(row_idx)

@@ -13,6 +13,9 @@ qr_core = page_module.qr_core
 line2dup_locator = page_module.line2dup_locator
 ncc_locator = page_module.ncc_locator
 _filter_paths_for_camera = page_module._filter_paths_for_camera
+inspection_item_specs_from_line2dup_recipe = page_module.inspection_item_specs_from_line2dup_recipe
+save_inspection_items = page_module.save_inspection_items
+sync_items_with_labels = page_module.sync_items_with_labels
 
 
 def _set_reference(self, path: str) -> None:
@@ -103,14 +106,32 @@ def _flush_line2dup_reference_regions_sync(self) -> None:
     self._line2dup_reference_regions_sync_pending = False
     self._clear_training_roi_review_state(self.current_camera_role())
     self._sync_line2dup_recipe_and_items()
-    current_path = self.canvas.image_path()
-    if current_path and os.path.exists(current_path):
-        self._load_canvas_image(current_path)
+    editor = getattr(self, "_template_editor_dialog", None)
+    editor_open = False
+    if isinstance(editor, QtWidgets.QWidget):
+        try:
+            editor_open = bool(editor.isVisible())
+        except RuntimeError:
+            editor_open = False
+    if not editor_open:
+        current_path = self.canvas.image_path()
+        if current_path and os.path.exists(current_path):
+            self._load_canvas_image(current_path)
     self.lbl_status.setText("状态：参考ROI已同步到运行界面")
 
 def _on_template_editor_dialog_destroyed(self, *_args) -> None:
-    self._flush_line2dup_reference_regions_sync()
+    had_pending_sync = bool(
+        getattr(self, "_line2dup_reference_regions_sync_pending", False)
+    )
     self._template_editor_dialog = None
+    self._flush_line2dup_reference_regions_sync()
+    if not had_pending_sync:
+        current_path = self.canvas.image_path()
+        if current_path and os.path.exists(current_path):
+            self._load_canvas_image(current_path)
+    geometry_signal = getattr(self, "roiGeometryChanged", None)
+    if geometry_signal is not None and hasattr(geometry_signal, "emit"):
+        geometry_signal.emit()
 
 def _on_line2dup_model_saved(self, model_path: str, recipe_path: str) -> None:
     camera_role = self.current_camera_role()
@@ -132,7 +153,60 @@ def _sync_line2dup_recipe_and_items(self) -> None:
         self.line2dup_recipe = self.line2dup_recipe_for_role(self.current_camera_role(), force_reload=True)
     except Exception:
         self.line2dup_recipe = None
-    self._reload_inspection_items()
+    role = str(self.current_camera_role() or "cam1").strip() or "cam1"
+    specs = inspection_item_specs_from_line2dup_recipe(self.line2dup_recipe)
+    labels = [
+        str(spec.get("roi_label", "") or "").strip()
+        for spec in specs
+        if str(spec.get("roi_label", "") or "").strip()
+    ]
+    display_names_by_label = {
+        str(spec.get("roi_label", "") or "").strip():
+        str(spec.get("display_name", "") or "").strip()
+        for spec in specs
+        if str(spec.get("roi_label", "") or "").strip()
+    }
+    current_role_items = [
+        item
+        for item in list(getattr(self, "inspection_items", []) or [])
+        if str(getattr(item, "camera_id", "") or "").strip() == role
+    ]
+    current_labels = [
+        str(getattr(item, "roi_label", "") or "").strip()
+        for item in current_role_items
+        if str(getattr(item, "roi_label", "") or "").strip()
+    ]
+    if current_labels != labels:
+        self._reload_inspection_items()
+        return
+
+    task_groups_by_label = {
+        label: display_name
+        for label, display_name in display_names_by_label.items()
+        if display_name and display_name != label
+    }
+    synced_items = sync_items_with_labels(
+        current_role_items,
+        labels,
+        default_camera_id=role,
+        display_names_by_label=display_names_by_label,
+        task_groups_by_label=task_groups_by_label,
+    )
+    if [item.to_dict() for item in synced_items] == [item.to_dict() for item in current_role_items]:
+        return
+
+    other_role_items = [
+        item
+        for item in list(getattr(self, "inspection_items", []) or [])
+        if str(getattr(item, "camera_id", "") or "").strip() != role
+    ]
+    self.inspection_items = other_role_items + synced_items
+    save_inspection_items(self.inspection_items, self.session.inspection_items_path)
+    invalidate_state_cache = getattr(self, "_invalidate_sample_annotation_state_cache", None)
+    if callable(invalidate_state_cache):
+        invalidate_state_cache()
+    self._refresh_inspection_items_table()
+    self.inspectionItemsChanged.emit()
 
 def _update_loc_ui(self) -> None:
     return None
@@ -208,6 +282,94 @@ def _resolve_autogen_targets(
     if reply == QtWidgets.QMessageBox.StandardButton.No:
         return list(missing)
     return list(paths)
+
+
+def _prepare_batch_autogen_job(
+    self,
+    paths: List[str],
+    *,
+    only_missing: bool,
+    camera_role=None,
+):
+    if not paths:
+        QtWidgets.QMessageBox.information(self, "提示", "没有可处理的图片")
+        return None
+
+    role = self.current_camera_role() if camera_role is None else str(camera_role)
+    method = str(self.loc_method or "").strip()
+    ref_image = str(self.ref_image or "")
+    recipe = None
+    model_path = ""
+
+    if method == "line2dup":
+        try:
+            recipe = self.line2dup_recipe_for_role(role, force_reload=True)
+            if role == self.current_camera_role():
+                self.line2dup_recipe = recipe
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "提示", f"无法加载模板 recipe：{exc}")
+            return None
+        if recipe is None:
+            QtWidgets.QMessageBox.warning(self, "提示", "当前产品没有可用的模板 recipe。")
+            return None
+        if recipe.reference_image and os.path.exists(recipe.reference_image):
+            ref_image = str(recipe.reference_image)
+        model_path = self.line2dup_model_path_for_role(role)
+        if not os.path.exists(model_path):
+            QtWidgets.QMessageBox.warning(self, "提示", "当前产品还没有模板模型，请先创建模板。")
+            return None
+        recipe_region_labels = {
+            str(region.get("output_label") or region.get("reference_label") or "").strip()
+            for region in (recipe.reference_regions or [])
+            if isinstance(region, dict)
+        }
+        recipe_region_labels.discard("")
+        if (not ref_image or not os.path.exists(ref_image)) and not recipe_region_labels:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "提示",
+                "模板定位需要参考图或已保存的参考 ROI。",
+            )
+            return None
+    elif method == "ncc":
+        model_path = ncc_locator.resolved_model_path_for_product(
+            self.session.product_dir,
+            role,
+        )
+        if not os.path.exists(model_path):
+            QtWidgets.QMessageBox.warning(
+                self,
+                "提示",
+                "当前产品还没有 NCC 模型，请先在 NCC 工具里制作模板。",
+            )
+            return None
+    else:
+        QtWidgets.QMessageBox.warning(self, "提示", f"不支持的定位方式：{method or '(空)'}")
+        return None
+
+    todo = self._resolve_autogen_targets(
+        paths,
+        only_missing=only_missing,
+        silent=False,
+        camera_role=role,
+    )
+    if not todo:
+        if getattr(self, "_skip_empty_autogen_message", False):
+            self._skip_empty_autogen_message = False
+            return None
+        QtWidgets.QMessageBox.information(self, "提示", "这些图片已经存在 ROI")
+        return None
+
+    return {
+        "method": method,
+        "camera_role": role,
+        "product_dir": self.session.product_dir,
+        "ref_image": ref_image,
+        "recipe": recipe,
+        "model_path": model_path,
+        "todo": list(todo),
+    }
+
 
 def _autogen_roi_for_images(
     self,
@@ -347,7 +509,7 @@ def _autogen_roi_for_images(
                         recipe=recipe,
                         detector=line2dup_detector,
                     )
-                    self._line2dup_match_ms_by_image[p] = float(run.total_ms)
+                    self._line2dup_match_ms_by_image[p] = float(run.locate_ms)
                     self._line2dup_autogen_ms_by_image[p] = float(run.total_ms)
                 elif method == "ncc":
                     run = ncc_locator.autogen_roi_json_from_ncc_timed(
@@ -395,8 +557,6 @@ def _autogen_roi_for_images(
         if callable(invalidate_shape_cache):
             for image_path in todo:
                 invalidate_shape_cache(image_path)
-    if ok and not silent:
-        self._reload_inspection_items()
     if ok or (errs and method == "ncc"):
         self.roiGeometryChanged.emit()
 

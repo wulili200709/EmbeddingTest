@@ -205,6 +205,29 @@ class _TrainingJobWorker(QtCore.QObject):
         display_rows: list[dict[str, object]] = []
         last_status_message = ""
         last_dialog_message = ""
+        prune_request = dict(self._payload.get("prune_request", {}) or {})
+        if prune_request:
+            cleaner = getattr(self._algo, "clear_obsolete_traditional_models", None)
+            if callable(cleaner):
+                cleaner(
+                    camera_role=str(prune_request.get("camera_role", "") or "cam1"),
+                    valid_model_keys_by_algorithm={
+                        str(key): set(value or ())
+                        for key, value in dict(
+                            prune_request.get("valid_model_keys_by_algorithm", {}) or {}
+                        ).items()
+                    },
+                )
+
+        task_requests = [
+            dict(request or {})
+            for request in self._payload.get("task_requests", [])
+            if isinstance(request, dict)
+        ]
+        if task_requests:
+            prepared_tasks, preparation_failures = self._prepare_task_requests(task_requests)
+            tasks.extend(prepared_tasks)
+            failure_messages.extend(preparation_failures)
         total = len(tasks)
 
         for index, task in enumerate(tasks, start=1):
@@ -238,6 +261,138 @@ class _TrainingJobWorker(QtCore.QObject):
             "fatal": "",
         }
 
+    def _prepare_task_requests(self, requests: list[dict]) -> tuple[list[dict], list[str]]:
+        candidate_paths = list(
+            dict.fromkeys(
+                str(path)
+                for request in requests
+                for path in list(request.get("candidate_paths", []) or [])
+                if str(path)
+            )
+        )
+        shape_labels_by_path: dict[str, set[str]] = {}
+        total_paths = len(candidate_paths)
+        for index, path in enumerate(candidate_paths, start=1):
+            labels: set[str] = set()
+            json_path = labelme_core.labelme_json_of_image(path)
+            try:
+                with open(json_path, "r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
+                raw_shapes = payload.get("shapes", []) if isinstance(payload, dict) else []
+                for shape in raw_shapes if isinstance(raw_shapes, list) else []:
+                    if not isinstance(shape, dict):
+                        continue
+                    label = str(shape.get("label", "") or "").strip()
+                    points = shape.get("points", [])
+                    if label and isinstance(points, list) and len(points) >= 2:
+                        labels.add(label)
+            except Exception:
+                labels = set()
+            shape_labels_by_path[os.path.normpath(path)] = labels
+            self.progressChanged.emit(f"正在准备训练样本 {index}/{total_paths}")
+
+        annotations_by_path = {
+            os.path.normpath(str(path)): dict(statuses or {})
+            for path, statuses in dict(
+                self._payload.get("sample_annotations_by_path", {}) or {}
+            ).items()
+        }
+        tasks: list[dict] = []
+        failures: list[str] = []
+        clearer = getattr(self._algo, "clear_training_output", None)
+
+        for request in requests:
+            display_name = str(request.get("display_name", "") or "tool").strip() or "tool"
+            try:
+                task = self._task_from_request(
+                    request,
+                    shape_labels_by_path=shape_labels_by_path,
+                    annotations_by_path=annotations_by_path,
+                )
+                if callable(clearer):
+                    for model_key in list(request.get("clear_model_keys", []) or []):
+                        clearer(
+                            str(task.get("algorithm", "") or ""),
+                            str(task.get("product_dir", "") or ""),
+                            model_key=str(model_key or ""),
+                        )
+                tasks.append(task)
+            except Exception as exc:
+                failures.append(f"{display_name}: {exc}")
+        return tasks, failures
+
+    @staticmethod
+    def _task_from_request(
+        request: dict,
+        *,
+        shape_labels_by_path: dict[str, set[str]],
+        annotations_by_path: dict[str, dict],
+    ) -> dict:
+        camera_role = str(request.get("camera_role", "") or "cam1")
+        label_names = list(request.get("label_names", []) or [])
+        candidate_paths = list(request.get("candidate_paths", []) or [])
+        ok_files: list[str] = []
+        ng_files: list[str] = []
+        ok_samples: list[tuple[str, str]] = []
+        ng_samples: list[tuple[str, str]] = []
+        missing_annotation_paths: list[str] = []
+
+        for path in candidate_paths:
+            normalized_path = os.path.normpath(str(path))
+            present_labels = [
+                label
+                for label in label_names
+                if label in shape_labels_by_path.get(normalized_path, set())
+            ]
+            if not present_labels:
+                continue
+            statuses = annotations_by_path.get(normalized_path, {})
+            labeled_statuses: list[tuple[str, str]] = []
+            for label in present_labels:
+                status = str(statuses.get(f"{camera_role}::{label}", "") or "").strip().upper()
+                if status not in {"OK", "NG"}:
+                    missing_annotation_paths.append(path)
+                    labeled_statuses = []
+                    break
+                labeled_statuses.append((label, status))
+            if not labeled_statuses:
+                continue
+            if any(status == "OK" for _, status in labeled_statuses):
+                ok_files.append(path)
+            if any(status == "NG" for _, status in labeled_statuses):
+                ng_files.append(path)
+            for label, status in labeled_statuses:
+                if status == "OK":
+                    ok_samples.append((path, label))
+                else:
+                    ng_samples.append((path, label))
+
+        if not candidate_paths:
+            raise RuntimeError(f"missing training images for {camera_role}")
+        if missing_annotation_paths:
+            missing_names = [os.path.basename(path) for path in missing_annotation_paths[:50]]
+            raise RuntimeError(
+                "missing ROI annotations for some grouped samples:\n" + "\n".join(missing_names)
+            )
+        missing_groups: list[str] = []
+        if not ok_samples:
+            missing_groups.append("OK")
+        if not bool(request.get("is_anomaly", False)) and not ng_samples:
+            missing_groups.append("NG")
+        if missing_groups:
+            raise RuntimeError(f"missing {'/'.join(missing_groups)} images for {camera_role}")
+
+        task = dict(request.get("task_base", {}) or {})
+        task.update(
+            {
+                "ok_files": ok_files,
+                "ng_files": ng_files,
+                "ok_samples": ok_samples,
+                "ng_samples": ng_samples,
+            }
+        )
+        return task
+
     def _execute_task(
         self,
         task: dict,
@@ -266,6 +421,273 @@ class _TrainingJobWorker(QtCore.QObject):
             progress_callback=progress_callback,
             embedding_cache_dir=str(task.get("embedding_cache_dir", "") or ""),
         )
+
+
+class _TrainingRoiPreparationWorker(QtCore.QObject):
+    progressChanged = QtCore.Signal(object)
+    finished = QtCore.Signal(object)
+
+    def __init__(
+        self,
+        payload: dict,
+        parent: Optional[QtCore.QObject] = None,
+    ) -> None:
+        super().__init__(parent)
+        self._payload = dict(payload or {})
+
+    @QtCore.Slot()
+    def run(self) -> None:
+        try:
+            result = self._prepare()
+        except Exception as exc:
+            result = {
+                "checked": 0,
+                "updated_paths": [],
+                "reused_paths": [],
+                "errors": [],
+                "timings": {},
+                "fatal": str(exc),
+            }
+        self.finished.emit(result)
+
+    def _prepare(self) -> dict:
+        product_dir = str(self._payload.get("product_dir", "") or "")
+        camera_role = str(self._payload.get("camera_role", "") or "cam1")
+        ref_image = str(self._payload.get("ref_image", "") or "")
+        candidate_paths = [
+            str(path)
+            for path in list(self._payload.get("candidate_paths", []) or [])
+            if str(path)
+        ]
+        recipe = line2dup_locator.load_recipe_for_product(product_dir, camera_role)
+        if recipe.reference_image and os.path.exists(recipe.reference_image):
+            ref_image = str(recipe.reference_image)
+        if not ref_image or not os.path.exists(ref_image):
+            raise FileNotFoundError(f"{camera_role} missing reference image")
+
+        expected_labels = set(output_labels_from_line2dup_recipe(recipe))
+        if not expected_labels:
+            raise RuntimeError(f"{camera_role} recipe does not contain output ROI labels")
+        recipe_path = line2dup_locator.resolved_recipe_path_for_product(product_dir, camera_role)
+        model_path = line2dup_locator.resolved_model_path_for_product(product_dir, camera_role)
+        shared_source_mtime_ns = max(
+            self._mtime_ns(recipe_path),
+            self._mtime_ns(model_path),
+            self._mtime_ns(ref_image),
+        )
+
+        detector = None
+        updated_paths: list[str] = []
+        reused_paths: list[str] = []
+        errors: list[str] = []
+        timings: dict[str, tuple[float, float]] = {}
+        total = len(candidate_paths)
+        for index, path in enumerate(candidate_paths, start=1):
+            try:
+                if not os.path.exists(path):
+                    raise FileNotFoundError(path)
+                json_path = labelme_core.labelme_json_of_image(path)
+                source_mtime_ns = max(shared_source_mtime_ns, self._mtime_ns(path))
+                if self._roi_json_is_current(
+                    json_path,
+                    expected_labels=expected_labels,
+                    source_mtime_ns=source_mtime_ns,
+                ):
+                    reused_paths.append(path)
+                    state = "reused"
+                else:
+                    if detector is None:
+                        from line2dup.like_matcher import load_detector_model
+
+                        detector = load_detector_model(model_path)
+                    run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
+                        tgt_img_path=path,
+                        ref_img_path=ref_image,
+                        product_dir=product_dir,
+                        camera_role=camera_role,
+                        recipe=recipe,
+                        detector=detector,
+                    )
+                    updated_paths.append(path)
+                    timings[path] = (float(run.locate_ms), float(run.total_ms))
+                    state = "updated"
+            except Exception as exc:
+                errors.append(f"{os.path.basename(path)}: {exc}")
+                state = "failed"
+            self.progressChanged.emit(
+                {
+                    "index": index,
+                    "total": total,
+                    "path": path,
+                    "state": state,
+                    "updated": len(updated_paths),
+                    "reused": len(reused_paths),
+                    "failed": len(errors),
+                }
+            )
+
+        return {
+            "checked": total,
+            "updated_paths": updated_paths,
+            "reused_paths": reused_paths,
+            "errors": errors,
+            "timings": timings,
+            "fatal": "",
+        }
+
+    @staticmethod
+    def _mtime_ns(path: str) -> int:
+        try:
+            return int(os.stat(path).st_mtime_ns)
+        except Exception:
+            return -1
+
+    @classmethod
+    def _roi_json_is_current(
+        cls,
+        json_path: str,
+        *,
+        expected_labels: set[str],
+        source_mtime_ns: int,
+    ) -> bool:
+        if not json_path or not os.path.exists(json_path):
+            return False
+        if cls._mtime_ns(json_path) < source_mtime_ns:
+            return False
+        try:
+            with open(json_path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except Exception:
+            return False
+        raw_shapes = payload.get("shapes", []) if isinstance(payload, dict) else []
+        if not isinstance(raw_shapes, list):
+            return False
+        present_labels = {
+            str(shape.get("label", "") or "").strip()
+            for shape in raw_shapes
+            if isinstance(shape, dict)
+            and isinstance(shape.get("points", []), list)
+            and len(shape.get("points", [])) >= 2
+        }
+        return expected_labels.issubset(present_labels)
+
+
+class _BatchAutoRoiWorker(QtCore.QObject):
+    progressChanged = QtCore.Signal(object)
+    finished = QtCore.Signal(object)
+
+    def __init__(
+        self,
+        payload: dict,
+        parent: Optional[QtCore.QObject] = None,
+    ) -> None:
+        super().__init__(parent)
+        self._payload = dict(payload or {})
+
+    @QtCore.Slot()
+    def run(self) -> None:
+        try:
+            result = self._run_batch()
+        except Exception as exc:
+            result = {
+                "method": str(self._payload.get("method", "") or ""),
+                "todo": list(self._payload.get("todo", []) or []),
+                "ok_paths": [],
+                "errors": [],
+                "timings": {},
+                "fatal": str(exc),
+            }
+        self.finished.emit(result)
+
+    def _run_batch(self) -> dict:
+        method = str(self._payload.get("method", "") or "")
+        role = str(self._payload.get("camera_role", "") or "cam1")
+        product_dir = str(self._payload.get("product_dir", "") or "")
+        ref_image = str(self._payload.get("ref_image", "") or "")
+        todo = [str(path) for path in list(self._payload.get("todo", []) or []) if str(path)]
+        recipe = self._payload.get("recipe")
+        model_path = str(self._payload.get("model_path", "") or "")
+
+        line2dup_detector = None
+        ncc_model = None
+        ncc_compiled = None
+        if method == "line2dup":
+            from line2dup.like_matcher import load_detector_model
+
+            line2dup_detector = load_detector_model(model_path)
+        elif method == "ncc":
+            from ncc.runtime_service import NccCompiledModel
+
+            ncc_model = ncc_locator.load_model(model_path).normalized()
+            ncc_compiled = NccCompiledModel(model_path, ncc_model)
+
+        ok_paths: list[str] = []
+        errors: list[str] = []
+        timings: dict[str, tuple[float, float]] = {}
+        total = len(todo)
+        try:
+            for index, path in enumerate(todo, start=1):
+                try:
+                    if method == "line2dup":
+                        run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
+                            tgt_img_path=path,
+                            ref_img_path=ref_image,
+                            product_dir=product_dir,
+                            camera_role=role,
+                            recipe=recipe,
+                            detector=line2dup_detector,
+                        )
+                    elif method == "ncc":
+                        run = ncc_locator.autogen_roi_json_from_ncc_timed(
+                            tgt_img_path=path,
+                            product_dir=product_dir,
+                            camera_role=role,
+                            model_path=model_path,
+                            model=ncc_model,
+                            compiled_model=ncc_compiled,
+                        )
+                    else:
+                        qr_core.autogen_roi_json_from_reference(
+                            tgt_img_path=path,
+                            ref_img_path=ref_image,
+                            method=method,
+                            anchor_label="anchor",
+                            roi_label="roi",
+                        )
+                        run = None
+                    ok_paths.append(path)
+                    if run is not None:
+                        timings[path] = (
+                            float(getattr(run, "locate_ms", 0.0) or 0.0),
+                            float(getattr(run, "total_ms", 0.0) or 0.0),
+                        )
+                except Exception as exc:
+                    errors.append(f"{os.path.basename(path)}: {exc}")
+                self.progressChanged.emit(
+                    {
+                        "index": index,
+                        "total": total,
+                        "path": path,
+                        "ok": len(ok_paths),
+                        "failed": len(errors),
+                    }
+                )
+        finally:
+            if ncc_compiled is not None:
+                try:
+                    ncc_compiled.close()
+                except Exception:
+                    pass
+
+        return {
+            "method": method,
+            "todo": todo,
+            "ok_paths": ok_paths,
+            "errors": errors,
+            "timings": timings,
+            "fatal": "",
+        }
+
 
 class _SampleAnnotationCanvas(QtWidgets.QWidget):
     imagePressed = QtCore.Signal(int, int, int)
@@ -487,6 +909,10 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
         self._autogen_progress_total = 0
         self._autogen_progress_ok = 0
         self._autogen_progress_errors = 0
+        self._autogen_thread: Optional[QtCore.QThread] = None
+        self._autogen_worker: Optional[_BatchAutoRoiWorker] = None
+        self._autogen_pending_result: Optional[dict] = None
+        self._autogen_preferred_path = ""
 
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(10, 10, 10, 10)
@@ -554,6 +980,13 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
     def showEvent(self, event: QtGui.QShowEvent) -> None:
         super().showEvent(event)
         self._refresh_scope()
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        if self._autogen_running:
+            self.lbl_status.setText("状态：ROI 正在后台生成，请等待完成")
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     def _camera_role(self) -> str:
         return str(self._preview_dialog.cmb_camera.currentData() or "cam1")
@@ -624,10 +1057,10 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
 
     def _prepare_autogen_progress(self, total_hint: int) -> None:
         total = max(1, int(total_hint or 0))
-        self._autogen_progress_total = 0
+        self._autogen_progress_total = int(total_hint or 0)
         self._autogen_progress_ok = 0
         self._autogen_progress_errors = 0
-        self.progress_autogen.setRange(0, total)
+        self.progress_autogen.setRange(0, total + 1)
         self.progress_autogen.setValue(0)
         self.progress_autogen.setFormat("准备中")
         self.lbl_status.setText(f"状态：正在准备 {int(total_hint or 0)} 张图片")
@@ -645,9 +1078,9 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
         self._autogen_progress_total = total
         self._autogen_progress_ok = max(0, int(ok_count or 0))
         self._autogen_progress_errors = max(0, int(err_count or 0))
-        self.progress_autogen.setRange(0, total)
+        self.progress_autogen.setRange(0, total + 1)
         self.progress_autogen.setValue(index)
-        percent = int(round((index / total) * 100)) if total else 0
+        percent = int(round((index / (total + 1)) * 100)) if total else 0
         self.progress_autogen.setFormat(f"{index}/{total}  {percent}%")
         if index <= 0:
             self.lbl_status.setText(f"状态：准备处理 {total} 张图片")
@@ -657,7 +1090,11 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
                 f"处理中... {index}/{total} {image_name} / "
                 f"成功 {self._autogen_progress_ok} / 失败 {self._autogen_progress_errors}"
             )
-        QtWidgets.QApplication.processEvents()
+        if index >= total:
+            self.lbl_status.setText(
+                f"状态：ROI 已生成，正在刷新界面... 成功 {self._autogen_progress_ok} / "
+                f"失败 {self._autogen_progress_errors}"
+            )
 
     def _finish_autogen_progress(self) -> None:
         total = int(getattr(self, "_autogen_progress_total", 0) or 0)
@@ -667,8 +1104,8 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
             self.progress_autogen.setFormat("未处理")
             self.lbl_status.setText("状态：未处理图片")
             return
-        self.progress_autogen.setRange(0, total)
-        self.progress_autogen.setValue(total)
+        self.progress_autogen.setRange(0, total + 1)
+        self.progress_autogen.setValue(total + 1)
         self.progress_autogen.setFormat(f"{total}/{total}  100%")
         self.lbl_status.setText(
             f"状态：ROI 生成完成，成功 {self._autogen_progress_ok} 张，"
@@ -676,21 +1113,102 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
         )
 
     def _run_autogen_paths(self, paths: List[str], *, only_missing: bool, preferred_path: str) -> None:
-        self._prepare_autogen_progress(len(paths))
+        job = self._tool_page._prepare_batch_autogen_job(
+            paths,
+            only_missing=only_missing,
+            camera_role=self._camera_role(),
+        )
+        if not job:
+            return
+        todo = list(job.get("todo", []) or [])
+        self._prepare_autogen_progress(len(todo))
         self._set_autogen_running(True)
-        try:
-            self._tool_page._autogen_roi_for_images(
-                paths,
-                only_missing=only_missing,
-                silent=False,
-                camera_role=self._camera_role(),
-                progress_callback=self._on_autogen_progress,
-            )
-        finally:
-            self._set_autogen_running(False)
+        self._autogen_preferred_path = str(preferred_path or "")
+
+        thread = QtCore.QThread(self)
+        worker = _BatchAutoRoiWorker(job)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progressChanged.connect(self._on_autogen_worker_progress)
+        worker.finished.connect(self._on_autogen_worker_result)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._on_autogen_thread_finished)
+        thread.finished.connect(thread.deleteLater)
+        self._autogen_thread = thread
+        self._autogen_worker = worker
+        self._autogen_pending_result = None
+        thread.start()
+
+    @QtCore.Slot(object)
+    def _on_autogen_worker_progress(self, payload: object) -> None:
+        progress = dict(payload or {}) if isinstance(payload, dict) else {}
+        self._on_autogen_progress(
+            int(progress.get("index", 0) or 0),
+            int(progress.get("total", 0) or 0),
+            str(progress.get("path", "") or ""),
+            int(progress.get("ok", 0) or 0),
+            int(progress.get("failed", 0) or 0),
+        )
+
+    @QtCore.Slot(object)
+    def _on_autogen_worker_result(self, payload: object) -> None:
+        self._autogen_pending_result = (
+            dict(payload or {}) if isinstance(payload, dict) else {}
+        )
+
+    @QtCore.Slot()
+    def _on_autogen_thread_finished(self) -> None:
+        result = dict(getattr(self, "_autogen_pending_result", {}) or {})
+        self._autogen_pending_result = None
+        self._autogen_thread = None
+        self._autogen_worker = None
+        self._on_autogen_worker_finished(result)
+
+    @QtCore.Slot(object)
+    def _on_autogen_worker_finished(self, payload: object) -> None:
+        result = dict(payload or {}) if isinstance(payload, dict) else {}
+        preferred_path = self._autogen_preferred_path
+        self._autogen_preferred_path = ""
+
+        ok_paths = [str(path) for path in result.get("ok_paths", []) if str(path)]
+        errors = [str(message) for message in result.get("errors", []) if str(message)]
+        fatal = str(result.get("fatal", "") or "")
+        timings = dict(result.get("timings", {}) or {})
+        self._autogen_progress_ok = len(ok_paths)
+        self._autogen_progress_errors = len(errors) + (1 if fatal else 0)
+
+        total = max(1, int(getattr(self, "_autogen_progress_total", 0) or 0))
+        self.progress_autogen.setRange(0, total + 1)
+        self.progress_autogen.setValue(total)
+        self.progress_autogen.setFormat("正在刷新界面...")
+        self.lbl_status.setText("状态：ROI 已生成，正在刷新界面...")
+
+        for path, values in timings.items():
+            try:
+                locate_ms, total_ms = values
+                self._tool_page._line2dup_match_ms_by_image[str(path)] = float(locate_ms)
+                self._tool_page._line2dup_autogen_ms_by_image[str(path)] = float(total_ms)
+            except Exception:
+                continue
+        for path in ok_paths:
+            self._tool_page._invalidate_shape_lookup_cache(path)
+
+        current_canvas_path = self._tool_page.canvas.image_path()
+        if current_canvas_path and current_canvas_path in set(ok_paths):
+            self._tool_page._load_canvas_image(current_canvas_path)
+            self._tool_page._set_status_for_current_image(current_canvas_path)
+        self._preview_dialog._refresh_after_roi_batch(ok_paths, preferred_path=preferred_path)
+        self._set_autogen_running(False)
         self._finish_autogen_progress()
-        self._preview_dialog._reload_samples(preferred_path=preferred_path)
-        self._refresh_scope()
+
+        if fatal:
+            QtWidgets.QMessageBox.warning(self, "ROI 生成失败", fatal)
+            return
+        message = f"自动 ROI 完成：成功 {len(ok_paths)} / 失败 {len(errors)}"
+        if errors:
+            message += "\n\n失败示例（前10）：\n" + "\n".join(errors[:10])
+        QtWidgets.QMessageBox.information(self, "完成", message)
 
     def _run_autogen_current_list(self) -> None:
         paths = self._scope_paths()
@@ -1049,6 +1567,36 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
     def _on_tool_page_roi_geometry_changed(self) -> None:
         self._reload_samples(preferred_path=self._current_dialog_selected_path())
 
+    def _refresh_after_roi_batch(
+        self,
+        changed_paths: List[str],
+        *,
+        preferred_path: str = "",
+    ) -> None:
+        changed = {os.path.normpath(str(path)) for path in changed_paths if str(path)}
+        if not changed:
+            return
+        camera_role = str(self.cmb_camera.currentData() or "cam1")
+        sample_kind = str(self.cmb_sample_kind.currentData() or "train")
+        for row in range(self.sample_list.count()):
+            item = self.sample_list.item(row)
+            if item is None:
+                continue
+            path = str(item.data(QtCore.Qt.UserRole) or item.toolTip() or "")
+            if os.path.normpath(path) not in changed:
+                continue
+            item.setText(
+                self._tool_page._sample_item_display_text(
+                    path,
+                    sample_kind,
+                    camera_role,
+                )
+            )
+
+        current_path = self._current_dialog_selected_path()
+        if current_path and os.path.normpath(current_path) in changed:
+            self._on_sample_selected()
+
     def _mark_current_image_all_ok(self) -> None:
         path, camera_role = self._current_path_and_role()
         if not path:
@@ -1406,8 +1954,14 @@ class ToolPage(QtWidgets.QWidget):
         self._training_roi_ready_signatures: Dict[str, str] = {}
         self._training_roi_pending_actions: Dict[str, str] = {}
         self._training_roi_confirmed_signatures: Dict[str, str] = {}
+        self._training_prepare_thread: Optional[QtCore.QThread] = None
+        self._training_prepare_worker: Optional[_TrainingRoiPreparationWorker] = None
+        self._training_prepare_dialog: Optional[QtWidgets.QProgressDialog] = None
+        self._training_prepare_context: Dict[str, object] = {}
+        self._training_prepare_pending_result: Optional[dict] = None
         self._training_thread: Optional[QtCore.QThread] = None
         self._training_worker: Optional[_TrainingJobWorker] = None
+        self._training_pending_result: Optional[dict] = None
         self._training_in_progress = False
         self.inspection_items: List[InspectionItem] = []
         self._visible_inspection_item_indexes: List[int] = []
@@ -1850,14 +2404,33 @@ class ToolPage(QtWidgets.QWidget):
             model_path = self.line2dup_model_path_for_role(role)
         recipe_mtime = os.path.getmtime(recipe_path) if recipe_path and os.path.exists(recipe_path) else -1.0
         model_mtime = os.path.getmtime(model_path) if model_path and os.path.exists(model_path) else -1.0
+        ref_path = str(self.ref_image or "")
+        if loc_method == "line2dup":
+            recipe_getter = getattr(self, "line2dup_recipe_for_role", None)
+            if callable(recipe_getter):
+                try:
+                    recipe = recipe_getter(role)
+                    recipe_ref = str(getattr(recipe, "reference_image", "") or "")
+                    if recipe_ref:
+                        ref_path = recipe_ref
+                except Exception:
+                    pass
+        ref_mtime = os.path.getmtime(ref_path) if ref_path and os.path.exists(ref_path) else -1.0
+        sample_state: List[str] = []
+        for path in sorted(str(value) for value in candidate_paths):
+            json_path = labelme_core.labelme_json_of_image(path)
+            image_mtime = os.path.getmtime(path) if os.path.exists(path) else -1.0
+            json_mtime = os.path.getmtime(json_path) if os.path.exists(json_path) else -1.0
+            sample_state.append(f"{path}:{image_mtime}:{json_mtime}")
         return "|".join(
             [
                 role,
                 loc_method,
                 str(recipe_mtime),
                 str(model_mtime),
-                str(self.ref_image or ""),
-                *sorted(str(path) for path in candidate_paths),
+                ref_path,
+                str(ref_mtime),
+                *sample_state,
             ]
         )
 
@@ -1977,44 +2550,167 @@ class ToolPage(QtWidgets.QWidget):
             QtWidgets.QMessageBox.warning(self, "提示", f"{role} 缺少参考图，请先确认位置修正模板。")
             return False
 
-        ok_count = 0
-        errors: List[str] = []
-        for path in candidate_paths:
-            try:
-                run = line2dup_locator.autogen_roi_json_from_line2dup_timed(
-                    tgt_img_path=path,
-                    ref_img_path=ref_image,
-                    product_dir=self.session.product_dir,
-                    camera_role=role,
-                )
-                self._line2dup_match_ms_by_image[path] = float(run.total_ms)
-                self._line2dup_autogen_ms_by_image[path] = float(run.total_ms)
-                ok_count += 1
-            except Exception as exc:
-                errors.append(f"{os.path.basename(path)}: {exc}")
+        self._start_training_roi_preparation(
+            {
+                "product_dir": self.session.product_dir,
+                "camera_role": role,
+                "ref_image": ref_image,
+                "candidate_paths": candidate_paths,
+            },
+            action_name=action_name,
+            action_key=action_key,
+        )
+        return False
 
+    def _start_training_roi_preparation(
+        self,
+        payload: dict,
+        *,
+        action_name: str,
+        action_key: str,
+    ) -> None:
+        if getattr(self, "_training_in_progress", False):
+            return
+        candidate_paths = list(payload.get("candidate_paths", []) or [])
+        total = max(1, len(candidate_paths))
+        self._training_prepare_context = {
+            "camera_role": str(payload.get("camera_role", "") or "cam1"),
+            "action_name": str(action_name or "训练"),
+            "action_key": str(action_key or ""),
+            "candidate_paths": candidate_paths,
+        }
+        self._set_training_running(True)
+        self.lbl_status.setText(f"状态：正在检查训练样本 ROI 0/{len(candidate_paths)}")
+
+        if not isinstance(self, QtCore.QObject):
+            worker = _TrainingRoiPreparationWorker(payload)
+            result = worker._prepare()
+            self._on_training_roi_preparation_finished(result)
+            return
+
+        dialog = QtWidgets.QProgressDialog(
+            f"正在检查训练样本 ROI 0/{len(candidate_paths)}",
+            "",
+            0,
+            total,
+            self,
+        )
+        dialog.setWindowTitle("训练准备")
+        dialog.setCancelButton(None)
+        dialog.setWindowModality(QtCore.Qt.WindowModal)
+        dialog.setMinimumDuration(0)
+        dialog.setValue(0)
+        dialog.show()
+
+        thread = QtCore.QThread(self)
+        worker = _TrainingRoiPreparationWorker(payload)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progressChanged.connect(self._on_training_roi_preparation_progress)
+        worker.finished.connect(self._on_training_roi_preparation_worker_result)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._on_training_roi_preparation_thread_finished)
+        thread.finished.connect(thread.deleteLater)
+        self._training_prepare_dialog = dialog
+        self._training_prepare_thread = thread
+        self._training_prepare_worker = worker
+        self._training_prepare_pending_result = None
+        thread.start()
+
+    @QtCore.Slot(object)
+    def _on_training_roi_preparation_progress(self, payload: object) -> None:
+        progress = dict(payload or {}) if isinstance(payload, dict) else {}
+        index = max(0, int(progress.get("index", 0) or 0))
+        total = max(1, int(progress.get("total", 0) or 0))
+        updated = max(0, int(progress.get("updated", 0) or 0))
+        reused = max(0, int(progress.get("reused", 0) or 0))
+        failed = max(0, int(progress.get("failed", 0) or 0))
+        text = (
+            f"正在检查训练样本 ROI {index}/{total}\n"
+            f"重新生成 {updated}，直接复用 {reused}，失败 {failed}"
+        )
+        dialog = getattr(self, "_training_prepare_dialog", None)
+        if dialog is not None:
+            dialog.setMaximum(total)
+            dialog.setValue(index)
+            dialog.setLabelText(text)
+        self.lbl_status.setText(f"状态：{text.replace(chr(10), '；')}")
+
+    @QtCore.Slot(object)
+    def _on_training_roi_preparation_worker_result(self, payload: object) -> None:
+        self._training_prepare_pending_result = (
+            dict(payload or {}) if isinstance(payload, dict) else {}
+        )
+
+    @QtCore.Slot()
+    def _on_training_roi_preparation_thread_finished(self) -> None:
+        result = dict(getattr(self, "_training_prepare_pending_result", {}) or {})
+        self._training_prepare_pending_result = None
+        self._training_prepare_thread = None
+        self._training_prepare_worker = None
+        self._on_training_roi_preparation_finished(result)
+
+    @QtCore.Slot(object)
+    def _on_training_roi_preparation_finished(self, payload: object) -> None:
+        result = dict(payload or {}) if isinstance(payload, dict) else {}
+        context = dict(getattr(self, "_training_prepare_context", {}) or {})
+        role = _normalize_camera_role(context.get("camera_role")) or "cam1"
+        action_name = str(context.get("action_name", "") or "训练")
+        action_key = str(context.get("action_key", "") or "")
+        candidate_paths = list(context.get("candidate_paths", []) or [])
+
+        dialog = getattr(self, "_training_prepare_dialog", None)
+        if dialog is not None:
+            dialog.close()
+            dialog.deleteLater()
+        self._training_prepare_dialog = None
+        self._training_prepare_thread = None
+        self._training_prepare_worker = None
+        self._training_prepare_pending_result = None
+        self._training_prepare_context = {}
+        self._set_training_running(False)
+
+        timings = dict(result.get("timings", {}) or {})
+        updated_paths = [str(path) for path in result.get("updated_paths", []) if str(path)]
+        reused_paths = [str(path) for path in result.get("reused_paths", []) if str(path)]
+        errors = [str(message) for message in result.get("errors", []) if str(message)]
+        fatal = str(result.get("fatal", "") or "")
+        for path, values in timings.items():
+            try:
+                locate_ms, total_ms = values
+                self._line2dup_match_ms_by_image[str(path)] = float(locate_ms)
+                self._line2dup_autogen_ms_by_image[str(path)] = float(total_ms)
+            except Exception:
+                continue
+        for path in updated_paths:
+            self._invalidate_shape_lookup_cache(path)
         self._refresh_current_image_after_roi_update(candidate_paths)
 
-        if errors:
+        if fatal or errors:
             self._clear_training_roi_review_state(role)
+            details = [fatal] if fatal else []
+            details.extend(errors[:20])
             QtWidgets.QMessageBox.warning(
                 self,
                 "ROI 生成失败",
                 "训练前自动更新 ROI 失败，请先检查模板或图片。\n\n"
-                + "\n".join(errors[:20]),
+                + "\n".join(details),
             )
-            return False
+            return
 
+        signature = self._training_roi_ready_signature(role)
         self._training_roi_ready_signatures[role] = signature
         self._training_roi_pending_actions[role] = action_key
         self._update_runtime_widgets()
-        self.lbl_status.setText(f"状态：已更新 {role} 的 ROI，请检查后再次点击{action_name}")
+        self.lbl_status.setText(f"状态：已检查 {role} 的 ROI，请检查后再次点击{action_name}")
         QtWidgets.QMessageBox.information(
             self,
-            "ROI 已更新",
-            f"已更新 {role} 的 OK/NG ROI，共 {ok_count} 张。\n请检查当前图片上的 ROI 后，再次点击“{action_name}”。",
+            "ROI 检查完成",
+            f"已检查 {len(candidate_paths)} 张训练图：重新生成 {len(updated_paths)} 张，"
+            f"复用已有 ROI {len(reused_paths)} 张。\n"
+            f"请检查当前图片上的 ROI 后，再次点击“{action_name}”。",
         )
-        return False
 
     def _set_current_camera_role(self, role: object, *, sync_debug_role: bool = True) -> None:
         normalized = _normalize_camera_role(role) or "cam1"
@@ -2591,7 +3287,7 @@ class ToolPage(QtWidgets.QWidget):
 
         self.table = QtWidgets.QTableWidget(0, 11)
         self.table.setHorizontalHeaderLabels(
-            ["\u6587\u4ef6", "GT", "Pred", "diff", "sim_ok", "sim_ng", "value", "threshold", "match_ms", "total_ms", "json"]
+            ["\u6587\u4ef6", "GT", "Pred", "diff", "sim_ok", "sim_ng", "value", "threshold", "match_ms", "整图total_ms", "json"]
         )
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
@@ -4779,6 +5475,106 @@ class ToolPage(QtWidgets.QWidget):
             or "tool"
         ).strip() or "tool"
 
+    def _training_clear_model_keys_for_item(
+        self,
+        inspection_item: InspectionItem,
+        algorithm: str,
+    ) -> List[str]:
+        target_model_keys = {self._effective_model_key_for_item(inspection_item)}
+        is_embedding_algorithm = getattr(self.algo, "is_embedding_algorithm", None)
+        grouped_traditional = bool(
+            str(getattr(inspection_item, "task_group", "") or "").strip()
+            and callable(is_embedding_algorithm)
+            and not is_embedding_algorithm(algorithm)
+        )
+        if grouped_traditional:
+            for peer in self._group_items_for_inspection_item(inspection_item, enabled_only=False):
+                peer_model_key = str(getattr(peer, "model_key", "") or "").strip()
+                if peer_model_key:
+                    target_model_keys.add(peer_model_key)
+        return sorted(key for key in target_model_keys if key)
+
+    def _training_prune_request_for_role(self, camera_role: object) -> dict:
+        role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        valid_model_keys_by_algorithm: Dict[str, set[str]] = {}
+        for inspection_item in list(getattr(self, "inspection_items", []) or []):
+            item_role = _normalize_camera_role(getattr(inspection_item, "camera_id", "")) or "cam1"
+            if item_role != role:
+                continue
+            algorithm = self._resolve_training_algorithm(inspection_item)
+            if not algorithm:
+                continue
+            is_embedding_algorithm = getattr(self.algo, "is_embedding_algorithm", None)
+            if callable(is_embedding_algorithm) and is_embedding_algorithm(algorithm):
+                continue
+            valid_model_keys_by_algorithm.setdefault(str(algorithm).strip(), set()).add(
+                self._effective_model_key_for_item(inspection_item)
+            )
+        return {
+            "camera_role": role,
+            "valid_model_keys_by_algorithm": valid_model_keys_by_algorithm,
+        }
+
+    def _training_task_request_for_item(self, inspection_item: InspectionItem) -> dict:
+        if not inspection_item.enabled:
+            raise RuntimeError("selected tool is disabled")
+        algorithm = self._resolve_training_algorithm(inspection_item)
+        if not algorithm:
+            if self.algo.is_learning_tool(inspection_item.algorithm_code):
+                raise RuntimeError("please choose a learning tool subtype first")
+            raise RuntimeError("please select an inspection tool")
+
+        camera_role = _normalize_camera_role(inspection_item.camera_id) or "cam1"
+        group_items = self._group_items_for_inspection_item(inspection_item, enabled_only=False)
+        label_names = list(
+            dict.fromkeys(
+                str(getattr(item, "roi_label", "") or "").strip()
+                for item in group_items
+                if str(getattr(item, "roi_label", "") or "").strip()
+            )
+        )
+        if not label_names:
+            label_names = [str(inspection_item.roi_label or "").strip() or "roi"]
+        candidate_paths = self._train_sample_paths_for_role(camera_role)
+        runtime_params = sync_item_runtime_params_to_controller(
+            self,
+            inspection_item,
+            algorithm=algorithm,
+        )
+        is_anomaly = bool(getattr(self.algo, "is_anomaly_tool", lambda _code: False)(algorithm))
+        embedding_cache_dir = ""
+        is_embedding = bool(getattr(self.algo, "is_embedding_algorithm", lambda _code: False)(algorithm))
+        if is_embedding and not is_anomaly:
+            cache_dir_getter = getattr(self.algo, "embedding_cache_dir", None)
+            if callable(cache_dir_getter):
+                embedding_cache_dir = str(
+                    cache_dir_getter(algorithm, self.session.product_dir) or ""
+                )
+        display_name = self._training_item_display_name(inspection_item)
+        return {
+            "display_name": display_name,
+            "camera_role": camera_role,
+            "label_names": label_names,
+            "candidate_paths": candidate_paths,
+            "is_anomaly": is_anomaly,
+            "clear_model_keys": self._training_clear_model_keys_for_item(
+                inspection_item,
+                algorithm,
+            ),
+            "task_base": {
+                "inspection_item": inspection_item,
+                "item_id": str(getattr(inspection_item, "item_id", "") or ""),
+                "display_name": display_name,
+                "algorithm": algorithm,
+                "product_dir": self.session.product_dir,
+                "label_names": label_names,
+                "model_key": self._effective_model_key_for_item(inspection_item),
+                "runtime_params": dict(runtime_params),
+                "is_anomaly": is_anomaly,
+                "embedding_cache_dir": embedding_cache_dir,
+            },
+        }
+
     def _prepare_training_task_for_item(self, inspection_item: InspectionItem) -> dict:
         if not inspection_item.enabled:
             raise RuntimeError("selected tool is disabled")
@@ -4926,6 +5722,8 @@ class ToolPage(QtWidgets.QWidget):
         mode: str,
         tasks: List[dict],
         *,
+        task_requests: Optional[List[dict]] = None,
+        prune_request: Optional[dict] = None,
         selected_item_id: str = "",
         selected_item_group_key: str = "",
         failures: Optional[List[str]] = None,
@@ -4933,6 +5731,14 @@ class ToolPage(QtWidgets.QWidget):
         return {
             "mode": mode,
             "tasks": list(tasks),
+            "task_requests": list(task_requests or []),
+            "sample_annotations_by_path": {
+                os.path.normpath(str(path)): dict(statuses or {})
+                for path, statuses in dict(
+                    getattr(self, "_sample_roi_annotations_by_path", {}) or {}
+                ).items()
+            },
+            "prune_request": dict(prune_request or {}),
             "selected_item_id": str(selected_item_id or ""),
             "selected_item_group_key": str(selected_item_group_key or ""),
             "failure_messages": list(failures or []),
@@ -4963,7 +5769,10 @@ class ToolPage(QtWidgets.QWidget):
             return
 
         self._set_training_running(True)
-        self._on_training_progress("training queued")
+        if self._payload_has_task_requests(payload):
+            self._on_training_progress("正在准备训练样本")
+        else:
+            self._on_training_progress("training queued")
 
         if not isinstance(self, QtCore.QObject):
             worker = _TrainingJobWorker(self.algo, payload)
@@ -4976,18 +5785,36 @@ class ToolPage(QtWidgets.QWidget):
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.progressChanged.connect(self._on_training_progress)
-        worker.finished.connect(self._on_training_finished)
+        worker.finished.connect(self._on_training_worker_result)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._on_training_thread_finished)
         thread.finished.connect(thread.deleteLater)
         self._training_thread = thread
         self._training_worker = worker
+        self._training_pending_result = None
         thread.start()
+
+    @staticmethod
+    def _payload_has_task_requests(payload: dict) -> bool:
+        return bool(list(dict(payload or {}).get("task_requests", []) or []))
+
+    @QtCore.Slot(object)
+    def _on_training_worker_result(self, payload: object) -> None:
+        self._training_pending_result = (
+            dict(payload or {}) if isinstance(payload, dict) else {}
+        )
+
+    @QtCore.Slot()
+    def _on_training_thread_finished(self) -> None:
+        result = dict(getattr(self, "_training_pending_result", {}) or {})
+        self._training_pending_result = None
+        self._training_thread = None
+        self._training_worker = None
+        self._on_training_finished(result)
 
     def _on_training_finished(self, payload: object) -> None:
         result_payload = dict(payload or {}) if isinstance(payload, dict) else {}
-        self._training_thread = None
-        self._training_worker = None
         self._set_training_running(False)
 
         success_names = [str(name) for name in result_payload.get("success_names", []) if str(name)]
@@ -5093,7 +5920,6 @@ class ToolPage(QtWidgets.QWidget):
             QtWidgets.QMessageBox.information(self, "Info", f"Please enable at least one inspection tool for {current_role}.")
             return
 
-        self._prune_stale_traditional_models_for_role(current_role)
         selected_item = self._selected_inspection_item()
         selected_item_id = str(selected_item.item_id or "") if selected_item is not None else ""
         selected_item_group_key = self._effective_model_key_for_item(selected_item)
@@ -5108,17 +5934,17 @@ class ToolPage(QtWidgets.QWidget):
                 continue
             seen_train_targets.add(train_signature)
             train_targets.append(inspection_item)
-        tasks: List[dict] = []
+        task_requests: List[dict] = []
         failure_messages: List[str] = []
 
         for inspection_item in train_targets:
             display_name = self._training_item_display_name(inspection_item)
             try:
-                tasks.append(self._prepare_training_task_for_item(inspection_item))
+                task_requests.append(self._training_task_request_for_item(inspection_item))
             except Exception as exc:
                 failure_messages.append(f"{display_name}: {exc}")
 
-        if not tasks:
+        if not task_requests:
             if failure_messages:
                 self.lbl_status.setText("Status: train failed")
                 QtWidgets.QMessageBox.warning(
@@ -5133,7 +5959,9 @@ class ToolPage(QtWidgets.QWidget):
         self._start_training_worker(
             self._training_payload(
                 "all",
-                tasks,
+                [],
+                task_requests=task_requests,
+                prune_request=self._training_prune_request_for_role(current_role),
                 selected_item_id=selected_item_id,
                 selected_item_group_key=selected_item_group_key,
                 failures=failure_messages,
@@ -5162,9 +5990,8 @@ class ToolPage(QtWidgets.QWidget):
         if not inspection_item.enabled:
             QtWidgets.QMessageBox.information(self, "Info", "The selected inspection tool is disabled")
             return
-        self._prune_stale_traditional_models_for_role(inspection_item.camera_id)
         try:
-            task = self._prepare_training_task_for_item(inspection_item)
+            task_request = self._training_task_request_for_item(inspection_item)
         except RuntimeError as exc:
             QtWidgets.QMessageBox.warning(self, "Train failed", str(exc))
             return
@@ -5175,7 +6002,9 @@ class ToolPage(QtWidgets.QWidget):
         self._start_training_worker(
             self._training_payload(
                 "current",
-                [task],
+                [],
+                task_requests=[task_request],
+                prune_request=self._training_prune_request_for_role(inspection_item.camera_id),
                 selected_item_id=str(inspection_item.item_id or ""),
                 selected_item_group_key=self._effective_model_key_for_item(inspection_item),
             )
@@ -5249,7 +6078,7 @@ class ToolPage(QtWidgets.QWidget):
         ) or "cam1"
 
         executor = InspectionExecutor(ToolPageRuntimeContext(self))
-        image_bgr = imread(p, cv2.IMREAD_COLOR) if self.loc_method == "ncc" else None
+        image_bgr = imread(p, cv2.IMREAD_COLOR)
         try:
             response = executor.execute(
                 InspectionExecutionRequest(

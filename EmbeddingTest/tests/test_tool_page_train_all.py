@@ -19,7 +19,11 @@ if root_str not in sys.path:
 
 from application.algorithm_controller import TrainResult
 from domain.inspection_items import InspectionItem
-from ui.debug.tool_page.page import ToolPage
+from ui.debug.tool_page.page import (
+    ToolPage,
+    _TrainingJobWorker,
+    _TrainingRoiPreparationWorker,
+)
 
 
 class _FakeAlgo:
@@ -149,12 +153,16 @@ class _TrainAllHarness:
     _warn_mixed_training_camera_samples = ToolPage._warn_mixed_training_camera_samples
     _missing_training_roi_paths = ToolPage._missing_training_roi_paths
     _training_item_display_name = staticmethod(ToolPage._training_item_display_name)
+    _training_clear_model_keys_for_item = ToolPage._training_clear_model_keys_for_item
+    _training_prune_request_for_role = ToolPage._training_prune_request_for_role
+    _training_task_request_for_item = ToolPage._training_task_request_for_item
     _prepare_training_task_for_item = ToolPage._prepare_training_task_for_item
     _execute_training_task = ToolPage._execute_training_task
     _finalize_training_task_result = ToolPage._finalize_training_task_result
     _training_payload = ToolPage._training_payload
     _set_training_running = ToolPage._set_training_running
     _on_training_progress = ToolPage._on_training_progress
+    _payload_has_task_requests = staticmethod(ToolPage._payload_has_task_requests)
     _start_training_worker = ToolPage._start_training_worker
     _on_training_finished = ToolPage._on_training_finished
     _train_inspection_item = ToolPage._train_inspection_item
@@ -203,6 +211,15 @@ class _TrainAllHarness:
         self._training_in_progress = False
         self._training_thread = None
         self._training_worker = None
+        self._sample_roi_annotations_by_path = {}
+        for path in self.train_files:
+            lower_name = os.path.basename(path).lower()
+            status = "OK" if "ok" in lower_name else "NG" if "ng" in lower_name else ""
+            if status:
+                self._sample_roi_annotations_by_path[os.path.normpath(path)] = {
+                    "cam1::roi1": status,
+                    "cam1::roi2": status,
+                }
 
     def _selected_inspection_item(self):
         if 0 <= self._selected_index < len(self.inspection_items):
@@ -299,6 +316,27 @@ class ToolPageTrainAllTest(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
+    def test_training_result_is_finalized_after_thread_cleanup(self) -> None:
+        finalized: list[dict] = []
+        harness = SimpleNamespace(
+            _training_pending_result=None,
+            _training_thread=object(),
+            _training_worker=object(),
+            _on_training_finished=lambda payload: finalized.append(dict(payload)),
+        )
+
+        ToolPage._on_training_worker_result(harness, {"success_names": ["Hole"]})
+
+        self.assertIsNotNone(harness._training_thread)
+        self.assertIsNotNone(harness._training_worker)
+        self.assertEqual(finalized, [])
+
+        ToolPage._on_training_thread_finished(harness)
+
+        self.assertIsNone(harness._training_thread)
+        self.assertIsNone(harness._training_worker)
+        self.assertEqual(finalized, [{"success_names": ["Hole"]}])
+
     def test_train_all_enabled_items_trains_each_tool_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             ok_path = Path(tmpdir) / "ok.png"
@@ -306,11 +344,11 @@ class ToolPageTrainAllTest(unittest.TestCase):
             ok_path.write_bytes(b"ok")
             ng_path.write_bytes(b"ng")
             ok_path.with_suffix(".json").write_text(
-                '{"shapes":[{"label":"roi1"},{"label":"roi2"}]}',
+                '{"shapes":[{"label":"roi1","points":[[0,0],[1,1]]},{"label":"roi2","points":[[0,0],[1,1]]}]}',
                 encoding="utf-8",
             )
             ng_path.with_suffix(".json").write_text(
-                '{"shapes":[{"label":"roi1"},{"label":"roi2"}]}',
+                '{"shapes":[{"label":"roi1","points":[[0,0],[1,1]]},{"label":"roi2","points":[[0,0],[1,1]]}]}',
                 encoding="utf-8",
             )
 
@@ -385,7 +423,7 @@ class ToolPageTrainAllTest(unittest.TestCase):
             for path in (ok_cam1, ok_cam2, ng_cam1, ng_cam2):
                 path.write_bytes(b"x")
                 path.with_suffix(".json").write_text(
-                    '{"shapes":[{"label":"roi1"},{"label":"roi2"}]}',
+                    '{"shapes":[{"label":"roi1","points":[[0,0],[1,1]]},{"label":"roi2","points":[[0,0],[1,1]]}]}',
                     encoding="utf-8",
                 )
 
@@ -462,7 +500,7 @@ class ToolPageTrainAllTest(unittest.TestCase):
             for path in (ok_path, ng_path):
                 path.write_bytes(b"x")
                 path.with_suffix(".json").write_text(
-                    '{"shapes":[{"label":"roi1"},{"label":"roi2"}]}',
+                    '{"shapes":[{"label":"roi1","points":[[0,0],[1,1]]},{"label":"roi2","points":[[0,0],[1,1]]}]}',
                     encoding="utf-8",
                 )
 
@@ -546,7 +584,7 @@ class ToolPageTrainAllTest(unittest.TestCase):
             for path in (ok_path, ng_path):
                 path.write_bytes(b"x")
                 path.with_suffix(".json").write_text(
-                    '{"shapes":[{"label":"roi1"},{"label":"roi2"}]}',
+                    '{"shapes":[{"label":"roi1","points":[[0,0],[1,1]]},{"label":"roi2","points":[[0,0],[1,1]]}]}',
                     encoding="utf-8",
                 )
 
@@ -588,7 +626,7 @@ class ToolPageTrainAllTest(unittest.TestCase):
             for path in (ok_path, ng_path):
                 path.write_bytes(b"x")
                 path.with_suffix(".json").write_text(
-                    '{"shapes":[{"label":"roi1"},{"label":"roi2"}]}',
+                    '{"shapes":[{"label":"roi1","points":[[0,0],[1,1]]},{"label":"roi2","points":[[0,0],[1,1]]}]}',
                     encoding="utf-8",
                 )
 
@@ -607,6 +645,134 @@ class ToolPageTrainAllTest(unittest.TestCase):
             self.assertEqual(len(harness.algo.train_calls), 2)
             self.assertTrue(info.called)
             self.assertFalse(warning.called)
+
+    def test_line2dup_roi_preparation_loads_detector_once_for_multiple_images(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            ref_path = root / "ref.png"
+            model_path = root / "model.json"
+            recipe_path = root / "recipe.json"
+            image_paths = [root / f"cam1_{index}.png" for index in range(3)]
+            for path in [ref_path, model_path, recipe_path, *image_paths]:
+                path.write_bytes(b"x")
+                os.utime(path, ns=(1_000_000_000, 1_000_000_000))
+            image_paths[0].with_suffix(".json").write_text(
+                '{"shapes":[{"label":"roi1","points":[[0,0],[1,1]]},'
+                '{"label":"roi2","points":[[0,0],[1,1]]}]}',
+                encoding="utf-8",
+            )
+            os.utime(
+                image_paths[0].with_suffix(".json"),
+                ns=(2_000_000_000, 2_000_000_000),
+            )
+
+            recipe = SimpleNamespace(reference_image=str(ref_path), model_path=str(model_path))
+            fake_run = SimpleNamespace(locate_ms=12.0, total_ms=18.0)
+            worker = _TrainingRoiPreparationWorker(
+                {
+                    "product_dir": tmpdir,
+                    "camera_role": "cam1",
+                    "ref_image": str(ref_path),
+                    "candidate_paths": [str(path) for path in image_paths],
+                }
+            )
+            detector = object()
+            with (
+                mock.patch(
+                    "ui.debug.tool_page.page.line2dup_locator.load_recipe_for_product",
+                    return_value=recipe,
+                ),
+                mock.patch(
+                    "ui.debug.tool_page.page.line2dup_locator.resolved_recipe_path_for_product",
+                    return_value=str(recipe_path),
+                ),
+                mock.patch(
+                    "ui.debug.tool_page.page.line2dup_locator.resolved_model_path_for_product",
+                    return_value=str(model_path),
+                ),
+                mock.patch(
+                    "ui.debug.tool_page.page.output_labels_from_line2dup_recipe",
+                    return_value=["roi1", "roi2"],
+                ),
+                mock.patch(
+                    "line2dup.like_matcher.load_detector_model",
+                    return_value=detector,
+                ) as load_detector,
+                mock.patch(
+                    "ui.debug.tool_page.page.line2dup_locator.autogen_roi_json_from_line2dup_timed",
+                    return_value=fake_run,
+                ) as autogen,
+            ):
+                result = worker._prepare()
+
+            self.assertEqual(load_detector.call_count, 1)
+            self.assertEqual(autogen.call_count, 2)
+            self.assertEqual(len(result["updated_paths"]), 2)
+            self.assertEqual(result["reused_paths"], [str(image_paths[0])])
+            self.assertEqual(result["errors"], [])
+            self.assertTrue(all(call.kwargs["detector"] is detector for call in autogen.call_args_list))
+
+    def test_training_worker_reads_each_sample_json_once_for_all_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            ok_path = root / "cam1_ok.png"
+            ng_path = root / "cam1_ng.png"
+            for path in (ok_path, ng_path):
+                path.write_bytes(b"x")
+                path.with_suffix(".json").write_text(
+                    '{"shapes":[{"label":"roi1","points":[[0,0],[1,1]]},'
+                    '{"label":"roi2","points":[[0,0],[1,1]]}]}',
+                    encoding="utf-8",
+                )
+            requests = []
+            for label in ("roi1", "roi2"):
+                requests.append(
+                    {
+                        "display_name": label,
+                        "camera_role": "cam1",
+                        "label_names": [label],
+                        "candidate_paths": [str(ok_path), str(ng_path)],
+                        "is_anomaly": False,
+                        "clear_model_keys": [],
+                        "task_base": {
+                            "display_name": label,
+                            "algorithm": "meanintensity",
+                            "product_dir": tmpdir,
+                            "label_names": [label],
+                            "model_key": f"cam1__{label}",
+                            "runtime_params": {},
+                        },
+                    }
+                )
+            annotations = {
+                os.path.normpath(str(ok_path)): {
+                    "cam1::roi1": "OK",
+                    "cam1::roi2": "OK",
+                },
+                os.path.normpath(str(ng_path)): {
+                    "cam1::roi1": "NG",
+                    "cam1::roi2": "NG",
+                },
+            }
+            worker = _TrainingJobWorker(
+                _FakeAlgo(),
+                {"sample_annotations_by_path": annotations},
+            )
+            real_open = open
+            json_open_count = 0
+
+            def counting_open(path, *args, **kwargs):
+                nonlocal json_open_count
+                if str(path).lower().endswith(".json"):
+                    json_open_count += 1
+                return real_open(path, *args, **kwargs)
+
+            with mock.patch("builtins.open", side_effect=counting_open):
+                tasks, failures = worker._prepare_task_requests(requests)
+
+            self.assertEqual(failures, [])
+            self.assertEqual(len(tasks), 2)
+            self.assertEqual(json_open_count, 2)
 
     def test_ncc_training_requires_second_click_confirmation(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -139,6 +139,8 @@ class NccMatchModel:
     template_mask_enabled: bool = False
     template_roi: NccMatchRect = field(default_factory=NccMatchRect)
     template_mask: NccReferenceRegion | None = None
+    orientation_anchor: NccMatchRect | None = None
+    pose_refinement: str = ""
     search_roi: NccMatchRect | None = None
     reference_regions: List[NccReferenceRegion] = field(default_factory=list)
     options: NccMatchOptions = field(default_factory=NccMatchOptions)
@@ -154,6 +156,12 @@ class NccMatchModel:
             template_mask_enabled=bool(self.template_mask_enabled),
             template_roi=self.template_roi.normalized(),
             template_mask=self.template_mask.normalized() if isinstance(self.template_mask, NccReferenceRegion) else None,
+            orientation_anchor=(
+                self.orientation_anchor.normalized()
+                if isinstance(self.orientation_anchor, NccMatchRect)
+                else None
+            ),
+            pose_refinement=str(self.pose_refinement or "").strip().lower(),
             search_roi=self.search_roi.normalized() if isinstance(self.search_roi, NccMatchRect) else None,
             reference_regions=[region.normalized() for region in list(self.reference_regions or [])],
             options=self.options.normalized(),
@@ -341,6 +349,12 @@ def load_model(model_path: str | Path) -> NccMatchModel:
         ),
         template_roi=_rect_from_any(_get_value(data, "template_roi", "templateRoi", default={})),
         template_mask=template_mask,
+        orientation_anchor=_optional_rect_from_any(
+            _get_value(data, "orientation_anchor", "orientationAnchor", default=None)
+        ),
+        pose_refinement=str(
+            _get_value(data, "pose_refinement", "poseRefinement", default="")
+        ),
         search_roi=_optional_rect_from_any(_get_value(data, "search_roi", "searchRoi", default=None)),
         reference_regions=_reference_regions_from_any(_get_value(data, "reference_regions", "referenceRegions", default=[])),
         options=_options_from_any(_get_value(data, "options", default={})),
@@ -381,6 +395,19 @@ def model_summary(model: NccMatchModel) -> str:
             )
             if normalized.template_mask_enabled and isinstance(normalized.template_mask, NccReferenceRegion)
             else ("Template Mask: enabled" if normalized.template_mask_enabled else "Template Mask: disabled"),
+            (
+                f"Orientation Anchor: x={normalized.orientation_anchor.x}, "
+                f"y={normalized.orientation_anchor.y}, "
+                f"w={normalized.orientation_anchor.width}, "
+                f"h={normalized.orientation_anchor.height}"
+            )
+            if normalized.orientation_anchor is not None
+            else "Orientation Anchor: disabled",
+            (
+                f"Pose Refinement: {normalized.pose_refinement}"
+                if normalized.pose_refinement
+                else "Pose Refinement: disabled"
+            ),
             (
                 f"Search ROI: x={normalized.search_roi.x}, y={normalized.search_roi.y}, "
                 f"w={normalized.search_roi.width}, h={normalized.search_roi.height}"

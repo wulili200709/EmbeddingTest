@@ -340,6 +340,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._recipe_reference_points: List[List[float]] = []
         self._reference_regions: List[Dict[str, object]] = []
         self._selected_reference_idx: Optional[int] = None
+        self._adding_reference_roi = False
         self._syncing_reference_view = False
         self._search_roi_shape_type: str = ""
         self._search_roi_points: List[List[float]] = []
@@ -681,7 +682,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.edit_display_name.returnPressed.connect(self._apply_reference_region_fields)
         self.btn_apply_region_name = QtWidgets.QPushButton("应用名称")
         self.btn_apply_region_name.clicked.connect(self._apply_reference_region_fields)
-        info_form.addRow("ROI 标签", self.edit_output_label)
+        info_form.addRow("内部标签", self.edit_output_label)
         info_form.addRow("显示名称", self.edit_display_name)
         name_btn_row = QtWidgets.QHBoxLayout()
         name_btn_row.addWidget(self.btn_apply_region_name)
@@ -729,7 +730,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         region_box = QtWidgets.QGroupBox("Reference Regions")
         region_l = QtWidgets.QVBoxLayout(region_box)
         self.table_reference_regions = QtWidgets.QTableWidget(0, 4)
-        self.table_reference_regions.setHorizontalHeaderLabels(["#", "Name", "ROI Label", "Info"])
+        self.table_reference_regions.setHorizontalHeaderLabels(["#", "显示名称", "内部标签", "区域信息"])
         self.table_reference_regions.verticalHeader().setVisible(False)
         self.table_reference_regions.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.table_reference_regions.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
@@ -1313,6 +1314,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             if isinstance(region, dict)
         ]
         self._invalidate_reference_region_cache()
+        self._adding_reference_roi = False
         self._selected_reference_idx = None
         with QtCore.QSignalBlocker(self.spin_array_count):
             self.spin_array_count.setValue(1)
@@ -1351,6 +1353,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
                 }
             ]
             self._invalidate_reference_region_cache()
+        self._adding_reference_roi = False
         self._selected_reference_idx = None
         self._refresh_reference_region_list()
         self._refresh_reference_canvas()
@@ -2037,6 +2040,37 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         if vbar.value() != scroll_value:
             vbar.setValue(min(scroll_value, vbar.maximum()))
 
+    def _refresh_reference_region_row(self, idx: int) -> None:
+        if not hasattr(self, "table_reference_regions"):
+            return
+        if not (0 <= idx < len(self._reference_regions)):
+            return
+        table = self.table_reference_regions
+        if idx >= table.rowCount():
+            self._refresh_reference_region_list()
+            return
+        blocker = QtCore.QSignalBlocker(table)
+        table.setUpdatesEnabled(False)
+        try:
+            values = self._reference_region_row_values(idx, self._reference_regions[idx])
+            for col, value in enumerate(values):
+                item = table.item(idx, col)
+                if item is None:
+                    item = QtWidgets.QTableWidgetItem()
+                    if col == 0:
+                        item.setTextAlignment(
+                            QtCore.Qt.AlignmentFlag.AlignHCenter
+                            | QtCore.Qt.AlignmentFlag.AlignVCenter
+                        )
+                    table.setItem(idx, col, item)
+                if item.text() != value:
+                    item.setText(value)
+                if item.data(QtCore.Qt.UserRole) != idx:
+                    item.setData(QtCore.Qt.UserRole, idx)
+        finally:
+            table.setUpdatesEnabled(True)
+            del blocker
+
     def _refresh_reference_region_fields(self) -> None:
         self.edit_output_label.blockSignals(True)
         self.edit_display_name.blockSignals(True)
@@ -2078,13 +2112,13 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         region["output_label"] = label
         region["display_name"] = display_name
         self._invalidate_reference_array_preview()
-        self._refresh_reference_region_list()
+        self._refresh_reference_region_row(self._selected_reference_idx)
         self._refresh_reference_region_fields()
         self._save_recipe()
         self.referenceRegionsChanged.emit()
         self._set_reference_status(f"已更新基准 ROI 名称：{display_name}")
 
-    def _refresh_reference_canvas(self) -> None:
+    def _refresh_reference_canvas_overlays(self) -> None:
         overlays = self._reference_region_overlay_shapes()
         if (
             self._selected_reference_idx is not None
@@ -2099,6 +2133,9 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             )
         overlays.extend(list(self._reference_preview_overlays or []))
         self.ref_canvas.set_overlays(overlays)
+
+    def _refresh_reference_canvas(self) -> None:
+        self._refresh_reference_canvas_overlays()
         self._syncing_reference_view = True
         try:
             if self._selected_reference_idx is None or not (0 <= self._selected_reference_idx < len(self._reference_regions)):
@@ -2141,6 +2178,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         if current_row < 0 or current_row >= len(self._reference_regions):
             self._selected_reference_idx = None
         else:
+            self._adding_reference_roi = False
             self._selected_reference_idx = current_row
         self._refresh_reference_canvas()
         self._refresh_reference_region_fields()
@@ -2154,6 +2192,8 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
     def _on_reference_canvas_pressed(self, button: int, x: int, y: int) -> None:
         if button != _button_left():
             return
+        if self._adding_reference_roi:
+            return
         selected = self._reference_region_at_point(float(x), float(y))
         if selected is None:
             return
@@ -2165,6 +2205,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
 
     def _prepare_new_reference_roi(self) -> None:
         self._invalidate_reference_array_preview()
+        self._adding_reference_roi = True
         self._selected_reference_idx = None
         if hasattr(self, "table_reference_regions"):
             self.table_reference_regions.blockSignals(True)
@@ -2178,6 +2219,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
     def _remove_selected_reference_roi(self) -> None:
         if self._selected_reference_idx is None or not (0 <= self._selected_reference_idx < len(self._reference_regions)):
             return
+        self._adding_reference_roi = False
         del self._reference_regions[self._selected_reference_idx]
         self._invalidate_reference_region_cache()
         self._invalidate_reference_array_preview()
@@ -2195,7 +2237,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         shape_type, points = self._region_points_from_canvas()
         if not shape_type or not points:
             return
-        if self._selected_reference_idx is None:
+        if self._adding_reference_roi or self._selected_reference_idx is None:
             label = self._next_reference_label()
             self._reference_regions.append(
                 {
@@ -2208,6 +2250,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             )
             self._invalidate_reference_region_cache()
             self._invalidate_reference_array_preview()
+            self._adding_reference_roi = False
             self._selected_reference_idx = len(self._reference_regions) - 1
             self._refresh_reference_region_list()
             self._refresh_reference_canvas()
@@ -2223,8 +2266,8 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self._invalidate_reference_region_cache()
             self._invalidate_reference_array_preview()
             label = str(region.get("output_label") or region.get("reference_label") or f"roi{self._selected_reference_idx + 1}")
-            self._refresh_reference_region_list()
-            self._refresh_reference_canvas()
+            self._refresh_reference_region_row(self._selected_reference_idx)
+            self._refresh_reference_canvas_overlays()
             self._save_recipe()
             self.referenceRegionsChanged.emit()
             self._set_reference_status(f"已更新基准 ROI：{label}")
@@ -2241,6 +2284,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         if not os.path.exists(jpath):
             self._reference_regions = []
             self._invalidate_reference_region_cache()
+            self._adding_reference_roi = False
             self._selected_reference_idx = None
             self._refresh_reference_region_list()
             self._refresh_reference_canvas()
@@ -2248,6 +2292,19 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
                 QtWidgets.QMessageBox.information(self, "提示", "当前参考图还没有 labelme json。")
             return
         try:
+            display_names_by_label = {
+                str(region.get("output_label") or region.get("reference_label") or "").strip():
+                str(
+                    region.get("display_name")
+                    or region.get("name")
+                    or region.get("output_label")
+                    or region.get("reference_label")
+                    or ""
+                ).strip()
+                for region in self._reference_regions
+                if isinstance(region, dict)
+                and str(region.get("output_label") or region.get("reference_label") or "").strip()
+            }
             regions: List[Dict[str, object]] = []
             for shape in qr_core.list_shapes_from_labelme(jpath, label_prefix="roi"):
                 label_name = str(shape.get("label", "")).strip()
@@ -2269,7 +2326,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
                     {
                         "reference_label": label_name,
                         "output_label": label_name,
-                        "display_name": label_name,
+                        "display_name": display_names_by_label.get(label_name, "") or label_name,
                         "shape_type": shape_type,
                         "points": points,
                     }
@@ -2279,6 +2336,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self._reference_regions = regions
             self._invalidate_reference_region_cache()
             self._invalidate_reference_array_preview()
+            self._adding_reference_roi = False
             self._selected_reference_idx = None
             self._refresh_reference_region_list()
             self._refresh_reference_canvas()
@@ -2289,6 +2347,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         except Exception as exc:
             self._reference_regions = []
             self._invalidate_reference_region_cache()
+            self._adding_reference_roi = False
             self._selected_reference_idx = None
             self._refresh_reference_region_list()
             self._refresh_reference_canvas()
@@ -2350,6 +2409,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._set_reference_status(f"基准 ROI 已保存，共 {len(self._reference_regions)} 个。")
 
     def _clear_reference_roi(self) -> None:
+        self._adding_reference_roi = False
         self._reference_regions = []
         self._invalidate_reference_region_cache()
         self._invalidate_reference_array_preview()

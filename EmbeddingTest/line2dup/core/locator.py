@@ -7,8 +7,16 @@ from typing import Any, Optional, Tuple
 
 import cv2
 
-import algorithms.proxy as qr_core
 from algorithms.image_io import imread
+from algorithms.labelme import (
+    clamp_roi_xywh,
+    delete_labelme_shapes,
+    labelme_json_of_image,
+    polygon_points_to_labelme_shape,
+    roi_xywh_to_labelme_shape,
+    sorted_label_names_from_labelme,
+    upsert_labelme_shapes,
+)
 from domain import clearable_roi_labels, output_labels_from_line2dup_recipe
 
 from .recipe import Line2DupRecipe, load_recipe, save_recipe
@@ -51,11 +59,11 @@ class RuntimeRoiAutogenRun:
 
 
 def _delete_stale_line2dup_roi_shapes(tgt_img_path: str, recipe: Line2DupRecipe) -> list[str]:
-    jpath = qr_core.labelme_json_of_image(tgt_img_path)
+    jpath = labelme_json_of_image(tgt_img_path)
     if not os.path.exists(jpath):
         return []
     current_labels = output_labels_from_line2dup_recipe(recipe)
-    existing_labels = qr_core.sorted_label_names_from_labelme(jpath, label_prefix="roi")
+    existing_labels = sorted_label_names_from_labelme(jpath, label_prefix="roi")
     labels_to_clear, clear_mode = clearable_roi_labels(
         current_labels,
         existing_labels,
@@ -63,14 +71,11 @@ def _delete_stale_line2dup_roi_shapes(tgt_img_path: str, recipe: Line2DupRecipe)
     )
     if clear_mode != "stale_only":
         return []
-    removed: list[str] = []
-    for label in labels_to_clear:
-        try:
-            if qr_core.delete_labelme_shape(tgt_img_path, label_name=label):
-                removed.append(label)
-        except Exception:
-            continue
-    return removed
+    try:
+        removed_count = int(delete_labelme_shapes(tgt_img_path, labels_to_clear))
+    except Exception:
+        return []
+    return labels_to_clear[:removed_count] if removed_count > 0 else []
 
 
 def _normalize_camera_role(camera_role: str) -> str:
@@ -194,16 +199,32 @@ def autogen_roi_json_from_line2dup_timed(
     result = locate_and_follow(scene, ref_img_path, active_recipe, detector=detector, scene_mask=scene_mask)
     locate_ms = (time.perf_counter() - locate_t0) * 1000.0
     _delete_stale_line2dup_roi_shapes(tgt_img_path, active_recipe)
-    jpath = ""
+    image_height, image_width = scene.shape[:2]
+    shapes: list[dict] = []
     for region in result.regions:
         if region.source_shape_type == "polygon":
-            jpath = qr_core.upsert_labelme_polygon(
-                tgt_img_path,
-                [(float(x), float(y)) for x, y in region.points],
-                label_name=region.label_name,
+            shapes.append(
+                polygon_points_to_labelme_shape(
+                    [(float(x), float(y)) for x, y in region.points],
+                    label_name=region.label_name,
+                )
             )
         else:
-            jpath = qr_core.upsert_labelme_rect(tgt_img_path, region.bbox, label_name=region.label_name)
+            x, y, w, h = clamp_roi_xywh(
+                *region.bbox,
+                W=image_width,
+                H=image_height,
+            )
+            shapes.append(
+                roi_xywh_to_labelme_shape(
+                    x,
+                    y,
+                    w,
+                    h,
+                    label_name=region.label_name,
+                )
+            )
+    jpath = upsert_labelme_shapes(tgt_img_path, shapes) if shapes else ""
     total_ms = (time.perf_counter() - total_t0) * 1000.0
     return Line2DupAutogenRun(jpath=jpath, result=result, locate_ms=locate_ms, total_ms=total_ms)
 

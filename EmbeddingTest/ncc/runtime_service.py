@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import math
 import time
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ from algorithms.image_io import imread
 from .interop.native_api import NccNativeApi, NccNativeMatcher
 from .model import (
     NccAngleRange,
+    NccAngleSearch,
     NccMatchBoundingBox,
     NccMatchModel,
     NccMatchOptions,
@@ -201,6 +203,561 @@ def _rotate_template_with_mask(
     )
     transformed = corners @ matrix.T
     return rotated, rotated_mask, transformed.astype(np.float32)
+
+
+def _normalize_angle_deg(angle_deg: float) -> float:
+    return float((float(angle_deg) + 180.0) % 360.0 - 180.0)
+
+
+def _orientation_anchor_mask(
+    template_gray: np.ndarray,
+    anchor: object,
+) -> Optional[np.ndarray]:
+    height, width = template_gray.shape[:2]
+    x = max(0, min(int(getattr(anchor, "x", 0)), width - 1))
+    y = max(0, min(int(getattr(anchor, "y", 0)), height - 1))
+    w = max(1, min(int(getattr(anchor, "width", 1)), width - x))
+    h = max(1, min(int(getattr(anchor, "height", 1)), height - y))
+    if w < 2 or h < 2:
+        return None
+    mask = np.zeros((height, width), dtype=np.uint8)
+    mask[y : y + h, x : x + w] = 255
+    return mask
+
+
+def _zero_mean_ncc(first: np.ndarray, second: np.ndarray, mask: np.ndarray) -> float:
+    selected = mask > 0
+    if int(np.count_nonzero(selected)) < 4:
+        return -1.0
+    first_values = first[selected].astype(np.float32)
+    second_values = second[selected].astype(np.float32)
+    first_values -= float(first_values.mean())
+    second_values -= float(second_values.mean())
+    denominator = float(np.linalg.norm(first_values) * np.linalg.norm(second_values))
+    if denominator <= 1e-12:
+        return -1.0
+    return float(np.dot(first_values, second_values) / denominator)
+
+
+def _orientation_anchor_score(
+    scene_gray: np.ndarray,
+    template_gray: np.ndarray,
+    anchor_mask: np.ndarray,
+    quad: Sequence[Tuple[float, float]],
+) -> float:
+    height, width = template_gray.shape[:2]
+    source_quad = np.asarray(quad, dtype=np.float32)
+    if source_quad.shape != (4, 2):
+        return -1.0
+    non_zero = cv2.findNonZero(anchor_mask)
+    if non_zero is None:
+        return -1.0
+    anchor_x, anchor_y, anchor_w, anchor_h = cv2.boundingRect(non_zero)
+    template_quad = np.asarray(
+        [
+            [0.0, 0.0],
+            [float(width - 1), 0.0],
+            [float(width - 1), float(height - 1)],
+            [0.0, float(height - 1)],
+        ],
+        dtype=np.float32,
+    )
+    anchor_quad = np.asarray(
+        [
+            [float(anchor_x), float(anchor_y)],
+            [float(anchor_x + anchor_w - 1), float(anchor_y)],
+            [float(anchor_x + anchor_w - 1), float(anchor_y + anchor_h - 1)],
+            [float(anchor_x), float(anchor_y + anchor_h - 1)],
+        ],
+        dtype=np.float32,
+    )
+    template_to_scene = cv2.getPerspectiveTransform(template_quad, source_quad)
+    scene_anchor_quad = cv2.perspectiveTransform(
+        anchor_quad.reshape(1, -1, 2),
+        template_to_scene,
+    ).reshape(-1, 2)
+    local_anchor_quad = np.asarray(
+        [
+            [0.0, 0.0],
+            [float(anchor_w - 1), 0.0],
+            [float(anchor_w - 1), float(anchor_h - 1)],
+            [0.0, float(anchor_h - 1)],
+        ],
+        dtype=np.float32,
+    )
+    aligned = cv2.warpPerspective(
+        scene_gray,
+        cv2.getPerspectiveTransform(scene_anchor_quad, local_anchor_quad),
+        (anchor_w, anchor_h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0,
+    )
+    template_anchor = template_gray[
+        anchor_y : anchor_y + anchor_h,
+        anchor_x : anchor_x + anchor_w,
+    ]
+    local_mask = anchor_mask[
+        anchor_y : anchor_y + anchor_h,
+        anchor_x : anchor_x + anchor_w,
+    ]
+    return _zero_mean_ncc(template_anchor, aligned, local_mask)
+
+
+def _find_orientation_anchor_match(
+    scene_gray: np.ndarray,
+    template_gray: np.ndarray,
+    primary: NccMatchResult,
+    anchor_mask: np.ndarray,
+    angle_deg: float,
+) -> Optional[Tuple[NccMatchResult, float]]:
+    rotated_template, rotated_mask, quad_local = _rotate_template_with_mask(
+        template_gray,
+        anchor_mask,
+        angle_deg,
+    )
+    non_zero = cv2.findNonZero(rotated_mask)
+    if non_zero is None:
+        return None
+    anchor_x, anchor_y, anchor_w, anchor_h = cv2.boundingRect(non_zero)
+    anchor_template = rotated_template[
+        anchor_y : anchor_y + anchor_h,
+        anchor_x : anchor_x + anchor_w,
+    ]
+    anchor_template_mask = rotated_mask[
+        anchor_y : anchor_y + anchor_h,
+        anchor_x : anchor_x + anchor_w,
+    ]
+
+    margin = max(64, int(round(max(template_gray.shape[:2]) * 0.35)))
+    scene_height, scene_width = scene_gray.shape[:2]
+    search_x0 = max(0, int(math.floor(primary.bbox.x)) - margin)
+    search_y0 = max(0, int(math.floor(primary.bbox.y)) - margin)
+    search_x1 = min(
+        scene_width,
+        int(math.ceil(primary.bbox.x + primary.bbox.width)) + margin,
+    )
+    search_y1 = min(
+        scene_height,
+        int(math.ceil(primary.bbox.y + primary.bbox.height)) + margin,
+    )
+    search = scene_gray[search_y0:search_y1, search_x0:search_x1]
+    if (
+        search.size == 0
+        or anchor_template.shape[0] > search.shape[0]
+        or anchor_template.shape[1] > search.shape[1]
+    ):
+        return None
+
+    scale = 0.25 if max(anchor_template.shape[:2]) >= 400 else 0.5
+    if scale < 1.0:
+        search_for_match = cv2.resize(
+            search,
+            None,
+            fx=scale,
+            fy=scale,
+            interpolation=cv2.INTER_AREA,
+        )
+        template_for_match = cv2.resize(
+            anchor_template,
+            None,
+            fx=scale,
+            fy=scale,
+            interpolation=cv2.INTER_AREA,
+        )
+        mask_for_match = cv2.resize(
+            anchor_template_mask,
+            None,
+            fx=scale,
+            fy=scale,
+            interpolation=cv2.INTER_NEAREST,
+        )
+    else:
+        search_for_match = search
+        template_for_match = anchor_template
+        mask_for_match = anchor_template_mask
+
+    if (
+        template_for_match.shape[0] > search_for_match.shape[0]
+        or template_for_match.shape[1] > search_for_match.shape[1]
+    ):
+        return None
+    response = cv2.matchTemplate(
+        search_for_match,
+        template_for_match,
+        cv2.TM_CCORR_NORMED,
+        mask=mask_for_match,
+    )
+    response = np.nan_to_num(response, copy=False, nan=-1.0, posinf=-1.0, neginf=-1.0)
+    _, _, _, max_location = cv2.minMaxLoc(response)
+    matched_x = float(max_location[0]) / scale
+    matched_y = float(max_location[1]) / scale
+    offset_x = float(search_x0) + matched_x - float(anchor_x)
+    offset_y = float(search_y0) + matched_y - float(anchor_y)
+    quad = tuple(
+        (float(px + offset_x), float(py + offset_y))
+        for px, py in quad_local
+    )
+    bbox = _bounding_box_from_quad(quad)
+    match = NccMatchResult(
+        score=primary.score,
+        angle=_normalize_angle_deg(angle_deg),
+        center=(bbox.x + bbox.width / 2.0, bbox.y + bbox.height / 2.0),
+        quad=quad,
+        bbox=bbox,
+    )
+    return match, _orientation_anchor_score(
+        scene_gray,
+        template_gray,
+        anchor_mask,
+        quad,
+    )
+
+
+def _disambiguate_top_orientation(
+    scene_gray: np.ndarray,
+    template_gray: np.ndarray,
+    matches: Tuple[NccMatchResult, ...],
+    anchor: object,
+) -> Tuple[Tuple[NccMatchResult, ...], bool]:
+    if not matches:
+        return matches, False
+    anchor_mask = _orientation_anchor_mask(template_gray, anchor)
+    if anchor_mask is None:
+        return matches, False
+
+    primary = matches[0]
+    same = _find_orientation_anchor_match(
+        scene_gray,
+        template_gray,
+        primary,
+        anchor_mask,
+        primary.angle,
+    )
+    opposite = _find_orientation_anchor_match(
+        scene_gray,
+        template_gray,
+        primary,
+        anchor_mask,
+        _normalize_angle_deg(primary.angle + 180.0),
+    )
+    if same is None or opposite is None:
+        return matches, False
+
+    _, same_score = same
+    opposite_match, opposite_score = opposite
+    if opposite_score <= same_score + 0.015:
+        return matches, True
+    return (opposite_match, *matches[1:]), True
+
+
+def _largest_saturation_contour(
+    image_bgr: np.ndarray,
+    *,
+    restrict_mask: Optional[np.ndarray] = None,
+    morphology_size: int = 15,
+) -> Optional[np.ndarray]:
+    hsv = cv2.cvtColor(np.ascontiguousarray(image_bgr), cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(
+        hsv,
+        np.asarray([20, 80, 10], dtype=np.uint8),
+        np.asarray([110, 255, 255], dtype=np.uint8),
+    )
+    if restrict_mask is not None:
+        mask = cv2.bitwise_and(mask, restrict_mask)
+    kernel_size = max(5, int(morphology_size) | 1)
+    kernel = cv2.getStructuringElement(
+        cv2.MORPH_RECT,
+        (kernel_size, kernel_size),
+    )
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    contours, _ = cv2.findContours(
+        mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+    if not contours:
+        return None
+    contour = max(contours, key=cv2.contourArea)
+    if float(cv2.contourArea(contour)) <= 0.0:
+        return None
+    return contour
+
+
+def _contour_long_axis_angle_deg(contour: np.ndarray) -> float:
+    box = cv2.boxPoints(cv2.minAreaRect(contour)).astype(np.float32)
+    edges = [
+        box[(index + 1) % 4] - box[index]
+        for index in range(4)
+    ]
+    longest = max(edges, key=lambda edge: float(np.dot(edge, edge)))
+    angle = math.degrees(math.atan2(float(longest[1]), float(longest[0])))
+    return float((angle + 90.0) % 180.0 - 90.0)
+
+
+def _prepare_saturation_axis_search(
+    scene_bgr: np.ndarray,
+    template_bgr: np.ndarray,
+    options: NccMatchOptions,
+) -> Optional[Tuple[np.ndarray, NccMatchOptions, np.ndarray, Tuple[float, float]]]:
+    if (
+        scene_bgr.ndim != 3
+        or scene_bgr.shape[2] != 3
+        or template_bgr.ndim != 3
+        or template_bgr.shape[2] != 3
+    ):
+        return None
+    ranges = list(options.angle_search.ranges or [])
+    total_span = sum(abs(float(item.end) - float(item.start)) for item in ranges)
+    if total_span < 180.0:
+        return None
+
+    scale = 0.25
+    scene_small = cv2.resize(
+        scene_bgr,
+        None,
+        fx=scale,
+        fy=scale,
+        interpolation=cv2.INTER_AREA,
+    )
+    template_small = cv2.resize(
+        template_bgr,
+        None,
+        fx=scale,
+        fy=scale,
+        interpolation=cv2.INTER_AREA,
+    )
+    scene_contour = _largest_saturation_contour(
+        scene_small,
+        morphology_size=5,
+    )
+    template_contour = _largest_saturation_contour(
+        template_small,
+        morphology_size=5,
+    )
+    if scene_contour is None or template_contour is None:
+        return None
+
+    scene_area = float(cv2.contourArea(scene_contour))
+    template_area = float(cv2.contourArea(template_contour))
+    if (
+        scene_area < float(scene_small.shape[0] * scene_small.shape[1]) * 0.01
+        or template_area < float(template_small.shape[0] * template_small.shape[1]) * 0.15
+    ):
+        return None
+
+    scene_axis = _contour_long_axis_angle_deg(scene_contour)
+    template_axis = _contour_long_axis_angle_deg(template_contour)
+    axis_angle = float((-(scene_axis - template_axis) + 90.0) % 180.0 - 90.0)
+
+    small_x, small_y, small_w, small_h = cv2.boundingRect(scene_contour)
+    margin = max(96, int(round(max(template_bgr.shape[:2]) * 0.33)))
+    crop_x0 = max(0, int(math.floor(float(small_x) / scale)) - margin)
+    crop_y0 = max(0, int(math.floor(float(small_y) / scale)) - margin)
+    crop_x1 = min(
+        scene_bgr.shape[1],
+        int(math.ceil(float(small_x + small_w) / scale)) + margin,
+    )
+    crop_y1 = min(
+        scene_bgr.shape[0],
+        int(math.ceil(float(small_y + small_h) / scale)) + margin,
+    )
+    scene_crop = scene_bgr[crop_y0:crop_y1, crop_x0:crop_x1]
+    if scene_crop.size == 0:
+        return None
+
+    crop_height, crop_width = scene_crop.shape[:2]
+    center = (float(crop_width) / 2.0, float(crop_height) / 2.0)
+    matrix = cv2.getRotationMatrix2D(center, -axis_angle, 1.0)
+    abs_cos = abs(float(matrix[0, 0]))
+    abs_sin = abs(float(matrix[0, 1]))
+    bound_width = int(math.ceil(crop_height * abs_sin + crop_width * abs_cos))
+    bound_height = int(math.ceil(crop_height * abs_cos + crop_width * abs_sin))
+    matrix[0, 2] += float(bound_width) / 2.0 - center[0]
+    matrix[1, 2] += float(bound_height) / 2.0 - center[1]
+    sample = scene_crop[:: max(1, crop_height // 64), :: max(1, crop_width // 64)]
+    border_value = tuple(
+        int(round(float(np.median(sample[:, :, channel]))))
+        for channel in range(3)
+    )
+    normalized_scene = cv2.warpAffine(
+        scene_crop,
+        matrix,
+        (bound_width, bound_height),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=border_value,
+    )
+
+    narrowed = NccMatchOptions(
+        target_num=options.target_num,
+        max_overlap=options.max_overlap,
+        score_threshold=options.score_threshold,
+        angle_search=NccAngleSearch(
+            mode="ranges",
+            tolerance_angle=0.0,
+            ranges=[
+                NccAngleRange(-15.0, 15.0),
+                NccAngleRange(165.0, 195.0),
+            ],
+        ),
+        min_reduced_area=options.min_reduced_area,
+        use_simd=options.use_simd,
+        use_subpixel=options.use_subpixel,
+        bitwise_not=options.bitwise_not,
+        stop_layer1=options.stop_layer1,
+    ).normalized()
+    return (
+        normalized_scene,
+        narrowed,
+        cv2.invertAffineTransform(matrix),
+        (float(crop_x0), float(crop_y0)),
+    )
+
+
+def _restore_match_from_pose_search(
+    match: NccMatchResult,
+    inverse_affine: np.ndarray,
+    crop_origin: Tuple[float, float],
+) -> NccMatchResult:
+    quad = cv2.transform(
+        np.asarray(match.quad, dtype=np.float32).reshape(1, -1, 2),
+        inverse_affine,
+    ).reshape(-1, 2)
+    quad += np.asarray(crop_origin, dtype=np.float32)
+    edge = quad[1] - quad[0]
+    angle = _normalize_angle_deg(
+        -math.degrees(math.atan2(float(edge[1]), float(edge[0])))
+    )
+    bbox = _bounding_box_from_quad(quad)
+    return NccMatchResult(
+        score=match.score,
+        angle=angle,
+        center=(bbox.x + bbox.width / 2.0, bbox.y + bbox.height / 2.0),
+        quad=tuple((float(x), float(y)) for x, y in quad),
+        bbox=bbox,
+    )
+
+
+def _refine_match_by_saturation_rect(
+    scene_bgr: np.ndarray,
+    template_bgr: np.ndarray,
+    match: NccMatchResult,
+) -> Optional[NccMatchResult]:
+    if (
+        scene_bgr.ndim != 3
+        or scene_bgr.shape[2] != 3
+        or template_bgr.ndim != 3
+        or template_bgr.shape[2] != 3
+    ):
+        return None
+    template_height, template_width = template_bgr.shape[:2]
+    template_corners = np.asarray(
+        [
+            [0.0, 0.0],
+            [float(template_width - 1), 0.0],
+            [float(template_width - 1), float(template_height - 1)],
+            [0.0, float(template_height - 1)],
+        ],
+        dtype=np.float32,
+    )
+    initial_quad = np.asarray(match.quad, dtype=np.float32)
+    if initial_quad.shape != (4, 2):
+        return None
+
+    morphology_size = max(
+        5,
+        int(round(min(template_height, template_width) * 0.02)) | 1,
+    )
+    template_contour = _largest_saturation_contour(
+        template_bgr,
+        morphology_size=morphology_size,
+    )
+    if template_contour is None:
+        return None
+    template_contour_area = float(cv2.contourArea(template_contour))
+    if template_contour_area < float(template_height * template_width) * 0.15:
+        return None
+
+    margin = max(
+        31,
+        int(round(max(template_height, template_width) * 0.08)) | 1,
+    )
+    scene_height, scene_width = scene_bgr.shape[:2]
+    crop_x0 = max(0, int(math.floor(float(np.min(initial_quad[:, 0])))) - margin)
+    crop_y0 = max(0, int(math.floor(float(np.min(initial_quad[:, 1])))) - margin)
+    crop_x1 = min(
+        scene_width,
+        int(math.ceil(float(np.max(initial_quad[:, 0])))) + margin,
+    )
+    crop_y1 = min(
+        scene_height,
+        int(math.ceil(float(np.max(initial_quad[:, 1])))) + margin,
+    )
+    scene_crop = scene_bgr[crop_y0:crop_y1, crop_x0:crop_x1]
+    if scene_crop.size == 0:
+        return None
+    scene_contour = _largest_saturation_contour(
+        scene_crop,
+        morphology_size=morphology_size,
+    )
+    if scene_contour is None:
+        return None
+    scene_contour = scene_contour + np.asarray([[[crop_x0, crop_y0]]], dtype=scene_contour.dtype)
+
+    initial_matrix = cv2.getPerspectiveTransform(template_corners, initial_quad)
+    template_box = cv2.boxPoints(cv2.minAreaRect(template_contour)).astype(np.float32)
+    scene_box = cv2.boxPoints(cv2.minAreaRect(scene_contour)).astype(np.float32)
+    predicted_box = cv2.perspectiveTransform(
+        template_box.reshape(1, -1, 2),
+        initial_matrix,
+    ).reshape(-1, 2)
+    permutation = min(
+        itertools.permutations(range(4)),
+        key=lambda order: sum(
+            float(np.linalg.norm(predicted_box[index] - scene_box[target]) ** 2)
+            for index, target in enumerate(order)
+        ),
+    )
+    matched_scene_box = np.asarray(
+        [scene_box[index] for index in permutation],
+        dtype=np.float32,
+    )
+    refined_matrix = cv2.getPerspectiveTransform(template_box, matched_scene_box)
+    refined_quad = cv2.perspectiveTransform(
+        template_corners.reshape(1, -1, 2),
+        refined_matrix,
+    ).reshape(-1, 2)
+    if not np.all(np.isfinite(refined_quad)):
+        return None
+
+    initial_area = abs(float(cv2.contourArea(initial_quad)))
+    refined_area = abs(float(cv2.contourArea(refined_quad)))
+    if initial_area <= 1.0 or not (0.75 <= refined_area / initial_area <= 1.25):
+        return None
+    initial_center = np.mean(initial_quad, axis=0)
+    refined_center = np.mean(refined_quad, axis=0)
+    max_shift = max(match.bbox.width, match.bbox.height) * 0.12
+    if float(np.linalg.norm(refined_center - initial_center)) > max_shift:
+        return None
+    corner_shift = np.linalg.norm(refined_quad - initial_quad, axis=1)
+    if float(np.max(corner_shift)) > max(match.bbox.width, match.bbox.height) * 0.18:
+        return None
+
+    edge = refined_quad[1] - refined_quad[0]
+    refined_angle = _normalize_angle_deg(
+        -math.degrees(math.atan2(float(edge[1]), float(edge[0])))
+    )
+    if abs(_normalize_angle_deg(refined_angle - match.angle)) > 10.0:
+        return None
+    bbox = _bounding_box_from_quad(refined_quad)
+    return NccMatchResult(
+        score=match.score,
+        angle=refined_angle,
+        center=(bbox.x + bbox.width / 2.0, bbox.y + bbox.height / 2.0),
+        quad=tuple((float(x), float(y)) for x, y in refined_quad),
+        bbox=bbox,
+    )
 
 
 def _bounding_box_from_quad(quad: Sequence[Tuple[float, float]] | np.ndarray) -> NccMatchBoundingBox:
@@ -402,6 +959,8 @@ class NccCompiledModel:
         self.model = (model or load_model(model_path)).normalized()
         self._template_last_write_ns: int = -1
         self._template_gray: Optional[np.ndarray] = None
+        self._template_bgr_last_write_ns: int = -1
+        self._template_bgr: Optional[np.ndarray] = None
         self._template_mask_last_write_ns: int = -2
         self._template_mask_gray: Optional[np.ndarray] = None
         self._native_matcher_cache: Dict[int, NccNativeMatcher] = {}
@@ -438,6 +997,20 @@ class NccCompiledModel:
         if self._native_matcher_cache:
             self.close()
         return self._template_gray
+
+    def _load_template_bgr(self) -> np.ndarray:
+        template_path = self._template_file()
+        if not template_path.exists():
+            raise FileNotFoundError(template_path)
+        last_write_ns = template_path.stat().st_mtime_ns
+        if self._template_bgr is not None and self._template_bgr_last_write_ns == last_write_ns:
+            return self._template_bgr
+        image = imread(str(template_path), cv2.IMREAD_COLOR)
+        if image is None:
+            raise RuntimeError(f"Failed to read template image: {template_path}")
+        self._template_bgr = np.ascontiguousarray(image)
+        self._template_bgr_last_write_ns = last_write_ns
+        return self._template_bgr
 
     def _load_template_mask_gray(self) -> Optional[np.ndarray]:
         if not bool(getattr(self.model, "template_mask_enabled", False)):
@@ -483,26 +1056,125 @@ class NccCompiledModel:
         scene_crop, crop_xywh = _crop_bgr(scene_bgr, search_roi)
         template_gray = self._load_template_gray()
         template_mask_gray = self._load_template_mask_gray()
+        refinement_mode = str(
+            getattr(self.model, "pose_refinement", "") or ""
+        ).strip().lower()
 
         t0 = time.perf_counter()
+        runtime_options = normalized_options
+        angle_prefiltered = False
+        template_bgr: Optional[np.ndarray] = None
+        match_scene = scene_crop
+        pose_search_inverse: Optional[np.ndarray] = None
+        pose_search_origin = (0.0, 0.0)
+        if refinement_mode == "saturation_rect":
+            template_bgr = self._load_template_bgr()
+            prepared_pose_search = _prepare_saturation_axis_search(
+                scene_crop,
+                template_bgr,
+                normalized_options,
+            )
+            if prepared_pose_search is not None:
+                (
+                    match_scene,
+                    runtime_options,
+                    pose_search_inverse,
+                    pose_search_origin,
+                ) = prepared_pose_search
+                angle_prefiltered = True
         backend_name = "python-ncc-mask" if template_mask_gray is not None else "python-ncc"
         matches: Tuple[NccMatchResult, ...]
 
         if template_mask_gray is None and prefer_native and NccNativeApi.is_available():
             try:
-                matcher = self._get_native_matcher(normalized_options.min_reduced_area)
-                source_gray = _prepare_gray_image(scene_crop, bitwise_not=normalized_options.bitwise_not)
-                native_payload = matcher.match(source_gray, _native_payload(normalized_options))
+                matcher = self._get_native_matcher(runtime_options.min_reduced_area)
+                source_gray = _prepare_gray_image(match_scene, bitwise_not=runtime_options.bitwise_not)
+                native_payload = matcher.match(source_gray, _native_payload(runtime_options))
                 matches = _parse_native_response(native_payload)
                 backend_name = "native-ncc"
             except Exception:
-                matches = _match_python(scene_crop, template_gray, normalized_options)
+                matches = _match_python(match_scene, template_gray, runtime_options)
         else:
             matches = _match_python(
-                scene_crop,
+                match_scene,
                 template_gray,
-                normalized_options,
+                runtime_options,
                 mask_gray=template_mask_gray,
+            )
+        if angle_prefiltered and not matches:
+            match_scene = scene_crop
+            runtime_options = normalized_options
+            pose_search_inverse = None
+            pose_search_origin = (0.0, 0.0)
+            if template_mask_gray is None and prefer_native and NccNativeApi.is_available():
+                try:
+                    matcher = self._get_native_matcher(runtime_options.min_reduced_area)
+                    source_gray = _prepare_gray_image(
+                        match_scene,
+                        bitwise_not=runtime_options.bitwise_not,
+                    )
+                    native_payload = matcher.match(
+                        source_gray,
+                        _native_payload(runtime_options),
+                    )
+                    matches = _parse_native_response(native_payload)
+                    backend_name = "native-ncc+angle-prefilter-fallback"
+                except Exception:
+                    matches = _match_python(
+                        match_scene,
+                        template_gray,
+                        runtime_options,
+                    )
+                    backend_name = "python-ncc+angle-prefilter-fallback"
+            else:
+                matches = _match_python(
+                    match_scene,
+                    template_gray,
+                    runtime_options,
+                    mask_gray=template_mask_gray,
+                )
+                backend_name = "python-ncc-mask+angle-prefilter-fallback"
+            angle_prefiltered = False
+        if angle_prefiltered:
+            backend_name = f"{backend_name}+angle-prefilter"
+
+        orientation_anchor = getattr(self.model, "orientation_anchor", None)
+        if orientation_anchor is not None and matches:
+            prepared_scene = _prepare_gray_image(
+                match_scene,
+                bitwise_not=runtime_options.bitwise_not,
+            )
+            prepared_template = _prepare_gray_image(
+                template_gray,
+                bitwise_not=runtime_options.bitwise_not,
+            )
+            matches, orientation_checked = _disambiguate_top_orientation(
+                prepared_scene,
+                prepared_template,
+                matches,
+                orientation_anchor,
+            )
+            if orientation_checked:
+                backend_name = f"{backend_name}+orientation-anchor"
+
+        if refinement_mode == "saturation_rect" and matches:
+            refined = _refine_match_by_saturation_rect(
+                match_scene,
+                template_bgr if template_bgr is not None else self._load_template_bgr(),
+                matches[0],
+            )
+            if refined is not None:
+                matches = (refined, *matches[1:])
+                backend_name = f"{backend_name}+saturation-rect"
+
+        if pose_search_inverse is not None and matches:
+            matches = tuple(
+                _restore_match_from_pose_search(
+                    item,
+                    pose_search_inverse,
+                    pose_search_origin,
+                )
+                for item in matches
             )
 
         if crop_xywh[0] or crop_xywh[1]:

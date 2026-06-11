@@ -56,6 +56,7 @@ _TOOL_PAGE_BINDINGS = (
             "_update_loc_ui",
             "_on_loc_method_changed",
             "_resolve_autogen_targets",
+            "_prepare_batch_autogen_job",
             "_autogen_roi_for_images",
             "_autogen_roi_current_tab",
             "_autogen_roi_all",
