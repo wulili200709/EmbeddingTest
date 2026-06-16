@@ -8,10 +8,15 @@ from datetime import datetime
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from algorithms.measurement import (
+    BRIGHT_BLOCK_CENTER_ALGORITHM,
+    BRIGHT_BLOCK_Y_DISTANCE_ALGORITHM,
+    CENTER_DISTANCE_ALGORITHM,
+    CENTER_DISTANCE_ALGORITHMS,
     FIND_LINE_ALGORITHM,
     FIND_LINE_ALGORITHMS,
     FIND_LINE_SUBPIX_ALGORITHM,
     LINE_DISTANCE_ALGORITHMS,
+    PIN_CENTER_DISTANCE_ALGORITHM,
 )
 from common.algorithm_codes import normalize_tool_algorithm_code
 from algorithms.registry import list_tool_algorithm_specs
@@ -27,6 +32,26 @@ def _is_find_line_algorithm(algorithm: object) -> bool:
     return str(algorithm or "").strip() in FIND_LINE_ALGORITHMS
 
 
+def _is_pin_center_distance_algorithm(algorithm: object) -> bool:
+    return str(algorithm or "").strip() == PIN_CENTER_DISTANCE_ALGORITHM
+
+
+def _is_bright_block_y_distance_algorithm(algorithm: object) -> bool:
+    return str(algorithm or "").strip() == BRIGHT_BLOCK_Y_DISTANCE_ALGORITHM
+
+
+def _is_bright_block_center_algorithm(algorithm: object) -> bool:
+    return str(algorithm or "").strip() == BRIGHT_BLOCK_CENTER_ALGORITHM
+
+
+def _is_center_distance_algorithm(algorithm: object) -> bool:
+    return str(algorithm or "").strip() in CENTER_DISTANCE_ALGORITHMS
+
+
+def _is_single_roi_distance_algorithm(algorithm: object) -> bool:
+    return _is_pin_center_distance_algorithm(algorithm) or _is_bright_block_y_distance_algorithm(algorithm)
+
+
 def _public_algorithm_code(algorithm: object) -> str:
     raw = str(algorithm or "").strip()
     if raw == FIND_LINE_SUBPIX_ALGORITHM:
@@ -38,6 +63,14 @@ def _public_algorithm_code(algorithm: object) -> str:
         return normalized
     if normalized == FIND_LINE_ALGORITHM and raw not in FIND_LINE_ALGORITHMS:
         return normalized
+    if normalized == PIN_CENTER_DISTANCE_ALGORITHM:
+        return normalized
+    if normalized == BRIGHT_BLOCK_CENTER_ALGORITHM:
+        return normalized
+    if normalized == BRIGHT_BLOCK_Y_DISTANCE_ALGORITHM:
+        return normalized
+    if normalized == CENTER_DISTANCE_ALGORITHM:
+        return normalized
     if normalized in LINE_DISTANCE_ALGORITHMS:
         return normalized
     return raw
@@ -45,7 +78,14 @@ def _public_algorithm_code(algorithm: object) -> str:
 
 def _hide_from_algorithm_picker(algorithm: object) -> bool:
     normalized = normalize_tool_algorithm_code(algorithm)
-    return normalized == FIND_LINE_SUBPIX_ALGORITHM or normalized in LINE_DISTANCE_ALGORITHMS
+    return (
+        normalized == FIND_LINE_SUBPIX_ALGORITHM
+        or normalized in LINE_DISTANCE_ALGORITHMS
+        or normalized in {
+            PIN_CENTER_DISTANCE_ALGORITHM,
+            BRIGHT_BLOCK_Y_DISTANCE_ALGORITHM,
+        }
+    )
 
 
 def _current_camera_role(tool_page) -> str:
@@ -91,8 +131,32 @@ def _unique_item_id(tool_page, base: str) -> str:
     return f"{candidate}_{index}"
 
 
+def _current_picker_algorithm(tool_page) -> str:
+    getter = getattr(tool_page, "current_algorithm", None)
+    raw = getter() if callable(getter) else ""
+    normalized = normalize_tool_algorithm_code(raw)
+    resolver = getattr(tool_page.algo, "resolve_tool_algorithm", None)
+    if callable(resolver):
+        return str(resolver(normalized) or normalized or "").strip()
+    return str(normalized or "").strip()
+
+
 def _add_line_distance_tool(tool_page) -> None:
     camera_role = _current_camera_role(tool_page)
+    selected_item = _selected_inspection_item(tool_page)
+    selected_algorithm = (
+        str(tool_page.algo.resolve_tool_algorithm(getattr(selected_item, "algorithm_code", "")) or "").strip()
+        if selected_item is not None
+        else ""
+    )
+    picker_algorithm = _current_picker_algorithm(tool_page)
+    center_options = [
+        item_id
+        for _display, item_id in _center_item_options(
+            tool_page,
+            type("_Selected", (), {"camera_id": camera_role, "item_id": ""})(),
+        )
+    ]
     line_options = [
         item_id
         for _display, item_id in _line_item_options(
@@ -100,12 +164,21 @@ def _add_line_distance_tool(tool_page) -> None:
             type("_Selected", (), {"camera_id": camera_role, "item_id": ""})(),
         )
     ]
+    if (
+        _is_bright_block_center_algorithm(selected_algorithm)
+        or _is_bright_block_center_algorithm(picker_algorithm)
+        or _is_center_distance_algorithm(selected_algorithm)
+        or _is_center_distance_algorithm(picker_algorithm)
+        or (len(line_options) < 2 and len(center_options) >= 2)
+    ):
+        _add_center_distance_tool(tool_page, center_options=center_options)
+        return
+
     items_by_id = {
         str(getattr(item, "item_id", "") or "").strip(): item
         for item in list(getattr(tool_page, "inspection_items", []) or [])
     }
 
-    selected_item = _selected_inspection_item(tool_page)
     selected_params = dict(getattr(selected_item, "params", {}) or {}) if selected_item is not None else {}
     line_param_candidates = [selected_params]
     for item_id_ref in line_options[:2]:
@@ -161,6 +234,121 @@ def _add_line_distance_tool(tool_page) -> None:
                 break
 
 
+def _add_center_distance_tool(tool_page, *, center_options: list[str] | None = None) -> None:
+    camera_role = _current_camera_role(tool_page)
+    if center_options is None:
+        center_options = [
+            item_id
+            for _display, item_id in _center_item_options(
+                tool_page,
+                type("_Selected", (), {"camera_id": camera_role, "item_id": ""})(),
+            )
+        ]
+    items_by_id = {
+        str(getattr(item, "item_id", "") or "").strip(): item
+        for item in list(getattr(tool_page, "inspection_items", []) or [])
+    }
+    selected_item = _selected_inspection_item(tool_page)
+    selected_params = dict(getattr(selected_item, "params", {}) or {}) if selected_item is not None else {}
+    unit = str(selected_params.get("limit_unit", "") or "").strip().lower()
+    if unit not in {"px", "mm"}:
+        unit = "px"
+    pixel_size = _optional_param_float(selected_params, "pixel_size_mm") or 0.0
+    if pixel_size <= 0.0:
+        for item_id_ref in center_options[:2]:
+            pixel_size = _optional_param_float(dict(getattr(items_by_id.get(item_id_ref), "params", {}) or {}), "pixel_size_mm") or 0.0
+            if pixel_size > 0.0:
+                break
+    item_id = _unique_item_id(tool_page, "center_distance")
+    params = {
+        "center_a_item_id": center_options[0] if len(center_options) >= 1 else "",
+        "center_b_item_id": center_options[1] if len(center_options) >= 2 else "",
+        "distance_mode": "vertical",
+        "limit_unit": unit,
+    }
+    if pixel_size > 0.0:
+        params["pixel_size_mm"] = pixel_size
+    lower = _optional_param_float(selected_params, "lower_limit", f"lower_limit_{unit}")
+    upper = _optional_param_float(selected_params, "upper_limit", f"upper_limit_{unit}")
+    if lower is not None:
+        params["lower_limit"] = lower
+    if upper is not None:
+        params["upper_limit"] = upper
+    tool_page.inspection_items.append(
+        InspectionItem(
+            item_id=item_id,
+            display_name="Center Distance",
+            camera_id=camera_role,
+            roi_label="",
+            algorithm_code=CENTER_DISTANCE_ALGORITHM,
+            enabled=True,
+            params=params,
+        )
+    )
+    _persist_inspection_items(tool_page)
+    _refresh_inspection_items_table(tool_page)
+    table = getattr(tool_page, "inspection_items_table", None)
+    if table is not None:
+        for visible_row, actual_index in enumerate(getattr(tool_page, "_visible_inspection_item_indexes", []) or []):
+            item = tool_page.inspection_items[actual_index]
+            if str(getattr(item, "item_id", "") or "") == item_id:
+                table.setCurrentCell(visible_row, 1)
+                break
+
+
+def _line_distance_should_be_center_distance(
+    item,
+    *,
+    line_options: list[tuple[str, str]],
+    center_options: list[tuple[str, str]],
+) -> bool:
+    algorithm = normalize_tool_algorithm_code(getattr(item, "algorithm_code", ""))
+    if not _is_line_distance_algorithm(algorithm):
+        return False
+    params = dict(getattr(item, "params", {}) or {})
+    has_line_refs = bool(
+        str(params.get("line_a_item_id", "") or "").strip()
+        or str(params.get("line_b_item_id", "") or "").strip()
+    )
+    return not has_line_refs and not line_options and len(center_options) >= 2
+
+
+def _convert_line_distance_to_center_distance(
+    tool_page,
+    item,
+    *,
+    center_options: list[tuple[str, str]],
+) -> None:
+    params = dict(getattr(item, "params", {}) or {})
+    center_ids = [item_id for _display, item_id in center_options]
+    unit = str(params.get("limit_unit", "") or "").strip().lower()
+    if unit not in {"px", "mm"}:
+        unit = "px"
+    converted_params = {
+        "center_a_item_id": center_ids[0] if len(center_ids) >= 1 else "",
+        "center_b_item_id": center_ids[1] if len(center_ids) >= 2 else "",
+        "distance_mode": str(params.get("distance_mode", "vertical") or "vertical").strip() or "vertical",
+        "limit_unit": unit,
+    }
+    pixel_size = _optional_param_float(params, "pixel_size_mm")
+    if pixel_size is not None and pixel_size > 0.0:
+        converted_params["pixel_size_mm"] = pixel_size
+    lower = _optional_param_float(params, "lower_limit", f"lower_limit_{unit}")
+    upper = _optional_param_float(params, "upper_limit", f"upper_limit_{unit}")
+    if lower is not None:
+        converted_params["lower_limit"] = lower
+    if upper is not None:
+        converted_params["upper_limit"] = upper
+    raw_name = str(getattr(item, "display_name", "") or "").strip()
+    if raw_name in {"", "Line Distance", "line_distance", tr("debug.algorithm.line_distance")}:
+        item.display_name = "Center Distance"
+    item.algorithm_code = CENTER_DISTANCE_ALGORITHM
+    item.roi_label = ""
+    item.params = converted_params
+    _persist_inspection_items(tool_page)
+    _refresh_inspection_items_table(tool_page)
+
+
 def _update_delete_line_distance_button(tool_page) -> None:
     button = getattr(tool_page, "btn_delete_line_distance_tool", None)
     if button is None:
@@ -168,7 +356,10 @@ def _update_delete_line_distance_button(tool_page) -> None:
     item = _selected_inspection_item(tool_page)
     can_delete = (
         item is not None
-        and _is_line_distance_algorithm(normalize_tool_algorithm_code(getattr(item, "algorithm_code", "")))
+        and (
+            _is_line_distance_algorithm(normalize_tool_algorithm_code(getattr(item, "algorithm_code", "")))
+            or _is_center_distance_algorithm(normalize_tool_algorithm_code(getattr(item, "algorithm_code", "")))
+        )
     )
     button.setEnabled(can_delete)
     button.setVisible(can_delete)
@@ -197,6 +388,12 @@ def _inspection_item_display_name(inspection_item) -> str:
             default_names.add(item_id)
         if raw_name in default_names:
             return tr(display_key)
+    if _is_center_distance_algorithm(algorithm):
+        default_names = {"", "Center Distance", "center_distance", tr("debug.algorithm.center_distance")}
+        if item_id.startswith("center_distance"):
+            default_names.add(item_id)
+        if raw_name in default_names:
+            return tr("debug.algorithm.center_distance")
     return raw_name
 
 
@@ -211,7 +408,10 @@ def _delete_selected_line_distance_tool(tool_page) -> None:
         return
 
     inspection_item = tool_page.inspection_items[row]
-    if not _is_line_distance_algorithm(normalize_tool_algorithm_code(getattr(inspection_item, "algorithm_code", ""))):
+    if not (
+        _is_line_distance_algorithm(normalize_tool_algorithm_code(getattr(inspection_item, "algorithm_code", "")))
+        or _is_center_distance_algorithm(normalize_tool_algorithm_code(getattr(inspection_item, "algorithm_code", "")))
+    ):
         QtWidgets.QMessageBox.information(
             tool_page,
             tr("debug.measurement.delete_line_distance_tool"),
@@ -331,6 +531,24 @@ def _line_item_options(tool_page, selected_item) -> list[tuple[str, str]]:
     return options
 
 
+def _center_item_options(tool_page, selected_item) -> list[tuple[str, str]]:
+    current_role = str(getattr(selected_item, "camera_id", "") or _current_camera_role(tool_page)).strip() or "cam1"
+    current_id = str(getattr(selected_item, "item_id", "") or "").strip()
+    options: list[tuple[str, str]] = []
+    for item in list(getattr(tool_page, "inspection_items", []) or []):
+        if str(getattr(item, "camera_id", "") or "").strip() != current_role:
+            continue
+        item_id = str(getattr(item, "item_id", "") or "").strip()
+        if not item_id or item_id == current_id:
+            continue
+        algorithm = str(tool_page.algo.resolve_tool_algorithm(getattr(item, "algorithm_code", "")) or "").strip()
+        if not _is_bright_block_center_algorithm(algorithm):
+            continue
+        display = str(getattr(item, "display_name", "") or getattr(item, "roi_label", "") or item_id).strip()
+        options.append((display, item_id))
+    return options
+
+
 def _set_combo_current_data(combo: QtWidgets.QComboBox, value: object) -> None:
     target = str(value or "").strip()
     index = combo.findData(target)
@@ -360,6 +578,15 @@ def _set_measurement_row_visible(tool_page, field_widget: QtWidgets.QWidget, vis
     field_widget.setVisible(visible)
 
 
+def _set_measurement_row_label(tool_page, field_widget: QtWidgets.QWidget, label_text: str) -> None:
+    frame = getattr(tool_page, "measurement_params_frame", None)
+    layout = frame.layout() if frame is not None else None
+    if isinstance(layout, QtWidgets.QFormLayout):
+        label_widget = layout.labelForField(field_widget)
+        if label_widget is not None:
+            label_widget.setText(label_text)
+
+
 def _update_measurement_params_panel(tool_page) -> None:
     frame = getattr(tool_page, "measurement_params_frame", None)
     if frame is None:
@@ -377,6 +604,9 @@ def _update_measurement_params_panel(tool_page) -> None:
     algorithm = str(tool_page.algo.resolve_tool_algorithm(item.algorithm_code) or "").strip()
     is_find_line = _is_find_line_algorithm(algorithm)
     is_line_distance = _is_line_distance_algorithm(algorithm)
+    is_center_distance = _is_center_distance_algorithm(algorithm)
+    is_single_roi_distance = _is_single_roi_distance_algorithm(algorithm)
+    is_direct_distance = is_line_distance or is_center_distance or is_single_roi_distance
     unit = str(params.get("limit_unit", "") or "").strip().lower()
     if unit not in {"px", "mm"}:
         unit = "mm" if ("lower_limit_mm" in params or "upper_limit_mm" in params) else "px"
@@ -398,31 +628,64 @@ def _update_measurement_params_panel(tool_page) -> None:
     scan_step = int(_optional_param_float(line_a, "scan_step") or _optional_param_float(line_b, "scan_step") or 2)
     min_points = int(_optional_param_float(line_a, "min_points") or _optional_param_float(line_b, "min_points") or 10)
     line_options = _line_item_options(tool_page, item)
+    center_options = _center_item_options(tool_page, item)
+    if _line_distance_should_be_center_distance(
+        item,
+        line_options=line_options,
+        center_options=center_options,
+    ):
+        _convert_line_distance_to_center_distance(tool_page, item, center_options=center_options)
+        return
+    pair_options = center_options if is_center_distance else line_options
+    distance_mode = str(params.get("distance_mode", "vertical") or "vertical").strip().lower()
+    if distance_mode not in {"vertical", "horizontal", "euclidean"}:
+        distance_mode = "vertical"
 
     tool_page._measurement_params_loading = True
     try:
-        _populate_line_tool_combo(tool_page.cmb_measurement_line_a_tool, line_options)
-        _populate_line_tool_combo(tool_page.cmb_measurement_line_b_tool, line_options)
-        _set_combo_current_data(tool_page.cmb_measurement_line_a_tool, params.get("line_a_item_id", ""))
-        _set_combo_current_data(tool_page.cmb_measurement_line_b_tool, params.get("line_b_item_id", ""))
-        _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_line_a_tool, is_line_distance)
-        _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_line_b_tool, is_line_distance)
+        _populate_line_tool_combo(tool_page.cmb_measurement_line_a_tool, pair_options)
+        _populate_line_tool_combo(tool_page.cmb_measurement_line_b_tool, pair_options)
+        _set_combo_current_data(
+            tool_page.cmb_measurement_line_a_tool,
+            params.get("center_a_item_id", "") if is_center_distance else params.get("line_a_item_id", ""),
+        )
+        _set_combo_current_data(
+            tool_page.cmb_measurement_line_b_tool,
+            params.get("center_b_item_id", "") if is_center_distance else params.get("line_b_item_id", ""),
+        )
+        _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_line_a_tool, is_line_distance or is_center_distance)
+        _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_line_b_tool, is_line_distance or is_center_distance)
+        _set_measurement_row_label(
+            tool_page,
+            tool_page.cmb_measurement_line_a_tool,
+            tr("debug.measurement.center_a_tool") if is_center_distance else tr("debug.measurement.line_a_tool"),
+        )
+        _set_measurement_row_label(
+            tool_page,
+            tool_page.cmb_measurement_line_b_tool,
+            tr("debug.measurement.center_b_tool") if is_center_distance else tr("debug.measurement.line_b_tool"),
+        )
+        _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_distance_mode, is_center_distance)
         _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_line_a_direction, is_find_line)
         _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_line_b_direction, False)
         _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_polarity, is_find_line)
         _set_measurement_row_visible(tool_page, tool_page.spin_measurement_edge_threshold, is_find_line)
         _set_measurement_row_visible(tool_page, tool_page.spin_measurement_scan_step, is_find_line)
         _set_measurement_row_visible(tool_page, tool_page.spin_measurement_min_points, is_find_line)
-        _set_measurement_row_visible(tool_page, tool_page.spin_measurement_lower, is_line_distance)
-        _set_measurement_row_visible(tool_page, tool_page.spin_measurement_upper, is_line_distance)
-        _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_unit, is_line_distance)
-        _set_measurement_row_visible(tool_page, tool_page.spin_measurement_pixel_size, is_line_distance)
-        tool_page.cmb_measurement_line_a_tool.setEnabled(is_line_distance)
-        tool_page.cmb_measurement_line_b_tool.setEnabled(is_line_distance)
+        _set_measurement_row_visible(tool_page, tool_page.spin_measurement_lower, is_direct_distance)
+        _set_measurement_row_visible(tool_page, tool_page.spin_measurement_upper, is_direct_distance)
+        _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_unit, is_direct_distance)
+        _set_measurement_row_visible(tool_page, tool_page.spin_measurement_pixel_size, is_direct_distance)
+        tool_page.cmb_measurement_line_a_tool.setEnabled(is_line_distance or is_center_distance)
+        tool_page.cmb_measurement_line_b_tool.setEnabled(is_line_distance or is_center_distance)
+        _set_combo_current_data(tool_page.cmb_measurement_distance_mode, distance_mode)
+        tool_page.cmb_measurement_distance_mode.setEnabled(is_center_distance)
         _set_combo_current_data(tool_page.cmb_measurement_line_a_direction, line_a_direction)
         _set_combo_current_data(tool_page.cmb_measurement_line_b_direction, line_b_direction)
         tool_page.cmb_measurement_line_a_direction.setEnabled(is_find_line)
-        tool_page.cmb_measurement_line_b_direction.setEnabled(not is_find_line and not is_line_distance)
+        tool_page.cmb_measurement_line_b_direction.setEnabled(
+            not is_find_line and not is_line_distance and not is_center_distance and not is_single_roi_distance
+        )
         _set_combo_current_data(tool_page.cmb_measurement_polarity, polarity)
         tool_page.cmb_measurement_polarity.setEnabled(is_find_line)
         tool_page.spin_measurement_edge_threshold.setValue(float(edge_threshold))
@@ -434,8 +697,8 @@ def _update_measurement_params_panel(tool_page) -> None:
         tool_page.cmb_measurement_unit.setCurrentText(unit)
         tool_page.chk_measurement_lower.setChecked(lower is not None)
         tool_page.chk_measurement_upper.setChecked(upper is not None)
-        tool_page.spin_measurement_lower.setEnabled(is_line_distance and lower is not None)
-        tool_page.spin_measurement_upper.setEnabled(is_line_distance and upper is not None)
+        tool_page.spin_measurement_lower.setEnabled(is_direct_distance and lower is not None)
+        tool_page.spin_measurement_upper.setEnabled(is_direct_distance and upper is not None)
         tool_page.spin_measurement_lower.setValue(float(lower or 0.0))
         tool_page.spin_measurement_upper.setValue(float(upper or 0.0))
         tool_page.spin_measurement_pixel_size.setValue(float(pixel_size))
@@ -467,6 +730,9 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
     algorithm = str(tool_page.algo.resolve_tool_algorithm(item.algorithm_code) or "").strip()
     is_find_line = _is_find_line_algorithm(algorithm)
     is_line_distance = _is_line_distance_algorithm(algorithm)
+    is_center_distance = _is_center_distance_algorithm(algorithm)
+    is_single_roi_distance = _is_single_roi_distance_algorithm(algorithm)
+    is_direct_distance = is_line_distance or is_center_distance or is_single_roi_distance
     line_a = dict(params.get("line" if is_find_line else "line_a") or {})
     line_b = dict(params.get("line_b") or {})
     if is_find_line:
@@ -496,6 +762,9 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
         params.pop("line_b", None)
         params.pop("line_a_item_id", None)
         params.pop("line_b_item_id", None)
+        params.pop("center_a_item_id", None)
+        params.pop("center_b_item_id", None)
+        params.pop("distance_mode", None)
         params.pop("limit_unit", None)
         params.pop("pixel_size_mm", None)
     elif is_line_distance:
@@ -504,6 +773,24 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
         params.pop("line", None)
         params.pop("line_a", None)
         params.pop("line_b", None)
+        params.pop("center_a_item_id", None)
+        params.pop("center_b_item_id", None)
+    elif is_center_distance:
+        distance_mode = str(
+            tool_page.cmb_measurement_distance_mode.currentData()
+            or tool_page.cmb_measurement_distance_mode.currentText()
+            or "vertical"
+        ).strip()
+        if distance_mode not in {"vertical", "horizontal", "euclidean"}:
+            distance_mode = "vertical"
+        params["center_a_item_id"] = str(tool_page.cmb_measurement_line_a_tool.currentData() or "").strip()
+        params["center_b_item_id"] = str(tool_page.cmb_measurement_line_b_tool.currentData() or "").strip()
+        params["distance_mode"] = distance_mode
+        params.pop("line", None)
+        params.pop("line_a", None)
+        params.pop("line_b", None)
+        params.pop("line_a_item_id", None)
+        params.pop("line_b_item_id", None)
     else:
         line_a["direction"] = str(
             tool_page.cmb_measurement_line_a_direction.currentData()
@@ -530,7 +817,7 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
             line["min_points"] = min_points
         params["line_a"] = line_a
         params["line_b"] = line_b
-    if is_line_distance:
+    if is_direct_distance:
         params["limit_unit"] = unit
         pixel_size = float(tool_page.spin_measurement_pixel_size.value())
         if pixel_size > 0.0:
@@ -545,8 +832,8 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
         params.pop("limit_unit", None)
         params.pop("pixel_size_mm", None)
     item.params = params
-    tool_page.spin_measurement_lower.setEnabled(is_line_distance and tool_page.chk_measurement_lower.isChecked())
-    tool_page.spin_measurement_upper.setEnabled(is_line_distance and tool_page.chk_measurement_upper.isChecked())
+    tool_page.spin_measurement_lower.setEnabled(is_direct_distance and tool_page.chk_measurement_lower.isChecked())
+    tool_page.spin_measurement_upper.setEnabled(is_direct_distance and tool_page.chk_measurement_upper.isChecked())
     _persist_inspection_items(tool_page)
     _update_learning_backbone_hint(tool_page)
 
@@ -616,6 +903,41 @@ def _inspection_item_status(tool_page, inspection_item):
                 f"Measures distance from {line_a} to {line_b} and judges OK/NG from lower/upper limits."
             )
             return (f"{line_a} -> {line_b}" if ready else "Select lines"), tooltip, "#79d279" if ready else "#d98c8c"
+        if _is_center_distance_algorithm(algorithm):
+            display_algorithm = _public_algorithm_code(algorithm)
+            params = dict(getattr(inspection_item, "params", {}) or {})
+            center_a = str(params.get("center_a_item_id", "") or "").strip() or "-"
+            center_b = str(params.get("center_b_item_id", "") or "").strip() or "-"
+            mode = str(params.get("distance_mode", "vertical") or "vertical").strip()
+            tooltip = (
+                f"Algorithm: {tool_page.algo.algorithm_display_name(display_algorithm) or display_algorithm}\n"
+                f"Measures {mode} distance from {center_a} to {center_b} and judges OK/NG from lower/upper limits."
+            )
+            ready = center_a != "-" and center_b != "-" and center_a != center_b
+            return (
+                f"{center_a} -> {center_b}" if ready else "Select centers",
+                tooltip,
+                "#79d279" if ready else "#d98c8c",
+            )
+        if _is_single_roi_distance_algorithm(algorithm):
+            display_algorithm = _public_algorithm_code(algorithm)
+            description = (
+                "Finds one vertical bright block and one horizontal bright block, then measures the Y distance."
+                if _is_bright_block_y_distance_algorithm(algorithm)
+                else "Finds two bright pin-tip centers inside one ROI and measures the center distance."
+            )
+            tooltip = (
+                f"Algorithm: {tool_page.algo.algorithm_display_name(display_algorithm) or display_algorithm}\n"
+                f"{description}"
+            )
+            return "Ready", tooltip, "#79d279"
+        if _is_bright_block_center_algorithm(algorithm):
+            display_algorithm = _public_algorithm_code(algorithm)
+            tooltip = (
+                f"Algorithm: {tool_page.algo.algorithm_display_name(display_algorithm) or display_algorithm}\n"
+                "Finds one bright block center inside the ROI for downstream center distance measurement."
+            )
+            return "Ready", tooltip, "#79d279"
         display_algorithm = _public_algorithm_code(algorithm)
         tooltip = (
             f"Algorithm: {tool_page.algo.algorithm_display_name(display_algorithm) or display_algorithm}\n"

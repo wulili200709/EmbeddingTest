@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional
 
-LINE_DISTANCE_ALGORITHMS = {"line_distance", "line_distance_ref_normal"}
+DISTANCE_MEASUREMENT_ALGORITHMS = {"line_distance", "line_distance_ref_normal", "center_distance"}
 
 
 @dataclass
@@ -138,7 +138,7 @@ class RuntimeInspectionResult:
             row[f"{prefix}_name"] = item.display_name
             row[f"{prefix}_result"] = item.result
             row[f"{prefix}_roi_label"] = item.roi_label
-            if item.algorithm_code in LINE_DISTANCE_ALGORITHMS and item.value is not None:
+            if item.algorithm_code in DISTANCE_MEASUREMENT_ALGORITHMS and item.value is not None:
                 row[f"{prefix}_distance"] = item.value
         return row
 

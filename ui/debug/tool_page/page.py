@@ -1226,6 +1226,8 @@ ALGORITHM_GROUPS = [
         "measurement",
         [
             ("Find Line", "find_line", True),
+            ("Bright Block Center", "bright_block_center", True),
+            ("Center Distance", "center_distance", True),
             ("Find Circle", "find_circle", False),
         ],
     ),
@@ -1256,6 +1258,10 @@ ALGORITHM_DISPLAY_KEYS = {
     "find_circle": "debug.algorithm.find_circle",
     "find_line": "debug.algorithm.find_line",
     "find_line_subpix": "debug.algorithm.find_line_subpix",
+    "bright_block_center": "debug.algorithm.bright_block_center",
+    "pin_center_distance": "debug.algorithm.pin_center_distance",
+    "bright_block_y_distance": "debug.algorithm.bright_block_y_distance",
+    "center_distance": "debug.algorithm.center_distance",
     "line_distance": "debug.algorithm.line_distance",
     "line_distance_ref_normal": "debug.algorithm.line_distance_ref_normal",
 }
@@ -1778,6 +1784,7 @@ class ToolPage(QtWidgets.QWidget):
             row_labels = {
                 "cmb_measurement_line_a_tool": tr("debug.measurement.line_a_tool"),
                 "cmb_measurement_line_b_tool": tr("debug.measurement.line_b_tool"),
+                "cmb_measurement_distance_mode": tr("debug.measurement.distance_mode"),
                 "cmb_measurement_line_a_direction": tr("debug.measurement.line_a_direction"),
                 "cmb_measurement_line_b_direction": tr("debug.measurement.line_b_direction"),
                 "cmb_measurement_polarity": tr("debug.measurement.polarity"),
@@ -1821,6 +1828,16 @@ class ToolPage(QtWidgets.QWidget):
             )):
                 if index < self.cmb_measurement_line_b_direction.count():
                     self.cmb_measurement_line_b_direction.setItemText(index, tr(key))
+            del blocker
+        if hasattr(self, "cmb_measurement_distance_mode"):
+            blocker = QtCore.QSignalBlocker(self.cmb_measurement_distance_mode)
+            for index, key in enumerate((
+                "debug.measurement.distance_mode.vertical",
+                "debug.measurement.distance_mode.horizontal",
+                "debug.measurement.distance_mode.euclidean",
+            )):
+                if index < self.cmb_measurement_distance_mode.count():
+                    self.cmb_measurement_distance_mode.setItemText(index, tr(key))
             del blocker
         if hasattr(self, "cmb_measurement_polarity"):
             blocker = QtCore.QSignalBlocker(self.cmb_measurement_polarity)
@@ -2958,6 +2975,12 @@ class ToolPage(QtWidgets.QWidget):
         for combo in (self.cmb_measurement_line_a_tool, self.cmb_measurement_line_b_tool):
             combo.setStyleSheet(_input_style)
             combo.currentIndexChanged.connect(self._on_measurement_params_changed)
+        self.cmb_measurement_distance_mode = QtWidgets.QComboBox()
+        self.cmb_measurement_distance_mode.addItem(tr("debug.measurement.distance_mode.vertical"), "vertical")
+        self.cmb_measurement_distance_mode.addItem(tr("debug.measurement.distance_mode.horizontal"), "horizontal")
+        self.cmb_measurement_distance_mode.addItem(tr("debug.measurement.distance_mode.euclidean"), "euclidean")
+        self.cmb_measurement_distance_mode.setStyleSheet(_input_style)
+        self.cmb_measurement_distance_mode.currentIndexChanged.connect(self._on_measurement_params_changed)
         self.cmb_measurement_line_a_direction = QtWidgets.QComboBox()
         self.cmb_measurement_line_b_direction = QtWidgets.QComboBox()
         for combo in (self.cmb_measurement_line_a_direction, self.cmb_measurement_line_b_direction):
@@ -3014,6 +3037,7 @@ class ToolPage(QtWidgets.QWidget):
         self.cmb_measurement_unit.currentTextChanged.connect(self._on_measurement_params_changed)
         measurement_form.addRow(tr("debug.measurement.line_a_tool"), self.cmb_measurement_line_a_tool)
         measurement_form.addRow(tr("debug.measurement.line_b_tool"), self.cmb_measurement_line_b_tool)
+        measurement_form.addRow(tr("debug.measurement.distance_mode"), self.cmb_measurement_distance_mode)
         measurement_form.addRow(tr("debug.measurement.line_a_direction"), self.cmb_measurement_line_a_direction)
         measurement_form.addRow(tr("debug.measurement.line_b_direction"), self.cmb_measurement_line_b_direction)
         measurement_form.addRow(tr("debug.measurement.polarity"), self.cmb_measurement_polarity)

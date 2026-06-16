@@ -13,7 +13,7 @@ from common.safe_io import atomic_write_json, load_json_with_backup
 
 
 SUPPORTED_CAMERA_IDS = ("cam1", "cam2")
-LINE_DISTANCE_ALGORITHMS = {"line_distance", "line_distance_ref_normal"}
+POST_DISTANCE_ALGORITHMS = {"line_distance", "line_distance_ref_normal", "center_distance"}
 
 
 def _slug_token(value: object, fallback: str = "tool") -> str:
@@ -111,7 +111,7 @@ def load_inspection_items(path: str) -> List[InspectionItem]:
         if not isinstance(entry, dict):
             continue
         item = InspectionItem.from_dict(entry)
-        if item.roi_label or item.algorithm_code in LINE_DISTANCE_ALGORITHMS:
+        if item.roi_label or item.algorithm_code in POST_DISTANCE_ALGORITHMS:
             items.append(item)
     return items
 
@@ -193,14 +193,15 @@ def sync_items_with_labels(
         item
         for item in existing_items
         if isinstance(item, InspectionItem)
-        and item.algorithm_code in LINE_DISTANCE_ALGORITHMS
+        and item.algorithm_code in POST_DISTANCE_ALGORITHMS
         and item.item_id not in {synced_item.item_id for synced_item in synced}
     ]
     for existing in existing_distance_items:
+        fallback_name = "Center Distance" if existing.algorithm_code == "center_distance" else "Line Distance"
         synced.append(
             InspectionItem(
-                item_id=existing.item_id or existing.display_name or "line_distance",
-                display_name=existing.display_name or existing.item_id or "Line Distance",
+                item_id=existing.item_id or existing.display_name or existing.algorithm_code or "distance",
+                display_name=existing.display_name or existing.item_id or fallback_name,
                 camera_id=existing.camera_id if existing.camera_id in SUPPORTED_CAMERA_IDS else default_camera_id,
                 roi_label=existing.roi_label,
                 algorithm_code=existing.algorithm_code,

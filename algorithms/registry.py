@@ -14,10 +14,14 @@ from common.algorithm_codes import (
 )
 
 from .measurement import (
+    BRIGHT_BLOCK_CENTER_ALGORITHM,
+    BRIGHT_BLOCK_Y_DISTANCE_ALGORITHM,
+    CENTER_DISTANCE_ALGORITHMS,
     FIND_LINE_ALGORITHMS,
     FIND_LINE_SUBPIX_ALGORITHM,
     LINE_DISTANCE_ALGORITHMS,
     MEASUREMENT_ALGORITHMS,
+    PIN_CENTER_DISTANCE_ALGORITHM,
 )
 from .traditional import TRADITIONAL_ALGORITHMS
 
@@ -68,6 +72,47 @@ for _code in MEASUREMENT_ALGORITHMS:
                 "limit_unit": "px",
             }
             if _code in LINE_DISTANCE_ALGORITHMS
+            else {
+                "center_a_item_id": "",
+                "center_b_item_id": "",
+                "distance_mode": "vertical",
+                "limit_unit": "px",
+            }
+            if _code in CENTER_DISTANCE_ALGORITHMS
+            else {
+                "block_orientation": "auto",
+                "limit_unit": "px",
+                "threshold": 0.0,
+                "min_area_px": 12.0,
+                "min_aspect_ratio": 1.6,
+                "target_orientation": "any",
+                "center_target": "inner_bright_strip",
+                "refine_center": True,
+                "inner_strip_min_width_ratio": 0.45,
+                "inner_strip_y_bias": 0.92,
+                "require_adjacent_body": True,
+                "adjacent_body_threshold": 200.0,
+                "adjacent_body_min_pixels": 24.0,
+                "adjacent_body_min_ratio": 0.012,
+            }
+            if _code == BRIGHT_BLOCK_CENTER_ALGORITHM
+            else {
+                "limit_unit": "px",
+                "threshold": 0.0,
+                "min_area_px": 12.0,
+                "min_aspect_ratio": 1.6,
+                "target_orientation": "horizontal",
+                "distance_mode": "euclidean",
+                "sort_axis": "y",
+                "center_target": "inner_bright_strip",
+                "refine_center": True,
+                "refine_expand_y_ratio": 2.5,
+                "inner_strip_min_width_ratio": 0.45,
+                "inner_strip_y_bias": 0.92,
+                "min_pair_separation_ratio": 0.12,
+                "min_pair_separation_size_ratio": 1.2,
+            }
+            if _code in {PIN_CENTER_DISTANCE_ALGORITHM, BRIGHT_BLOCK_Y_DISTANCE_ALGORITHM}
             else {
                 "line_a": {"direction": "left_right"},
                 "line_b": {"direction": "right_left"},

@@ -4135,3 +4135,27 @@ EmbeddingTest/requirements.txt
 重点：vendor/ 可以不传，third_party/ 不建议不传。vendor 是编译 .pyd 用的 C++ 源码，third_party 里有相机和 IO 运行依赖。
 
 powershell -ExecutionPolicy Bypass -File .\EmbeddingTest\build_py312.ps1
+
+# 有关尺寸计算说明
+## 现在界面上添加距离测量 怎么找不到距离测量这个算法？
+距离测量不会出现在普通“算法”下拉框里，因为它不是单个 ROI 算法，而是依赖两个“找直线”工具的组合测量。
+![alt text](image-16.png)
+正确操作：
+
+两个 ROI 都选择 找直线。
+点击上方的 添加距离测量。
+系统会新增一行 距离测量。
+选中新增行，在参数里选择“直线 A 工具”和“直线 B 工具”。
+如果当前有两个 亮块中心，点击该按钮会添加的是中心距测量。当前找不到两个“找直线”工具时，也无法正确配置普通距离测量。
+##  如果界面上的算法选择的是亮块中心
+那么添加距离测量 会显示中心距测量
+![alt text](image-1.png)
+
+
+# 位置定位中能匹配成功，但是标注的时候会显示匹配失败
+line2dup 是旧版本里“位置修正/自动 ROI”的内部算法名。后来这套能力被重命名/收敛成 shape，但旧会话文件里可能还保留 "loc_method": "line2dup"。
+
+现在源码里已经改成只支持 shape：
+
+application/product_session.py (line 227)：读取 session 时，如果看到 line2dup 会强制改成 shape
+ui/debug/tool_page/page.py (line 98)：SUPPORTED_LOC_MODES = ["shape"]

@@ -33,6 +33,32 @@ class ShapeRecipe:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ShapeRecipe":
+        raw_reference_regions = data.get("reference_regions") if "reference_regions" in data else None
+        if isinstance(raw_reference_regions, list):
+            reference_regions = [
+                {
+                    "reference_label": str(region.get("reference_label") or region.get("label") or ""),
+                    "output_label": str(region.get("output_label") or region.get("reference_label") or region.get("label") or ""),
+                    "display_name": str(
+                        region.get("display_name")
+                        or region.get("name")
+                        or region.get("output_label")
+                        or region.get("reference_label")
+                        or region.get("label")
+                        or ""
+                    ),
+                    "shape_type": str(region.get("shape_type", "rectangle")),
+                    "points": [
+                        [float(pt[0]), float(pt[1])]
+                        for pt in region.get("points", []) or []
+                        if isinstance(pt, (list, tuple)) and len(pt) >= 2
+                    ],
+                }
+                for region in raw_reference_regions
+                if isinstance(region, dict)
+            ]
+        else:
+            reference_regions = None
         return cls(
             model_path=str(data.get("model_path", "")),
             reference_image=str(data.get("reference_image", "")),
@@ -55,28 +81,7 @@ class ShapeRecipe:
                 for pt in data.get("reference_points", []) or []
                 if isinstance(pt, (list, tuple)) and len(pt) >= 2
             ] or None,
-            reference_regions=[
-                {
-                    "reference_label": str(region.get("reference_label") or region.get("label") or ""),
-                    "output_label": str(region.get("output_label") or region.get("reference_label") or region.get("label") or ""),
-                    "display_name": str(
-                        region.get("display_name")
-                        or region.get("name")
-                        or region.get("output_label")
-                        or region.get("reference_label")
-                        or region.get("label")
-                        or ""
-                    ),
-                    "shape_type": str(region.get("shape_type", "rectangle")),
-                    "points": [
-                        [float(pt[0]), float(pt[1])]
-                        for pt in region.get("points", []) or []
-                        if isinstance(pt, (list, tuple)) and len(pt) >= 2
-                    ],
-                }
-                for region in data.get("reference_regions", []) or []
-                if isinstance(region, dict)
-            ] or None,
+            reference_regions=reference_regions,
             search_shape_type=str(data.get("search_shape_type", "")),
             search_points=[
                 [float(pt[0]), float(pt[1])]

@@ -17,13 +17,22 @@ from algorithms.traditional import (
     train_threshold_model,
 )
 from algorithms.measurement import (
+    BRIGHT_BLOCK_CENTER_ALGORITHM,
+    BRIGHT_BLOCK_Y_DISTANCE_ALGORITHM,
+    CENTER_DISTANCE_ALGORITHM,
     FIND_LINE_ALGORITHMS,
     LINE_DISTANCE_ALGORITHMS,
     MEASUREMENT_ALGORITHMS,
+    PIN_CENTER_DISTANCE_ALGORITHM,
     is_measurement_algorithm,
+    judge_bright_block_y_distance,
     judge_edge_distance,
+    judge_pin_center_distance,
+    measure_bright_block_center,
+    measure_bright_block_y_distance,
     measure_edge_distance,
     measure_find_line,
+    measure_pin_center_distance,
 )
 from common.algorithm_codes import (
     DEFAULT_LEARNING_BACKBONE,
@@ -668,6 +677,90 @@ class AlgorithmController:
                 threshold = None
             elif algorithm in LINE_DISTANCE_ALGORITHMS:
                 raise RuntimeError("Line Distance must be run with paired Find Line tools")
+            elif algorithm == CENTER_DISTANCE_ALGORITHM:
+                raise RuntimeError("Center Distance must be run with paired Bright Block Center tools")
+            elif algorithm == BRIGHT_BLOCK_CENTER_ALGORITHM:
+                diff = 0.0
+                roi_label = labels[0] if labels else "roi1"
+                try:
+                    measurement = measure_bright_block_center(
+                        path,
+                        preferred_label=roi_label,
+                        params=params,
+                    )
+                    pred = "OK"
+                    detail = (
+                        f"bright_block_center=({measurement.center_xy[0]:.3f},"
+                        f"{measurement.center_xy[1]:.3f})px"
+                        f" threshold={measurement.threshold:.1f}"
+                    )
+                    measurement_payload = measurement.to_dict()
+                    measurement_payload.update({"pred": pred})
+                except RuntimeError as exc:
+                    pred = "NG"
+                    detail = f"bright_block_center_missing: {exc}"
+                    measurement_payload = {
+                        "type": BRIGHT_BLOCK_CENTER_ALGORITHM,
+                        "roi_label": str(roi_label or ""),
+                        "center_points": [],
+                        "candidates": [],
+                        "pred": pred,
+                        "detail": str(exc),
+                    }
+                value = None
+                threshold = None
+            elif algorithm == PIN_CENTER_DISTANCE_ALGORITHM:
+                measurement = measure_pin_center_distance(
+                    path,
+                    preferred_label=labels[0] if labels else "roi1",
+                    params=params,
+                )
+                pred, judged_value, lower, upper, unit = judge_pin_center_distance(measurement, params)
+                diff = 0.0
+                detail = (
+                    f"pin_center_distance={judged_value:.3f}{unit}"
+                    f" raw={measurement.distance_px:.3f}px"
+                    f" threshold={measurement.threshold:.1f}"
+                )
+                measurement_payload = measurement.to_dict()
+                measurement_payload.update(
+                    {
+                        "distance": float(judged_value),
+                        "unit": unit,
+                        "label": f"{judged_value:.3f}{unit}",
+                        "pred": pred,
+                    }
+                )
+                value = judged_value
+                threshold = float(upper) if upper is not None else None
+                if lower is not None or upper is not None:
+                    detail += f" spec={lower if lower is not None else '-'}..{upper if upper is not None else '-'}{unit}"
+            elif algorithm == BRIGHT_BLOCK_Y_DISTANCE_ALGORITHM:
+                measurement = measure_bright_block_y_distance(
+                    path,
+                    preferred_label=labels[0] if labels else "roi1",
+                    params=params,
+                )
+                pred, judged_value, lower, upper, unit = judge_bright_block_y_distance(measurement, params)
+                diff = 0.0
+                detail = (
+                    f"bright_block_y_distance={judged_value:.3f}{unit}"
+                    f" raw={measurement.distance_px:.3f}px"
+                    f" threshold={measurement.threshold:.1f}"
+                )
+                measurement_payload = measurement.to_dict()
+                measurement_payload.update(
+                    {
+                        "distance": float(judged_value),
+                        "unit": unit,
+                        "label": f"{judged_value:.3f}{unit}",
+                        "pred": pred,
+                    }
+                )
+                value = judged_value
+                threshold = float(upper) if upper is not None else None
+                if lower is not None or upper is not None:
+                    detail += f" spec={lower if lower is not None else '-'}..{upper if upper is not None else '-'}{unit}"
             else:
                 measurement = measure_edge_distance(
                     path,

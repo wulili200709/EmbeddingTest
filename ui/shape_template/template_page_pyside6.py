@@ -52,6 +52,56 @@ from shape.like_matcher import (  # noqa: E402
 )
 
 
+class _TemplateBuildWorker(QtCore.QObject):
+    progressChanged = QtCore.Signal(int, str)
+    finished = QtCore.Signal(object)
+    failed = QtCore.Signal(str)
+
+    def __init__(self, payload: Dict[str, object], parent: Optional[QtCore.QObject] = None) -> None:
+        super().__init__(parent)
+        self._payload = dict(payload)
+
+    @QtCore.Slot()
+    def run(self) -> None:
+        try:
+            self.progressChanged.emit(10, "Validating template ROI...")
+            pose = self._payload["pose"]
+            assert isinstance(pose, dict)
+            pose_infos = pose_infos_from_ui_values(
+                float(pose["angle_start"]),
+                float(pose["angle_end"]),
+                float(pose["angle_step"]),
+                float(pose["scale_start"]),
+                float(pose["scale_end"]),
+                float(pose["scale_step"]),
+            )
+
+            self.progressChanged.emit(25, "Building template features...")
+            detector, kept, skipped = build_multi_backend_detector(
+                class_id=str(self._payload["class_id"]),
+                roi_img=cast(np.ndarray, self._payload["roi_img"]),
+                roi_rect=cast(RoiRect, self._payload["roi_rect"]),
+                mask_rects=cast(List[MaskRect], self._payload["mask_rects"]),
+                pose_infos=pose_infos,
+                pose_ui=cast(Dict[str, float], self._payload["pose_ui"]),
+                levels=cast(List[int], self._payload["levels"]),
+                num_features=int(self._payload["num_features"]),
+                weak_threshold=float(self._payload["weak_threshold"]),
+                strong_threshold=float(self._payload["strong_threshold"]),
+                original_mode=str(self._payload["original_mode"]),
+                original_editor_levels=cast(Optional[List[TemplateLevel]], self._payload["original_editor_levels"]),
+                source_image_path=str(self._payload["source_image_path"]),
+            )
+
+            self.progressChanged.emit(85, "Writing model file...")
+            os.makedirs(str(self._payload["role_dir"]), exist_ok=True)
+            save_detector_model(detector, str(self._payload["model_path"]))
+            self.progressChanged.emit(100, "Template saved.")
+            self.finished.emit({"detector": detector, "kept": kept, "skipped": skipped})
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 def _cv_to_qpixmap(image_bgr: np.ndarray) -> QtGui.QPixmap:
     if image_bgr.ndim == 2:
         rgb = cv2.cvtColor(image_bgr, cv2.COLOR_GRAY2RGB)
@@ -114,6 +164,18 @@ def _shape_to_rect(shape: dict) -> Optional[Tuple[int, int, int, int]]:
     x0, y0 = arr.min(axis=0)
     x1, y1 = arr.max(axis=0)
     return int(round(x0)), int(round(y0)), max(1, int(round(x1 - x0))), max(1, int(round(y1 - y0)))
+
+
+def _compact_path_text(path: str, *, max_chars: int = 72) -> str:
+    text = os.path.normpath(str(path or ""))
+    if len(text) <= max_chars:
+        return text
+    drive, tail = os.path.splitdrive(text)
+    basename = os.path.basename(text)
+    parent = os.path.basename(os.path.dirname(text))
+    suffix = os.path.join(parent, basename) if parent else basename
+    prefix = f"{drive}{os.sep}" if drive else ""
+    return f"{prefix}...{os.sep}{suffix}"
 
 
 def _clamp_rect_to_roi(rect: Tuple[int, int, int, int], roi: RoiRect) -> Optional[MaskRect]:
@@ -310,9 +372,15 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
         self._reference_regions: List[Dict[str, object]] = []
         self._selected_reference_idx: Optional[int] = None
         self._syncing_reference_view = False
+        self._reference_dirty = False
+        self._reference_regions_explicit = False
         self._search_roi_shape_type: str = ""
         self._search_roi_points: List[List[float]] = []
         self._find_result_cache: Dict[str, Dict[str, object]] = {}
+        self._suppress_create_auto_apply = False
+        self._build_thread: Optional[QtCore.QThread] = None
+        self._build_worker: Optional[_TemplateBuildWorker] = None
+        self._build_progress: Optional[QtWidgets.QProgressDialog] = None
 
         self._build_ui()
         self._load_recipe()
@@ -365,6 +433,7 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
             ("btn_apply_selection", tr("template.apply_current_box")),
             ("btn_clear_roi", tr("template.clear_template_roi")),
             ("btn_clear_masks", tr("template.clear_mask")),
+            ("btn_undo_mask", tr("template.undo_last_mask")),
             ("chk_edit_points", tr("template.edit_points")),
             ("btn_extract_points", tr("template.extract_points")),
             ("btn_reset_points", tr("template.reset_points")),
@@ -375,7 +444,7 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
             ("btn_remove_reference_roi", tr("template.delete_selected_roi")),
             ("btn_clear_reference_rois", tr("template.clear_all_roi")),
             ("btn_load_reference_roi", tr("template.load_reference_roi")),
-            ("btn_save_reference_roi", tr("template.save_current_roi")),
+            ("btn_save_reference_roi", tr("template.save_roi_config")),
             ("btn_find_open_model", tr("template.open_model")),
             ("btn_find_use_product", tr("template.use_product_model")),
             ("btn_add_find_images", tr("template.add_images")),
@@ -392,10 +461,14 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
                 widget.setText(text)
         if hasattr(self, "lbl_current_usage"):
             self.lbl_current_usage.setText(tr("template.current_usage"))
+        if hasattr(self, "lbl_mask_count"):
+            self._refresh_mask_count()
         if hasattr(self, "lbl_default_direction"):
             self.lbl_default_direction.setText(tr("template.default_direction_label"))
         if hasattr(self, "lbl_point_help"):
             self.lbl_point_help.setText(tr("template.point_help"))
+        if hasattr(self, "chk_edit_points"):
+            self._sync_point_edit_detail_visibility()
         if hasattr(self, "help_text"):
             self.help_text.setText(tr("template.create_help"))
         if hasattr(self, "btn_build_pinned"):
@@ -425,7 +498,10 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
         ):
             self.lbl_status.setText(tr("template.create_status"))
         if hasattr(self, "lbl_reference_status") and not self._reference_regions:
-            self.lbl_reference_status.setText(tr("template.reference_status"))
+            if self._reference_dirty:
+                self.lbl_reference_status.setText(self._reference_dirty_status())
+            else:
+                self.lbl_reference_status.setText(tr("template.reference_status"))
         if hasattr(self, "lbl_find_status") and self.list_find_images.count() <= 0:
             self.lbl_find_status.setText(tr("template.find_status"))
 
@@ -434,7 +510,7 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setMinimumWidth(360)
+        scroll.setMinimumWidth(420)
         scroll.setStyleSheet(
             "QScrollArea{background:#2f2f2f;border:none;}"
             "QScrollArea > QWidget > QWidget{background:#2f2f2f;}"
@@ -474,7 +550,7 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
         layout.addWidget(splitter, 1)
 
         left_container = QtWidgets.QWidget()
-        left_container.setMinimumWidth(360)
+        left_container.setMinimumWidth(440)
         left_container_layout = QtWidgets.QVBoxLayout(left_container)
         left_container_layout.setContentsMargins(0, 0, 0, 0)
         left_container_layout.setSpacing(8)
@@ -509,23 +585,30 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
         self.cmb_role.currentTextChanged.connect(self._on_role_changed)
         self.btn_apply_selection = QtWidgets.QPushButton(tr("template.apply_current_box"))
         self.btn_apply_selection.clicked.connect(self._apply_current_selection)
+        self.btn_apply_selection.setVisible(False)
         self.btn_clear_roi = QtWidgets.QPushButton(tr("template.clear_template_roi"))
         self.btn_clear_roi.clicked.connect(self._clear_template_roi)
         self.btn_clear_masks = QtWidgets.QPushButton(tr("template.clear_mask"))
         self.btn_clear_masks.clicked.connect(self._clear_masks)
+        self.btn_undo_mask = QtWidgets.QPushButton(tr("template.undo_last_mask"))
+        self.btn_undo_mask.clicked.connect(self._undo_last_mask)
+        self.lbl_mask_count = QtWidgets.QLabel()
         select_l.setColumnStretch(0, 0)
         select_l.setColumnStretch(1, 1)
         self.lbl_current_usage = QtWidgets.QLabel(tr("template.current_usage"))
         select_l.addWidget(self.lbl_current_usage, 0, 0)
         select_l.addWidget(self.cmb_role, 0, 1)
-        select_l.addWidget(self.btn_apply_selection, 1, 0, 1, 2)
-        select_l.addWidget(self.btn_clear_roi, 2, 0)
-        select_l.addWidget(self.btn_clear_masks, 2, 1)
+        select_l.addWidget(self.btn_clear_roi, 1, 0)
+        select_l.addWidget(self.btn_clear_masks, 1, 1)
+        select_l.addWidget(self.btn_undo_mask, 2, 0)
+        select_l.addWidget(self.lbl_mask_count, 2, 1)
         select_box.setTitle(tr("template.template_edit"))
         self.lbl_current_usage.setText(tr("template.current_usage"))
         self.btn_apply_selection.setText(tr("template.apply_current_box"))
         self.btn_clear_roi.setText(tr("template.clear_template_roi"))
         self.btn_clear_masks.setText(tr("template.clear_mask"))
+        self.btn_undo_mask.setText(tr("template.undo_last_mask"))
+        self._refresh_mask_count()
         left.addWidget(select_box)
 
         self.point_box = QtWidgets.QGroupBox(tr("template.feature_point_edit"))
@@ -560,6 +643,7 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
         self.lbl_default_direction.setText(tr("template.default_direction_label"))
         self.btn_reset_points.setText(tr("template.reset_points"))
         self.lbl_point_help.setText(tr("template.point_help"))
+        self._sync_point_edit_detail_visibility()
         left.addWidget(point_box)
 
         self.param_box = QtWidgets.QGroupBox(tr("template.params"))
@@ -581,13 +665,13 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
         self.spin_strong.setValue(60.0)
         self.spin_angle_start = QtWidgets.QDoubleSpinBox()
         self.spin_angle_start.setRange(-360.0, 360.0)
-        self.spin_angle_start.setValue(0.0)
+        self.spin_angle_start.setValue(-5.0)
         self.spin_angle_end = QtWidgets.QDoubleSpinBox()
         self.spin_angle_end.setRange(-360.0, 360.0)
-        self.spin_angle_end.setValue(360.0)
+        self.spin_angle_end.setValue(10.0)
         self.spin_angle_step = QtWidgets.QDoubleSpinBox()
         self.spin_angle_step.setRange(0.1, 360.0)
-        self.spin_angle_step.setValue(10.0)
+        self.spin_angle_step.setValue(1.0)
         self.spin_scale_start = QtWidgets.QDoubleSpinBox()
         self.spin_scale_start.setRange(0.05, 10.0)
         self.spin_scale_start.setValue(1.0)
@@ -679,7 +763,7 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
         splitter.addWidget(right_container)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([430, 1000])
+        splitter.setSizes([460, 1000])
         self.create_canvas = RoiCanvas()
         self.canvas = self.create_canvas
         self.create_canvas.setMinimumSize(640, 480)
@@ -769,8 +853,8 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
         self.btn_clear_reference_rois.clicked.connect(self._clear_reference_roi)
         self.btn_load_reference_roi = QtWidgets.QPushButton(tr("template.load_reference_roi"))
         self.btn_load_reference_roi.clicked.connect(lambda: self._load_reference_roi_from_json(silent=False))
-        self.btn_save_reference_roi = QtWidgets.QPushButton(tr("template.save_current_roi"))
-        self.btn_save_reference_roi.clicked.connect(self._save_reference_roi_to_json)
+        self.btn_save_reference_roi = QtWidgets.QPushButton(tr("template.save_roi_config"))
+        self.btn_save_reference_roi.clicked.connect(self._save_reference_roi_config)
         for button in [
             self.btn_add_reference_roi,
             self.btn_load_reference_roi,
@@ -950,7 +1034,7 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
             return
         self.image_path = path
         self.image_bgr = image_bgr
-        self.lbl_image.setText(path)
+        self.lbl_image.setText(_compact_path_text(path))
         self.lbl_image.setToolTip(path)
         self.create_canvas.set_image(path, pixmap=pixmap_from_path(path))
         self.ref_canvas.set_image(path, pixmap=pixmap_from_path(path))
@@ -965,11 +1049,17 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
             self._point_drag_end = None
             self.detector = None
             self.detector_path = ""
+            self._refresh_mask_count()
         self._refresh_create_overlays()
         self.lbl_status.setText(tr("template.status_extracted", count=self._feature_count))
+        loaded_json_regions = False
         if not self._apply_reference_roi_from_recipe():
-            self._load_reference_roi_from_json(silent=True)
-        self._save_recipe()
+            loaded_json_regions = self._load_reference_roi_from_json(silent=True)
+        if loaded_json_regions:
+            self._set_reference_dirty(True, tr("template.status_reference_loaded_unsaved", count=len(self._reference_regions)))
+        else:
+            self._set_reference_dirty(False)
+            self._save_recipe()
 
         self.lbl_status.setText(tr("template.status_loaded_reference"))
 
@@ -1037,6 +1127,7 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
             if isinstance(region, dict)
         ]
         first_region = reference_regions[0] if reference_regions else None
+        saved_reference_regions = reference_regions if (reference_regions or self._reference_regions_explicit) else None
         reference_shape_type = str((first_region or {}).get("shape_type", self._recipe_reference_shape_type))
         reference_points = list((first_region or {}).get("points", self._recipe_reference_points))
         reference_label = str((first_region or {}).get("reference_label", "roi") or "roi")
@@ -1059,7 +1150,7 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
             reference_label=reference_label,
             reference_shape_type=reference_shape_type,
             reference_points=reference_points or None,
-            reference_regions=reference_regions or None,
+            reference_regions=saved_reference_regions,
             search_shape_type=str(self._search_roi_shape_type or ""),
             search_points=[list(pt) for pt in (self._search_roi_points or [])] or None,
         )
@@ -1075,6 +1166,7 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
         if not os.path.exists(recipe_path):
             self._refresh_reference_region_fields()
             self._apply_find_backend_default()
+            self._set_reference_dirty(False)
             return
         recipe = load_recipe(recipe_path)
         if recipe.reference_image and os.path.exists(recipe.reference_image) and not self.image_path:
@@ -1106,6 +1198,7 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
             for region in (recipe.reference_regions or [])
             if isinstance(region, dict)
         ]
+        self._reference_regions_explicit = recipe.reference_regions is not None
         self._selected_reference_idx = None
         self._refresh_search_roi_status()
         self.cmb_backend_create.setCurrentText(BACKEND_KEY_TO_LABEL.get(recipe.backend, "Original"))
@@ -1118,11 +1211,19 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
         self._refresh_reference_region_list()
         self._refresh_reference_canvas()
         self._refresh_reference_region_fields()
+        self._set_reference_dirty(False)
         self._sync_recipe_controls("create")
         self._apply_find_backend_default()
 
     def _apply_reference_roi_from_recipe(self) -> bool:
         if not self._reference_regions:
+            if self._reference_regions_explicit:
+                self._selected_reference_idx = None
+                self._refresh_reference_region_list()
+                self._refresh_reference_canvas()
+                self._refresh_reference_region_fields()
+                self._set_reference_dirty(False, tr("template.status_loaded_recipe_roi"))
+                return True
             points = self._recipe_reference_points or []
             if not points:
                 return False
@@ -1140,7 +1241,7 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
         self._refresh_reference_region_list()
         self._refresh_reference_canvas()
         self._refresh_reference_region_fields()
-        self.lbl_reference_status.setText(tr("template.status_loaded_recipe_roi"))
+        self._set_reference_dirty(False, tr("template.status_loaded_recipe_roi"))
         return bool(self._reference_regions)
 
     def _load_existing_model(self, *, silent: bool) -> None:
@@ -1190,7 +1291,8 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
         self._point_drag_start = None
         self._point_drag_end = None
         self.btn_extract_points.setEnabled(False)
-        self.create_canvas.clear_roi()
+        self._clear_create_canvas_roi()
+        self._refresh_mask_count()
         self.edit_class_id.setText(class_id)
         self.find_model_path = self.paths.model_path
         self._update_find_model_label()
@@ -1213,26 +1315,29 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
         self.spin_num_features.setValue(max(16, int(getattr(detector, "num_features", 128) or 128)))
         self.spin_weak.setValue(float(getattr(detector, "weak_threshold", 30.0) or 30.0))
         self.spin_strong.setValue(float(getattr(detector, "strong_threshold", 60.0) or 60.0))
-        self.spin_angle_start.setValue(float(pose_ui.get("angle_start", 0.0) or 0.0))
-        self.spin_angle_end.setValue(float(pose_ui.get("angle_end", 360.0) or 360.0))
-        self.spin_angle_step.setValue(float(pose_ui.get("angle_step", 10.0) or 10.0))
-        self.spin_scale_start.setValue(float(pose_ui.get("scale_start", 1.0) or 1.0))
-        self.spin_scale_end.setValue(float(pose_ui.get("scale_end", 1.0) or 1.0))
-        self.spin_scale_step.setValue(float(pose_ui.get("scale_step", 0.05) or 0.05))
+        self.spin_angle_start.setValue(float(pose_ui.get("angle_start", self.spin_angle_start.value())))
+        self.spin_angle_end.setValue(float(pose_ui.get("angle_end", self.spin_angle_end.value())))
+        self.spin_angle_step.setValue(float(pose_ui.get("angle_step", self.spin_angle_step.value())))
+        self.spin_scale_start.setValue(float(pose_ui.get("scale_start", self.spin_scale_start.value())))
+        self.spin_scale_end.setValue(float(pose_ui.get("scale_end", self.spin_scale_end.value())))
+        self.spin_scale_step.setValue(float(pose_ui.get("scale_step", self.spin_scale_step.value())))
 
-    def _extract_points_from_roi(self) -> None:
+    def _extract_points_from_roi(self, _checked: object = None, *, show_errors: bool = True) -> bool:
         if self.image_bgr is None or not self.image_path:
-            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.load_reference_first"))
-            return
+            if show_errors:
+                QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.load_reference_first"))
+            return False
         if self.template_roi is None:
-            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.set_template_roi_first"))
-            return
+            if show_errors:
+                QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.set_template_roi_first"))
+            return False
 
         x, y, w, h = self.template_roi.x, self.template_roi.y, self.template_roi.w, self.template_roi.h
         roi_img = self.image_bgr[y : y + h, x : x + w].copy()
         if roi_img.size == 0:
-            QtWidgets.QMessageBox.critical(self, tr("common.invalid_template"), tr("template.roi_out_of_range"))
-            return
+            if show_errors:
+                QtWidgets.QMessageBox.critical(self, tr("common.invalid_template"), tr("template.roi_out_of_range"))
+            return False
 
         try:
             levels = parse_levels(self.edit_levels.text().strip())
@@ -1261,8 +1366,11 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
             if not extracted_levels:
                 raise RuntimeError("No template extracted.")
         except Exception as exc:
-            QtWidgets.QMessageBox.critical(self, tr("common.extract_failed"), str(exc))
-            return
+            if show_errors:
+                QtWidgets.QMessageBox.critical(self, tr("common.extract_failed"), str(exc))
+            else:
+                self.lbl_status.setText(tr("template.status_auto_extract_failed", error=exc))
+            return False
 
         self.editor_levels = [extracted_levels[0]]
         self._sync_editor_levels()
@@ -1271,11 +1379,24 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
         self._hover_feature_index = None
         self._point_drag_start = None
         self._point_drag_end = None
-        self.chk_edit_points.setChecked(True)
+        self.chk_edit_points.setChecked(False)
         self._refresh_create_overlays()
         self.lbl_status.setText(tr("template.status_extracted", count=self._feature_count))
+        return True
+
+    def _auto_extract_points_from_roi(self) -> None:
+        if self._build_thread is not None:
+            return
+        if self.chk_edit_points.isChecked():
+            return
+        if self.points_dirty:
+            self.lbl_status.setText(tr("template.status_auto_extract_skipped_dirty"))
+            return
+        self._extract_points_from_roi(show_errors=False)
 
     def _build_and_save(self) -> None:
+        if self._build_thread is not None:
+            return
         if self.image_bgr is None or not self.image_path:
             QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.load_reference_first"))
             return
@@ -1290,38 +1411,82 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
             return
 
         original_mode = "manual_points" if (self.points_dirty or self.original_mode == "manual_points") and self.editor_levels else "auto"
-        original_editor_levels = self.editor_levels if original_mode == "manual_points" else None
+        original_editor_levels = clone_levels(self.editor_levels) if original_mode == "manual_points" else None
 
         try:
-            pose_infos = pose_infos_from_ui_values(
-                float(self.spin_angle_start.value()),
-                float(self.spin_angle_end.value()),
-                float(self.spin_angle_step.value()),
-                float(self.spin_scale_start.value()),
-                float(self.spin_scale_end.value()),
-                float(self.spin_scale_step.value()),
-            )
-            detector, kept, skipped = build_multi_backend_detector(
-                class_id=self.edit_class_id.text().strip() or self.product_name or "object",
-                roi_img=roi_img,
-                roi_rect=self.template_roi,
-                mask_rects=self.mask_rects,
-                pose_infos=pose_infos,
-                pose_ui=self._pose_ui_values(),
-                levels=parse_levels(self.edit_levels.text().strip()),
-                num_features=int(self.spin_num_features.value()),
-                weak_threshold=float(self.spin_weak.value()),
-                strong_threshold=float(self.spin_strong.value()),
-                original_mode=original_mode,
-                original_editor_levels=original_editor_levels,
-                source_image_path=self.image_path,
-            )
-            os.makedirs(self.paths.role_dir, exist_ok=True)
-            save_detector_model(detector, self.paths.model_path)
+            levels = parse_levels(self.edit_levels.text().strip())
         except Exception as exc:
             QtWidgets.QMessageBox.critical(self, tr("common.create_failed"), str(exc))
             return
 
+        payload: Dict[str, object] = {
+            "class_id": self.edit_class_id.text().strip() or self.product_name or "object",
+            "roi_img": roi_img,
+            "roi_rect": self.template_roi,
+            "mask_rects": list(self.mask_rects),
+            "pose": self._pose_ui_values(),
+            "pose_ui": self._pose_ui_values(),
+            "levels": levels,
+            "num_features": int(self.spin_num_features.value()),
+            "weak_threshold": float(self.spin_weak.value()),
+            "strong_threshold": float(self.spin_strong.value()),
+            "original_mode": original_mode,
+            "original_editor_levels": original_editor_levels,
+            "source_image_path": self.image_path,
+            "role_dir": self.paths.role_dir,
+            "model_path": self.paths.model_path,
+        }
+        self._start_build_worker(payload)
+
+    def _start_build_worker(self, payload: Dict[str, object]) -> None:
+        progress = QtWidgets.QProgressDialog(
+            tr("template.saving_model"),
+            "",
+            0,
+            100,
+            self,
+        )
+        progress.setWindowTitle(tr("template.saving_model_title"))
+        progress.setCancelButton(None)
+        progress.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        self._build_progress = progress
+
+        thread = QtCore.QThread(self)
+        worker = _TemplateBuildWorker(payload)
+        worker.moveToThread(thread)
+        self._build_thread = thread
+        self._build_worker = worker
+
+        thread.started.connect(worker.run)
+        worker.progressChanged.connect(self._on_build_progress)
+        worker.finished.connect(self._on_build_finished)
+        worker.failed.connect(self._on_build_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._clear_build_worker_refs)
+
+        self._set_build_controls_enabled(False)
+        self.lbl_status.setText(tr("template.status_saving_model"))
+        progress.show()
+        thread.start()
+
+    def _on_build_progress(self, value: int, message: str) -> None:
+        if self._build_progress is not None:
+            self._build_progress.setLabelText(str(message or tr("template.saving_model")))
+            self._build_progress.setValue(max(0, min(100, int(value))))
+
+    def _on_build_finished(self, payload: object) -> None:
+        if self._build_progress is not None:
+            self._build_progress.setValue(100)
+            self._build_progress.close()
+        self._set_build_controls_enabled(True)
+        result = cast(Dict[str, object], payload)
+        detector = cast(ShapeLikeDetector, result.get("detector"))
+        kept = int(result.get("kept", 0) or 0)
+        skipped = int(result.get("skipped", 0) or 0)
         self.detector = detector
         self.detector_path = self.paths.model_path
         self.find_model_path = self.paths.model_path
@@ -1336,13 +1501,50 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
         self._point_drag_start = None
         self._point_drag_end = None
         self.btn_extract_points.setEnabled(False)
-        self.create_canvas.clear_roi()
+        self._clear_create_canvas_roi()
         self._refresh_create_overlays()
         self.lbl_status.setText(
             tr("template.status_saved_model", kept=kept, skipped=skipped, count=self._feature_count)
         )
         self.modelSaved.emit(self.paths.model_path, self.paths.recipe_path)
         QtWidgets.QMessageBox.information(self, tr("common.done"), tr("template.saved_model", path=self.paths.model_path))
+
+    def _on_build_failed(self, message: str) -> None:
+        if self._build_progress is not None:
+            self._build_progress.close()
+        self._set_build_controls_enabled(True)
+        QtWidgets.QMessageBox.critical(self, tr("common.create_failed"), str(message))
+
+    def _clear_build_worker_refs(self) -> None:
+        self._build_thread = None
+        self._build_worker = None
+        self._build_progress = None
+        self._refresh_mask_count()
+
+    def _set_build_controls_enabled(self, enabled: bool) -> None:
+        for widget in (
+            self.btn_build,
+            self.btn_build_pinned,
+            self.btn_open_image,
+            self.btn_load_model,
+            self.btn_extract_points,
+            self.btn_reset_points,
+            self.cmb_role,
+            self.btn_apply_selection,
+            self.btn_clear_roi,
+            self.btn_clear_masks,
+            self.btn_undo_mask,
+        ):
+            widget.setEnabled(bool(enabled))
+        if enabled:
+            self.btn_extract_points.setEnabled(self.template_roi is not None)
+            self.btn_undo_mask.setEnabled(bool(self.mask_rects))
+            if self.chk_edit_points.isChecked():
+                self.cmb_role.setEnabled(False)
+                self.btn_apply_selection.setEnabled(False)
+                self.btn_clear_roi.setEnabled(False)
+                self.btn_clear_masks.setEnabled(False)
+                self.btn_undo_mask.setEnabled(False)
 
     def _pose_ui_values(self) -> Dict[str, float]:
         return {
@@ -1354,12 +1556,28 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
             "scale_step": float(self.spin_scale_step.value()),
         }
 
-    def _apply_current_selection(self) -> None:
+    def _refresh_mask_count(self) -> None:
+        if hasattr(self, "lbl_mask_count"):
+            self.lbl_mask_count.setText(tr("template.mask_count", count=len(self.mask_rects)))
+        if hasattr(self, "btn_undo_mask"):
+            edit_enabled = bool(getattr(self, "chk_edit_points", None) and self.chk_edit_points.isChecked())
+            self.btn_undo_mask.setEnabled(bool(self.mask_rects) and self._build_thread is None and not edit_enabled)
+
+    def _clear_create_canvas_roi(self) -> None:
+        self._suppress_create_auto_apply = True
+        try:
+            self.create_canvas.clear_roi()
+        finally:
+            self._suppress_create_auto_apply = False
+
+    def _apply_current_selection(self, _checked: object = None, *, show_warnings: bool = True, auto: bool = False) -> bool:
         xywh = self.create_canvas.roi_xywh()
         if xywh is None:
-            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.drag_rect_first"))
-            return
+            if show_warnings:
+                QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.drag_rect_first"))
+            return False
         role = self.cmb_role.currentText()
+        should_auto_extract = False
         if role == "template_roi":
             self.template_roi = RoiRect(*xywh)
             self.mask_rects = []
@@ -1371,19 +1589,27 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
             self._point_drag_start = None
             self._point_drag_end = None
             self.lbl_status.setText(tr("template.status_template_roi_updated"))
+            should_auto_extract = True
         else:
             if self.template_roi is None:
-                QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.set_template_roi_first"))
-                return
+                if show_warnings:
+                    QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.set_template_roi_first"))
+                return False
             rel = _clamp_rect_to_roi(xywh, self.template_roi)
             if rel is None:
-                QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.mask_intersect_required"))
-                return
+                if show_warnings:
+                    QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.mask_intersect_required"))
+                return False
             self.mask_rects.append(rel)
             self.btn_extract_points.setEnabled(self.template_roi is not None)
             self.lbl_status.setText(tr("template.status_mask_added", count=len(self.mask_rects)))
-        self.create_canvas.clear_roi()
+            should_auto_extract = True
+        self._refresh_mask_count()
+        self._clear_create_canvas_roi()
         self._refresh_create_overlays()
+        if should_auto_extract:
+            self._auto_extract_points_from_roi()
+        return True
 
     def _clear_template_roi(self) -> None:
         self.template_roi = None
@@ -1394,16 +1620,30 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
         self._hover_feature_index = None
         self._point_drag_start = None
         self._point_drag_end = None
-        self.create_canvas.clear_roi()
+        self._clear_create_canvas_roi()
+        self._refresh_mask_count()
         self._refresh_create_overlays()
         self.lbl_status.setText(tr("template.status_template_roi_cleared"))
 
     def _clear_masks(self) -> None:
         self.mask_rects = []
         self.btn_extract_points.setEnabled(self.template_roi is not None)
-        self.create_canvas.clear_roi()
+        self._clear_create_canvas_roi()
+        self._refresh_mask_count()
         self._refresh_create_overlays()
         self.lbl_status.setText(tr("template.status_mask_cleared"))
+        self._auto_extract_points_from_roi()
+
+    def _undo_last_mask(self) -> None:
+        if not self.mask_rects:
+            return
+        self.mask_rects.pop()
+        self.btn_extract_points.setEnabled(self.template_roi is not None)
+        self._clear_create_canvas_roi()
+        self._refresh_mask_count()
+        self._refresh_create_overlays()
+        self.lbl_status.setText(tr("template.status_mask_undone", count=len(self.mask_rects)))
+        self._auto_extract_points_from_roi()
 
     def _on_role_changed(self, role: str) -> None:
         if role == "exclude_mask":
@@ -1425,23 +1665,40 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
                 preview_width=2,
             )
 
+    def _sync_point_edit_detail_visibility(self) -> None:
+        visible = bool(self.chk_edit_points.isChecked())
+        for widget in (
+            self.lbl_default_direction,
+            self.spin_point_label,
+            self.btn_reset_points,
+            self.lbl_point_help,
+        ):
+            widget.setVisible(visible)
+
     def _on_point_edit_toggled(self, enabled: bool) -> None:
         self.create_canvas.set_interaction_enabled(not enabled)
         self.cmb_role.setEnabled(not enabled)
         self.btn_apply_selection.setEnabled(not enabled)
         self.btn_clear_roi.setEnabled(not enabled)
         self.btn_clear_masks.setEnabled(not enabled)
+        self.btn_undo_mask.setEnabled((not enabled) and bool(self.mask_rects))
         self.btn_extract_points.setEnabled(self.template_roi is not None)
         if enabled:
             self.lbl_status.setText(tr("template.status_point_edit_enabled"))
         else:
             self._point_drag_start = None
             self._point_drag_end = None
+        self._sync_point_edit_detail_visibility()
         self._refresh_create_overlays()
 
     def _on_create_canvas_shape_changed(self) -> None:
+        if self._suppress_create_auto_apply:
+            return
         if self.chk_edit_points.isChecked():
             return
+        if self._build_thread is not None:
+            return
+        self._apply_current_selection(show_warnings=False, auto=True)
 
     def _on_create_canvas_pressed(self, button: int, x: int, y: int) -> None:
         if not self.chk_edit_points.isChecked():
@@ -1743,6 +2000,16 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
             return OverlayShape(shape_type="rect", xywh=(x, y, w, h), color=color, width=width, dash=dash)
         return OverlayShape(shape_type="rect", xywh=(0, 0, 1, 1), color=color, width=width, dash=dash)
 
+    def _set_reference_dirty(self, dirty: bool, status_text: str = "") -> None:
+        self._reference_dirty = bool(dirty)
+        if hasattr(self, "btn_save_reference_roi"):
+            self.btn_save_reference_roi.setEnabled(self._reference_dirty or bool(self._reference_regions))
+        if status_text and hasattr(self, "lbl_reference_status"):
+            self.lbl_reference_status.setText(status_text)
+
+    def _reference_dirty_status(self) -> str:
+        return tr("template.status_reference_dirty", count=len(self._reference_regions))
+
     def _refresh_reference_region_list(self) -> None:
         if not hasattr(self, "table_reference_regions"):
             return
@@ -1758,13 +2025,13 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
                 if isinstance(pt, (list, tuple)) and len(pt) >= 2
             ]
             if shape_type == "polygon":
-                info_text = f"Polygon 路 {len(points)} pts"
+                info_text = f"Polygon {len(points)} pts"
             elif len(points) >= 2:
                 x0, y0 = float(points[0][0]), float(points[0][1])
                 x1, y1 = float(points[1][0]), float(points[1][1])
                 w = max(1, int(round(abs(x1 - x0))))
                 h = max(1, int(round(abs(y1 - y0))))
-                info_text = f"Rect 路 {w}x{h}"
+                info_text = f"Rect {w}x{h}"
             else:
                 info_text = "Rect"
             row = self.table_reference_regions.rowCount()
@@ -1832,9 +2099,7 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
         region["display_name"] = display_name
         self._refresh_reference_region_list()
         self._refresh_reference_region_fields()
-        self._save_recipe()
-        self.referenceRegionsChanged.emit()
-        self.lbl_reference_status.setText(tr("template.status_reference_name_updated", name=display_name))
+        self._set_reference_dirty(True, tr("template.status_reference_name_updated_unsaved", name=display_name))
 
     def _refresh_reference_canvas(self) -> None:
         overlays: List[OverlayShape] = []
@@ -1908,9 +2173,7 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
         self._refresh_reference_region_list()
         self._refresh_reference_canvas()
         self._refresh_reference_region_fields()
-        self._save_recipe()
-        self.referenceRegionsChanged.emit()
-        self.lbl_reference_status.setText(tr("template.status_reference_deleted"))
+        self._set_reference_dirty(True, tr("template.status_reference_deleted_unsaved", count=len(self._reference_regions)))
 
     def _on_reference_canvas_shape_changed(self) -> None:
         if self._syncing_reference_view:
@@ -1920,6 +2183,7 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
             return
         if self._selected_reference_idx is None:
             label = self._next_reference_label()
+            self._reference_regions_explicit = True
             self._reference_regions.append(
                 {
                     "reference_label": label,
@@ -1929,40 +2193,40 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
                     "points": points,
                 }
             )
-            self._selected_reference_idx = len(self._reference_regions) - 1
+            self._selected_reference_idx = None
             self._refresh_reference_region_list()
             self._refresh_reference_canvas()
             self._refresh_reference_region_fields()
-            self._save_recipe()
-            self.lbl_reference_status.setText(tr("template.status_reference_added", label=label))
+            self._set_reference_dirty(True, tr("template.status_reference_added_unsaved", label=label, count=len(self._reference_regions)))
             return
         if 0 <= self._selected_reference_idx < len(self._reference_regions):
+            self._reference_regions_explicit = True
             region = self._reference_regions[self._selected_reference_idx]
             region["shape_type"] = shape_type
             region["points"] = points
             label = str(region.get("output_label") or region.get("reference_label") or f"roi{self._selected_reference_idx + 1}")
             self._refresh_reference_region_list()
             self._refresh_reference_canvas()
-            self._save_recipe()
-            self.lbl_reference_status.setText(tr("template.status_reference_updated", label=label))
+            self._set_reference_dirty(True, tr("template.status_reference_updated_unsaved", label=label))
 
     def _on_reference_shape_changed(self, shape_name: str) -> None:
         self.ref_canvas.draw_shape = "polygon" if shape_name == "polygon" else "rect"
 
-    def _load_reference_roi_from_json(self, *, silent: bool) -> None:
+    def _load_reference_roi_from_json(self, *, silent: bool) -> bool:
         if not self.image_path or not os.path.exists(self.image_path):
             if not silent:
                 QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.load_reference_first"))
-            return
+            return False
         jpath = labelme_io.labelme_json_of_image(self.image_path)
         if not os.path.exists(jpath):
             self._reference_regions = []
             self._selected_reference_idx = None
             self._refresh_reference_region_list()
             self._refresh_reference_canvas()
+            self._refresh_reference_region_fields()
             if not silent:
                 QtWidgets.QMessageBox.information(self, tr("common.info"), tr("template.no_reference_json"))
-            return
+            return False
         try:
             regions: List[Dict[str, object]] = []
             for shape in labelme_io.list_shapes_from_labelme(jpath, label_prefix="roi"):
@@ -1993,13 +2257,14 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
             if not regions:
                 raise RuntimeError(tr("template.no_reference_roi_in_json"))
             self._reference_regions = regions
+            self._reference_regions_explicit = True
             self._selected_reference_idx = None
             self._refresh_reference_region_list()
             self._refresh_reference_canvas()
             self._refresh_reference_region_fields()
-            self.lbl_reference_status.setText(tr("template.status_reference_loaded", count=len(regions)))
-            self._save_recipe()
-            self.referenceRegionsChanged.emit()
+            status = tr("template.status_reference_loaded_unsaved", count=len(regions))
+            self._set_reference_dirty(True, status)
+            return True
         except Exception as exc:
             self._reference_regions = []
             self._selected_reference_idx = None
@@ -2008,6 +2273,7 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
             self._refresh_reference_region_fields()
             if not silent:
                 QtWidgets.QMessageBox.warning(self, tr("common.load_failed"), str(exc))
+            return False
 
     def _save_reference_roi_to_json(self) -> None:
         if not self.image_path or not os.path.exists(self.image_path):
@@ -2058,21 +2324,53 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
         except Exception as exc:
             QtWidgets.QMessageBox.warning(self, tr("common.save_failed"), str(exc))
             return
+        self._reference_regions_explicit = True
         self._save_recipe()
+        self._set_reference_dirty(False)
         self.referenceRegionsChanged.emit()
         self.lbl_reference_status.setText(tr("template.status_reference_saved", count=len(self._reference_regions)))
 
+    def _save_reference_roi_config(self, _checked: object = None) -> None:
+        try:
+            self._reference_regions_explicit = True
+            self._save_recipe()
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, tr("common.save_failed"), str(exc))
+            return
+        self._set_reference_dirty(False, tr("template.status_reference_config_saved", count=len(self._reference_regions)))
+        self.referenceRegionsChanged.emit()
+
+    def _confirm_reference_roi_discard(self) -> bool:
+        if not self._reference_dirty:
+            return True
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            tr("template.unsaved_reference_title"),
+            tr("template.unsaved_reference_message", count=len(self._reference_regions)),
+            (
+                QtWidgets.QMessageBox.StandardButton.Save
+                | QtWidgets.QMessageBox.StandardButton.Discard
+                | QtWidgets.QMessageBox.StandardButton.Cancel
+            ),
+            QtWidgets.QMessageBox.StandardButton.Save,
+        )
+        if reply == QtWidgets.QMessageBox.StandardButton.Save:
+            self._save_reference_roi_config()
+            return not self._reference_dirty
+        if reply == QtWidgets.QMessageBox.StandardButton.Discard:
+            return True
+        return False
+
     def _clear_reference_roi(self) -> None:
         self._reference_regions = []
+        self._reference_regions_explicit = True
         self._selected_reference_idx = None
         self._refresh_reference_region_list()
         self._refresh_reference_canvas()
         self._refresh_reference_region_fields()
         self._recipe_reference_shape_type = ""
         self._recipe_reference_points = []
-        self._save_recipe()
-        self.referenceRegionsChanged.emit()
-        self.lbl_reference_status.setText(tr("template.status_reference_cleared"))
+        self._set_reference_dirty(True, tr("template.status_reference_cleared_unsaved"))
 
     def _search_roi_xywh(self) -> Optional[Tuple[int, int, int, int]]:
         points = [
@@ -2335,6 +2633,13 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
         self.lbl_find_status.setText(status_msg)
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        if self._build_thread is not None:
+            event.ignore()
+            self.lbl_status.setText(tr("template.status_saving_model"))
+            return
+        if not self._confirm_reference_roi_discard():
+            event.ignore()
+            return
         self._clear_find_images()
         super().closeEvent(event)
 

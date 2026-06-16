@@ -18,6 +18,12 @@ from ui.roi_overlay_colors import overlay_style_for_label, search_region_style
 
 
 _RUNTIME_OVERLAY_WIDTH_MULTIPLIER = 3.0
+_RUNTIME_CENTER_DISTANCE_OK_COLORS = (
+    QtGui.QColor("#22c55e"),
+    QtGui.QColor("#40c4ff"),
+    QtGui.QColor("#f59e0b"),
+    QtGui.QColor("#c084fc"),
+)
 
 
 def embedding_test_root(anchor_file: str) -> Path:
@@ -321,6 +327,60 @@ def _segment_tuple(value: object) -> tuple[tuple[float, float], tuple[float, flo
     return p0, p1
 
 
+def _center_points_from_measurement(measurement: dict) -> list[tuple[float, float]]:
+    raw_centers = measurement.get("center_points")
+    points: list[tuple[float, float]] = []
+    if isinstance(raw_centers, list):
+        for point in raw_centers:
+            parsed = _point_tuple(point)
+            if parsed is not None:
+                points.append(parsed)
+    return points
+
+
+def _offset_center_distance_dimension(
+    measurement: dict,
+    segment: tuple[tuple[float, float], tuple[float, float]],
+    index: int,
+) -> tuple[
+    tuple[tuple[float, float], tuple[float, float]],
+    list[tuple[tuple[float, float], tuple[float, float]]],
+    tuple[float, float],
+]:
+    centers = _center_points_from_measurement(measurement)
+    p0, p1 = segment
+    if len(centers) >= 2:
+        c0, c1 = centers[0], centers[1]
+    else:
+        c0, c1 = p0, p1
+    mode = str(measurement.get("distance_mode", "vertical") or "vertical").strip().lower()
+    offset = 34.0 + float(index) * 46.0
+    if mode == "horizontal":
+        anchor_y = max(float(c0[1]), float(c1[1]), float(p0[1]), float(p1[1])) + offset
+        shifted = ((float(c0[0]), anchor_y), (float(c1[0]), anchor_y))
+        leaders = [((float(c0[0]), float(c0[1])), shifted[0]), ((float(c1[0]), float(c1[1])), shifted[1])]
+        return shifted, leaders, ((float(c0[0]) + float(c1[0])) * 0.5, anchor_y + 20.0)
+    if mode == "euclidean":
+        dx = float(c1[0]) - float(c0[0])
+        dy = float(c1[1]) - float(c0[1])
+        length = max(1.0, float((dx * dx + dy * dy) ** 0.5))
+        nx = -dy / length
+        ny = dx / length
+        shifted = (
+            (float(c0[0]) + nx * offset, float(c0[1]) + ny * offset),
+            (float(c1[0]) + nx * offset, float(c1[1]) + ny * offset),
+        )
+        leaders = [((float(c0[0]), float(c0[1])), shifted[0]), ((float(c1[0]), float(c1[1])), shifted[1])]
+        return shifted, leaders, (
+            (shifted[0][0] + shifted[1][0]) * 0.5 + nx * 18.0,
+            (shifted[0][1] + shifted[1][1]) * 0.5 + ny * 18.0,
+        )
+    anchor_x = max(float(c0[0]), float(c1[0]), float(p0[0]), float(p1[0])) + offset
+    shifted = ((anchor_x, float(c0[1])), (anchor_x, float(c1[1])))
+    leaders = [((float(c0[0]), float(c0[1])), shifted[0]), ((float(c1[0]), float(c1[1])), shifted[1])]
+    return shifted, leaders, (anchor_x + 44.0, (float(c0[1]) + float(c1[1])) * 0.5)
+
+
 def _draw_runtime_measurements(
     painter: QtGui.QPainter,
     source: str | RuntimePreviewFrame,
@@ -329,11 +389,31 @@ def _draw_runtime_measurements(
     display_size: QtCore.QSize | None = None,
 ) -> None:
     overlay_scale = _runtime_measurement_overlay_scale(source_size, display_size)
+    center_distance_index = 0
     for measurement in _runtime_source_measurements(source):
         measurement_type = str(measurement.get("type", "") or "").strip()
         pred = str(measurement.get("pred", "") or "").strip().upper()
         color = QtGui.QColor("#22c55e" if pred == "OK" else "#ff4040" if pred == "NG" else "#f97316")
-        if measurement_type in {"line_distance", "line_distance_ref_normal"}:
+        if measurement_type in {"pin_center_distance", "bright_block_y_distance", "bright_block_center"}:
+            dimension_segment = _segment_tuple(measurement.get("dimension_segment"))
+            if dimension_segment is not None:
+                _draw_runtime_segment(painter, dimension_segment, color, overlay_scale=overlay_scale)
+            raw_centers = measurement.get("center_points")
+            center_points = []
+            if isinstance(raw_centers, list):
+                for point in raw_centers:
+                    parsed = _point_tuple(point)
+                    if parsed is not None:
+                        center_points.append(parsed)
+            if center_points:
+                _draw_runtime_points(
+                    painter,
+                    center_points,
+                    QtGui.QColor("#facc15"),
+                    overlay_scale=overlay_scale,
+                )
+            continue
+        if measurement_type in {"line_distance", "line_distance_ref_normal", "center_distance"}:
             segment_a = _segment_tuple(measurement.get("line_a_segment"))
             if segment_a is None:
                 line_a = measurement.get("line_a")
@@ -350,11 +430,34 @@ def _draw_runtime_measurements(
                 _draw_runtime_segment(painter, segment_b, color, overlay_scale=overlay_scale)
             dimension_segment = _segment_tuple(measurement.get("dimension_segment"))
             if dimension_segment is not None:
+                text_pos = None
+                if measurement_type == "center_distance":
+                    if pred != "NG":
+                        color = _RUNTIME_CENTER_DISTANCE_OK_COLORS[
+                            center_distance_index % len(_RUNTIME_CENTER_DISTANCE_OK_COLORS)
+                        ]
+                    dimension_segment, leaders, text_pos = _offset_center_distance_dimension(
+                        measurement,
+                        dimension_segment,
+                        center_distance_index,
+                    )
+                    center_distance_index += 1
+                    for leader in leaders:
+                        _draw_runtime_segment(painter, leader, color, overlay_scale=max(1.0, overlay_scale * 0.45))
                 _draw_runtime_dimension(
                     painter,
                     dimension_segment,
                     color,
                     str(measurement.get("label", "") or ""),
+                    overlay_scale=overlay_scale,
+                    text_pos=text_pos,
+                )
+            center_points = _center_points_from_measurement(measurement)
+            if center_points:
+                _draw_runtime_points(
+                    painter,
+                    center_points,
+                    QtGui.QColor("#facc15"),
                     overlay_scale=overlay_scale,
                 )
             continue
@@ -392,6 +495,22 @@ def _draw_runtime_segment(
     painter.drawLine(QtCore.QPointF(x0, y0), QtCore.QPointF(x1, y1))
 
 
+def _draw_runtime_points(
+    painter: QtGui.QPainter,
+    points: list[tuple[float, float]],
+    color: QtGui.QColor,
+    *,
+    overlay_scale: float = 1.0,
+) -> None:
+    radius = max(4.0, 4.0 * float(overlay_scale))
+    pen = QtGui.QPen(color)
+    pen.setWidthF(max(2.0, 2.0 * float(overlay_scale)))
+    painter.setPen(pen)
+    painter.setBrush(QtGui.QBrush(color))
+    for x, y in points:
+        painter.drawEllipse(QtCore.QPointF(float(x), float(y)), radius, radius)
+
+
 def _draw_runtime_dimension(
     painter: QtGui.QPainter,
     segment: tuple[tuple[float, float], tuple[float, float]],
@@ -399,6 +518,7 @@ def _draw_runtime_dimension(
     text: str,
     *,
     overlay_scale: float = 1.0,
+    text_pos: tuple[float, float] | None = None,
 ) -> None:
     (x0, y0), (x1, y1) = segment
     scale = max(1.0, float(overlay_scale))
@@ -429,8 +549,12 @@ def _draw_runtime_dimension(
 
     if not text:
         return
-    tx = (x0 + x1) * 0.5 + nx * 16.0 * scale
-    ty = (y0 + y1) * 0.5 + ny * 16.0 * scale
+    if text_pos is None:
+        tx = (x0 + x1) * 0.5 + nx * 16.0 * scale
+        ty = (y0 + y1) * 0.5 + ny * 16.0 * scale
+    else:
+        tx = float(text_pos[0])
+        ty = float(text_pos[1])
     font = painter.font()
     font.setPixelSize(max(18, int(round(18.0 * scale))))
     font.setBold(True)

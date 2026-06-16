@@ -10,11 +10,19 @@ import algorithms.lazy_api as qr_core
 import numpy as np
 from common.algorithm_codes import learning_backbone_storage_code
 from algorithms.measurement import (
+    BRIGHT_BLOCK_CENTER_ALGORITHM,
+    BRIGHT_BLOCK_Y_DISTANCE_ALGORITHM,
     FIND_LINE_ALGORITHMS,
     LINE_DISTANCE_ALGORITHMS,
+    PIN_CENTER_DISTANCE_ALGORITHM,
+    judge_bright_block_y_distance,
     judge_edge_distance,
+    judge_pin_center_distance,
+    measure_bright_block_y_distance_from_array,
+    measure_bright_block_center_from_array,
     measure_edge_distance_from_array,
     measure_find_line_from_array,
+    measure_pin_center_distance_from_array,
 )
 from algorithms.traditional import TraditionalThresholdModel, compute_roi_metrics_from_array, metric_value
 from common import labelme_io
@@ -650,6 +658,7 @@ class ProductRuntimeContext:
         for item in measurement_items:
             params = dict(item.params or {})
             algorithm = self.algo.resolve_tool_algorithm(item.algorithm_code)
+            measurement_payload_override = None
             if algorithm in FIND_LINE_ALGORITHMS:
                 measurement = measure_find_line_from_array(
                     image,
@@ -668,6 +677,68 @@ class ProductRuntimeContext:
                     f" pos={measurement.position_px:.3f}px"
                     f" angle={measurement.angle_deg:.3f}deg"
                     f" residual={residual:.3f}"
+                )
+                unit = "px"
+            elif algorithm == BRIGHT_BLOCK_CENTER_ALGORITHM:
+                judged_value = None
+                lower = None
+                upper = None
+                residual = 0.0
+                unit = "px"
+                roi_label = str(item.roi_label or "").strip() or "roi"
+                try:
+                    measurement = measure_bright_block_center_from_array(
+                        image,
+                        shape_by_label=shape_by_label,
+                        preferred_label=roi_label,
+                        params=params,
+                    )
+                    pred = "OK"
+                    detail = (
+                        f"bright_block_center=({measurement.center_xy[0]:.3f},"
+                        f"{measurement.center_xy[1]:.3f})px"
+                        f" threshold={measurement.threshold:.1f}"
+                    )
+                    measurement_payload_override = None
+                except RuntimeError as exc:
+                    pred = "NG"
+                    detail = f"bright_block_center_missing: {exc}"
+                    measurement = None
+                    measurement_payload_override = {
+                        "type": BRIGHT_BLOCK_CENTER_ALGORITHM,
+                        "roi_label": roi_label,
+                        "center_points": [],
+                        "candidates": [],
+                        "pred": pred,
+                        "detail": str(exc),
+                    }
+            elif algorithm == PIN_CENTER_DISTANCE_ALGORITHM:
+                measurement = measure_pin_center_distance_from_array(
+                    image,
+                    shape_by_label=shape_by_label,
+                    preferred_label=str(item.roi_label or "").strip() or "roi",
+                    params=params,
+                )
+                pred, judged_value, lower, upper, unit = judge_pin_center_distance(measurement, params)
+                residual = 0.0
+                detail = (
+                    f"pin_center_distance={judged_value:.3f}{unit}"
+                    f" raw={measurement.distance_px:.3f}px"
+                    f" threshold={measurement.threshold:.1f}"
+                )
+            elif algorithm == BRIGHT_BLOCK_Y_DISTANCE_ALGORITHM:
+                measurement = measure_bright_block_y_distance_from_array(
+                    image,
+                    shape_by_label=shape_by_label,
+                    preferred_label=str(item.roi_label or "").strip() or "roi",
+                    params=params,
+                )
+                pred, judged_value, lower, upper, unit = judge_bright_block_y_distance(measurement, params)
+                residual = 0.0
+                detail = (
+                    f"bright_block_y_distance={judged_value:.3f}{unit}"
+                    f" raw={measurement.distance_px:.3f}px"
+                    f" threshold={measurement.threshold:.1f}"
                 )
             else:
                 measurement = measure_edge_distance_from_array(
@@ -695,10 +766,26 @@ class ProductRuntimeContext:
                 match_ms=match_ms,
                 infer_ms=0.0,
                 total_ms=0.0,
-                roi_label=measurement.roi_label,
+                roi_label=getattr(measurement, "roi_label", str(item.roi_label or "").strip() or "roi"),
                 detail=detail,
             )
-            rows_by_key[item.model_key]["measurement"] = measurement.to_dict()
+            measurement_payload = (
+                measurement_payload_override
+                if measurement_payload_override is not None
+                else measurement.to_dict()
+            )
+            if algorithm in {PIN_CENTER_DISTANCE_ALGORITHM, BRIGHT_BLOCK_Y_DISTANCE_ALGORITHM}:
+                measurement_payload.update(
+                    {
+                        "distance": float(judged_value),
+                        "unit": unit,
+                        "label": f"{judged_value:.3f}{unit}",
+                        "pred": pred,
+                    }
+                )
+            elif algorithm == BRIGHT_BLOCK_CENTER_ALGORITHM:
+                measurement_payload.update({"pred": pred})
+            rows_by_key[item.model_key]["measurement"] = measurement_payload
 
         return RuntimeFrameBatchPrediction(
             rows=[dict(rows_by_key[item.model_key]) for item in enabled_items],

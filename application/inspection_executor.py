@@ -11,6 +11,9 @@ from typing import List, Protocol
 import numpy as np
 
 from algorithms.measurement import (
+    BRIGHT_BLOCK_CENTER_ALGORITHM,
+    CENTER_DISTANCE_ALGORITHM,
+    CENTER_DISTANCE_ALGORITHMS,
     FittedLine,
     LINE_DISTANCE_ALGORITHMS,
     LINE_DISTANCE_REF_NORMAL_ALGORITHM,
@@ -24,6 +27,14 @@ _PASS_RESULT = "PASS"
 
 def _is_line_distance_item(item: InspectionItem) -> bool:
     return str(getattr(item, "algorithm_code", "") or "").strip() in LINE_DISTANCE_ALGORITHMS
+
+
+def _is_center_distance_item(item: InspectionItem) -> bool:
+    return str(getattr(item, "algorithm_code", "") or "").strip() in CENTER_DISTANCE_ALGORITHMS
+
+
+def _is_post_distance_item(item: InspectionItem) -> bool:
+    return _is_line_distance_item(item) or _is_center_distance_item(item)
 
 
 def _normalized_result(value: object) -> str:
@@ -113,8 +124,8 @@ class InspectionExecutor:
         item_rows: List[dict] = []
         enabled_item_results: List[InspectionItemResult] = []
         enabled_items = [item for item in request.items if item.enabled]
-        predicted_enabled_items = [item for item in enabled_items if not _is_line_distance_item(item)]
-        distance_items = [item for item in enabled_items if _is_line_distance_item(item)]
+        predicted_enabled_items = [item for item in enabled_items if not _is_post_distance_item(item)]
+        distance_items = [item for item in enabled_items if _is_post_distance_item(item)]
         batch_rows: List[dict] | None = None
         roi_shapes: tuple[object, ...] = ()
         batch_predict_from_frame = getattr(self._predictor, "predict_items_batch_from_frame", None)
@@ -131,7 +142,7 @@ class InspectionExecutor:
         elif callable(batch_predict) and predicted_enabled_items:
             batch_rows = [dict(row) for row in batch_predict(request.image_path, items=predicted_enabled_items)]
         predicted_index = 0
-        line_rows_by_item_id: dict[str, dict] = {}
+        rows_by_item_id: dict[str, dict] = {}
 
         for item in request.items:
             if not item.enabled:
@@ -148,7 +159,7 @@ class InspectionExecutor:
                     )
                 )
                 continue
-            if _is_line_distance_item(item):
+            if _is_post_distance_item(item):
                 continue
 
             if batch_rows is not None:
@@ -167,7 +178,7 @@ class InspectionExecutor:
             item_rows.append(dict(row))
             item_key = str(getattr(item, "item_id", "") or "").strip()
             if item_key:
-                line_rows_by_item_id[item_key] = dict(row)
+                rows_by_item_id[item_key] = dict(row)
             item_result = InspectionItemResult(
                 item_id=item.item_id,
                 display_name=item.display_name,
@@ -184,30 +195,40 @@ class InspectionExecutor:
             item_results.append(item_result)
             enabled_item_results.append(item_result)
 
-        line_distance_results: List[InspectionItemResult] = []
+        post_distance_results: List[InspectionItemResult] = []
         for distance_item in distance_items:
-            line_distance_row = self._build_find_line_distance_row(
-                distance_item=distance_item,
-                line_items=predicted_enabled_items,
-                line_rows_by_item_id=line_rows_by_item_id,
-                camera_id=request.camera_id,
-                image_path=request.image_path,
-            )
-            if line_distance_row is None:
+            if _is_center_distance_item(distance_item):
+                distance_row = self._build_center_distance_row(
+                    distance_item=distance_item,
+                    center_items=predicted_enabled_items,
+                    rows_by_item_id=rows_by_item_id,
+                    camera_id=request.camera_id,
+                    image_path=request.image_path,
+                )
+            else:
+                distance_row = self._build_find_line_distance_row(
+                    distance_item=distance_item,
+                    line_items=predicted_enabled_items,
+                    line_rows_by_item_id=rows_by_item_id,
+                    camera_id=request.camera_id,
+                    image_path=request.image_path,
+                )
+            if distance_row is None:
                 distance_algorithm = str(getattr(distance_item, "algorithm_code", "") or "").strip() or "line_distance"
-                line_distance_row = {
+                pair_detail = "center distance pair missing" if _is_center_distance_item(distance_item) else "line distance pair missing"
+                distance_row = {
                     "file_path": request.image_path,
-                    "file_name": str(distance_item.display_name or distance_item.item_id or "Line Distance"),
+                    "file_name": str(distance_item.display_name or distance_item.item_id or "Distance"),
                     "pred": "NG",
-                    "detail": "line distance pair missing",
+                    "detail": pair_detail,
                     "algorithm": distance_algorithm,
-                    "tool_name": str(distance_item.display_name or distance_item.item_id or "Line Distance"),
+                    "tool_name": str(distance_item.display_name or distance_item.item_id or "Distance"),
                     "camera_id": request.camera_id,
                     "roi_label": str(distance_item.roi_label or ""),
                     "params": dict(distance_item.params or {}),
                 }
-            item_rows.append(dict(line_distance_row))
-            line_distance_result = InspectionItemResult(
+            item_rows.append(dict(distance_row))
+            distance_result = InspectionItemResult(
                 item_id=distance_item.item_id,
                 display_name=distance_item.display_name,
                 camera_id=distance_item.camera_id,
@@ -215,14 +236,14 @@ class InspectionExecutor:
                 algorithm_code=distance_item.algorithm_code,
                 enabled=True,
                 params=dict(distance_item.params or {}),
-                result=str(line_distance_row.get("pred", "NG") or "NG"),
-                detail=self._build_detail(line_distance_row),
-                value=self._row_value(line_distance_row),
-                unit=self._row_unit(line_distance_row),
+                result=str(distance_row.get("pred", "NG") or "NG"),
+                detail=self._build_detail(distance_row),
+                value=self._row_value(distance_row),
+                unit=self._row_unit(distance_row),
             )
-            item_results.append(line_distance_result)
-            enabled_item_results.append(line_distance_result)
-            line_distance_results.append(line_distance_result)
+            item_results.append(distance_result)
+            enabled_item_results.append(distance_result)
+            post_distance_results.append(distance_result)
 
         if not enabled_item_results:
             return InspectionExecutionResponse(
@@ -235,8 +256,8 @@ class InspectionExecutor:
                 roi_shapes=roi_shapes,
             )
 
-        if line_distance_results:
-            decision_item_results = line_distance_results
+        if post_distance_results:
+            decision_item_results = post_distance_results
         else:
             decision_item_results = [
                 item
@@ -255,13 +276,13 @@ class InspectionExecutor:
         )
         infer_ms = sum(self._extract_timing_fields(row)[1] for row in item_rows)
         total_ms = match_ms + infer_ms if (match_ms > 0.0 or infer_ms > 0.0) else 0.0
-        if line_distance_results:
+        if post_distance_results:
             distance_detail = "; ".join(
                 self._strip_timing_tokens(item.detail)
-                for item in line_distance_results
+                for item in post_distance_results
                 if self._strip_timing_tokens(item.detail)
             )
-            camera_detail_parts = [distance_detail] if distance_detail else ["Line Distance"]
+            camera_detail_parts = [distance_detail] if distance_detail else ["Distance"]
             if match_ms > 0:
                 camera_detail_parts.append(f"match={match_ms:.1f}ms")
             if infer_ms > 0:
@@ -278,12 +299,13 @@ class InspectionExecutor:
             for row in item_rows
             if isinstance(row.get("measurement"), dict)
         )
-        line_distance_measurements = tuple(
+        post_distance_measurements = tuple(
             measurement
             for measurement in raw_measurements
             if str(measurement.get("type", "") or "").strip() in LINE_DISTANCE_ALGORITHMS
+            or str(measurement.get("type", "") or "").strip() in CENTER_DISTANCE_ALGORITHMS
         )
-        measurements = line_distance_measurements or raw_measurements
+        measurements = post_distance_measurements or raw_measurements
 
         return InspectionExecutionResponse(
             camera_id=request.camera_id,
@@ -804,6 +826,98 @@ class InspectionExecutor:
         return candidates[0][0], candidates[0][1], candidates[1][0], candidates[1][1]
 
     @staticmethod
+    def _center_item_ref(item: InspectionItem) -> str:
+        return str(getattr(item, "item_id", "") or "").strip()
+
+    @staticmethod
+    def _center_point_from_row(row: dict) -> tuple[float, float] | None:
+        if not _is_passing_result(row.get("pred")):
+            return None
+        measurement = row.get("measurement")
+        if not isinstance(measurement, dict):
+            return None
+        raw_points = measurement.get("center_points")
+        if isinstance(raw_points, (list, tuple)) and raw_points:
+            point = raw_points[0]
+            if isinstance(point, (list, tuple)) and len(point) >= 2:
+                try:
+                    return float(point[0]), float(point[1])
+                except (TypeError, ValueError):
+                    return None
+        raw_center = measurement.get("center", measurement.get("center_xy"))
+        if isinstance(raw_center, (list, tuple)) and len(raw_center) >= 2:
+            try:
+                return float(raw_center[0]), float(raw_center[1])
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    @classmethod
+    def _resolve_center_distance_pair(
+        cls,
+        *,
+        distance_item: InspectionItem,
+        center_items: List[InspectionItem],
+        rows_by_item_id: dict[str, dict],
+    ) -> tuple[InspectionItem, dict, InspectionItem, dict] | None:
+        params = dict(getattr(distance_item, "params", {}) or {})
+        center_a_id = str(params.get("center_a_item_id", "") or "").strip()
+        center_b_id = str(params.get("center_b_item_id", "") or "").strip()
+        items_by_id = {
+            cls._center_item_ref(item): item
+            for item in center_items
+            if cls._center_item_ref(item)
+        }
+        if center_a_id or center_b_id:
+            if not center_a_id or not center_b_id or center_a_id == center_b_id:
+                return None
+            item_a = items_by_id.get(center_a_id)
+            item_b = items_by_id.get(center_b_id)
+            row_a = rows_by_item_id.get(center_a_id)
+            row_b = rows_by_item_id.get(center_b_id)
+            if (
+                item_a is not None
+                and item_b is not None
+                and row_a is not None
+                and row_b is not None
+                and cls._center_point_from_row(row_a) is not None
+                and cls._center_point_from_row(row_b) is not None
+            ):
+                return item_a, row_a, item_b, row_b
+            return None
+
+        candidates: list[tuple[InspectionItem, dict]] = []
+        for item in center_items:
+            algorithm = str(getattr(item, "algorithm_code", "") or "").strip()
+            if algorithm != BRIGHT_BLOCK_CENTER_ALGORITHM:
+                continue
+            key = cls._center_item_ref(item)
+            row = rows_by_item_id.get(key)
+            if row is None or cls._center_point_from_row(row) is None:
+                continue
+            candidates.append((item, row))
+        if len(candidates) < 2:
+            return None
+        return candidates[0][0], candidates[0][1], candidates[1][0], candidates[1][1]
+
+    @staticmethod
+    def _center_distance_info(
+        center_a: tuple[float, float],
+        center_b: tuple[float, float],
+        distance_mode: object,
+    ) -> tuple[float, tuple[tuple[float, float], tuple[float, float]], str]:
+        mode = str(distance_mode or "vertical").strip().lower()
+        if mode not in {"vertical", "horizontal", "euclidean"}:
+            mode = "vertical"
+        ax, ay = float(center_a[0]), float(center_a[1])
+        bx, by = float(center_b[0]), float(center_b[1])
+        if mode == "horizontal":
+            return abs(bx - ax), ((ax, ay), (bx, ay)), mode
+        if mode == "euclidean":
+            return float(math.hypot(bx - ax, by - ay)), ((ax, ay), (bx, by)), mode
+        return abs(by - ay), ((ax, ay), (ax, by)), mode
+
+    @staticmethod
     def _distance_between_segments(
         segment_a: tuple[tuple[float, float], tuple[float, float]],
         segment_b: tuple[tuple[float, float], tuple[float, float]],
@@ -1010,6 +1124,143 @@ class InspectionExecutor:
                 "line_b_item_id": cls._line_item_ref(item_b),
                 "line_a": dict(row_a.get("measurement", {}) or {}),
                 "line_b": dict(row_b.get("measurement", {}) or {}),
+            },
+        }
+
+    @classmethod
+    def _build_center_distance_row(
+        cls,
+        *,
+        distance_item: InspectionItem,
+        center_items: List[InspectionItem],
+        rows_by_item_id: dict[str, dict],
+        camera_id: str,
+        image_path: str,
+    ) -> dict | None:
+        pair = cls._resolve_center_distance_pair(
+            distance_item=distance_item,
+            center_items=center_items,
+            rows_by_item_id=rows_by_item_id,
+        )
+        if pair is None:
+            return None
+
+        item_a, row_a, item_b, row_b = pair
+        center_a = cls._center_point_from_row(row_a)
+        center_b = cls._center_point_from_row(row_b)
+        if center_a is None or center_b is None:
+            return None
+
+        params = dict(getattr(distance_item, "params", {}) or {})
+        distance_px, dimension_segment, distance_mode = cls._center_distance_info(
+            center_a,
+            center_b,
+            params.get("distance_mode", "vertical"),
+        )
+        unit = str(params.get("limit_unit", "px") or "px").strip().lower()
+        if unit not in {"px", "mm"}:
+            unit = "px"
+        value = float(distance_px)
+        pixel_size = cls._optional_float(params.get("pixel_size_mm")) or 0.0
+        if unit == "mm":
+            if pixel_size <= 0.0:
+                pixel_size = cls._item_param_float(item_a, "pixel_size_mm") or 0.0
+            if pixel_size <= 0.0:
+                pixel_size = cls._item_param_float(item_b, "pixel_size_mm") or 0.0
+            if pixel_size <= 0.0:
+                raise RuntimeError("pixel_size_mm is required when center-distance limits use mm")
+            value = float(distance_px * pixel_size)
+        if unit == "mm":
+            value, raw_value, compensation_enabled, compensation_slope, compensation_intercept = cls._compensated_value(
+                value,
+                params,
+            )
+        else:
+            _ignored_value, raw_value, _configured_compensation_enabled, compensation_slope, compensation_intercept = cls._compensated_value(
+                value,
+                params,
+            )
+            value = raw_value
+            compensation_enabled = False
+        reported_value = cls._round_measurement_value(value, unit)
+        lower = cls._optional_float(params.get("lower_limit", params.get(f"lower_limit_{unit}")))
+        upper = cls._optional_float(params.get("upper_limit", params.get(f"upper_limit_{unit}")))
+        ok = True
+        if lower is not None and reported_value < lower:
+            ok = False
+        if upper is not None and reported_value > upper:
+            ok = False
+
+        name_a = str(getattr(item_a, "display_name", "") or getattr(item_a, "roi_label", "") or "CenterA")
+        name_b = str(getattr(item_b, "display_name", "") or getattr(item_b, "roi_label", "") or "CenterB")
+        display_name = str(getattr(distance_item, "display_name", "") or getattr(distance_item, "item_id", "") or "Center Distance")
+        detail = (
+            f"center_distance={cls._format_measurement_value(reported_value, unit)}"
+            f" mode={distance_mode}"
+            f" centers={name_a}/{name_b}"
+            f" raw={distance_px:.3f}px"
+        )
+        if compensation_enabled:
+            detail += (
+                f" compensation=k={compensation_slope:.6g},b={compensation_intercept:.6g}"
+            )
+        if lower is not None or upper is not None:
+            detail += (
+                f" spec={cls._format_measurement_limit(lower, unit)}"
+                f"..{cls._format_measurement_limit(upper, unit)}"
+            )
+
+        pred = "OK" if ok else "NG"
+        return {
+            "file_path": image_path,
+            "file_name": display_name,
+            "gt": "",
+            "pred": pred,
+            "diff": 0.0,
+            "sim_ok": None,
+            "sim_ng": None,
+            "value": reported_value,
+            "unit": unit,
+            "threshold": upper,
+            "match_ms": max(
+                (
+                    float(row.get("match_ms") or 0.0)
+                    for row in (row_a, row_b)
+                    if row.get("match_ms") is not None
+                ),
+                default=0.0,
+            ),
+            "infer_ms": 0.0,
+            "total_ms": 0.0,
+            "json_name": str(row_a.get("json_name", row_b.get("json_name", "")) or ""),
+            "detail": detail,
+            "algorithm": CENTER_DISTANCE_ALGORITHM,
+            "tool_name": display_name,
+            "camera_id": camera_id,
+            "roi_label": str(getattr(distance_item, "roi_label", "") or ""),
+            "params": params,
+            "measurement": {
+                "type": CENTER_DISTANCE_ALGORITHM,
+                "distance_px": float(distance_px),
+                "distance": reported_value,
+                "unit": unit,
+                "pixel_size_mm": pixel_size,
+                "compensation_enabled": compensation_enabled,
+                "compensation_slope": compensation_slope,
+                "compensation_intercept": compensation_intercept,
+                "dimension_segment": [[float(x), float(y)] for x, y in dimension_segment],
+                "line_segment": [[float(x), float(y)] for x, y in dimension_segment],
+                "center_points": [
+                    [float(center_a[0]), float(center_a[1])],
+                    [float(center_b[0]), float(center_b[1])],
+                ],
+                "distance_mode": distance_mode,
+                "label": cls._format_measurement_value(reported_value, unit),
+                "pred": pred,
+                "center_a_item_id": cls._center_item_ref(item_a),
+                "center_b_item_id": cls._center_item_ref(item_b),
+                "center_a": dict(row_a.get("measurement", {}) or {}),
+                "center_b": dict(row_b.get("measurement", {}) or {}),
             },
         }
 

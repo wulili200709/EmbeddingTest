@@ -7,7 +7,12 @@ from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from algorithms.measurement import FIND_LINE_ALGORITHMS, LINE_DISTANCE_ALGORITHMS
+from algorithms.measurement import (
+    BRIGHT_BLOCK_CENTER_ALGORITHM,
+    CENTER_DISTANCE_ALGORITHMS,
+    FIND_LINE_ALGORITHMS,
+    LINE_DISTANCE_ALGORITHMS,
+)
 from ui.i18n import tr, tr_runtime_state, tr_status_text
 from ui.roi_overlay_colors import merge_roi_statuses
 
@@ -775,23 +780,37 @@ class RuntimeModePage(QtWidgets.QWidget):
                 default_names.add(item_id)
             if name in default_names:
                 return tr(display_key)
+        if algorithm in CENTER_DISTANCE_ALGORITHMS:
+            default_names = {"", "Center Distance", "center_distance", tr("debug.algorithm.center_distance")}
+            if item_id.startswith("center_distance"):
+                default_names.add(item_id)
+            if name in default_names:
+                return tr("debug.algorithm.center_distance")
         return name or str(row.get("roi_label", "") or item_id)
 
     @staticmethod
     def _runtime_display_rows_for_camera(rows: list[dict]) -> list[dict]:
         camera_rows = list(rows or [])
         line_helper_ids: set[str] = set()
+        center_helper_ids: set[str] = set()
         for row in camera_rows:
-            if str(row.get("algorithm_code", "") or "").strip() not in LINE_DISTANCE_ALGORITHMS:
+            algorithm = str(row.get("algorithm_code", "") or "").strip()
+            if algorithm not in LINE_DISTANCE_ALGORITHMS and algorithm not in CENTER_DISTANCE_ALGORITHMS:
                 continue
             params = row.get("params", {})
             if not isinstance(params, dict):
                 continue
-            for key in ("line_a_item_id", "line_b_item_id"):
+            helper_ids = center_helper_ids if algorithm in CENTER_DISTANCE_ALGORITHMS else line_helper_ids
+            keys = (
+                ("center_a_item_id", "center_b_item_id")
+                if algorithm in CENTER_DISTANCE_ALGORITHMS
+                else ("line_a_item_id", "line_b_item_id")
+            )
+            for key in keys:
                 item_id = str(params.get(key, "") or "").strip()
                 if item_id:
-                    line_helper_ids.add(item_id)
-        if not line_helper_ids:
+                    helper_ids.add(item_id)
+        if not line_helper_ids and not center_helper_ids:
             return camera_rows
         return [
             row
@@ -799,6 +818,10 @@ class RuntimeModePage(QtWidgets.QWidget):
             if not (
                 str(row.get("algorithm_code", "") or "").strip() in FIND_LINE_ALGORITHMS
                 and str(row.get("item_id", "") or "").strip() in line_helper_ids
+            )
+            and not (
+                str(row.get("algorithm_code", "") or "").strip() == BRIGHT_BLOCK_CENTER_ALGORITHM
+                and str(row.get("item_id", "") or "").strip() in center_helper_ids
             )
         ]
 
