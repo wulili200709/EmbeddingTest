@@ -2,122 +2,34 @@
 
 from __future__ import annotations
 
-from common import labelme_io
+import os
+from typing import List, Optional
 
-from . import page as page_module
+from PySide6 import QtWidgets
+
+from common import labelme_io
+from common.app_logging import get_app_logger
+
+from application.auto_roi_service import (
+    AutoRoiIssue,
+    missing_roi_files as service_missing_roi_files,
+    run_auto_roi_batch,
+    validate_autogen_reference,
+)
+from ui.debug.tool_page.camera_roles import filter_paths_for_camera as _filter_paths_for_camera
 from ui.i18n import tr
 
-List = page_module.List
-Optional = page_module.Optional
-os = page_module.os
-QtCore = page_module.QtCore
-QtWidgets = page_module.QtWidgets
-qr_core = page_module.qr_core
-shape_locator = page_module.shape_locator
-_filter_paths_for_camera = page_module._filter_paths_for_camera
+LOGGER = get_app_logger(__name__)
 
 
-def _set_reference(self, path: str) -> None:
-    camera_role = self.current_camera_role()
-    self._clear_training_roi_review_state(camera_role)
-    self.ref_image = path
-    if self.lbl_ref is not None:
-        self.lbl_ref.setText(f"{tr('debug.reference_image')}: {os.path.basename(path)}")
-        self.lbl_ref.setToolTip(path)
-    try:
-        recipe = self.shape_recipe_for_role(camera_role) or shape_locator.load_recipe_for_product(
-            self.session.product_dir,
-            camera_role,
-        )
-        recipe.reference_image = path
-        recipe.model_path = self.shape_model_path_for_role(camera_role)
-        shape_locator.save_recipe_for_product(self.session.product_dir, recipe, camera_role)
-        self._shape_recipes_by_role[camera_role] = recipe
-        self.shape_recipe = recipe
-    except Exception:
-        pass
-    self._save_session()
+def _auto_roi_issue_text(issue: AutoRoiIssue) -> str:
+    if issue.message_key:
+        try:
+            return tr(issue.message_key, **dict(issue.message_args or {}))
+        except Exception:
+            pass
+    return issue.fallback or issue.message_key or ""
 
-def _set_ref_from_current(self) -> None:
-    p = self.canvas.image_path()
-    if not p:
-        QtWidgets.QMessageBox.warning(self, "Info", "Open an image from the right-side list first")
-        return
-    self._set_reference(p)
-
-def _pick_ref_image(self) -> None:
-    p, _ = QtWidgets.QFileDialog.getOpenFileName(
-        self, tr("auto.pick_reference_title"), "",
-        "Images (*.jpg *.jpeg *.png *.bmp *.tif *.tiff *.webp)",
-    )
-    if not p:
-        return
-    self._set_reference(p)
-
-def _open_shape_template_page(self) -> None:
-    from ui.debug import ShapeTemplateDialog
-
-    if self._template_editor_dialog is not None and self._template_editor_dialog.isVisible():
-        self._template_editor_dialog.raise_()
-        self._template_editor_dialog.activateWindow()
-        return
-    initial = self.ref_image or self.canvas.image_path() or ""
-    dlg = ShapeTemplateDialog(
-        product_name=self.session.current_product,
-        product_dir=self.session.product_dir,
-        camera_role=self.current_camera_role(),
-        initial_image_path=initial,
-        parent=self.window(),
-    )
-    dlg.setModal(False)
-    dlg.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
-    dlg.modelSaved.connect(self._on_shape_model_saved)
-    dlg.referenceRegionsChanged.connect(self._on_shape_reference_regions_changed)
-    dlg.destroyed.connect(self._on_template_editor_dialog_destroyed)
-    self._template_editor_dialog = dlg
-    dlg.show()
-    dlg.raise_()
-    dlg.activateWindow()
-
-
-def _on_template_editor_dialog_destroyed(self, *_args) -> None:
-    self._template_editor_dialog = None
-
-def _on_shape_model_saved(self, model_path: str, recipe_path: str) -> None:
-    camera_role = self.current_camera_role()
-    self._clear_training_roi_review_state(camera_role)
-    try:
-        self.shape_recipe = self.shape_recipe_for_role(camera_role, force_reload=True)
-    except Exception:
-        self.shape_recipe = None
-    self._reload_inspection_items()
-    self._apply_current_role_recipe_state()
-    self.lbl_status.setText(f"Status: template model saved {os.path.basename(model_path)}")
-
-def _on_shape_reference_regions_changed(self) -> None:
-    self._clear_training_roi_review_state(self.current_camera_role())
-    self._sync_shape_recipe_and_items()
-    current_path = self.canvas.image_path()
-    if current_path and os.path.exists(current_path):
-        self._load_canvas_image(current_path)
-    self.lbl_status.setText("Status: reference ROI synchronized to runtime")
-
-def _sync_shape_recipe_and_items(self) -> None:
-    try:
-        self.shape_recipe = self.shape_recipe_for_role(self.current_camera_role(), force_reload=True)
-    except Exception:
-        self.shape_recipe = None
-    self._reload_inspection_items()
-
-
-def _update_loc_ui(self) -> None:
-    return None
-
-def _on_loc_method_changed(self, method: str) -> None:
-    self.loc_method = method
-    self._clear_training_roi_review_state()
-    self._update_loc_ui()
-    self._save_session()
 
 def _resolve_autogen_targets(
     self,
@@ -130,7 +42,8 @@ def _resolve_autogen_targets(
     self._skip_empty_autogen_message = False
     if not paths:
         return []
-    missing = self._missing_roi_files(paths, camera_role=camera_role)
+    labels = self._shape_output_labels(camera_role) if self.loc_method == "shape" else ["roi"]
+    missing = service_missing_roi_files(paths, labels)
     if not missing:
         if not silent:
             QtWidgets.QMessageBox.information(self, "Info", "These images already have ROI.")
@@ -177,6 +90,7 @@ def _autogen_roi_for_images(
         return
     ref_image = self.ref_image
     method = self.loc_method
+    labels: List[str] = ["roi"]
     role = self.current_camera_role() if camera_role is None else str(camera_role)
     if method == "shape":
         try:
@@ -196,55 +110,26 @@ def _autogen_roi_for_images(
                     if getattr(self, "lbl_ref", None) is not None:
                         self.lbl_ref.setText(f"{tr('debug.reference_image')}: {os.path.basename(ref_image)}")
                         self.lbl_ref.setToolTip(ref_image)
-        if not os.path.exists(self.shape_model_path_for_role(role)):
-            QtWidgets.QMessageBox.warning(self, "Info", "Current product has no template model. Create a template first.")
-            return
         labels = self._shape_output_labels(role)
-        recipe_region_labels = {
-            str(region.get("output_label") or region.get("reference_label") or "").strip()
-            for region in (recipe.reference_regions or [])
-            if isinstance(region, dict)
-        }
-        recipe_region_labels.discard("")
-        if (not ref_image or not os.path.exists(ref_image)) and not recipe_region_labels:
-            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("auto.need_reference_or_saved"))
-            return
-        if labels:
-            missing_labels = [label for label in labels if label not in recipe_region_labels]
-            if missing_labels:
-                ref_json = labelme_io.labelme_json_of_image(ref_image) if ref_image else ""
-                if not ref_json or not os.path.exists(ref_json):
-                    QtWidgets.QMessageBox.warning(
-                        self,
-                        tr("common.info"),
-                        tr("auto.missing_reference_json", labels=", ".join(missing_labels)),
-                    )
-                    return
-                missing_labels = [
-                    label for label in missing_labels
-                    if labelme_io.read_shape_from_labelme(ref_json, label) is None
-                ]
-                if missing_labels:
-                    QtWidgets.QMessageBox.warning(
-                        self,
-                        tr("common.info"),
-                        tr("auto.missing_reference_roi", labels=", ".join(missing_labels)),
-                    )
-                    return
+        validation = validate_autogen_reference(
+            method=method,
+            ref_image=ref_image,
+            shape_model_path=self.shape_model_path_for_role(role),
+            shape_labels=labels,
+            reference_regions=recipe.reference_regions,
+        )
     else:
-        if not ref_image or not os.path.exists(ref_image):
-            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("auto.set_reference_first"))
-            return
-        ref_json = labelme_io.labelme_json_of_image(ref_image)
-        if not os.path.exists(ref_json):
-            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("auto.reference_missing_json"))
-            return
-        if labelme_io.try_read_xywh_from_labelme(ref_json, "anchor") is None:
-            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("auto.reference_missing_anchor"))
-            return
-        if labelme_io.try_read_xywh_from_labelme(ref_json, "roi") is None:
-            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("auto.reference_missing_roi"))
-            return
+        validation = validate_autogen_reference(method=method, ref_image=ref_image)
+
+    if not validation.ok:
+        issue = validation.issue
+        QtWidgets.QMessageBox.warning(
+            self,
+            tr("common.info"),
+            _auto_roi_issue_text(issue) if issue is not None else tr("common.error"),
+        )
+        return
+    labels = validation.labels or labels
 
     todo = self._resolve_autogen_targets(paths, only_missing=only_missing, silent=silent, camera_role=role)
     if not todo:
@@ -255,26 +140,25 @@ def _autogen_roi_for_images(
             QtWidgets.QMessageBox.information(self, tr("common.info"), tr("auto.images_already_have_roi"))
         return
 
-    ok = 0
-    errs: List[str] = []
-    for p in todo:
+    result = run_auto_roi_batch(
+        paths=todo,
+        labels=labels,
+        method=method,
+        ref_image=ref_image,
+        product_dir=self.session.product_dir,
+        camera_role=role,
+        only_missing=only_missing,
+        pre_resolved=True,
+    )
+    ok = int(result.get("ok", 0) or 0)
+    errs = [str(err) for err in result.get("errs", []) or [] if str(err)]
+    for path, elapsed_ms in dict(result.get("timings", {}) or {}).items():
         try:
-            if method == "shape":
-                run = shape_locator.autogen_roi_json_from_shape_timed(
-                    tgt_img_path=p, ref_img_path=ref_image,
-                    product_dir=self.session.product_dir,
-                    camera_role=role,
-                )
-                self._shape_match_ms_by_image[p] = float(run.total_ms)
-                self._shape_autogen_ms_by_image[p] = float(run.total_ms)
-            else:
-                qr_core.autogen_roi_json_from_reference(
-                    tgt_img_path=p, ref_img_path=ref_image,
-                    method=method, anchor_label="anchor", roi_label="roi",
-                )
-            ok += 1
-        except Exception as e:
-            errs.append(f"{os.path.basename(p)}: {e}")
+            value = float(elapsed_ms)
+        except Exception:
+            continue
+        self._shape_match_ms_by_image[str(path)] = value
+        self._shape_autogen_ms_by_image[str(path)] = value
 
     if not silent:
         msg = tr("auto.finished", ok=ok, failed=len(errs))
@@ -335,8 +219,8 @@ def _clear_roi_for_images(
                 if labelme_io.delete_labelme_shape(path, label):
                     removed += 1
                     any_removed = True
-            except Exception:
-                pass
+            except Exception as exc:
+                LOGGER.exception("Failed to delete ROI label %s from %s: %s", label, path, exc)
         if any_removed:
             touched += 1
             self._shape_match_ms_by_image.pop(path, None)

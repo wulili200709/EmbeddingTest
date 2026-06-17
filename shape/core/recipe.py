@@ -10,6 +10,7 @@ from common.safe_io import atomic_write_json, load_json_with_backup
 
 @dataclass
 class ShapeRecipe:
+    schema_version: int = 1
     model_path: str = ""
     reference_image: str = ""
     class_id: str = ""
@@ -60,6 +61,7 @@ class ShapeRecipe:
         else:
             reference_regions = None
         return cls(
+            schema_version=int(data.get("schema_version", 1) or 1),
             model_path=str(data.get("model_path", "")),
             reference_image=str(data.get("reference_image", "")),
             class_id=str(data.get("class_id", "")),

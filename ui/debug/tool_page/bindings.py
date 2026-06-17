@@ -6,8 +6,10 @@ from . import (
     analysis_tools,
     auto_roi,
     auto_roi_flow,
+    auto_roi_reference_flow,
     camera_debug,
     debug_camera_flow,
+    debug_io_flow,
     roi_ops,
     test_runner,
     tool_config,
@@ -39,7 +41,7 @@ _TOOL_PAGE_BINDINGS = (
         ),
     ),
     (
-        auto_roi_flow,
+        auto_roi_reference_flow,
         (
             "_set_reference",
             "_set_ref_from_current",
@@ -51,6 +53,11 @@ _TOOL_PAGE_BINDINGS = (
             "_sync_shape_recipe_and_items",
             "_update_loc_ui",
             "_on_loc_method_changed",
+        ),
+    ),
+    (
+        auto_roi_flow,
+        (
             "_resolve_autogen_targets",
             "_autogen_roi_for_images",
             "_autogen_roi_current_tab",
@@ -134,6 +141,11 @@ _TOOL_PAGE_BINDINGS = (
             "_refresh_debug_camera_settings",
             "_apply_debug_camera_settings",
             "_grab_debug_camera_once",
+        ),
+    ),
+    (
+        debug_io_flow,
+        (
             "_open_debug_io",
             "_close_debug_io",
             "_refresh_debug_io_snapshot",

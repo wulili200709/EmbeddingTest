@@ -9,8 +9,6 @@ import cv2
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from common import labelme_io
-
 from shape.core.bootstrap import ensure_repo_root_on_path
 from shape.core.locator import (
     product_paths,
@@ -18,7 +16,8 @@ from shape.core.locator import (
     resolved_recipe_path_for_product,
 )
 from shape.core.recipe import ShapeRecipe, load_recipe, save_recipe
-from shape.core.roi_follow import FollowResult, locate_and_follow
+from shape.core.recipe_store import ShapeRecipeStore
+from shape.core.roi_follow import locate_and_follow
 from shape.core.template_core import (
     BACKEND_ITEMS,
     BACKEND_KEY_TO_LABEL,
@@ -27,18 +26,29 @@ from shape.core.template_core import (
     RoiRect,
     angle_deg_to_label,
     build_mask_from_rects,
-    build_multi_backend_detector,
     clone_levels,
     label_to_angle_deg,
     load_class_source_assets,
     normalize_extracted_levels_to_roi,
     parse_levels,
-    pose_infos_from_ui_values,
     roi_level_shapes_from_image,
     sync_levels_from_level0,
 )
 from ui.debug import OverlayShape, RoiCanvas, pixmap_from_path
 from ui.i18n import tr
+from ui.shape_template.reference_roi_tab import ReferenceRoiTabMixin
+from ui.shape_template.template_build_worker import _TemplateBuildWorker
+from ui.shape_template.template_page_utils import (
+    _arrow_endpoint,
+    _button_left,
+    _button_right,
+    _clamp_rect_to_roi,
+    _compact_path_text,
+    _cv_to_qpixmap,
+    _draw_match_overlay,
+    _orientation_palette,
+    _overlay_follow_result,
+)
 
 ensure_repo_root_on_path()
 
@@ -47,197 +57,7 @@ from shape.like_matcher import (  # noqa: E402
     ShapeLikeDetector,
     TemplateLevel,
     load_detector_model,
-    match_quad,
-    save_detector_model,
 )
-
-
-class _TemplateBuildWorker(QtCore.QObject):
-    progressChanged = QtCore.Signal(int, str)
-    finished = QtCore.Signal(object)
-    failed = QtCore.Signal(str)
-
-    def __init__(self, payload: Dict[str, object], parent: Optional[QtCore.QObject] = None) -> None:
-        super().__init__(parent)
-        self._payload = dict(payload)
-
-    @QtCore.Slot()
-    def run(self) -> None:
-        try:
-            self.progressChanged.emit(10, "Validating template ROI...")
-            pose = self._payload["pose"]
-            assert isinstance(pose, dict)
-            pose_infos = pose_infos_from_ui_values(
-                float(pose["angle_start"]),
-                float(pose["angle_end"]),
-                float(pose["angle_step"]),
-                float(pose["scale_start"]),
-                float(pose["scale_end"]),
-                float(pose["scale_step"]),
-            )
-
-            self.progressChanged.emit(25, "Building template features...")
-            detector, kept, skipped = build_multi_backend_detector(
-                class_id=str(self._payload["class_id"]),
-                roi_img=cast(np.ndarray, self._payload["roi_img"]),
-                roi_rect=cast(RoiRect, self._payload["roi_rect"]),
-                mask_rects=cast(List[MaskRect], self._payload["mask_rects"]),
-                pose_infos=pose_infos,
-                pose_ui=cast(Dict[str, float], self._payload["pose_ui"]),
-                levels=cast(List[int], self._payload["levels"]),
-                num_features=int(self._payload["num_features"]),
-                weak_threshold=float(self._payload["weak_threshold"]),
-                strong_threshold=float(self._payload["strong_threshold"]),
-                original_mode=str(self._payload["original_mode"]),
-                original_editor_levels=cast(Optional[List[TemplateLevel]], self._payload["original_editor_levels"]),
-                source_image_path=str(self._payload["source_image_path"]),
-            )
-
-            self.progressChanged.emit(85, "Writing model file...")
-            os.makedirs(str(self._payload["role_dir"]), exist_ok=True)
-            save_detector_model(detector, str(self._payload["model_path"]))
-            self.progressChanged.emit(100, "Template saved.")
-            self.finished.emit({"detector": detector, "kept": kept, "skipped": skipped})
-        except Exception as exc:
-            self.failed.emit(str(exc))
-
-
-def _cv_to_qpixmap(image_bgr: np.ndarray) -> QtGui.QPixmap:
-    if image_bgr.ndim == 2:
-        rgb = cv2.cvtColor(image_bgr, cv2.COLOR_GRAY2RGB)
-    else:
-        rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-    h, w = rgb.shape[:2]
-    qimg = QtGui.QImage(rgb.data, w, h, rgb.strides[0], QtGui.QImage.Format_RGB888)
-    return QtGui.QPixmap.fromImage(qimg.copy())
-
-
-def _orientation_palette() -> List[QtGui.QColor]:
-    return [
-        QtGui.QColor(255, 0, 0),
-        QtGui.QColor(255, 128, 0),
-        QtGui.QColor(255, 255, 0),
-        QtGui.QColor(0, 255, 0),
-        QtGui.QColor(0, 255, 255),
-        QtGui.QColor(0, 128, 255),
-        QtGui.QColor(0, 0, 255),
-        QtGui.QColor(255, 0, 255),
-    ]
-
-
-def _arrow_endpoint(x: float, y: float, theta_deg: float, length: float) -> Tuple[float, float]:
-    rad = math.radians(float(theta_deg))
-    return float(x + length * math.cos(rad)), float(y + length * math.sin(rad))
-
-
-def _apply_affine_point(transform: Optional[np.ndarray], x: float, y: float) -> Tuple[float, float]:
-    if transform is None:
-        return float(x), float(y)
-    matrix = np.asarray(transform, dtype=np.float32)
-    if matrix.shape == (3, 3):
-        matrix = matrix[:2, :]
-    px = float(matrix[0, 0] * x + matrix[0, 1] * y + matrix[0, 2])
-    py = float(matrix[1, 0] * x + matrix[1, 1] * y + matrix[1, 2])
-    return px, py
-
-
-def _button_left() -> int:
-    return int(QtCore.Qt.MouseButton.LeftButton.value)
-
-
-def _button_right() -> int:
-    return int(QtCore.Qt.MouseButton.RightButton.value)
-
-
-def _shape_to_rect(shape: dict) -> Optional[Tuple[int, int, int, int]]:
-    pts = shape.get("points", [])
-    if not pts:
-        return None
-    if shape.get("shape_type") == "rectangle" and len(pts) >= 2:
-        (x0, y0), (x1, y1) = pts[:2]
-        x = int(round(min(float(x0), float(x1))))
-        y = int(round(min(float(y0), float(y1))))
-        w = int(round(abs(float(x1) - float(x0))))
-        h = int(round(abs(float(y1) - float(y0))))
-        return x, y, max(1, w), max(1, h)
-    arr = np.asarray(pts, dtype=np.float32)
-    x0, y0 = arr.min(axis=0)
-    x1, y1 = arr.max(axis=0)
-    return int(round(x0)), int(round(y0)), max(1, int(round(x1 - x0))), max(1, int(round(y1 - y0)))
-
-
-def _compact_path_text(path: str, *, max_chars: int = 72) -> str:
-    text = os.path.normpath(str(path or ""))
-    if len(text) <= max_chars:
-        return text
-    drive, tail = os.path.splitdrive(text)
-    basename = os.path.basename(text)
-    parent = os.path.basename(os.path.dirname(text))
-    suffix = os.path.join(parent, basename) if parent else basename
-    prefix = f"{drive}{os.sep}" if drive else ""
-    return f"{prefix}...{os.sep}{suffix}"
-
-
-def _clamp_rect_to_roi(rect: Tuple[int, int, int, int], roi: RoiRect) -> Optional[MaskRect]:
-    x, y, w, h = rect
-    x1 = max(int(roi.x), int(x))
-    y1 = max(int(roi.y), int(y))
-    x2 = min(int(roi.x + roi.w), int(x + w))
-    y2 = min(int(roi.y + roi.h), int(y + h))
-    if x2 <= x1 or y2 <= y1:
-        return None
-    return MaskRect(x=x1 - int(roi.x), y=y1 - int(roi.y), w=x2 - x1, h=y2 - y1)
-
-
-def _overlay_follow_result(
-    image_bgr: np.ndarray,
-    result: FollowResult,
-    label_name: str,
-    *,
-    elapsed_ms: Optional[float] = None,
-) -> np.ndarray:
-    canvas = image_bgr.copy()
-    text = f"{label_name} sim={result.match.similarity:.2f} class={result.match.class_id} tid={result.match.template_id}"
-    if elapsed_ms is not None and elapsed_ms >= 0.0:
-        text += f" time={elapsed_ms:.1f}ms"
-    cv2.putText(canvas, text, (16, 48), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (20, 230, 255), 4, cv2.LINE_AA)
-    region_palette = [(0, 255, 255), (255, 0, 255), (0, 220, 120), (255, 180, 0), (0, 180, 255)]
-    for idx, region in enumerate(result.regions):
-        color = region_palette[idx % len(region_palette)]
-        pts = np.round(np.asarray(region.points, dtype=np.float32)).astype(np.int32).reshape(-1, 1, 2)
-        cv2.polylines(canvas, [pts], True, color, 2, cv2.LINE_AA)
-        tx = int(round(region.points[0][0]))
-        ty = int(round(region.points[0][1]))
-        cv2.putText(canvas, region.label_name, (tx, max(20, ty - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
-    return canvas
-
-
-def _draw_match_overlay(detector: ShapeLikeDetector, image_bgr: np.ndarray, match) -> np.ndarray:
-    out = image_bgr.copy()
-    color = (0, 255, 0)
-    t0 = detector.get_templates(match.class_id, match.template_id, backend=match.backend)[0]
-    refined_transform = match.refined_transform
-    for f in t0.features:
-        px = float(f.x + match.x)
-        py = float(f.y + match.y)
-        if refined_transform is not None:
-            px, py = _apply_affine_point(refined_transform, px, py)
-        pxi = int(round(px))
-        pyi = int(round(py))
-        theta = float(f.theta)
-        if not np.isfinite(theta):
-            theta = label_to_angle_deg(int(f.label))
-        rad = np.deg2rad(theta)
-        p2x = float(f.x + match.x + 7.0 * float(np.cos(rad)))
-        p2y = float(f.y + match.y + 7.0 * float(np.sin(rad)))
-        if refined_transform is not None:
-            p2x, p2y = _apply_affine_point(refined_transform, p2x, p2y)
-        cv2.arrowedLine(out, (pxi, pyi), (int(round(p2x)), int(round(p2y))), (0, 0, 0), 3, cv2.LINE_AA, 0, 0.35)
-        cv2.arrowedLine(out, (pxi, pyi), (int(round(p2x)), int(round(p2y))), color, 1, cv2.LINE_AA, 0, 0.35)
-    corners = match_quad(detector, match)
-    pts_i = np.array([[int(round(x)), int(round(y))] for x, y in corners], dtype=np.int32).reshape(-1, 1, 2)
-    cv2.polylines(out, [pts_i], isClosed=True, color=color, thickness=2, lineType=cv2.LINE_AA)
-    return out
 
 
 _DIALOG_STYLESHEET = """
@@ -317,7 +137,7 @@ QLabel {
 _DEFAULT_FIND_BACKEND_LABEL = "Fusion V2"
 
 
-class ShapeTemplateDialog(QtWidgets.QDialog):
+class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
     modelSaved = QtCore.Signal(str, str)
     referenceRegionsChanged = QtCore.Signal()
 
@@ -1198,7 +1018,7 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
             for region in (recipe.reference_regions or [])
             if isinstance(region, dict)
         ]
-        self._reference_regions_explicit = recipe.reference_regions is not None
+        self._reference_regions_explicit = ShapeRecipeStore.has_explicit_reference_regions(recipe)
         self._selected_reference_idx = None
         self._refresh_search_roi_status()
         self.cmb_backend_create.setCurrentText(BACKEND_KEY_TO_LABEL.get(recipe.backend, "Original"))
@@ -1960,417 +1780,6 @@ class ShapeTemplateDialog(QtWidgets.QDialog):
                 )
         overlays.extend(self._feature_overlays())
         self.create_canvas.set_overlays(overlays)
-
-    def _next_reference_label(self) -> str:
-        used = {
-            str(region.get("reference_label") or region.get("output_label") or "")
-            for region in self._reference_regions
-            if isinstance(region, dict)
-        }
-        idx = 1
-        while f"roi{idx}" in used:
-            idx += 1
-        return f"roi{idx}"
-
-    def _region_points_from_canvas(self) -> Tuple[str, List[List[float]]]:
-        if self.ref_canvas.roi.shape_type == "polygon" and self.ref_canvas.roi.points:
-            return "polygon", [[float(x), float(y)] for x, y in self.ref_canvas.roi.points]
-        xywh = self.ref_canvas.roi_xywh()
-        if xywh is None:
-            return "", []
-        x, y, w, h = xywh
-        return "rectangle", [[float(x), float(y)], [float(x + w), float(y + h)]]
-
-    def _region_overlay_shape(self, region: Dict[str, object], color: QtGui.QColor, width: int, dash: bool) -> OverlayShape:
-        shape_type = str(region.get("shape_type", "rectangle"))
-        points = [
-            (float(pt[0]), float(pt[1]))
-            for pt in region.get("points", []) or []
-            if isinstance(pt, (list, tuple)) and len(pt) >= 2
-        ]
-        if shape_type == "polygon" and len(points) >= 3:
-            return OverlayShape(shape_type="polygon", points=points, color=color, width=width, dash=dash)
-        if len(points) >= 2:
-            x0, y0 = float(points[0][0]), float(points[0][1])
-            x1, y1 = float(points[1][0]), float(points[1][1])
-            x = int(round(min(x0, x1)))
-            y = int(round(min(y0, y1)))
-            w = max(1, int(round(abs(x1 - x0))))
-            h = max(1, int(round(abs(y1 - y0))))
-            return OverlayShape(shape_type="rect", xywh=(x, y, w, h), color=color, width=width, dash=dash)
-        return OverlayShape(shape_type="rect", xywh=(0, 0, 1, 1), color=color, width=width, dash=dash)
-
-    def _set_reference_dirty(self, dirty: bool, status_text: str = "") -> None:
-        self._reference_dirty = bool(dirty)
-        if hasattr(self, "btn_save_reference_roi"):
-            self.btn_save_reference_roi.setEnabled(self._reference_dirty or bool(self._reference_regions))
-        if status_text and hasattr(self, "lbl_reference_status"):
-            self.lbl_reference_status.setText(status_text)
-
-    def _reference_dirty_status(self) -> str:
-        return tr("template.status_reference_dirty", count=len(self._reference_regions))
-
-    def _refresh_reference_region_list(self) -> None:
-        if not hasattr(self, "table_reference_regions"):
-            return
-        self.table_reference_regions.blockSignals(True)
-        self.table_reference_regions.setRowCount(0)
-        for idx, region in enumerate(self._reference_regions):
-            label = str(region.get("output_label") or region.get("reference_label") or f"roi{idx + 1}")
-            display_name = str(region.get("display_name") or region.get("name") or label).strip() or label
-            shape_type = str(region.get("shape_type", "rectangle"))
-            points = [
-                [float(pt[0]), float(pt[1])]
-                for pt in region.get("points", []) or []
-                if isinstance(pt, (list, tuple)) and len(pt) >= 2
-            ]
-            if shape_type == "polygon":
-                info_text = f"Polygon {len(points)} pts"
-            elif len(points) >= 2:
-                x0, y0 = float(points[0][0]), float(points[0][1])
-                x1, y1 = float(points[1][0]), float(points[1][1])
-                w = max(1, int(round(abs(x1 - x0))))
-                h = max(1, int(round(abs(y1 - y0))))
-                info_text = f"Rect {w}x{h}"
-            else:
-                info_text = "Rect"
-            row = self.table_reference_regions.rowCount()
-            self.table_reference_regions.insertRow(row)
-            values = [
-                str(idx),
-                display_name,
-                label,
-                info_text,
-            ]
-            for col, value in enumerate(values):
-                item = QtWidgets.QTableWidgetItem(value)
-                item.setData(QtCore.Qt.UserRole, idx)
-                if col == 0:
-                    item.setTextAlignment(
-                        int(
-                            QtCore.Qt.AlignmentFlag.AlignHCenter
-                            | QtCore.Qt.AlignmentFlag.AlignVCenter
-                        )
-                    )
-                self.table_reference_regions.setItem(row, col, item)
-        if self._selected_reference_idx is not None and 0 <= self._selected_reference_idx < self.table_reference_regions.rowCount():
-            self.table_reference_regions.setCurrentCell(self._selected_reference_idx, 0)
-        self.table_reference_regions.blockSignals(False)
-
-    def _refresh_reference_region_fields(self) -> None:
-        self.edit_output_label.blockSignals(True)
-        self.edit_display_name.blockSignals(True)
-        try:
-            has_selection = (
-                self._selected_reference_idx is not None
-                and 0 <= self._selected_reference_idx < len(self._reference_regions)
-            )
-            self.edit_output_label.setEnabled(has_selection)
-            self.edit_display_name.setEnabled(has_selection)
-            self.btn_apply_region_name.setEnabled(has_selection)
-            if not has_selection:
-                self.edit_output_label.setText("")
-                self.edit_display_name.setText("")
-                return
-            region = self._reference_regions[self._selected_reference_idx]
-            label = str(region.get("output_label") or region.get("reference_label") or "").strip()
-            display_name = str(region.get("display_name") or region.get("name") or label).strip() or label
-            self.edit_output_label.setText(label)
-            self.edit_display_name.setText(display_name)
-        finally:
-            self.edit_output_label.blockSignals(False)
-            self.edit_display_name.blockSignals(False)
-
-    def _on_region_field_edited(self) -> None:
-        pass
-
-    def _apply_reference_region_fields(self) -> None:
-        if self._selected_reference_idx is None or not (0 <= self._selected_reference_idx < len(self._reference_regions)):
-            return
-        region = self._reference_regions[self._selected_reference_idx]
-        label = self.edit_output_label.text().strip()
-        if not label:
-            label = str(region.get("output_label") or region.get("reference_label") or "").strip()
-        if not label:
-            label = self._next_reference_label()
-        display_name = self.edit_display_name.text().strip() or label
-        region["reference_label"] = label
-        region["output_label"] = label
-        region["display_name"] = display_name
-        self._refresh_reference_region_list()
-        self._refresh_reference_region_fields()
-        self._set_reference_dirty(True, tr("template.status_reference_name_updated_unsaved", name=display_name))
-
-    def _refresh_reference_canvas(self) -> None:
-        overlays: List[OverlayShape] = []
-        inactive_color = QtGui.QColor(255, 0, 255)
-        for idx, region in enumerate(self._reference_regions):
-            if idx == self._selected_reference_idx:
-                continue
-            overlays.append(self._region_overlay_shape(region, inactive_color, 1.8, False))
-        self.ref_canvas.set_overlays(overlays)
-        self._syncing_reference_view = True
-        try:
-            if self._selected_reference_idx is None or not (0 <= self._selected_reference_idx < len(self._reference_regions)):
-                self.ref_canvas.clear_roi()
-            else:
-                region = self._reference_regions[self._selected_reference_idx]
-                shape_type = str(region.get("shape_type", "rectangle"))
-                points = [
-                    (float(pt[0]), float(pt[1]))
-                    for pt in region.get("points", []) or []
-                    if isinstance(pt, (list, tuple)) and len(pt) >= 2
-                ]
-                self.cmb_reference_shape.setCurrentText("polygon" if shape_type == "polygon" else "rectangle")
-                if shape_type == "polygon" and len(points) >= 3:
-                    self.ref_canvas.set_roi_polygon(points)
-                elif len(points) >= 2:
-                    x0, y0 = float(points[0][0]), float(points[0][1])
-                    x1, y1 = float(points[1][0]), float(points[1][1])
-                    self.ref_canvas.set_roi_rect(
-                        (
-                            int(round(min(x0, x1))),
-                            int(round(min(y0, y1))),
-                            max(1, int(round(abs(x1 - x0)))),
-                            max(1, int(round(abs(y1 - y0)))),
-                        )
-                    )
-                else:
-                    self.ref_canvas.clear_roi()
-        finally:
-            self._syncing_reference_view = False
-
-    def _on_reference_region_selected(
-        self,
-        current_row: int,
-        _current_column: int,
-        _previous_row: int,
-        _previous_column: int,
-    ) -> None:
-        if current_row < 0 or current_row >= len(self._reference_regions):
-            self._selected_reference_idx = None
-        else:
-            self._selected_reference_idx = current_row
-        self._refresh_reference_canvas()
-        self._refresh_reference_region_fields()
-
-    def _prepare_new_reference_roi(self) -> None:
-        self._selected_reference_idx = None
-        if hasattr(self, "table_reference_regions"):
-            self.table_reference_regions.blockSignals(True)
-            self.table_reference_regions.clearSelection()
-            self.table_reference_regions.setCurrentIndex(QtCore.QModelIndex())
-            self.table_reference_regions.blockSignals(False)
-        self._refresh_reference_canvas()
-        self._refresh_reference_region_fields()
-        self.lbl_reference_status.setText(tr("template.status_reference_add_mode"))
-
-    def _remove_selected_reference_roi(self) -> None:
-        if self._selected_reference_idx is None or not (0 <= self._selected_reference_idx < len(self._reference_regions)):
-            return
-        del self._reference_regions[self._selected_reference_idx]
-        self._selected_reference_idx = None
-        self._refresh_reference_region_list()
-        self._refresh_reference_canvas()
-        self._refresh_reference_region_fields()
-        self._set_reference_dirty(True, tr("template.status_reference_deleted_unsaved", count=len(self._reference_regions)))
-
-    def _on_reference_canvas_shape_changed(self) -> None:
-        if self._syncing_reference_view:
-            return
-        shape_type, points = self._region_points_from_canvas()
-        if not shape_type or not points:
-            return
-        if self._selected_reference_idx is None:
-            label = self._next_reference_label()
-            self._reference_regions_explicit = True
-            self._reference_regions.append(
-                {
-                    "reference_label": label,
-                    "output_label": label,
-                    "display_name": label,
-                    "shape_type": shape_type,
-                    "points": points,
-                }
-            )
-            self._selected_reference_idx = None
-            self._refresh_reference_region_list()
-            self._refresh_reference_canvas()
-            self._refresh_reference_region_fields()
-            self._set_reference_dirty(True, tr("template.status_reference_added_unsaved", label=label, count=len(self._reference_regions)))
-            return
-        if 0 <= self._selected_reference_idx < len(self._reference_regions):
-            self._reference_regions_explicit = True
-            region = self._reference_regions[self._selected_reference_idx]
-            region["shape_type"] = shape_type
-            region["points"] = points
-            label = str(region.get("output_label") or region.get("reference_label") or f"roi{self._selected_reference_idx + 1}")
-            self._refresh_reference_region_list()
-            self._refresh_reference_canvas()
-            self._set_reference_dirty(True, tr("template.status_reference_updated_unsaved", label=label))
-
-    def _on_reference_shape_changed(self, shape_name: str) -> None:
-        self.ref_canvas.draw_shape = "polygon" if shape_name == "polygon" else "rect"
-
-    def _load_reference_roi_from_json(self, *, silent: bool) -> bool:
-        if not self.image_path or not os.path.exists(self.image_path):
-            if not silent:
-                QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.load_reference_first"))
-            return False
-        jpath = labelme_io.labelme_json_of_image(self.image_path)
-        if not os.path.exists(jpath):
-            self._reference_regions = []
-            self._selected_reference_idx = None
-            self._refresh_reference_region_list()
-            self._refresh_reference_canvas()
-            self._refresh_reference_region_fields()
-            if not silent:
-                QtWidgets.QMessageBox.information(self, tr("common.info"), tr("template.no_reference_json"))
-            return False
-        try:
-            regions: List[Dict[str, object]] = []
-            for shape in labelme_io.list_shapes_from_labelme(jpath, label_prefix="roi"):
-                label_name = str(shape.get("label", "")).strip()
-                if not label_name:
-                    continue
-                shape_type = str(shape.get("shape_type", "rectangle"))
-                if shape_type == "polygon":
-                    points = [[float(x), float(y)] for x, y in shape.get("points", [])]
-                    if len(points) < 3:
-                        continue
-                else:
-                    xywh = _shape_to_rect(shape)
-                    if xywh is None:
-                        continue
-                    x, y, w, h = xywh
-                    points = [[float(x), float(y)], [float(x + w), float(y + h)]]
-                    shape_type = "rectangle"
-                regions.append(
-                    {
-                        "reference_label": label_name,
-                        "output_label": label_name,
-                        "display_name": label_name,
-                        "shape_type": shape_type,
-                        "points": points,
-                    }
-                )
-            if not regions:
-                raise RuntimeError(tr("template.no_reference_roi_in_json"))
-            self._reference_regions = regions
-            self._reference_regions_explicit = True
-            self._selected_reference_idx = None
-            self._refresh_reference_region_list()
-            self._refresh_reference_canvas()
-            self._refresh_reference_region_fields()
-            status = tr("template.status_reference_loaded_unsaved", count=len(regions))
-            self._set_reference_dirty(True, status)
-            return True
-        except Exception as exc:
-            self._reference_regions = []
-            self._selected_reference_idx = None
-            self._refresh_reference_region_list()
-            self._refresh_reference_canvas()
-            self._refresh_reference_region_fields()
-            if not silent:
-                QtWidgets.QMessageBox.warning(self, tr("common.load_failed"), str(exc))
-            return False
-
-    def _save_reference_roi_to_json(self) -> None:
-        if not self.image_path or not os.path.exists(self.image_path):
-            QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.load_reference_first"))
-            return
-        try:
-            if not self._reference_regions:
-                raise RuntimeError(tr("template.no_reference_roi_to_save"))
-            old_recipe = load_recipe(self.paths.recipe_path) if os.path.exists(self.paths.recipe_path) else ShapeRecipe()
-            old_labels = {
-                str(region.get("output_label") or region.get("reference_label") or "")
-                for region in (old_recipe.reference_regions or [])
-                if isinstance(region, dict)
-            }
-            new_labels = {
-                str(region.get("output_label") or region.get("reference_label") or "")
-                for region in self._reference_regions
-                if isinstance(region, dict)
-            }
-            for label_name in old_labels - new_labels:
-                if label_name:
-                    labelme_io.delete_labelme_shape(self.image_path, label_name=label_name)
-            for region in self._reference_regions:
-                label_name = str(region.get("output_label") or region.get("reference_label") or "").strip()
-                shape_type = str(region.get("shape_type", "rectangle"))
-                points = [
-                    (float(pt[0]), float(pt[1]))
-                    for pt in region.get("points", []) or []
-                    if isinstance(pt, (list, tuple)) and len(pt) >= 2
-                ]
-                if not label_name or len(points) < 2:
-                    continue
-                if shape_type == "polygon" and len(points) >= 3:
-                    labelme_io.upsert_labelme_polygon(self.image_path, points, label_name=label_name)
-                else:
-                    x0, y0 = points[0]
-                    x1, y1 = points[1]
-                    labelme_io.upsert_labelme_rect(
-                        self.image_path,
-                        (
-                            int(round(min(x0, x1))),
-                            int(round(min(y0, y1))),
-                            max(1, int(round(abs(x1 - x0)))),
-                            max(1, int(round(abs(y1 - y0)))),
-                        ),
-                        label_name=label_name,
-                    )
-        except Exception as exc:
-            QtWidgets.QMessageBox.warning(self, tr("common.save_failed"), str(exc))
-            return
-        self._reference_regions_explicit = True
-        self._save_recipe()
-        self._set_reference_dirty(False)
-        self.referenceRegionsChanged.emit()
-        self.lbl_reference_status.setText(tr("template.status_reference_saved", count=len(self._reference_regions)))
-
-    def _save_reference_roi_config(self, _checked: object = None) -> None:
-        try:
-            self._reference_regions_explicit = True
-            self._save_recipe()
-        except Exception as exc:
-            QtWidgets.QMessageBox.warning(self, tr("common.save_failed"), str(exc))
-            return
-        self._set_reference_dirty(False, tr("template.status_reference_config_saved", count=len(self._reference_regions)))
-        self.referenceRegionsChanged.emit()
-
-    def _confirm_reference_roi_discard(self) -> bool:
-        if not self._reference_dirty:
-            return True
-        reply = QtWidgets.QMessageBox.question(
-            self,
-            tr("template.unsaved_reference_title"),
-            tr("template.unsaved_reference_message", count=len(self._reference_regions)),
-            (
-                QtWidgets.QMessageBox.StandardButton.Save
-                | QtWidgets.QMessageBox.StandardButton.Discard
-                | QtWidgets.QMessageBox.StandardButton.Cancel
-            ),
-            QtWidgets.QMessageBox.StandardButton.Save,
-        )
-        if reply == QtWidgets.QMessageBox.StandardButton.Save:
-            self._save_reference_roi_config()
-            return not self._reference_dirty
-        if reply == QtWidgets.QMessageBox.StandardButton.Discard:
-            return True
-        return False
-
-    def _clear_reference_roi(self) -> None:
-        self._reference_regions = []
-        self._reference_regions_explicit = True
-        self._selected_reference_idx = None
-        self._refresh_reference_region_list()
-        self._refresh_reference_canvas()
-        self._refresh_reference_region_fields()
-        self._recipe_reference_shape_type = ""
-        self._recipe_reference_points = []
-        self._set_reference_dirty(True, tr("template.status_reference_cleared_unsaved"))
 
     def _search_roi_xywh(self) -> Optional[Tuple[int, int, int, int]]:
         points = [

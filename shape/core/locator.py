@@ -11,6 +11,7 @@ from common import labelme_io
 
 from .recipe_labels import clearable_roi_labels, output_labels_from_shape_recipe
 from .recipe import ShapeRecipe, load_recipe, save_recipe
+from .recipe_store import ShapeRecipeStore
 from .roi_follow import FollowResult
 from .services import RuntimeDetectedShape, ShapeLocateService, runtime_shapes_from_follow_result
 
@@ -88,26 +89,15 @@ def product_paths(product_dir: str, camera_role: str = "cam1") -> ProductShapePa
 
 
 def _resolve_recipe_file(paths: ProductShapePaths) -> str:
-    if os.path.exists(paths.recipe_path):
-        return paths.recipe_path
-    if os.path.exists(paths.legacy_recipe_path):
-        return paths.legacy_recipe_path
-    return paths.recipe_path
+    return ShapeRecipeStore(paths).resolved_recipe_path()
 
 
 def _resolve_model_file(paths: ProductShapePaths) -> str:
-    if os.path.exists(paths.model_path):
-        return paths.model_path
-    if os.path.exists(paths.legacy_model_path):
-        return paths.legacy_model_path
-    return paths.model_path
+    return ShapeRecipeStore(paths).resolved_model_path()
 
 
 def load_recipe_for_product(product_dir: str, camera_role: str = "cam1") -> ShapeRecipe:
-    paths = product_paths(product_dir, camera_role)
-    recipe = load_recipe(_resolve_recipe_file(paths))
-    recipe.model_path = _resolve_model_file(paths)
-    return recipe
+    return ShapeRecipeStore(product_paths(product_dir, camera_role)).load()
 
 
 def resolved_recipe_path_for_product(product_dir: str, camera_role: str = "cam1") -> str:
@@ -119,10 +109,7 @@ def resolved_model_path_for_product(product_dir: str, camera_role: str = "cam1")
 
 
 def save_recipe_for_product(product_dir: str, recipe: ShapeRecipe, camera_role: str = "cam1") -> None:
-    paths = product_paths(product_dir, camera_role)
-    os.makedirs(paths.role_dir, exist_ok=True)
-    recipe.model_path = paths.model_path
-    save_recipe(recipe, paths.recipe_path)
+    ShapeRecipeStore(product_paths(product_dir, camera_role)).save(recipe)
 
 
 def recipe_is_ready(product_dir: str, camera_role: str = "cam1") -> bool:
