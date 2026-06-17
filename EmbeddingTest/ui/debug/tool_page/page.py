@@ -43,6 +43,11 @@ from infrastructure.camera_settings_store import (
     CameraSettingsStore,
     hik_settings_kwargs_from_mapping,
 )
+from infrastructure.json_backup import (
+    backup_valid_json,
+    load_json_with_recovery,
+    write_json_with_backup,
+)
 from application import (
     AlgorithmController,
     InspectionExecutionRequest,
@@ -121,6 +126,12 @@ ROI_OVERLAY_PALETTE = [
 ]
 
 _CAMERA_ROLE_RE = re.compile(r"(?:^|[_-])(cam[12])(?=[_.-]|$)", re.IGNORECASE)
+_TRAINING_TASK_PROGRESS_RE = re.compile(r"^training\s+(\d+)\s*/\s*(\d+)\s*(.*)$", re.IGNORECASE)
+_TRAINING_PREPARE_PROGRESS_RE = re.compile(r"正在准备训练样本\s+(\d+)\s*/\s*(\d+)")
+_TRAINING_INNER_PROGRESS_RE = re.compile(
+    r"\b(?:traditional|embedding|cache)\b.*?(\d+)(?:\s*-\s*(\d+))?\s*/\s*(\d+)",
+    re.IGNORECASE,
+)
 
 
 def _normalize_camera_role(camera_id: object) -> str:
@@ -3579,6 +3590,18 @@ class ToolPage(QtWidgets.QWidget):
         self.lbl_training_validation.setWordWrap(True)
         self.lbl_training_validation.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;padding:0 2px 4px 2px;")
         action_vbox.addWidget(self.lbl_training_validation)
+        self.progress_training = QtWidgets.QProgressBar()
+        self.progress_training.setRange(0, 1000)
+        self.progress_training.setValue(0)
+        self.progress_training.setTextVisible(True)
+        self.progress_training.setFormat("等待训练")
+        self.progress_training.setVisible(False)
+        self.progress_training.setStyleSheet(
+            "QProgressBar{background:#252525;color:#e8e8e8;border:1px solid #505050;"
+            "border-radius:3px;text-align:center;min-height:18px;}"
+            "QProgressBar::chunk{background:#2d8cff;border-radius:2px;}"
+        )
+        action_vbox.addWidget(self.progress_training)
 
         _action_btn = (
             "QPushButton{background:#2d5aa0;color:white;border:none;"
@@ -4493,8 +4516,10 @@ class ToolPage(QtWidgets.QWidget):
         if not store_path or not os.path.exists(store_path):
             return
         try:
-            with open(store_path, "r", encoding="utf-8") as handle:
-                raw_payload = json.load(handle)
+            raw_payload = load_json_with_recovery(
+                store_path,
+                expected_type=dict,
+            )
         except Exception:
             return
         image_payload = raw_payload.get("images", raw_payload) if isinstance(raw_payload, dict) else {}
@@ -4542,13 +4567,20 @@ class ToolPage(QtWidgets.QWidget):
             self._delete_sample_annotation_file()
             return
         os.makedirs(self.session.product_dir, exist_ok=True)
-        with open(store_path, "w", encoding="utf-8") as handle:
-            json.dump({"images": images_payload}, handle, ensure_ascii=False, indent=2)
+        write_json_with_backup(
+            store_path,
+            {"images": images_payload},
+            expected_type=dict,
+        )
 
     def _delete_sample_annotation_file(self) -> None:
         store_path = self._sample_annotation_store_path()
         try:
             if store_path and os.path.exists(store_path):
+                try:
+                    backup_valid_json(store_path, expected_type=dict)
+                except Exception:
+                    pass
                 os.remove(store_path)
         except Exception:
             pass
@@ -4998,10 +5030,11 @@ class ToolPage(QtWidgets.QWidget):
                     keys.add(key)
         return keys
 
-    def _add_image_paths_to_sample_list(self, kind: str, files: List[str]) -> Tuple[int, int]:
+    def _add_image_paths_to_sample_list(self, kind: str, files: List[str]) -> Tuple[int, int, List[str]]:
         normalized_kind = str(kind or "").strip().upper()
         existing_names = self._existing_sample_basename_keys()
         added_files: List[str] = []
+        skipped_names: List[str] = []
         skipped_count = 0
         for path in files:
             normalized_path = str(path or "").strip()
@@ -5010,18 +5043,38 @@ class ToolPage(QtWidgets.QWidget):
                 continue
             if name_key in existing_names:
                 skipped_count += 1
+                skipped_names.append(os.path.basename(normalized_path))
                 continue
             added_files.append(normalized_path)
             existing_names.add(name_key)
         if not added_files:
-            return 0, skipped_count
+            return 0, skipped_count, skipped_names
         if normalized_kind in {"TRAIN", "OK", "NG", "TRAIN_OK", "TRAIN_NG"}:
             self.train_files.extend(added_files)
             self.train_files = sorted(list(dict.fromkeys(self.train_files)))
         else:
             self.test_files.extend(added_files)
             self.test_files = sorted(list(dict.fromkeys(self.test_files)))
-        return len(added_files), skipped_count
+        return len(added_files), skipped_count, skipped_names
+
+    def _show_duplicate_sample_names_message(self, skipped_names: List[str], added_count: int = 0) -> None:
+        skipped_count = len(skipped_names)
+        if skipped_count <= 0:
+            return
+        if added_count > 0:
+            message = (
+                f"已添加 {added_count} 张图片。\n"
+                f"有 {skipped_count} 张图片文件名已存在于训练或测试列表，已跳过。"
+            )
+        else:
+            message = f"有 {skipped_count} 张图片文件名已存在于训练或测试列表，已跳过。"
+        shown_names = skipped_names[:20]
+        if shown_names:
+            message += "\n\n重名文件：\n" + "\n".join(f"- {name}" for name in shown_names)
+        remaining_count = skipped_count - len(shown_names)
+        if remaining_count > 0:
+            message += f"\n... 另外 {remaining_count} 张未显示"
+        QtWidgets.QMessageBox.information(self, "同名图片", message)
 
     def _add_images_to(self, kind: str) -> None:
         files, _ = QtWidgets.QFileDialog.getOpenFileNames(
@@ -5032,9 +5085,10 @@ class ToolPage(QtWidgets.QWidget):
         )
         if not files:
             return
-        added_count, skipped_count = self._add_image_paths_to_sample_list(kind, list(files))
+        added_count, skipped_count, skipped_names = self._add_image_paths_to_sample_list(kind, list(files))
         if added_count <= 0 and skipped_count > 0:
             self.lbl_status.setText(f"状态：已跳过 {skipped_count} 张同名图片，没有新增图片。")
+            self._show_duplicate_sample_names_message(skipped_names, added_count)
             return
         if added_count <= 0:
             return
@@ -5043,6 +5097,7 @@ class ToolPage(QtWidgets.QWidget):
         self._save_session()
         if skipped_count:
             self.lbl_status.setText(f"状态：已添加 {added_count} 张图片，跳过 {skipped_count} 张同名图片。")
+            self._show_duplicate_sample_names_message(skipped_names, added_count)
         else:
             self.lbl_status.setText(f"状态：已添加 {added_count} 张图片。")
 
@@ -5751,6 +5806,67 @@ class ToolPage(QtWidgets.QWidget):
             if button is not None:
                 button.setEnabled(not running)
 
+    def _begin_training_progress_bar(self, text: str = "准备训练...") -> None:
+        progress_bar = getattr(self, "progress_training", None)
+        if progress_bar is None:
+            return
+        progress_bar.setVisible(True)
+        progress_bar.setRange(0, 1000)
+        progress_bar.setValue(0)
+        progress_bar.setFormat(str(text or "准备训练..."))
+
+    def _finish_training_progress_bar(self, *, success_count: int, failure_count: int) -> None:
+        progress_bar = getattr(self, "progress_training", None)
+        if progress_bar is None:
+            return
+        progress_bar.setRange(0, 1000)
+        progress_bar.setValue(1000)
+        if failure_count:
+            progress_bar.setFormat(f"训练结束：成功 {success_count}，失败 {failure_count}")
+        else:
+            progress_bar.setFormat(f"训练完成：成功 {success_count}")
+
+    def _update_training_progress_bar(self, text: str) -> None:
+        progress_bar = getattr(self, "progress_training", None)
+        if progress_bar is None:
+            return
+        message = str(text or "").strip()
+        if not message:
+            return
+        if not progress_bar.isVisible():
+            progress_bar.setVisible(True)
+
+        prepare_match = _TRAINING_PREPARE_PROGRESS_RE.search(message)
+        if prepare_match:
+            index = max(0, int(prepare_match.group(1)))
+            total = max(1, int(prepare_match.group(2)))
+            progress_bar.setRange(0, total)
+            progress_bar.setValue(min(index, total))
+            progress_bar.setFormat(f"准备样本 {min(index, total)}/{total}")
+            return
+
+        task_match = _TRAINING_TASK_PROGRESS_RE.match(message)
+        if task_match:
+            index = max(1, int(task_match.group(1)))
+            total = max(1, int(task_match.group(2)))
+            detail = str(task_match.group(3) or "").strip()
+            progress_bar.setRange(0, total * 1000)
+            value = (min(index, total) - 1) * 1000
+            inner_match = _TRAINING_INNER_PROGRESS_RE.search(detail)
+            if inner_match:
+                inner_current = int(inner_match.group(2) or inner_match.group(1))
+                inner_total = max(1, int(inner_match.group(3)))
+                inner_value = int(1000 * min(inner_current, inner_total) / inner_total)
+                value += inner_value
+            progress_bar.setValue(min(value, total * 1000))
+            progress_bar.setFormat(f"{min(index, total)}/{total} {detail}".strip())
+            return
+
+        if message == "training queued":
+            progress_bar.setRange(0, 0)
+            progress_bar.setFormat("训练排队中...")
+            return
+
     def _on_training_progress(self, message: str) -> None:
         text = str(message or "").strip()
         if not text:
@@ -5762,6 +5878,7 @@ class ToolPage(QtWidgets.QWidget):
         validation_label = getattr(self, "lbl_training_validation", None)
         if validation_label is not None:
             validation_label.setText(status_text)
+        self._update_training_progress_bar(text)
 
     def _start_training_worker(self, payload: dict) -> None:
         if getattr(self, "_training_in_progress", False):
@@ -5769,6 +5886,7 @@ class ToolPage(QtWidgets.QWidget):
             return
 
         self._set_training_running(True)
+        self._begin_training_progress_bar("准备训练...")
         if self._payload_has_task_requests(payload):
             self._on_training_progress("正在准备训练样本")
         else:
@@ -5848,6 +5966,11 @@ class ToolPage(QtWidgets.QWidget):
                         display_rows = list(train_result.result_rows)
             except Exception as exc:
                 failure_messages.append(f"{task.get('display_name', 'tool')}: {exc}")
+
+        self._finish_training_progress_bar(
+            success_count=len(success_names),
+            failure_count=len(failure_messages),
+        )
 
         if last_status_message:
             self.lbl_status.setText(last_status_message)

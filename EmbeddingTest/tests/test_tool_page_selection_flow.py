@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -41,6 +42,8 @@ class _ToolPageSelectionHarness:
     _sample_basename_key = ToolPage._sample_basename_key
     _existing_sample_basename_keys = ToolPage._existing_sample_basename_keys
     _add_image_paths_to_sample_list = ToolPage._add_image_paths_to_sample_list
+    _show_duplicate_sample_names_message = ToolPage._show_duplicate_sample_names_message
+    _add_images_to = ToolPage._add_images_to
 
     def __init__(self) -> None:
         self.tabs = QtWidgets.QTabWidget()
@@ -179,7 +182,7 @@ class ToolPageSelectionFlowTest(unittest.TestCase):
         harness = _ToolPageSelectionHarness()
         harness.test_files = [r"C:\old\cam1_debug.png"]
 
-        added_count, skipped_count = harness._add_image_paths_to_sample_list(
+        added_count, skipped_count, skipped_names = harness._add_image_paths_to_sample_list(
             "TEST",
             [
                 r"D:\new\cam1_debug.png",
@@ -190,10 +193,50 @@ class ToolPageSelectionFlowTest(unittest.TestCase):
 
         self.assertEqual(added_count, 1)
         self.assertEqual(skipped_count, 2)
+        self.assertEqual(skipped_names, ["cam1_debug.png", "cam1_new.png"])
         self.assertEqual(
             sorted(os.path.basename(path) for path in harness.test_files),
             ["cam1_debug.png", "cam1_new.png"],
         )
+
+    def test_add_train_skips_existing_test_basename(self) -> None:
+        harness = _ToolPageSelectionHarness()
+        harness.test_files = [r"C:\capture\20260609_105917_cam1.png"]
+
+        added_count, skipped_count, skipped_names = harness._add_image_paths_to_sample_list(
+            "TRAIN",
+            [
+                r"D:\packed\20260609_105917_cam1.png",
+                r"D:\packed\20260609_105647_cam1.png",
+            ],
+        )
+
+        self.assertEqual(added_count, 1)
+        self.assertEqual(skipped_count, 1)
+        self.assertEqual(skipped_names, ["20260609_105917_cam1.png"])
+        self.assertEqual(harness.test_files, [r"C:\capture\20260609_105917_cam1.png"])
+        self.assertEqual(
+            sorted(os.path.basename(path) for path in harness.train_files),
+            ["20260609_105647_cam1.png"],
+        )
+
+    def test_add_images_shows_duplicate_name_message(self) -> None:
+        harness = _ToolPageSelectionHarness()
+        harness.train_files = [r"C:\capture\20260609_165310_313711_cam1.png"]
+
+        with mock.patch(
+            "PySide6.QtWidgets.QFileDialog.getOpenFileNames",
+            return_value=([r"D:\packed\20260609_165310_313711_cam1.png"], ""),
+        ), mock.patch("PySide6.QtWidgets.QMessageBox.information") as information:
+            harness._add_images_to("TEST")
+
+        information.assert_called_once()
+        args = information.call_args.args
+        self.assertEqual(args[1], "同名图片")
+        self.assertIn("1 张图片文件名已存在", args[2])
+        self.assertIn("20260609_165310_313711_cam1.png", args[2])
+        self.assertEqual(harness.test_files, [])
+        self.assertEqual(harness.refresh_calls, 0)
 
     def test_move_test_sample_into_training(self) -> None:
         harness = _ToolPageSelectionHarness()

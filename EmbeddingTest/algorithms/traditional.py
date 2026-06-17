@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Iterable, List, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -379,12 +379,29 @@ def _target_threshold_center(
     return fallback_mid
 
 
+def _emit_training_progress(
+    progress_callback: Optional[Callable[[str], None]],
+    status: str,
+    index: int,
+    total: int,
+    path: str,
+) -> None:
+    if not callable(progress_callback):
+        return
+    total = max(1, int(total or 0))
+    status_text = str(status or "").strip().upper() or "SAMPLE"
+    progress_callback(
+        f"traditional {status_text} {int(index)}/{total} {os.path.basename(str(path or ''))}"
+    )
+
+
 def train_threshold_model(
     ok_files: Sequence[str],
     ng_files: Sequence[str],
     algorithm: str,
     *,
     preferred_label: str = "roi1",
+    progress_callback: Optional[Callable[[str], None]] = None,
 ) -> Tuple[TraditionalThresholdModel, List[Dict[str, Any]]]:
     if not ok_files or not ng_files:
         raise RuntimeError("Traditional algorithm needs both OK and NG samples")
@@ -395,13 +412,17 @@ def train_threshold_model(
     ok_values: List[float] = []
     ng_values: List[float] = []
 
-    for path in ok_files:
+    ok_total = len(ok_files)
+    ng_total = len(ng_files)
+    for index, path in enumerate(ok_files, start=1):
+        _emit_training_progress(progress_callback, "OK", index, ok_total, path)
         metrics = compute_roi_metrics(path, preferred_label=preferred_label)
         value = metric_value(metrics, algorithm)
         ok_values.append(value)
         rows.append({"gt": "OK", "value": value, **metrics})
 
-    for path in ng_files:
+    for index, path in enumerate(ng_files, start=1):
+        _emit_training_progress(progress_callback, "NG", index, ng_total, path)
         metrics = compute_roi_metrics(path, preferred_label=preferred_label)
         value = metric_value(metrics, algorithm)
         ng_values.append(value)
@@ -452,6 +473,7 @@ def train_threshold_model_from_samples(
     algorithm: str,
     *,
     preferred_label: str = "roi1",
+    progress_callback: Optional[Callable[[str], None]] = None,
 ) -> Tuple[TraditionalThresholdModel, List[Dict[str, Any]]]:
     if not ok_samples or not ng_samples:
         raise RuntimeError("Traditional algorithm needs both OK and NG samples")
@@ -475,13 +497,18 @@ def train_threshold_model_from_samples(
             entries.append((path, label))
         return entries
 
-    for path, label in _normalized_entries(ok_samples):
+    ok_entries = _normalized_entries(ok_samples)
+    ng_entries = _normalized_entries(ng_samples)
+
+    for index, (path, label) in enumerate(ok_entries, start=1):
+        _emit_training_progress(progress_callback, "OK", index, len(ok_entries), path)
         metrics = compute_roi_metrics(path, preferred_label=label)
         value = metric_value(metrics, algorithm)
         ok_values.append(value)
         rows.append({"gt": "OK", "value": value, **metrics})
 
-    for path, label in _normalized_entries(ng_samples):
+    for index, (path, label) in enumerate(ng_entries, start=1):
+        _emit_training_progress(progress_callback, "NG", index, len(ng_entries), path)
         metrics = compute_roi_metrics(path, preferred_label=label)
         value = metric_value(metrics, algorithm)
         ng_values.append(value)
@@ -516,7 +543,7 @@ def train_threshold_model_from_samples(
     )
     labels = [
         str(label or "").strip()
-        for _path, label in _normalized_entries(ok_samples) + _normalized_entries(ng_samples)
+        for _path, label in ok_entries + ng_entries
         if str(label or "").strip()
     ]
     best_model = TraditionalThresholdModel(

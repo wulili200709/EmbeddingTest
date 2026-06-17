@@ -161,6 +161,9 @@ class _TrainAllHarness:
     _finalize_training_task_result = ToolPage._finalize_training_task_result
     _training_payload = ToolPage._training_payload
     _set_training_running = ToolPage._set_training_running
+    _begin_training_progress_bar = ToolPage._begin_training_progress_bar
+    _finish_training_progress_bar = ToolPage._finish_training_progress_bar
+    _update_training_progress_bar = ToolPage._update_training_progress_bar
     _on_training_progress = ToolPage._on_training_progress
     _payload_has_task_requests = staticmethod(ToolPage._payload_has_task_requests)
     _start_training_worker = ToolPage._start_training_worker
@@ -311,6 +314,17 @@ class _TrainingConfirmHarness:
         self._sync_training_action_buttons()
 
 
+class _TrainingProgressHarness:
+    _update_training_progress_bar = ToolPage._update_training_progress_bar
+    _on_training_progress = ToolPage._on_training_progress
+
+    def __init__(self) -> None:
+        self.lbl_status = QtWidgets.QLabel("")
+        self.lbl_training_validation = QtWidgets.QLabel("")
+        self.progress_training = QtWidgets.QProgressBar()
+        self.progress_training.setVisible(False)
+
+
 class ToolPageTrainAllTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -336,6 +350,22 @@ class ToolPageTrainAllTest(unittest.TestCase):
         self.assertIsNone(harness._training_thread)
         self.assertIsNone(harness._training_worker)
         self.assertEqual(finalized, [{"success_names": ["Hole"]}])
+
+    def test_training_progress_bar_tracks_traditional_sample_progress(self) -> None:
+        harness = _TrainingProgressHarness()
+
+        harness._on_training_progress(
+            "training 2/4 Pusher: traditional OK 3/10 cam1_ok.png"
+        )
+
+        self.assertEqual(
+            harness.lbl_status.text(),
+            "Status: training 2/4 Pusher: traditional OK 3/10 cam1_ok.png",
+        )
+        self.assertEqual(harness.progress_training.maximum(), 4000)
+        self.assertEqual(harness.progress_training.value(), 1300)
+        self.assertIn("2/4 Pusher", harness.progress_training.format())
+        self.assertIn("traditional OK 3/10", harness.progress_training.format())
 
     def test_train_all_enabled_items_trains_each_tool_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

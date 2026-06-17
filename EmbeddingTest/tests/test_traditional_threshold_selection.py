@@ -88,6 +88,46 @@ class TraditionalThresholdSelectionTest(unittest.TestCase):
         self.assertAlmostEqual(model.accuracy, 1.0, places=8)
         self.assertEqual(len(rows), 4)
 
+    def test_traditional_training_reports_sample_progress(self) -> None:
+        metric_map = {
+            "ok1.png": 120.0,
+            "ng1.png": 40.0,
+        }
+        progress: list[str] = []
+
+        def _fake_compute(path: str, preferred_label: str = "roi1"):
+            return {
+                "file_path": path,
+                "file_name": path,
+                "roi_label": preferred_label,
+                "bbox_xywh": [0, 0, 10, 10],
+                "meanintensity": metric_map[path],
+                "mean_intensity": metric_map[path],
+                "meanstd": 0.0,
+                "mean_std": 0.0,
+                "meanhsv_h": 0.0,
+                "meanhsv_s": 0.0,
+                "meanhsv_v": 0.0,
+                "roi_area": 100,
+            }
+
+        with mock.patch.object(traditional, "compute_roi_metrics", side_effect=_fake_compute):
+            traditional.train_threshold_model(
+                ["ok1.png"],
+                ["ng1.png"],
+                "meanintensity",
+                preferred_label="roi1",
+                progress_callback=progress.append,
+            )
+
+        self.assertEqual(
+            progress,
+            [
+                "traditional OK 1/1 ok1.png",
+                "traditional NG 1/1 ng1.png",
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

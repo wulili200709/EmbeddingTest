@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict
 
 from algorithms.registry import normalize_learning_backbone
+from infrastructure.json_backup import load_json_with_recovery, write_json_with_backup
 
 
 @dataclass
@@ -45,16 +45,14 @@ def load_product_params(path: str) -> ProductRuntimeParams:
     p = Path(path)
     if not p.exists():
         return ProductRuntimeParams()
-    data = json.loads(p.read_text(encoding="utf-8-sig"))
-    if not isinstance(data, dict):
-        raise ValueError(f"Invalid product params: {p}")
+    data = load_json_with_recovery(p, expected_type=dict)
     return ProductRuntimeParams.from_dict(data)
 
 
 def save_product_params(params: ProductRuntimeParams, path: str) -> None:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(params.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json_with_backup(p, params.to_dict(), expected_type=dict)
 
 
 __all__ = ["ProductRuntimeParams", "load_product_params", "save_product_params"]

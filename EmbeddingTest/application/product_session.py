@@ -17,6 +17,11 @@ from path_utils import (
     resolve_existing_product_path,
     resolve_existing_product_paths,
 )
+from infrastructure.json_backup import (
+    load_json_with_recovery,
+    protect_product_json_files,
+    write_json_with_backup,
+)
 
 
 @dataclass(frozen=True)
@@ -124,6 +129,7 @@ class ProductSession:
         return self.line2dup_paths_for_role(camera_role).recipe_path
 
     def load(self) -> None:
+        protect_product_json_files(self.session_dir)
         if os.path.exists(self.products_json):
             try:
                 with open(self.products_json, "r", encoding="utf-8") as f:
@@ -167,8 +173,10 @@ class ProductSession:
         existing_payload: dict = {}
         if os.path.exists(self.session_json):
             try:
-                with open(self.session_json, "r", encoding="utf-8") as f:
-                    existing_payload = json.load(f)
+                existing_payload = load_json_with_recovery(
+                    self.session_json,
+                    expected_type=dict,
+                )
             except Exception:
                 existing_payload = {}
         payload = {
@@ -210,15 +218,16 @@ class ProductSession:
                 ),
             ),
         }
-        with open(self.session_json, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
+        write_json_with_backup(self.session_json, payload, expected_type=dict)
 
     def load_session(self) -> SessionData:
         raw: dict = {}
         if self.session_json and os.path.exists(self.session_json):
             try:
-                with open(self.session_json, "r", encoding="utf-8") as f:
-                    raw = json.load(f)
+                raw = load_json_with_recovery(
+                    self.session_json,
+                    expected_type=dict,
+                )
             except Exception:
                 raw = {}
 

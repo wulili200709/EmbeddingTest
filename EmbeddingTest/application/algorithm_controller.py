@@ -715,6 +715,7 @@ class AlgorithmController:
                 normalized_ng_samples,
                 algorithm,
                 preferred_label=training_label_names[0],
+                progress_callback=progress_callback,
             )
         else:
             threshold_model, train_rows = train_threshold_model(
@@ -722,6 +723,7 @@ class AlgorithmController:
                 ng_files,
                 algorithm,
                 preferred_label=training_label_names[0],
+                progress_callback=progress_callback,
             )
         result_rows: List[Dict[str, Any]] = []
         for sample in train_rows:

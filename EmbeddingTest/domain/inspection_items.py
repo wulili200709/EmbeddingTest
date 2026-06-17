@@ -9,7 +9,6 @@ inspection_items.py
 
 from __future__ import annotations
 
-import json
 import os
 import re
 from dataclasses import asdict, dataclass, field
@@ -19,6 +18,7 @@ from algorithms.registry import (
     SHARED_BACKBONE_ALGORITHM_CODE,
     normalize_tool_algorithm_code,
 )
+from infrastructure.json_backup import load_json_with_recovery, write_json_with_backup
 
 
 SUPPORTED_CAMERA_IDS = ("cam1", "cam2")
@@ -134,8 +134,7 @@ def load_inspection_items(path: str) -> List[InspectionItem]:
     if not path or not os.path.exists(path):
         return []
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            raw = json.load(f)
+        raw = load_json_with_recovery(path, expected_type=list)
     except Exception:
         return []
     if not isinstance(raw, list):
@@ -153,8 +152,7 @@ def load_inspection_items(path: str) -> List[InspectionItem]:
 def save_inspection_items(items: Iterable[InspectionItem], path: str) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     payload = [item.to_dict() for item in items]
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
+    write_json_with_backup(path, payload, expected_type=list)
 
 
 def build_default_item(

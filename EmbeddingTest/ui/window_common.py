@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Optional
 import re
@@ -11,6 +10,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from app_paths import packaged_embedding_test_root, writable_embedding_test_root
 from application import AlgorithmController, ProductSession
 from application.runtime.preview_frame import RuntimePreviewFrame, RuntimePreviewShape
+from infrastructure.json_backup import load_json_with_recovery
 from line2dup.core import locator as line2dup_locator
 from ncc import locator as ncc_locator
 import algorithms.proxy as qr_core
@@ -231,8 +231,7 @@ def _draw_runtime_search_region(painter: QtGui.QPainter, source: str | RuntimePr
 def _runtime_loc_method_for_product(product_dir: str) -> str:
     session_path = Path(str(product_dir or "")) / "session.json"
     try:
-        with session_path.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
+        payload = load_json_with_recovery(session_path, expected_type=dict)
     except Exception:
         payload = {}
     method = str(payload.get("loc_method", "line2dup") or "line2dup").strip().lower()
