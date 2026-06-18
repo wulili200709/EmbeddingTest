@@ -91,6 +91,26 @@ class InspectionItemDisplayNameTest(unittest.TestCase):
         self.assertEqual(synced[0].effective_model_key, "cam1__Hole")
         self.assertEqual(synced[2].effective_model_key, "cam1__Pusher")
 
+    def test_chinese_task_group_names_remain_distinct_in_model_keys(self) -> None:
+        blue = InspectionItem(
+            item_id="roi4",
+            display_name="蓝4",
+            camera_id="cam1",
+            roi_label="roi4",
+            task_group="蓝4",
+        )
+        orange = InspectionItem(
+            item_id="roi9",
+            display_name="橙4",
+            camera_id="cam1",
+            roi_label="roi9",
+            task_group="橙4",
+        )
+
+        self.assertEqual(blue.effective_model_key, "cam1__蓝4")
+        self.assertEqual(orange.effective_model_key, "cam1__橙4")
+        self.assertNotEqual(blue.effective_model_key, orange.effective_model_key)
+
     def test_sync_items_replaces_stale_roi_task_group_with_reference_name(self) -> None:
         existing_items = [
             InspectionItem(

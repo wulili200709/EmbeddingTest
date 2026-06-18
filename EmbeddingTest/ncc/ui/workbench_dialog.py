@@ -1272,7 +1272,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             return
         if self.source_canvas.roi_xywh() is None:
             return
-        self._save_template()
+        self._save_template(show_progress=False)
 
     def _sync_roi_to_canvas(self) -> None:
         if self._syncing_roi:
@@ -1310,7 +1310,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         save_model(self._model_path, self._model)
         self._refresh_model_summary()
 
-    def _save_template(self) -> None:
+    def _save_template(self, _checked: object = None, *, show_progress: bool = True) -> None:
         source_path = str(self.source_canvas.image_path() or "").strip()
         if not source_path:
             QtWidgets.QMessageBox.warning(self, "NCC", "请先加载参考图。")
@@ -1319,14 +1319,42 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         if roi is None:
             QtWidgets.QMessageBox.warning(self, "NCC", "请先在右侧参考图上框选模板 ROI。")
             return
-        self._sync_model_from_ui()
-        set_source_from_image_file(self._model_path, self._model, source_path)
-        self._model = set_template_from_roi(self._model_path, self._model, roi)
-        self._model.reference_regions = [region.normalized() for region in self._reference_regions]
-        save_model(self._model_path, self._model)
-        self._load_model()
-        self._set_status("模板已保存。")
-        self.modelSaved.emit(self._model_path)
+        progress: Optional[QtWidgets.QProgressDialog] = None
+        buttons = [
+            button
+            for button in (
+                getattr(self, "btn_save_template", None),
+                getattr(self, "btn_apply_template_roi", None),
+            )
+            if isinstance(button, QtWidgets.QAbstractButton)
+        ]
+        if show_progress:
+            self._set_status("正在保存 NCC 模板，请稍候...")
+            for button in buttons:
+                button.setEnabled(False)
+            progress = QtWidgets.QProgressDialog("正在保存 NCC 模板，请稍候...", "", 0, 0, self)
+            progress.setWindowTitle("保存模板")
+            progress.setCancelButton(None)
+            progress.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
+            progress.setMinimumDuration(0)
+            progress.setValue(0)
+            progress.show()
+            QtWidgets.QApplication.processEvents(QtCore.QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+        try:
+            self._sync_model_from_ui()
+            set_source_from_image_file(self._model_path, self._model, source_path)
+            self._model = set_template_from_roi(self._model_path, self._model, roi)
+            self._model.reference_regions = [region.normalized() for region in self._reference_regions]
+            save_model(self._model_path, self._model)
+            self._load_model()
+            self._set_status("模板已保存。")
+            self.modelSaved.emit(self._model_path)
+        finally:
+            if progress is not None:
+                progress.close()
+                progress.deleteLater()
+            for button in buttons:
+                button.setEnabled(True)
 
     def _reference_region_row_values(self, index: int, region: NccReferenceRegion) -> List[str]:
         label = region.label_name or f"roi{index + 1}"
@@ -1501,8 +1529,6 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
                 (float(x) + dx, float(y) + dy)
                 for x, y in original_points
             ]
-        self._refresh_reference_region_list()
-        self._refresh_reference_region_fields()
         self._refresh_reference_canvas()
 
     def _on_reference_canvas_pressed(self, button: int, x: int, y: int) -> None:

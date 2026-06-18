@@ -1526,6 +1526,26 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             QtWidgets.QMessageBox.critical(self, "模板无效", "模板ROI超出图像范围。")
             return
 
+        buttons = [
+            button
+            for button in (
+                getattr(self, "btn_build", None),
+                getattr(self, "btn_build_pinned", None),
+            )
+            if isinstance(button, QtWidgets.QAbstractButton)
+        ]
+        self.lbl_status.setText("状态：正在保存位置修正模板，请稍候...")
+        for button in buttons:
+            button.setEnabled(False)
+        progress = QtWidgets.QProgressDialog("正在保存位置修正模板，请稍候...", "", 0, 0, self)
+        progress.setWindowTitle("保存模板")
+        progress.setCancelButton(None)
+        progress.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        progress.show()
+        QtWidgets.QApplication.processEvents(QtCore.QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+
         original_mode = (
             "manual_points"
             if (self.points_dirty or self.original_mode == "manual_points") and self._has_editor_features()
@@ -1560,29 +1580,45 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             os.makedirs(self.paths.role_dir, exist_ok=True)
             save_detector_model(detector, self.paths.model_path)
         except Exception as exc:
+            progress.close()
+            progress.deleteLater()
+            for button in buttons:
+                button.setEnabled(True)
             QtWidgets.QMessageBox.critical(self, "创建失败", str(exc))
             return
 
-        self.detector = detector
-        self.detector_path = self.paths.model_path
-        self.find_model_path = self.paths.model_path
-        self._update_find_model_label()
-        self._save_recipe()
-        class_id = self.edit_class_id.text().strip() or self.product_name or "object"
-        saved_levels = detector.get_original_editor_levels(class_id)
-        if saved_levels:
-            self.editor_levels = clone_levels(saved_levels)
-        self.points_dirty = False
-        self._hover_feature_index = None
-        self._point_drag_start = None
-        self._point_drag_end = None
-        self._update_extract_points_button_state()
-        self._clear_create_canvas_roi()
-        self._refresh_create_overlays()
-        self.lbl_status.setText(
-            f"状态：模型已保存，kept={kept} skipped={skipped} 特征点={self._feature_count}"
-        )
-        self.modelSaved.emit(self.paths.model_path, self.paths.recipe_path)
+        try:
+            self.detector = detector
+            self.detector_path = self.paths.model_path
+            self.find_model_path = self.paths.model_path
+            self._update_find_model_label()
+            self._save_recipe()
+            class_id = self.edit_class_id.text().strip() or self.product_name or "object"
+            saved_levels = detector.get_original_editor_levels(class_id)
+            if saved_levels:
+                self.editor_levels = clone_levels(saved_levels)
+            self.points_dirty = False
+            self._hover_feature_index = None
+            self._point_drag_start = None
+            self._point_drag_end = None
+            self._update_extract_points_button_state()
+            self._clear_create_canvas_roi()
+            self._refresh_create_overlays()
+            self.lbl_status.setText(
+                f"状态：模型已保存，kept={kept} skipped={skipped} 特征点={self._feature_count}"
+            )
+            self.modelSaved.emit(self.paths.model_path, self.paths.recipe_path)
+        except Exception as exc:
+            progress.close()
+            progress.deleteLater()
+            for button in buttons:
+                button.setEnabled(True)
+            QtWidgets.QMessageBox.critical(self, "保存失败", str(exc))
+            return
+        progress.close()
+        progress.deleteLater()
+        for button in buttons:
+            button.setEnabled(True)
         QtWidgets.QMessageBox.information(self, "完成", f"模板模型已保存：\n{self.paths.model_path}")
 
     def _pose_ui_values(self) -> Dict[str, float]:

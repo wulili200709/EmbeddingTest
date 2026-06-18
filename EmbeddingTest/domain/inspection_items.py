@@ -25,7 +25,7 @@ SUPPORTED_CAMERA_IDS = ("cam1", "cam2")
 
 
 def _slug_token(value: object, fallback: str = "tool") -> str:
-    normalized = re.sub(r"[^0-9A-Za-z._-]+", "_", str(value or "").strip()).strip("._-")
+    normalized = re.sub(r"[^\w._-]+", "_", str(value or "").strip(), flags=re.UNICODE).strip("._-")
     return normalized or fallback
 
 

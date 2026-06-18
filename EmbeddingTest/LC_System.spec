@@ -23,6 +23,7 @@ SESSION_ROOT = APP_ROOT / ".qr_session"
 MVIMPORT_ROOT = APP_ROOT / "third_party" / "MvImport"
 NKIO_ROOT = APP_ROOT / "third_party" / "nkio"
 NKIO_DLL = NKIO_ROOT / "NKIOLIBx64.dll"
+NKIO_SDK_DLL = SDK_ROOT / "Lib" / "x64" / "NKIOLIBx64.dll"
 ICON_PATH = RES_ROOT / "logo.ico"
 NKIO_BIN_ROOT = SDK_ROOT / "Bin"
 NKIO_SELECT_INI = NKIO_BIN_ROOT / "select.ini"
@@ -149,8 +150,16 @@ for path in APP_ROOT.glob("*.pyd"):
 for path in ROOT_LEVEL_BINARY_FILES:
     if path.exists():
         binaries.append(_pair(path))
-if NKIO_DLL.exists():
-    binaries.append(_pair(NKIO_DLL, "EmbeddingTest/third_party/nkio"))
+if NKIO_ROOT.exists():
+    for path in NKIO_ROOT.iterdir():
+        if not path.is_file():
+            continue
+        if path.suffix.lower() in {".dll", ".pyd"}:
+            binaries.append(_pair(path, "EmbeddingTest/third_party/nkio"))
+        else:
+            datas.append(_pair(path, "EmbeddingTest/third_party/nkio"))
+elif NKIO_SDK_DLL.exists():
+    binaries.append(_pair(NKIO_SDK_DLL, "EmbeddingTest/third_party/nkio"))
 for path in ROOT_LEVEL_DATA_FILES:
     if path.exists():
         datas.append(_pair(path))

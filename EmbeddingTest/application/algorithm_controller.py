@@ -256,7 +256,7 @@ class AlgorithmController:
 
     @staticmethod
     def _normalize_model_key(model_key: object) -> str:
-        normalized = re.sub(r"[^0-9A-Za-z._-]+", "_", str(model_key or "").strip()).strip("._-")
+        normalized = re.sub(r"[^\w._-]+", "_", str(model_key or "").strip(), flags=re.UNICODE).strip("._-")
         return normalized
 
     def tool_model_key(self, model_key: object) -> str:

@@ -30,6 +30,24 @@ class AlgorithmControllerToolScopedModelsTest(unittest.TestCase):
         )
         self.assertTrue(path.endswith("cam1__roi1_register_model_lt01.npz"))
 
+    def test_embedding_model_path_keeps_chinese_tool_key_distinct(self) -> None:
+        controller = AlgorithmController()
+
+        blue_path = controller.embedding_model_path(
+            "b0",
+            "C:/demo/product",
+            model_key="cam1__蓝4",
+        )
+        orange_path = controller.embedding_model_path(
+            "b0",
+            "C:/demo/product",
+            model_key="cam1__橙4",
+        )
+
+        self.assertTrue(blue_path.endswith("cam1__蓝4_register_model_lt01.npz"))
+        self.assertTrue(orange_path.endswith("cam1__橙4_register_model_lt01.npz"))
+        self.assertNotEqual(blue_path, orange_path)
+
     def test_load_embedding_model_reuses_unchanged_model_file(self) -> None:
         controller = AlgorithmController()
         controller.set_learning_backbone("b0")
