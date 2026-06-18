@@ -57,6 +57,9 @@ class _Canvas:
     def roi_xywh(self):
         return self._roi
 
+    def has_image(self) -> bool:
+        return True
+
 
 class _MoveCanvas:
     _pixmap = None
@@ -115,6 +118,54 @@ class NccWorkbenchTemplateRoiTest(unittest.TestCase):
         NccMatchWorkbenchDialog._apply_current_template_roi(dialog)
 
         self.assertEqual(calls, [True])
+
+    def test_drawing_template_roi_auto_applies_current_box(self) -> None:
+        dialog = NccMatchWorkbenchDialog.__new__(NccMatchWorkbenchDialog)
+        dialog._syncing_roi = False
+        dialog._loading_model = False
+        dialog._suppress_source_roi_auto_apply = False
+        dialog.source_canvas = _Canvas((5, 6, 70, 80))
+        seen: list[tuple[int, int, int, int]] = []
+        calls: list[bool] = []
+        dialog._set_roi_spin_values = lambda roi: seen.append(roi)
+        dialog._save_template = lambda: calls.append(True)
+
+        NccMatchWorkbenchDialog._sync_roi_from_canvas(dialog)
+
+        self.assertEqual(seen, [(5, 6, 70, 80)])
+        self.assertEqual(calls, [True])
+
+    def test_loading_template_roi_does_not_auto_apply_current_box(self) -> None:
+        dialog = NccMatchWorkbenchDialog.__new__(NccMatchWorkbenchDialog)
+        dialog._syncing_roi = False
+        dialog._loading_model = True
+        dialog._suppress_source_roi_auto_apply = False
+        dialog.source_canvas = _Canvas((5, 6, 70, 80))
+        seen: list[tuple[int, int, int, int]] = []
+        calls: list[bool] = []
+        dialog._set_roi_spin_values = lambda roi: seen.append(roi)
+        dialog._save_template = lambda: calls.append(True)
+
+        NccMatchWorkbenchDialog._sync_roi_from_canvas(dialog)
+
+        self.assertEqual(seen, [(5, 6, 70, 80)])
+        self.assertEqual(calls, [])
+
+    def test_loading_source_image_without_roi_does_not_reset_template_roi_form(self) -> None:
+        dialog = NccMatchWorkbenchDialog.__new__(NccMatchWorkbenchDialog)
+        dialog._syncing_roi = False
+        dialog._loading_model = True
+        dialog._suppress_source_roi_auto_apply = False
+        dialog.source_canvas = _Canvas(None)
+        seen: list[tuple[int, int, int, int]] = []
+        calls: list[bool] = []
+        dialog._set_roi_spin_values = lambda roi: seen.append(roi)
+        dialog._save_template = lambda: calls.append(True)
+
+        NccMatchWorkbenchDialog._sync_roi_from_canvas(dialog)
+
+        self.assertEqual(seen, [])
+        self.assertEqual(calls, [])
 
     def test_translate_reference_move_selection_moves_all_selected_regions(self) -> None:
         dialog = NccMatchWorkbenchDialog.__new__(NccMatchWorkbenchDialog)

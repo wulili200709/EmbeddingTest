@@ -347,6 +347,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._reference_move_start: Optional[Tuple[float, float]] = None
         self._reference_move_original: Dict[int, List[Tuple[float, float]]] = {}
         self._loading_model = False
+        self._suppress_source_roi_auto_apply = False
         self._find_running = False
         self._find_thread: Optional[QtCore.QThread] = None
         self._find_worker: Optional[_NccFindWorker] = None
@@ -920,7 +921,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
 
         if source_path and Path(source_path).exists():
             self.source_canvas.set_image(source_path)
-            self.source_canvas.set_roi_rect(self._model.template_roi.to_xywh())
+            self.source_canvas.set_roi_rect(self._model.template_roi.to_xywh(), emit_signal=False)
             self._refresh_source_canvas_overlays()
         elif self.source_canvas.image_path() is None:
             self.source_canvas.clear_image()
@@ -1258,8 +1259,20 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             return
         roi = self.source_canvas.roi_xywh()
         if roi is None:
+            if getattr(self, "_loading_model", False):
+                return
             roi = (0, 0, 1, 1)
+            self._set_roi_spin_values(roi)
+            return
         self._set_roi_spin_values(roi)
+        self._auto_apply_template_roi_from_canvas()
+
+    def _auto_apply_template_roi_from_canvas(self) -> None:
+        if getattr(self, "_loading_model", False) or getattr(self, "_suppress_source_roi_auto_apply", False):
+            return
+        if self.source_canvas.roi_xywh() is None:
+            return
+        self._save_template()
 
     def _sync_roi_to_canvas(self) -> None:
         if self._syncing_roi:
@@ -1270,11 +1283,12 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
                 self.spn_roi_y.value(),
                 max(1, self.spn_roi_w.value()),
                 max(1, self.spn_roi_h.value()),
-            )
+            ),
+            emit_signal=False,
         )
 
     def _clear_source_roi(self) -> None:
-        self.source_canvas.clear_roi()
+        self.source_canvas.clear_roi(emit_signal=False)
         self._set_roi_spin_values((0, 0, 1, 1))
         self._set_status("已清空模板 ROI。")
 
@@ -2328,12 +2342,13 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
                 self.spn_roi_y.value(),
                 max(1, self.spn_roi_w.value()),
                 max(1, self.spn_roi_h.value()),
-            )
+            ),
+            emit_signal=False,
         )
         self._refresh_mask_canvas()
 
     def _clear_source_roi(self) -> None:
-        self.source_canvas.clear_roi()
+        self.source_canvas.clear_roi(emit_signal=False)
         self._set_roi_spin_values((0, 0, 1, 1))
         self._refresh_mask_canvas()
         self._set_status("已清空模板 ROI。")

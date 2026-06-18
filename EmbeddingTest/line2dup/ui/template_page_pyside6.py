@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import json
 import os
 import time
 from typing import Dict, List, Optional, Tuple, cast
@@ -342,12 +343,15 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._selected_reference_idx: Optional[int] = None
         self._adding_reference_roi = False
         self._syncing_reference_view = False
+        self._reference_dirty = False
+        self._reference_regions_explicit = False
         self._search_roi_shape_type: str = ""
         self._search_roi_points: List[List[float]] = []
         self._find_result_cache: Dict[str, Dict[str, object]] = {}
         self._reference_preview_overlays: List[OverlayShape] = []
         self._reference_region_overlay_cache: List[OverlayShape] = []
         self._reference_region_overlay_cache_valid = False
+        self._suppress_create_auto_apply = False
 
         self._build_ui()
         self._load_recipe()
@@ -378,7 +382,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setMinimumWidth(360)
+        scroll.setMinimumWidth(420)
         scroll.setStyleSheet(
             "QScrollArea{background:#2f2f2f;border:none;}"
             "QScrollArea > QWidget > QWidget{background:#2f2f2f;}"
@@ -418,7 +422,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         layout.addWidget(splitter, 1)
 
         left_container = QtWidgets.QWidget()
-        left_container.setMinimumWidth(360)
+        left_container.setMinimumWidth(440)
         left_container_layout = QtWidgets.QVBoxLayout(left_container)
         left_container_layout.setContentsMargins(0, 0, 0, 0)
         left_container_layout.setSpacing(8)
@@ -451,22 +455,30 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.cmb_role.currentTextChanged.connect(self._on_role_changed)
         self.btn_apply_selection = QtWidgets.QPushButton("应用当前框")
         self.btn_apply_selection.clicked.connect(self._apply_current_selection)
+        self.btn_apply_selection.setVisible(False)
         self.btn_clear_roi = QtWidgets.QPushButton("清空模板ROI")
         self.btn_clear_roi.clicked.connect(self._clear_template_roi)
         self.btn_clear_masks = QtWidgets.QPushButton("清空Mask")
         self.btn_clear_masks.clicked.connect(self._clear_masks)
+        self.btn_undo_mask = QtWidgets.QPushButton("撤销上一个Mask")
+        self.btn_undo_mask.clicked.connect(self._undo_last_mask)
+        self.lbl_mask_count = QtWidgets.QLabel()
         select_l.setColumnStretch(0, 0)
         select_l.setColumnStretch(1, 1)
-        select_l.addWidget(QtWidgets.QLabel("当前用途"), 0, 0)
+        self.lbl_current_usage = QtWidgets.QLabel("当前用途")
+        select_l.addWidget(self.lbl_current_usage, 0, 0)
         select_l.addWidget(self.cmb_role, 0, 1)
-        select_l.addWidget(self.btn_apply_selection, 1, 0, 1, 2)
-        select_l.addWidget(self.btn_clear_roi, 2, 0)
-        select_l.addWidget(self.btn_clear_masks, 2, 1)
+        select_l.addWidget(self.btn_clear_roi, 1, 0)
+        select_l.addWidget(self.btn_clear_masks, 1, 1)
+        select_l.addWidget(self.btn_undo_mask, 2, 0)
+        select_l.addWidget(self.lbl_mask_count, 2, 1)
         select_box.setTitle("模板编辑")
-        cast(QtWidgets.QLabel, select_l.itemAtPosition(0, 0).widget()).setText("当前用途")
+        self.lbl_current_usage.setText("当前用途")
         self.btn_apply_selection.setText("应用当前框")
         self.btn_clear_roi.setText("清空模板ROI")
         self.btn_clear_masks.setText("清空Mask")
+        self.btn_undo_mask.setText("撤销上一个Mask")
+        self._refresh_mask_count()
         left.addWidget(select_box)
 
         point_box = QtWidgets.QGroupBox("特征点编辑")
@@ -488,7 +500,8 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         point_l.setColumnStretch(1, 1)
         self.lbl_point_help.setText("宸﹀嚮娣诲姞鐐癸紝鐭嫋鍙缃柟鍚戯紱鍙冲嚮鍒犻櫎閫変腑/闄勮繎鐗瑰緛鐐广€?")
         point_l.addWidget(self.chk_edit_points, 0, 0, 1, 2)
-        point_l.addWidget(QtWidgets.QLabel("默认方向label"), 1, 0)
+        self.lbl_default_direction = QtWidgets.QLabel("默认方向label")
+        point_l.addWidget(self.lbl_default_direction, 1, 0)
         point_l.addWidget(self.spin_point_label, 1, 1)
         point_l.addWidget(self.btn_reset_points, 2, 0, 1, 2)
         point_l.addWidget(self.lbl_point_help, 3, 0, 1, 2)
@@ -496,9 +509,10 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.lbl_point_help.setText("左击添加点，短拖可设置方向；右击删除选中/附近特征点。")
         point_box.setTitle("特征点编辑")
         self.chk_edit_points.setText("Edit Points")
-        cast(QtWidgets.QLabel, point_l.itemAtPosition(1, 0).widget()).setText("默认方向label")
+        self.lbl_default_direction.setText("默认方向label")
         self.btn_reset_points.setText("恢复模型特征点")
         self.lbl_point_help.setText("左击添加点，短拖可设置方向；右击删除选中/附近特征点。")
+        self._sync_point_edit_detail_visibility()
         left.addWidget(point_box)
 
         param_box = QtWidgets.QGroupBox("模板参数")
@@ -519,13 +533,13 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.spin_strong.setValue(60.0)
         self.spin_angle_start = QtWidgets.QDoubleSpinBox()
         self.spin_angle_start.setRange(-360.0, 360.0)
-        self.spin_angle_start.setValue(0.0)
+        self.spin_angle_start.setValue(-5.0)
         self.spin_angle_end = QtWidgets.QDoubleSpinBox()
         self.spin_angle_end.setRange(-360.0, 360.0)
-        self.spin_angle_end.setValue(360.0)
+        self.spin_angle_end.setValue(10.0)
         self.spin_angle_step = QtWidgets.QDoubleSpinBox()
         self.spin_angle_step.setRange(0.1, 360.0)
-        self.spin_angle_step.setValue(10.0)
+        self.spin_angle_step.setValue(1.0)
         self.spin_scale_start = QtWidgets.QDoubleSpinBox()
         self.spin_scale_start.setRange(0.05, 10.0)
         self.spin_scale_start.setValue(1.0)
@@ -557,7 +571,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.cmb_backend_create.setCurrentText("Original")
         self.spin_threshold_create = QtWidgets.QDoubleSpinBox()
         self.spin_threshold_create.setRange(0.0, 100.0)
-        self.spin_threshold_create.setValue(70.0)
+        self.spin_threshold_create.setValue(50.0)
         self.spin_nms_create = QtWidgets.QDoubleSpinBox()
         self.spin_nms_create.setRange(0.0, 1.0)
         self.spin_nms_create.setDecimals(2)
@@ -616,7 +630,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         splitter.addWidget(right_container)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([430, 1000])
+        splitter.setSizes([460, 1000])
         self.create_canvas = RoiCanvas()
         self.canvas = self.create_canvas
         self.create_canvas.setMinimumSize(640, 480)
@@ -756,8 +770,8 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.btn_clear_reference_rois.clicked.connect(self._clear_reference_roi)
         self.btn_load_reference_roi = QtWidgets.QPushButton("加载已有参考ROI")
         self.btn_load_reference_roi.clicked.connect(lambda: self._load_reference_roi_from_json(silent=False))
-        self.btn_save_reference_roi = QtWidgets.QPushButton("保存当前ROI")
-        self.btn_save_reference_roi.clicked.connect(self._save_reference_roi_to_json)
+        self.btn_save_reference_roi = QtWidgets.QPushButton("保存ROI配置")
+        self.btn_save_reference_roi.clicked.connect(self._save_reference_roi_config)
         for button in [
             self.btn_add_reference_roi,
             self.btn_load_reference_roi,
@@ -1230,6 +1244,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             if isinstance(region, dict)
         ]
         first_region = reference_regions[0] if reference_regions else None
+        saved_reference_regions = reference_regions if (reference_regions or self._reference_regions_explicit) else None
         reference_shape_type = str((first_region or {}).get("shape_type", self._recipe_reference_shape_type))
         reference_points = list((first_region or {}).get("points", self._recipe_reference_points))
         reference_label = str((first_region or {}).get("reference_label", "roi") or "roi")
@@ -1265,7 +1280,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             reference_label=reference_label,
             reference_shape_type=reference_shape_type,
             reference_points=reference_points or None,
-            reference_regions=reference_regions or None,
+            reference_regions=saved_reference_regions,
             search_shape_type=str(self._search_roi_shape_type or ""),
             search_points=[list(pt) for pt in (self._search_roi_points or [])] or None,
         )
@@ -1313,6 +1328,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             for region in (recipe.reference_regions or [])
             if isinstance(region, dict)
         ]
+        self._reference_regions_explicit = self._recipe_has_explicit_reference_regions(recipe_path)
         self._invalidate_reference_region_cache()
         self._adding_reference_roi = False
         self._selected_reference_idx = None
@@ -1333,12 +1349,20 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._refresh_reference_region_list()
         self._refresh_reference_canvas()
         self._refresh_reference_region_fields()
-        self._set_reference_status("已加载模板配方。")
+        self._set_reference_dirty(False, "已加载模板配方。")
         self._sync_recipe_controls("create")
         self._apply_find_backend_default()
 
     def _apply_reference_roi_from_recipe(self) -> bool:
         if not self._reference_regions:
+            if self._reference_regions_explicit:
+                self._adding_reference_roi = False
+                self._selected_reference_idx = None
+                self._refresh_reference_region_list()
+                self._refresh_reference_canvas()
+                self._refresh_reference_region_fields()
+                self._set_reference_dirty(False, "已加载模板配方中的空参考 ROI 配置。")
+                return False
             points = self._recipe_reference_points or []
             if not points:
                 return False
@@ -1358,7 +1382,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._refresh_reference_region_list()
         self._refresh_reference_canvas()
         self._refresh_reference_region_fields()
-        self._set_reference_status("已从 recipe 恢复参考 ROI。")
+        self._set_reference_dirty(False, "已从 recipe 恢复参考 ROI。")
         return bool(self._reference_regions)
 
     def _load_existing_model(self, *, silent: bool) -> None:
@@ -1407,7 +1431,8 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._point_drag_start = None
         self._point_drag_end = None
         self._update_extract_points_button_state()
-        self.create_canvas.clear_roi()
+        self._refresh_mask_count()
+        self._clear_create_canvas_roi()
         self.edit_class_id.setText(class_id)
         self.find_model_path = self.paths.model_path
         self._update_find_model_label()
@@ -1417,19 +1442,22 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             f"状态：已加载模型 {os.path.basename(self.paths.model_path)}，特征点={self._feature_count}"
         )
 
-    def _extract_points_from_roi(self) -> None:
+    def _extract_points_from_roi(self, _checked: object = None, *, show_errors: bool = True) -> bool:
         if self.image_bgr is None or not self.image_path:
-            QtWidgets.QMessageBox.warning(self, "提示", "请先加载参考图。")
-            return
+            if show_errors:
+                QtWidgets.QMessageBox.warning(self, "提示", "请先加载参考图。")
+            return False
         if self.template_roi is None:
-            QtWidgets.QMessageBox.warning(self, "提示", "请先设置 template_roi。")
-            return
+            if show_errors:
+                QtWidgets.QMessageBox.warning(self, "提示", "请先设置 template_roi。")
+            return False
 
         x, y, w, h = self.template_roi.x, self.template_roi.y, self.template_roi.w, self.template_roi.h
         roi_img = self.image_bgr[y : y + h, x : x + w].copy()
         if roi_img.size == 0:
-            QtWidgets.QMessageBox.critical(self, "模板无效", "模板ROI超出图像范围。")
-            return
+            if show_errors:
+                QtWidgets.QMessageBox.critical(self, "模板无效", "模板ROI超出图像范围。")
+            return False
 
         try:
             levels = parse_levels(self.edit_levels.text().strip())
@@ -1458,8 +1486,11 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             if not extracted_levels:
                 raise RuntimeError("No template extracted.")
         except Exception as exc:
-            QtWidgets.QMessageBox.critical(self, "提取失败", str(exc))
-            return
+            if show_errors:
+                QtWidgets.QMessageBox.critical(self, "提取失败", str(exc))
+            else:
+                self.lbl_status.setText(f"状态：自动提取特征点失败：{exc}")
+            return False
 
         self.editor_levels = [extracted_levels[0]]
         self._sync_editor_levels()
@@ -1468,9 +1499,18 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._hover_feature_index = None
         self._point_drag_start = None
         self._point_drag_end = None
-        self.chk_edit_points.setChecked(True)
+        self.chk_edit_points.setChecked(False)
         self._refresh_create_overlays()
         self.lbl_status.setText(f"状态：已提取特征点，当前总数={self._feature_count}")
+        return True
+
+    def _auto_extract_points_from_roi(self) -> None:
+        if self.chk_edit_points.isChecked():
+            return
+        if self.points_dirty:
+            self.lbl_status.setText("状态：已有手动编辑特征点，已跳过自动提取。")
+            return
+        self._extract_points_from_roi(show_errors=False)
 
     def _build_and_save(self) -> None:
         if self.image_bgr is None or not self.image_path:
@@ -1537,7 +1577,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._point_drag_start = None
         self._point_drag_end = None
         self._update_extract_points_button_state()
-        self.create_canvas.clear_roi()
+        self._clear_create_canvas_roi()
         self._refresh_create_overlays()
         self.lbl_status.setText(
             f"状态：模型已保存，kept={kept} skipped={skipped} 特征点={self._feature_count}"
@@ -1555,12 +1595,28 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             "scale_step": float(self.spin_scale_step.value()),
         }
 
-    def _apply_current_selection(self) -> None:
+    def _refresh_mask_count(self) -> None:
+        if hasattr(self, "lbl_mask_count"):
+            self.lbl_mask_count.setText(f"已添加 Mask：{len(self.mask_rects)} 个")
+        if hasattr(self, "btn_undo_mask"):
+            edit_enabled = bool(getattr(self, "chk_edit_points", None) and self.chk_edit_points.isChecked())
+            self.btn_undo_mask.setEnabled(bool(self.mask_rects) and not edit_enabled)
+
+    def _clear_create_canvas_roi(self) -> None:
+        self._suppress_create_auto_apply = True
+        try:
+            self.create_canvas.clear_roi()
+        finally:
+            self._suppress_create_auto_apply = False
+
+    def _apply_current_selection(self, _checked: object = None, *, show_warnings: bool = True, auto: bool = False) -> bool:
         xywh = self.create_canvas.roi_xywh()
         if xywh is None:
-            QtWidgets.QMessageBox.warning(self, "提示", "请先在图上拉一个矩形。")
-            return
+            if show_warnings:
+                QtWidgets.QMessageBox.warning(self, "提示", "请先在图上拉一个矩形。")
+            return False
         role = self.cmb_role.currentText()
+        should_auto_extract = False
         if role == "template_roi":
             self.template_roi = RoiRect(*xywh)
             self.mask_rects = []
@@ -1572,18 +1628,26 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self._point_drag_start = None
             self._point_drag_end = None
             self.lbl_status.setText("状态：已更新模板ROI。重新建模后会提取新的特征点。")
+            should_auto_extract = True
         else:
             if self.template_roi is None:
-                QtWidgets.QMessageBox.warning(self, "提示", "请先设置 template_roi。")
-                return
+                if show_warnings:
+                    QtWidgets.QMessageBox.warning(self, "提示", "请先设置 template_roi。")
+                return False
             rel = _clamp_rect_to_roi(xywh, self.template_roi)
             if rel is None:
-                QtWidgets.QMessageBox.warning(self, "提示", "Mask 矩形需要和模板ROI相交。")
-                return
+                if show_warnings:
+                    QtWidgets.QMessageBox.warning(self, "提示", "Mask 矩形需要和模板ROI相交。")
+                return False
             self.mask_rects.append(rel)
             self.lbl_status.setText(f"状态：已添加 {len(self.mask_rects)} 个 mask 矩形。")
-        self.create_canvas.clear_roi()
+            should_auto_extract = True
+        self._refresh_mask_count()
+        self._clear_create_canvas_roi()
         self._refresh_create_overlays()
+        if should_auto_extract:
+            self._auto_extract_points_from_roi()
+        return True
 
     def _clear_template_roi(self) -> None:
         self.template_roi = None
@@ -1594,17 +1658,31 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._hover_feature_index = None
         self._point_drag_start = None
         self._point_drag_end = None
-        self.create_canvas.clear_roi()
+        self._clear_create_canvas_roi()
         self._update_extract_points_button_state()
+        self._refresh_mask_count()
         self._refresh_create_overlays()
         self.lbl_status.setText("状态：已清空模板ROI。")
 
     def _clear_masks(self) -> None:
         self.mask_rects = []
         self._update_extract_points_button_state()
-        self.create_canvas.clear_roi()
+        self._clear_create_canvas_roi()
+        self._refresh_mask_count()
         self._refresh_create_overlays()
         self.lbl_status.setText("状态：已清空 mask。")
+        self._auto_extract_points_from_roi()
+
+    def _undo_last_mask(self) -> None:
+        if not self.mask_rects:
+            return
+        self.mask_rects.pop()
+        self._update_extract_points_button_state()
+        self._clear_create_canvas_roi()
+        self._refresh_mask_count()
+        self._refresh_create_overlays()
+        self.lbl_status.setText(f"状态：已撤销上一个 mask，剩余 {len(self.mask_rects)} 个。")
+        self._auto_extract_points_from_roi()
 
     def _on_role_changed(self, role: str) -> None:
         if role == "exclude_mask":
@@ -1626,23 +1704,38 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
                 preview_width=2,
             )
 
+    def _sync_point_edit_detail_visibility(self) -> None:
+        visible = bool(self.chk_edit_points.isChecked())
+        for widget in (
+            self.lbl_default_direction,
+            self.spin_point_label,
+            self.btn_reset_points,
+            self.lbl_point_help,
+        ):
+            widget.setVisible(visible)
+
     def _on_point_edit_toggled(self, enabled: bool) -> None:
         self.create_canvas.set_interaction_enabled(not enabled)
         self.cmb_role.setEnabled(not enabled)
         self.btn_apply_selection.setEnabled(not enabled)
         self.btn_clear_roi.setEnabled(not enabled)
         self.btn_clear_masks.setEnabled(not enabled)
+        self.btn_undo_mask.setEnabled((not enabled) and bool(self.mask_rects))
         self._update_extract_points_button_state()
         if enabled:
             self.lbl_status.setText("状态：点编辑已开启。左击添加，短拖设方向，右击删最近点。")
         else:
             self._point_drag_start = None
             self._point_drag_end = None
+        self._sync_point_edit_detail_visibility()
         self._refresh_create_overlays()
 
     def _on_create_canvas_shape_changed(self) -> None:
+        if getattr(self, "_suppress_create_auto_apply", False):
+            return
         if self.chk_edit_points.isChecked():
             return
+        self._apply_current_selection(show_warnings=False, auto=True)
 
     def _on_create_canvas_pressed(self, button: int, x: int, y: int) -> None:
         if not self.chk_edit_points.isChecked():
@@ -1924,6 +2017,24 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             idx += 1
         return f"roi{idx}"
 
+    def _recipe_has_explicit_reference_regions(self, recipe_path: str) -> bool:
+        try:
+            with open(recipe_path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except Exception:
+            return False
+        return isinstance(data, dict) and "reference_regions" in data
+
+    def _set_reference_dirty(self, dirty: bool, status_text: str = "") -> None:
+        self._reference_dirty = bool(dirty)
+        if hasattr(self, "btn_save_reference_roi"):
+            self.btn_save_reference_roi.setEnabled(self._reference_dirty or bool(self._reference_regions))
+        if status_text:
+            self._set_reference_status(status_text)
+
+    def _reference_dirty_status(self) -> str:
+        return f"参考 ROI 配置有未保存更改，共 {len(self._reference_regions)} 个。"
+
     def _on_array_settings_changed(self, _value) -> None:
         self._invalidate_reference_array_preview()
         self._save_recipe()
@@ -2114,9 +2225,8 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._invalidate_reference_array_preview()
         self._refresh_reference_region_row(self._selected_reference_idx)
         self._refresh_reference_region_fields()
-        self._save_recipe()
-        self.referenceRegionsChanged.emit()
-        self._set_reference_status(f"已更新基准 ROI 名称：{display_name}")
+        self._reference_regions_explicit = True
+        self._set_reference_dirty(True, f"已更新参考 ROI 名称：{display_name}，尚未保存配置。")
 
     def _refresh_reference_canvas_overlays(self) -> None:
         overlays = self._reference_region_overlay_shapes()
@@ -2223,13 +2333,12 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         del self._reference_regions[self._selected_reference_idx]
         self._invalidate_reference_region_cache()
         self._invalidate_reference_array_preview()
+        self._reference_regions_explicit = True
         self._selected_reference_idx = None
         self._refresh_reference_region_list()
         self._refresh_reference_canvas()
         self._refresh_reference_region_fields()
-        self._save_recipe()
-        self.referenceRegionsChanged.emit()
-        self._set_reference_status("已删除选中的基准 ROI。")
+        self._set_reference_dirty(True, f"已删除选中的参考 ROI，剩余 {len(self._reference_regions)} 个，尚未保存配置。")
 
     def _on_reference_canvas_shape_changed(self) -> None:
         if self._syncing_reference_view:
@@ -2239,6 +2348,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             return
         if self._adding_reference_roi or self._selected_reference_idx is None:
             label = self._next_reference_label()
+            self._reference_regions_explicit = True
             self._reference_regions.append(
                 {
                     "reference_label": label,
@@ -2251,15 +2361,17 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self._invalidate_reference_region_cache()
             self._invalidate_reference_array_preview()
             self._adding_reference_roi = False
-            self._selected_reference_idx = len(self._reference_regions) - 1
+            self._selected_reference_idx = None
             self._refresh_reference_region_list()
             self._refresh_reference_canvas()
             self._refresh_reference_region_fields()
-            self._save_recipe()
-            self.referenceRegionsChanged.emit()
-            self._set_reference_status(f"已新增基准 ROI：{label}")
+            self._set_reference_dirty(
+                True,
+                f"已新增参考 ROI：{label}，共 {len(self._reference_regions)} 个，尚未保存配置；可继续画下一个。",
+            )
             return
         if 0 <= self._selected_reference_idx < len(self._reference_regions):
+            self._reference_regions_explicit = True
             region = self._reference_regions[self._selected_reference_idx]
             region["shape_type"] = shape_type
             region["points"] = points
@@ -2268,9 +2380,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             label = str(region.get("output_label") or region.get("reference_label") or f"roi{self._selected_reference_idx + 1}")
             self._refresh_reference_region_row(self._selected_reference_idx)
             self._refresh_reference_canvas_overlays()
-            self._save_recipe()
-            self.referenceRegionsChanged.emit()
-            self._set_reference_status(f"已更新基准 ROI：{label}")
+            self._set_reference_dirty(True, f"已更新参考 ROI：{label}，尚未保存配置。")
 
     def _on_reference_shape_changed(self, shape_name: str) -> None:
         self.ref_canvas.draw_shape = "polygon" if shape_name == "polygon" else "rect"
@@ -2288,6 +2398,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self._selected_reference_idx = None
             self._refresh_reference_region_list()
             self._refresh_reference_canvas()
+            self._refresh_reference_region_fields()
             if not silent:
                 QtWidgets.QMessageBox.information(self, "提示", "当前参考图还没有 labelme json。")
             return
@@ -2334,6 +2445,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             if not regions:
                 raise RuntimeError("json 中没有 roi1/roi2/... 参考ROI")
             self._reference_regions = regions
+            self._reference_regions_explicit = True
             self._invalidate_reference_region_cache()
             self._invalidate_reference_array_preview()
             self._adding_reference_roi = False
@@ -2341,9 +2453,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
             self._refresh_reference_region_list()
             self._refresh_reference_canvas()
             self._refresh_reference_region_fields()
-            self._set_reference_status(f"已加载 {len(regions)} 个基准 ROI。")
-            self._save_recipe()
-            self.referenceRegionsChanged.emit()
+            self._set_reference_dirty(True, f"已加载 {len(regions)} 个参考 ROI，尚未保存配置。")
         except Exception as exc:
             self._reference_regions = []
             self._invalidate_reference_region_cache()
@@ -2404,13 +2514,47 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         except Exception as exc:
             QtWidgets.QMessageBox.warning(self, "保存失败", str(exc))
             return
+        self._reference_regions_explicit = True
         self._save_recipe()
+        self._set_reference_dirty(False)
         self.referenceRegionsChanged.emit()
-        self._set_reference_status(f"基准 ROI 已保存，共 {len(self._reference_regions)} 个。")
+        self._set_reference_status(f"参考 ROI 已保存，共 {len(self._reference_regions)} 个。")
+
+    def _save_reference_roi_config(self, _checked: object = None) -> None:
+        try:
+            self._reference_regions_explicit = True
+            self._save_recipe()
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "保存失败", str(exc))
+            return
+        self._set_reference_dirty(False, f"ROI 配置已保存到 recipe，共 {len(self._reference_regions)} 个。")
+        self.referenceRegionsChanged.emit()
+
+    def _confirm_reference_roi_discard(self) -> bool:
+        if not self._reference_dirty:
+            return True
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            "参考 ROI 未保存",
+            f"参考 ROI 配置有未保存更改，共 {len(self._reference_regions)} 个。\n是否先保存到 recipe？",
+            (
+                QtWidgets.QMessageBox.StandardButton.Save
+                | QtWidgets.QMessageBox.StandardButton.Discard
+                | QtWidgets.QMessageBox.StandardButton.Cancel
+            ),
+            QtWidgets.QMessageBox.StandardButton.Save,
+        )
+        if reply == QtWidgets.QMessageBox.StandardButton.Save:
+            self._save_reference_roi_config()
+            return not self._reference_dirty
+        if reply == QtWidgets.QMessageBox.StandardButton.Discard:
+            return True
+        return False
 
     def _clear_reference_roi(self) -> None:
         self._adding_reference_roi = False
         self._reference_regions = []
+        self._reference_regions_explicit = True
         self._invalidate_reference_region_cache()
         self._invalidate_reference_array_preview()
         self._selected_reference_idx = None
@@ -2419,9 +2563,7 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self._refresh_reference_region_fields()
         self._recipe_reference_shape_type = ""
         self._recipe_reference_points = []
-        self._save_recipe()
-        self.referenceRegionsChanged.emit()
-        self._set_reference_status("已清空全部基准 ROI。")
+        self._set_reference_dirty(True, "已清空全部参考 ROI，尚未保存配置。")
 
     def _search_roi_xywh(self) -> Optional[Tuple[int, int, int, int]]:
         points = [
@@ -2689,6 +2831,9 @@ class Line2DupTemplateDialog(QtWidgets.QDialog):
         self.lbl_find_status.setText(status_msg)
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        if not self._confirm_reference_roi_discard():
+            event.ignore()
+            return
         self._clear_find_images()
         super().closeEvent(event)
 
