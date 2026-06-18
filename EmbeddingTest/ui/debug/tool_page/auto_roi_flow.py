@@ -136,12 +136,21 @@ def _on_template_editor_dialog_destroyed(self, *_args) -> None:
 def _on_line2dup_model_saved(self, model_path: str, recipe_path: str) -> None:
     camera_role = self.current_camera_role()
     self._clear_training_roi_review_state(camera_role)
+    self.loc_method = "line2dup"
+    combo = getattr(self, "cmb_loc", None)
+    if combo is not None:
+        index = combo.findText("line2dup")
+        if index >= 0 and combo.currentIndex() != index:
+            blocker = QtCore.QSignalBlocker(combo)
+            combo.setCurrentIndex(index)
+            del blocker
     try:
         self.line2dup_recipe = self.line2dup_recipe_for_role(camera_role, force_reload=True)
     except Exception:
         self.line2dup_recipe = None
     self._reload_inspection_items()
     self._apply_current_role_recipe_state()
+    self._save_session()
     self.lbl_status.setText(f"状态：模板模型已保存 {os.path.basename(model_path)}")
 
 def _on_line2dup_reference_regions_changed(self) -> None:

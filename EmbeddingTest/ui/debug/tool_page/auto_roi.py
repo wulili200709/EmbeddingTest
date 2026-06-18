@@ -76,10 +76,23 @@ def _reload_inspection_items(tool_page) -> None:
         allowed_roles = ["cam1"]
     if current_role not in set(allowed_roles):
         current_role = allowed_roles[0]
-    labels = tool_page._current_loc_output_labels(current_role)
+    if tool_page.loc_method == "line2dup":
+        try:
+            active_line2dup_recipe = tool_page.line2dup_recipe_for_role(current_role, force_reload=True)
+        except Exception:
+            active_line2dup_recipe = None
+        tool_page.line2dup_recipe = active_line2dup_recipe
+        labels = [
+            str(label).strip()
+            for label in output_labels_from_line2dup_recipe(active_line2dup_recipe)
+            if str(label).strip()
+        ]
+    else:
+        active_line2dup_recipe = None
+        labels = tool_page._current_loc_output_labels(current_role)
     display_names_by_label = {}
     if tool_page.loc_method == "line2dup":
-        specs = inspection_item_specs_from_line2dup_recipe(tool_page.line2dup_recipe)
+        specs = inspection_item_specs_from_line2dup_recipe(active_line2dup_recipe)
         display_names_by_label = {
             str(spec.get("roi_label", "")).strip(): str(spec.get("display_name", "")).strip()
             for spec in specs
