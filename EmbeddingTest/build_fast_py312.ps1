@@ -10,6 +10,14 @@ Write-Host "Using Python 3.12 to build LC System FAST..."
 $env:LC_FAST_BUILD = "1"
 
 try {
+    if (Test-Path $distPath) {
+        Remove-Item -LiteralPath $distPath -Recurse -Force
+    }
+    $collectToc = Join-Path $workPath "LC_System\COLLECT-00.toc"
+    if (Test-Path $collectToc) {
+        Remove-Item -LiteralPath $collectToc -Force
+    }
+
     & py -3.12 -m PyInstaller --noconfirm --distpath $distPath --workpath $workPath $specPath
 }
 finally {

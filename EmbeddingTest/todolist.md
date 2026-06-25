@@ -3764,3 +3764,383 @@ duration_ms：脉冲持续时间，单位毫秒
 例如：
 
 { "type": "pulse_output", "name": "reject_output", "value": true, "reset_value": false, "duration_ms": 200 }
+
+# NCC 纠错
+![alt text](image-4.png)
+这种小错位能纠正吗
+能纠正一部分。你截图这种“小错位”主要不是显示问题，而是 NCC 定位本身有误差：
+
+当前 score 只有 0.54 左右，说明匹配置信度不高。
+角度搜索是 -180 ~ 180，目标重复结构很多，容易选到相似但略偏的位置。
+你截图里 Subpixel 没勾，快速模式(Layer1) 勾了，速度快但位置/角度会更粗。
+端子这种目标有明显绿色外轮廓，适合用二次轮廓校正。
+我已经加了一个 Contour Refine 开关到 Find 参数里：workbench_dialog.py。勾上后会保存 pose_refinement="saturation_rect"，运行时会在 NCC 初定位后，用目标的高饱和外轮廓再做一次姿态校正，专门处理你图里这种整体偏一点的情况。
+
+建议你测试时这样设置：
+
+勾选 Subpixel
+取消 快速模式(Layer1)
+勾选新加的 Contour Refine
+尽量设置 搜索ROI，不要全图搜
+角度范围如果实际只会小角度偏转，改成比如 -20 ~ 20
+
+
+Contour Refine  这个是什么原理？
+5:12 PM
+
+
+Worked for 0s
+Contour Refine 是“先粗定位，再用目标外轮廓做二次校正”。
+
+在你的 NCC 流程里，第一步还是普通模板匹配：根据灰度相似度找出 top1.quad。但端子这类目标有大量重复小结构，NCC 可能会被局部纹理影响，出现几像素平移或角度轻微偏差。
+
+Contour Refine 开启后，会对 top1 再做一次修正：
+
+从模板图和场景图里提取高饱和区域
+也就是绿色端子本体这类颜色明显的区域，代码里通过 HSV 阈值找目标轮廓。
+
+找最大轮廓的最小外接旋转矩形
+用 cv2.minAreaRect 得到目标主体的旋转矩形。
+
+把模板轮廓矩形和场景轮廓矩形对齐
+根据 NCC 初定位预测出的姿态，选择正确的四个角对应关系，然后计算新的透视变换。
+
+更新匹配框 quad
+如果修正后的框没有离原结果太远、面积变化也合理，就接受修正；否则丢弃修正，仍用原 NCC 结果。
+
+所以它不是重新训练，也不是 AI 识别；它是利用“目标颜色/外轮廓稳定”这个先验，把 NCC 的小偏移拉回到更贴近物体外形的位置。
+
+适合：绿色端子、彩色塑料件、主体颜色和背景差异明显的工件。
+不适合：目标和背景颜色接近、外轮廓不完整、反光严重、画面里有多个同色干扰物。
+
+
+
+
+
+5:12 PM
+你举个例子
+5:15 PM
+
+举个对应你截图的例子：
+
+假设模板里的绿色端子真实位置应该是：
+
+左上角 (730, 450)
+宽 365
+高 280
+角度 -3°
+NCC 第一轮根据灰度纹理匹配，可能找到：
+
+左上角 (735, 446)
+宽 365
+高 280
+角度 -3.3°
+看起来就会整体向右偏 5 像素、向上偏 4 像素。因为端子里面每个孔、每个金属片都很像，NCC 可能被内部重复纹理“拉偏”。
+
+开启 Contour Refine 后，它会再看绿色端子整体外轮廓：
+
+场景图里最大绿色轮廓的旋转矩形：
+左上角约 (730, 451)
+角度约 -3.0°
+然后它会把 NCC 的框修正到更贴近这个绿色外轮廓：
+
+修正后：
+左上角 (731, 451)
+宽 366
+高 279
+角度 -3.0°
+这样粉色的小 ROI 是基于修正后的绿色大框投影过去的，所以内部小框也会跟着整体回正。
+
+可以理解成：
+
+NCC：先靠纹理找“像不像”
+Contour Refine：再靠绿色外形找“边界准不准”
+所以如果目标是绿色端子，这个方法通常能修正“整体偏几像素”这类问题。
+
+
+
+
+
+5:15 PM
+然后它会把 NCC 的框修正到更贴近这个绿色外轮廓：  具体怎么修正
+5:17 PM
+
+
+Worked for 35s
+具体修正发生在 _refine_match_by_saturation_rect (line 642)，核心是用“模板绿色轮廓矩形”和“场景绿色轮廓矩形”重新算一个变换矩阵。
+
+简化成 5 步：
+
+NCC 先给一个初始框
+比如 NCC 结果是：
+
+initial_quad = [
+  左上, 右上, 右下, 左下
+]
+这个框可能整体偏了几像素。
+
+在模板图里找绿色主体轮廓
+代码会从模板图提取高饱和区域，找最大轮廓，然后算最小旋转外接矩形：
+
+template_box = cv2.boxPoints(cv2.minAreaRect(template_contour))
+在场景图里找绿色主体轮廓
+它只在 NCC 初始框附近裁一块区域找，不是全图乱找：
+
+scene_box = cv2.boxPoints(cv2.minAreaRect(scene_contour))
+确定四个角怎么对应
+旋转矩形的四个点顺序可能不一致，所以代码先用 NCC 初始框预测模板轮廓应该落在哪里：
+
+initial_matrix = cv2.getPerspectiveTransform(template_corners, initial_quad)
+predicted_box = cv2.perspectiveTransform(template_box, initial_matrix)
+然后枚举 4 个角的所有排列，找“预测点”和“场景点”距离最小的对应关系：
+
+permutation = min(itertools.permutations(range(4)), ...)
+matched_scene_box = [scene_box[index] for index in permutation]
+用新的轮廓对应关系重算框
+这一步就是“修正”本体：
+
+refined_matrix = cv2.getPerspectiveTransform(template_box, matched_scene_box)
+refined_quad = cv2.perspectiveTransform(template_corners, refined_matrix)
+也就是说：
+
+原来：用 NCC 找到的整体框 initial_quad
+现在：用绿色外轮廓对齐后反推出新的整体框 refined_quad
+最后还有保护条件：如果修正后面积变化太大、中心偏移太大、角点移动太大、角度变化太大，就放弃修正，继续用原 NCC 结果。这样避免外轮廓误检时把框拉飞。
+
+
+
+
+
+5:19 PM
+还是没看懂  你这么说的话 那NCC还需要吗
+5:21 PM
+
+需要。Contour Refine 不是替代 NCC，它只负责“微调”，不能可靠地单独定位。
+
+可以这样理解：
+
+NCC 做的是：先找到这个零件大概在哪里、转了多少度。
+Contour Refine 做的是：在 NCC 找到的位置附近，把外框往真实绿色边界上贴一贴。
+
+如果不用 NCC，直接找绿色轮廓，会有几个问题：
+
+不知道找哪个绿色块
+画面里可能有绿色背景、绿色反光、别的绿色件、阴影区域。只靠颜色找最大轮廓，有可能找错。
+
+不知道这个绿色轮廓对应模板的哪个方向
+端子上下左右结构可能相似，单看外框只是一个矩形，不一定知道它有没有转 180 度。
+
+不能定位内部小 ROI
+粉色小框不是只贴外轮廓，它们要知道模板内部孔位、金属片位置怎么映射过去。这个映射需要 NCC 给出模板整体姿态。
+
+轮廓只能修边界，不能判断“像不像”
+NCC 会比较纹理、孔位、亮暗分布；Contour Refine 只看绿色主体边界。
+
+举个简单比喻：
+
+NCC：先认出“这是那个端子”，并把模板大致盖上去。
+Contour Refine：再看绿色外边缘，把模板框挪正一点。
+流程是：
+
+原图
+  ↓
+NCC 找到大概位置：这里像模板，角度约 -3.3°
+  ↓
+只在这个附近找绿色外轮廓
+  ↓
+用绿色外轮廓把 NCC 框微调 3~5 像素
+  ↓
+粉色小 ROI 跟着修正后的大框投影
+所以 NCC 是主定位，Contour Refine 是后处理。没有 NCC，Contour Refine 不知道该在哪个地方修，也不知道修的是不是正确目标。
+
+
+
+
+
+5:21 PM
+用绿色外轮廓把 NCC 框微调 3~5 像素
+  ↓
+粉色小 ROI 跟着修正后的大框投影  怎微调对应的
+5:26 PM
+
+对应关系是靠“模板坐标系”统一起来的。
+
+先看模板里有两类点：
+
+模板大框 template_corners
+A(0,0)  B(120,0)
+D(0,90) C(120,90)
+
+粉色小 ROI，比如某个孔：
+p1(20,20) p2(35,20) p3(35,35) p4(20,35)
+NCC 先把模板大框放到场景图上，得到一个初始大框：
+
+NCC 大框：
+A' B'
+D' C'
+这时粉色 ROI 也是用同一个变换投影过去的，所以如果大框整体偏了，粉色 ROI 也会跟着偏。
+
+Contour Refine 做的微调是：重新计算一个更准的“大框变换”。
+
+它不是直接说“整体向左 5 像素”。更准确地说，它会算一个矩阵：
+
+模板绿色外轮廓  ->  场景绿色外轮廓
+得到这个矩阵后，再把模板大框四个角重新投影：
+
+template_corners -> refined_quad
+于是大框从：
+
+NCC 初始框：
+A'  B'
+D'  C'
+变成：
+
+轮廓修正框：
+A'' B''
+D'' C''
+然后粉色小 ROI 也使用同一个修正后的映射关系：
+
+模板里的粉色 ROI 点 -> 场景里的粉色 ROI 点
+所以“对应”不是手动一个个框挪，而是：
+
+模板大框怎么变到修正后大框，
+模板里的所有小 ROI 就按同一个变换一起变过去。
+举个数值例子：
+
+NCC 认为大框左上角在 (735,446)
+轮廓修正后大框左上角在 (731,451)
+那么模板里一个小 ROI 点：
+
+模板点 (20,20)
+原来可能投影到：
+
+(795,505)
+修正后会投影到：
+
+(791,510)
+它不是单独判断这个小孔在哪里，而是因为整个模板坐标系被重新摆正了，小 ROI 自动跟着新的大框走。
+
+
+
+
+
+5:26 PM
+我知道小框怎么挪过去的  我的问题是Contour Refine 做的微调 ，是怎么微调的？先算场景图里的最小外接矩形的四个点，然后算测试图片里的最小外接矩形四个点，然后呢
+5:28 PM
+
+对，你说到关键点了。后面就是：把模板里的绿色外接矩形四点，和场景图里的绿色外接矩形四点配对，然后重新算一个变换矩阵。
+
+流程具体是这样：
+
+模板图：
+template_box = 模板绿色轮廓的最小外接矩形四点
+
+测试图：
+scene_box = 测试图绿色轮廓的最小外接矩形四点
+问题是 minAreaRect 给出的 4 个点顺序不一定一致。比如模板点顺序可能是：
+
+左上、右上、右下、左下
+测试图点顺序可能是：
+
+右下、左下、左上、右上
+如果直接配对会错。所以代码先用 NCC 的初始结果做一次预测：
+
+initial_matrix = cv2.getPerspectiveTransform(template_corners, initial_quad)
+predicted_box = cv2.perspectiveTransform(template_box, initial_matrix)
+意思是：
+
+如果 NCC 是对的，模板绿色矩形应该大概落在测试图哪里？
+然后拿这个 predicted_box 去跟真实检测到的 scene_box 比，枚举 4 个点的所有对应顺序，找距离最小的那一组：
+
+permutation = min(
+    itertools.permutations(range(4)),
+    key=lambda order: sum(
+        distance(predicted_box[i], scene_box[order[i]])
+    )
+)
+找到正确配对后，就得到：
+
+template_box[0] -> matched_scene_box[0]
+template_box[1] -> matched_scene_box[1]
+template_box[2] -> matched_scene_box[2]
+template_box[3] -> matched_scene_box[3]
+然后重新算一个矩阵：
+
+refined_matrix = cv2.getPerspectiveTransform(template_box, matched_scene_box)
+这个矩阵的含义是：
+
+把模板里的绿色外轮廓，变换到测试图里的绿色外轮廓。
+最后用这个矩阵去投影整个模板大框：
+
+refined_quad = cv2.perspectiveTransform(template_corners, refined_matrix)
+所以微调本质上是：
+
+原来：
+模板大框 -> NCC 初始大框
+
+修正后：
+模板绿色外框 -> 测试图绿色外框
+再反推出：
+模板大框 -> 修正后大框
+它不是简单地 x - 5, y + 4，而是重新算了一个包含平移、旋转、缩放的变换矩阵。然后用这个新矩阵替换 NCC 原来的 quad。
+
+
+
+
+
+5:28 PM
+微调之后就直接用新矩阵了？
+5:30 PM
+
+
+不是直接无条件用。代码会先校验新矩阵算出来的 refined_quad 是否“合理”，合理才替换 NCC 原结果。
+
+校验主要有这些：
+
+点必须是有效数字
+if not np.all(np.isfinite(refined_quad)):
+    return None
+面积不能变化太离谱
+if initial_area <= 1.0 or not (0.75 <= refined_area / initial_area <= 1.25):
+    return None
+也就是修正后的面积只能在原 NCC 框的 75% ~ 125% 范围内。
+
+中心点不能偏太远
+max_shift = max(match.bbox.width, match.bbox.height) * 0.12
+if np.linalg.norm(refined_center - initial_center) > max_shift:
+    return None
+中心移动不能超过大框最大边长的 12%。
+
+单个角点不能跳太远
+if np.max(corner_shift) > max(match.bbox.width, match.bbox.height) * 0.18:
+    return None
+任意角点移动不能超过最大边长的 18%。
+
+角度不能变化太大
+if abs(refined_angle - match.angle) > 10.0:
+    return None
+修正后的角度和 NCC 角度差不能超过 10°。
+
+只有这些都通过，才会生成新的结果：
+
+return NccMatchResult(
+    score=match.score,
+    angle=refined_angle,
+    center=...,
+    quad=refined_quad,
+    bbox=...
+)
+然后主流程才会替换：
+
+if refined is not None:
+    matches = (refined, *matches[1:])
+所以实际逻辑是：
+
+NCC 初始框
+  ↓
+Contour Refine 算新框
+  ↓
+检查新框是否合理
+  ↓
+合理：用新框
+不合理：继续用 NCC 原框

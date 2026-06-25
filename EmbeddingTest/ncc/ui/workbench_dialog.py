@@ -749,6 +749,8 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.chk_use_simd = QtWidgets.QCheckBox("SIMD")
         self.chk_use_subpixel = QtWidgets.QCheckBox("Subpixel")
         self.chk_bitwise_not = QtWidgets.QCheckBox("Bitwise Not")
+        self.chk_pose_refine = QtWidgets.QCheckBox("Contour Refine")
+        self.chk_pose_refine.setToolTip("Use the colored target outline to refine the top NCC pose after matching.")
         self.chk_stop_layer1 = QtWidgets.QCheckBox("快速模式(Layer1)")
         params_grid.addWidget(QtWidgets.QLabel("Target Num"), 0, 0)
         params_grid.addWidget(self.spn_target_num, 0, 1)
@@ -766,6 +768,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         params_grid.addWidget(self.chk_use_subpixel, 3, 1)
         params_grid.addWidget(self.chk_bitwise_not, 3, 2)
         params_grid.addWidget(self.chk_stop_layer1, 3, 3)
+        params_grid.addWidget(self.chk_pose_refine, 4, 0, 1, 2)
         left_layout.addWidget(params_box)
 
         search_box = QtWidgets.QGroupBox("搜索ROI")
@@ -834,6 +837,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             self.chk_use_subpixel,
             self.chk_bitwise_not,
             self.chk_stop_layer1,
+            self.chk_pose_refine,
         ):
             checkbox.toggled.connect(self._schedule_find_options_save)
         return page
@@ -884,6 +888,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
                 self.chk_enable_template_mask.setChecked(bool(getattr(self._model, "template_mask_enabled", False)))
             self._set_roi_spin_values(self._model.template_roi.to_xywh())
             self._apply_options_to_form(self._model.options)
+            self._apply_pose_refinement_to_form()
             self._reload_authoring_canvases(force_reference=True)
             self._refresh_reference_region_list()
             self._refresh_reference_region_fields()
@@ -1147,6 +1152,16 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.chk_bitwise_not.setChecked(normalized.bitwise_not)
         self.chk_stop_layer1.setChecked(normalized.stop_layer1)
 
+    def _apply_pose_refinement_to_form(self) -> None:
+        if hasattr(self, "chk_pose_refine"):
+            mode = str(getattr(self._model, "pose_refinement", "") or "").strip().lower()
+            self.chk_pose_refine.setChecked(mode == "saturation_rect")
+
+    def _current_pose_refinement(self) -> str:
+        if hasattr(self, "chk_pose_refine") and self.chk_pose_refine.isChecked():
+            return "saturation_rect"
+        return ""
+
     def _current_find_options(self) -> NccMatchOptions:
         return NccMatchOptions(
             target_num=self.spn_target_num.value(),
@@ -1188,6 +1203,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             height=max(1, self.spn_roi_h.value()),
         ).normalized()
         self._model.template_mask = self._template_mask_from_canvas()
+        self._model.pose_refinement = self._current_pose_refinement()
         self._model.options = self._current_find_options()
         self._model.reference_regions = [region.normalized() for region in self._reference_regions]
 
@@ -1195,6 +1211,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._model.display_name = self.edt_display_name.text().strip() or self._model.display_name
         self._model.template_mask_enabled = self._template_mask_enabled()
         self._model.template_mask = self._template_mask_from_canvas()
+        self._model.pose_refinement = self._current_pose_refinement()
         self._model.options = self._current_find_options()
         self._model.reference_regions = [region.normalized() for region in self._reference_regions]
 

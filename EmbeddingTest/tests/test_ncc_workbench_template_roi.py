@@ -84,6 +84,7 @@ def _dialog_for_options(model_path: str, model: NccMatchModel) -> NccMatchWorkbe
     dialog.chk_use_subpixel = _Check(True)
     dialog.chk_bitwise_not = _Check(True)
     dialog.chk_stop_layer1 = _Check(False)
+    dialog.chk_pose_refine = _Check(True)
     return dialog
 
 
@@ -108,12 +109,13 @@ class NccWorkbenchTemplateRoiTest(unittest.TestCase):
             self.assertEqual(saved.template_roi.to_xywh(), (11, 22, 333, 444))
             self.assertEqual(saved.options.target_num, 7)
             self.assertEqual(saved.options.score_threshold, 0.42)
+            self.assertEqual(saved.pose_refinement, "saturation_rect")
 
     def test_apply_current_template_roi_saves_template(self) -> None:
         dialog = NccMatchWorkbenchDialog.__new__(NccMatchWorkbenchDialog)
         dialog.source_canvas = _Canvas((1, 2, 30, 40))
         calls: list[bool] = []
-        dialog._save_template = lambda: calls.append(True)
+        dialog._save_template = lambda *args, **kwargs: calls.append(True)
 
         NccMatchWorkbenchDialog._apply_current_template_roi(dialog)
 
@@ -128,7 +130,7 @@ class NccWorkbenchTemplateRoiTest(unittest.TestCase):
         seen: list[tuple[int, int, int, int]] = []
         calls: list[bool] = []
         dialog._set_roi_spin_values = lambda roi: seen.append(roi)
-        dialog._save_template = lambda: calls.append(True)
+        dialog._save_template = lambda *args, **kwargs: calls.append(True)
 
         NccMatchWorkbenchDialog._sync_roi_from_canvas(dialog)
 
