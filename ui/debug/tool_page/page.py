@@ -137,10 +137,13 @@ class ToolPage(QtWidgets.QWidget):
         session: ProductSession,
         algo: AlgorithmController,
         parent: Optional[QtWidgets.QWidget] = None,
+        *,
+        lite_mode: bool = False,
     ) -> None:
         super().__init__(parent)
         self.session = session
         self.algo = algo
+        self.lite_mode = bool(lite_mode)
         self._configured_camera_roles: List[str] = ["cam1", "cam2"]
 
         self.train_files: List[str] = []
@@ -208,7 +211,8 @@ class ToolPage(QtWidgets.QWidget):
         self._set_current_camera_role(self._current_camera_role)
         self._apply_configured_camera_roles_to_ui()
         QtCore.QTimer.singleShot(0, self._update_responsive_layout)
-        self.destroyed.connect(lambda *_: self._cleanup_debug_hardware())
+        if not self.lite_mode:
+            self.destroyed.connect(lambda *_: self._cleanup_debug_hardware())
 
     # ------------------------------------------------------------------
     # Public API used by MainWindow
@@ -731,6 +735,9 @@ class ToolPage(QtWidgets.QWidget):
             action.setChecked(code == current_algorithm)
 
     def open_camera_debug_dialog(self) -> None:
+        if self.lite_mode or not hasattr(self, "camera_debug_page"):
+            QtWidgets.QMessageBox.information(self, "LC System Lite", "轻量版未加载相机调试模块。")
+            return
         self._show_tool_dialog(
             "camera_debug",
             self.camera_debug_page,
@@ -740,6 +747,9 @@ class ToolPage(QtWidgets.QWidget):
         self._refresh_debug_camera_list()
 
     def open_io_debug_dialog(self) -> None:
+        if self.lite_mode or not hasattr(self, "io_debug_page"):
+            QtWidgets.QMessageBox.information(self, "LC System Lite", "轻量版未加载 DI/DO 调试模块。")
+            return
         self._show_tool_dialog(
             "io_debug",
             self.io_debug_page,
@@ -766,6 +776,8 @@ class ToolPage(QtWidgets.QWidget):
         self._apply_runtime_io_debug_state()
 
     def _apply_runtime_io_debug_state(self) -> None:
+        if self.lite_mode or not hasattr(self, "btn_debug_open_io"):
+            return
         if self._runtime_io_ready and self._runtime_io_controller is not None:
             if (
                 self._debug_io_controller is not None
@@ -1247,33 +1259,34 @@ class ToolPage(QtWidgets.QWidget):
         self.template_match_box = auto_box
         self._update_loc_ui()
 
-        build_camera_debug_page(
-            self,
-            styles={
-                "dark_bg": _DARK_BG,
-                "panel_bg": _PANEL_BG,
-                "header_bg": _HEADER_BG,
-                "text_light": _TEXT_LIGHT,
-                "text_dim": _TEXT_DIM,
-                "input_style": _input_style,
-                "compact_btn": _compact_btn,
-            },
-            standard_icon=_si,
-            standard_pixmap=SP,
-        )
+        if not self.lite_mode:
+            build_camera_debug_page(
+                self,
+                styles={
+                    "dark_bg": _DARK_BG,
+                    "panel_bg": _PANEL_BG,
+                    "header_bg": _HEADER_BG,
+                    "text_light": _TEXT_LIGHT,
+                    "text_dim": _TEXT_DIM,
+                    "input_style": _input_style,
+                    "compact_btn": _compact_btn,
+                },
+                standard_icon=_si,
+                standard_pixmap=SP,
+            )
 
-        build_io_debug_page(
-            self,
-            styles={
-                "dark_bg": _DARK_BG,
-                "panel_bg": _PANEL_BG,
-                "text_light": _TEXT_LIGHT,
-                "text_dim": _TEXT_DIM,
-                "compact_btn": _compact_btn,
-            },
-            standard_icon=_si,
-            standard_pixmap=SP,
-        )
+            build_io_debug_page(
+                self,
+                styles={
+                    "dark_bg": _DARK_BG,
+                    "panel_bg": _PANEL_BG,
+                    "text_light": _TEXT_LIGHT,
+                    "text_dim": _TEXT_DIM,
+                    "compact_btn": _compact_btn,
+                },
+                standard_icon=_si,
+                standard_pixmap=SP,
+            )
 
         self.lbl_template_tool_hint = QtWidgets.QLabel("")
         self.lbl_template_tool_hint.hide()

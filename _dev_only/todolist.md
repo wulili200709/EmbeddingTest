@@ -3220,6 +3220,13 @@ build_py312.ps1 只是调用 PyInstaller；而 LC_System.spec 里把 algorithms�
 还有一个重点：app_paths.py 说明冻结运行时的可写目录就是 dist\LC System\EmbeddingTest。这意味着别的机台里的 EmbeddingTest\.qr_session 和部分 config 可能是现场数据；而 dialogs.py 里还有 runtime_record_settings.json 这种运行时设置文件。
 所以不要随手整目录覆盖 EmbeddingTest，否则容易把对方机台的配置和运行数据覆盖掉。默认最稳的是只换 LC System.exe，只有这次确实改到配置或原生库时，再补换对应文件。
 
+#### Lite
+cd C:\Users\goney\Desktop\MatchTemplate2\EmbeddingTest
+.\build_lite_py312.ps1
+生成位置：
+dist\LC System Lite\LC System Lite.exe
+如果 PowerShell 提示脚本执行策略限制，可以用：
+powershell -ExecutionPolicy Bypass -File .\build_lite_py312.ps1
 
 # 改善点
 1.灯带太亮，晃眼
