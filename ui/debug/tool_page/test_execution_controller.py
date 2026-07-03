@@ -6,16 +6,14 @@ from typing import Dict, List
 from PySide6 import QtCore, QtWidgets
 
 from application import InspectionExecutionRequest, InspectionExecutor, ToolPageRuntimeContext
+from common.camera_roles import normalize_camera_role
 from domain import InspectionItem
 from ui.i18n import tr
 from ui.roi_overlay_colors import is_roi_label
 
 
 def _normalize_camera_role(camera_id: object) -> str:
-    text = str(camera_id or "").strip().lower()
-    if text in {"cam1", "cam2"}:
-        return text
-    return ""
+    return normalize_camera_role(camera_id)
 
 
 class TestExecutionController:

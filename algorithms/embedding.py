@@ -47,7 +47,13 @@ _BACKBONE_OUTPUT_CHANNELS = {
     "mobilenet_v3_small": 576,
     "mobilenet_v3_large": 960,
 }
-_ORT_EXPORT_VERSION = "v1"
+
+
+def _is_lite_runtime() -> bool:
+    return str(os.environ.get("LC_SYSTEM_LITE", "")).strip().lower() in {"1", "true", "yes", "lite"}
+
+
+_ORT_EXPORT_VERSION = "opset12_v1" if _is_lite_runtime() else "v1"
 _ORT_EXPORT_LOCK = RLock()
 _EMBEDDING_CACHE_VERSION = "v1"
 
@@ -165,25 +171,62 @@ def _export_backbone_onnx(name: str, onnx_path: Path) -> None:
     model = model.cpu().eval()
     dummy = torch.randn(1, 3, 224, 224, dtype=torch.float32)
     os.makedirs(onnx_path.parent, exist_ok=True)
+    if not _is_lite_runtime():
+        torch.onnx.export(
+            model,
+            dummy,
+            str(onnx_path),
+            export_params=True,
+            do_constant_folding=True,
+            verbose=False,
+            input_names=["input"],
+            output_names=["embedding"],
+            dynamo=False,
+            report=False,
+            verify=False,
+            profile=False,
+            dynamic_axes={
+                "input": {0: "batch_size"},
+                "embedding": {0: "batch_size"},
+            },
+            opset_version=17,
+        )
+        return
+
     torch.onnx.export(
         model,
-        dummy,
+        (dummy,),
         str(onnx_path),
         export_params=True,
+        opset_version=12,
         do_constant_folding=True,
-        verbose=False,
         input_names=["input"],
         output_names=["embedding"],
         dynamo=False,
-        report=False,
-        verify=False,
-        profile=False,
-        dynamic_axes={
-            "input": {0: "batch_size"},
-            "embedding": {0: "batch_size"},
-        },
-        opset_version=17,
     )
+
+
+def export_backbone_onnx(backbone: str, *, device: Optional[str] = None) -> dict[str, object]:
+    normalized_name = storage_code_backbone(backbone)
+    normalized_device = _normalized_device(device)
+    runtime_path = _ensure_ort_model(normalized_name, device=normalized_device)
+    onnx_path = _backbone_onnx_path(normalized_name)
+    input_shape: list[int | str] = []
+    opsets: list[tuple[str, int]] = []
+    if onnx is not None and onnx_path.exists():
+        model = onnx.load(str(onnx_path))
+        if model.graph.input:
+            for dim in model.graph.input[0].type.tensor_type.shape.dim:
+                input_shape.append(int(dim.dim_value) if dim.dim_value else str(dim.dim_param or "?"))
+        for item in model.opset_import:
+            opsets.append((str(item.domain or "ai.onnx"), int(item.version)))
+    return {
+        "backbone": normalized_name,
+        "onnx_path": str(onnx_path),
+        "runtime_path": str(runtime_path),
+        "input_shape": input_shape,
+        "opsets": opsets,
+    }
 
 
 def _ensure_ort_model(name: str, *, device: str) -> Path:
@@ -856,6 +899,7 @@ __all__ = [
     "load_backbone",
     "load_images",
     "load_register_model_npz",
+    "export_backbone_onnx",
     "predict_one",
     "predict_one_with_model",
     "save_register_model_npz",

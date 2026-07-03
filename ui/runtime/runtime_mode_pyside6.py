@@ -7,6 +7,13 @@ from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from common.camera_roles import (
+    CAMERA_ROLES,
+    DEFAULT_CAMERA_ROLE,
+    camera_index_for_role,
+    configured_camera_roles,
+    normalize_camera_role,
+)
 from algorithms.measurement import (
     BRIGHT_BLOCK_CENTER_ALGORITHM,
     CENTER_DISTANCE_ALGORITHMS,
@@ -30,7 +37,15 @@ _RUNNING_YELLOW = "#eab308"
 
 
 def _camera_title(camera_id: str) -> str:
-    return tr("runtime.camera1") if str(camera_id).strip() == "cam1" else tr("runtime.camera2")
+    role = normalize_camera_role(camera_id, default=DEFAULT_CAMERA_ROLE)
+    if role == "cam1":
+        return tr("runtime.camera1")
+    if role == "cam2":
+        return tr("runtime.camera2")
+    if role == "cam3":
+        return tr("runtime.camera3")
+    index = camera_index_for_role(role)
+    return f"Cam{index}" if index else str(camera_id or DEFAULT_CAMERA_ROLE)
 
 
 def _status_badge_width(label: QtWidgets.QLabel, text: str, *, minimum: int = 56, maximum: int = 160) -> int:
@@ -217,14 +232,14 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._item_indicators: list[_ItemIndicator] = []
         self._item_indicators_by_item_id: dict[str, _ItemIndicator] = {}
         self._camera_section_headers: dict[str, _CameraSectionHeader] = {}
-        self._cam1_serial = ""
-        self._cam2_serial = ""
         self._release_pwd = ""
-        self._configured_role_set: set[str] = {"cam1", "cam2"}
+        self._configured_role_set: set[str] = set(CAMERA_ROLES)
         self._active_role_set: set[str] = set()
         self._busy = False
         self._inspection_rows: list[dict] = []
-        self._camera_preview_sources: dict[str, object | None] = {"cam1": None, "cam2": None}
+        self._camera_preview_sources: dict[str, object | None] = {
+            role: None for role in CAMERA_ROLES
+        }
         self._current_product_name = ""
         self._current_record_path = ""
         self._available_camera_count: int | None = None
@@ -243,6 +258,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.btn_simulate_foot.setToolTip(tr("runtime.simulate_foot_tip"))
         self.btn_trigger_cam1.setText(tr("runtime.trigger_cam1"))
         self.btn_trigger_cam2.setText(tr("runtime.trigger_cam2"))
+        self.btn_trigger_cam3.setText(tr("runtime.trigger_cam3"))
         self.lbl_panel_title.setText(tr("runtime.items"))
         self.lbl_total_label.setText(tr("runtime.stats"))
 
@@ -336,6 +352,15 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.btn_trigger_cam2.clicked.connect(lambda: self.triggerCameraRequested.emit(2))
         header_layout.addWidget(self.btn_trigger_cam2)
 
+        self.btn_trigger_cam3 = QtWidgets.QPushButton(tr("runtime.trigger_cam3"))
+        self.btn_trigger_cam3.setStyleSheet(_trigger_btn_css)
+        self.btn_trigger_cam3.setAutoDefault(False)
+        self.btn_trigger_cam3.setDefault(False)
+        self.btn_trigger_cam3.setFocusPolicy(QtCore.Qt.NoFocus)
+        self.btn_trigger_cam3.setEnabled(False)
+        self.btn_trigger_cam3.clicked.connect(lambda: self.triggerCameraRequested.emit(3))
+        header_layout.addWidget(self.btn_trigger_cam3)
+
         header_layout.addStretch(1)
 
         self.lbl_current_product = QtWidgets.QLabel("-")
@@ -366,10 +391,13 @@ class RuntimeModePage(QtWidgets.QWidget):
 
         self.view_cam1 = RuntimeImageView("Cam1")
         self.view_cam2 = RuntimeImageView("Cam2")
+        self.view_cam3 = RuntimeImageView("Cam3")
         camera_splitter.addWidget(self.view_cam1)
         camera_splitter.addWidget(self.view_cam2)
+        camera_splitter.addWidget(self.view_cam3)
         camera_splitter.setStretchFactor(0, 1)
         camera_splitter.setStretchFactor(1, 1)
+        camera_splitter.setStretchFactor(2, 1)
         camera_layout.addWidget(camera_splitter, 1)
         self._camera_splitter = camera_splitter
 
@@ -484,6 +512,12 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.lbl_cam2_timing.setWordWrap(True)
         self.lbl_cam2_timing.setMinimumWidth(0)
         total_layout.addWidget(self.lbl_cam2_timing)
+
+        self.lbl_cam3_timing = QtWidgets.QLabel("Cam3: -")
+        self.lbl_cam3_timing.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
+        self.lbl_cam3_timing.setWordWrap(True)
+        self.lbl_cam3_timing.setMinimumWidth(0)
+        total_layout.addWidget(self.lbl_cam3_timing)
         self._refresh_camera_timing_visibility()
 
         self.lbl_final_result = QtWidgets.QLabel("-")
@@ -553,6 +587,8 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.edit_cam1_serial.hide()
         self.edit_cam2_serial = QtWidgets.QLineEdit()
         self.edit_cam2_serial.hide()
+        self.edit_cam3_serial = QtWidgets.QLineEdit()
+        self.edit_cam3_serial.hide()
         self.edit_release_password = QtWidgets.QLineEdit()
         self.edit_release_password.hide()
         self.btn_refresh_cameras = QtWidgets.QPushButton()
@@ -581,13 +617,24 @@ class RuntimeModePage(QtWidgets.QWidget):
 
     def camera_bindings(self) -> dict[str, str]:
         bindings: dict[str, str] = {}
-        cam1 = self.edit_cam1_serial.text().strip()
-        cam2 = self.edit_cam2_serial.text().strip()
-        if cam1:
-            bindings["cam1"] = cam1
-        if cam2:
-            bindings["cam2"] = cam2
+        for role in CAMERA_ROLES:
+            serial = self.camera_serial(role)
+            if serial:
+                bindings[role] = serial
         return bindings
+
+    def camera_serial(self, role: str) -> str:
+        role_text = normalize_camera_role(role)
+        editor = getattr(self, f"edit_{role_text}_serial", None)
+        if editor is None:
+            return ""
+        return editor.text().strip()
+
+    def set_camera_serial(self, role: str, serial: str) -> None:
+        role_text = normalize_camera_role(role)
+        editor = getattr(self, f"edit_{role_text}_serial", None)
+        if editor is not None:
+            editor.setText(str(serial or "").strip())
 
     def release_password(self) -> str:
         return self.edit_release_password.text()
@@ -677,14 +724,7 @@ class RuntimeModePage(QtWidgets.QWidget):
             self._reload_daily_result_counters()
 
     def set_configured_camera_roles(self, roles: list[str]) -> None:
-        configured = {
-            str(role).strip()
-            for role in roles
-            if str(role).strip() in {"cam1", "cam2"}
-        }
-        if not configured:
-            configured = {"cam1"}
-        self._configured_role_set = configured
+        self._configured_role_set = set(configured_camera_roles(roles))
         self._refresh_camera_role_layout()
         self._refresh_trigger_buttons()
 
@@ -692,8 +732,15 @@ class RuntimeModePage(QtWidgets.QWidget):
         role_set = {str(role).strip() for role in roles if str(role).strip()}
         self._active_role_set = role_set
         if not role_set:
-            self.view_cam1.set_runtime_pixmap(None, placeholder=tr("runtime.no_camera_connected"))
-            self.view_cam2.set_runtime_pixmap(None, placeholder="Cam2")
+            for role in CAMERA_ROLES:
+                view = getattr(self, f"view_{role}", None)
+                if view is not None:
+                    placeholder = (
+                        tr("runtime.no_camera_connected")
+                        if role == DEFAULT_CAMERA_ROLE
+                        else role.upper()
+                    )
+                    view.set_runtime_pixmap(None, placeholder=placeholder)
         self.lbl_footer_connection.setText(
             f"{tr('runtime.camera')}: "
             + (", ".join(sorted(role_set)) if role_set else tr("runtime.not_connected"))
@@ -716,7 +763,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._item_indicators_by_item_id.clear()
         self._camera_section_headers.clear()
 
-        grouped_rows: dict[str, list[dict]] = {"cam1": [], "cam2": []}
+        grouped_rows: dict[str, list[dict]] = {role: [] for role in CAMERA_ROLES}
         for row in rows:
             camera_id = str(row.get("camera_id", "cam1")).strip() or "cam1"
             if camera_id not in grouped_rows:
@@ -729,7 +776,7 @@ class RuntimeModePage(QtWidgets.QWidget):
 
         insert_index = 0
         display_index = 1
-        for camera_id in ["cam1", "cam2"]:
+        for camera_id in CAMERA_ROLES:
             camera_rows = display_grouped_rows.get(camera_id, [])
             if not camera_rows:
                 continue
@@ -826,28 +873,32 @@ class RuntimeModePage(QtWidgets.QWidget):
         ]
 
     def set_camera_pixmap(self, role: str, pixmap: QtGui.QPixmap | None, *, placeholder: str | None = None) -> None:
-        if role == "cam1":
-            self.view_cam1.set_runtime_pixmap(pixmap, placeholder=placeholder)
-        elif role == "cam2":
-            self.view_cam2.set_runtime_pixmap(pixmap, placeholder=placeholder)
+        view = getattr(self, f"view_{normalize_camera_role(role)}", None)
+        if view is not None:
+            view.set_runtime_pixmap(pixmap, placeholder=placeholder)
 
     def set_camera_source_path(self, role: str, path: str) -> None:
         source = str(path or "").strip()
-        self._camera_preview_sources[str(role).strip() or "cam1"] = source if source else None
+        role_text = normalize_camera_role(role, default=DEFAULT_CAMERA_ROLE)
+        self._camera_preview_sources[role_text] = source if source else None
 
     def set_camera_preview_source(self, role: str, source: object) -> None:
-        self._camera_preview_sources[str(role).strip() or "cam1"] = source
+        role_text = normalize_camera_role(role, default=DEFAULT_CAMERA_ROLE)
+        self._camera_preview_sources[role_text] = source
 
     def roi_statuses_for_camera(self, camera_id: str) -> dict[str, str]:
         return merge_roi_statuses(self._inspection_rows, camera_id=camera_id)
 
     def clear_camera_views(self) -> None:
         self._active_role_set = set()
-        self._camera_preview_sources = {"cam1": None, "cam2": None}
-        self.view_cam1.set_runtime_pixmap(None, placeholder="Cam1")
-        self.view_cam2.set_runtime_pixmap(None, placeholder="Cam2")
-        self.lbl_cam1_timing.setText("Cam1: -")
-        self.lbl_cam2_timing.setText("Cam2: -")
+        self._camera_preview_sources = {role: None for role in CAMERA_ROLES}
+        for role in CAMERA_ROLES:
+            view = getattr(self, f"view_{role}", None)
+            if view is not None:
+                view.set_runtime_pixmap(None, placeholder=role.upper())
+            label = getattr(self, f"lbl_{role}_timing", None)
+            if label is not None:
+                label.setText(f"{role.upper()}: -")
         self._refresh_camera_role_layout()
         self._refresh_camera_timing_visibility()
         self.set_camera_results({})
@@ -865,7 +916,7 @@ class RuntimeModePage(QtWidgets.QWidget):
     def _refresh_camera_previews(self) -> None:
         from ui.window_common import update_runtime_preview
 
-        for role in ("cam1", "cam2"):
+        for role in CAMERA_ROLES:
             source = self._camera_preview_sources.get(role)
             if source is not None:
                 update_runtime_preview(self, role, source)
@@ -887,25 +938,23 @@ class RuntimeModePage(QtWidgets.QWidget):
         match_ms = self._coerce_ms(timing_map.get("match_ms"))
         infer_ms = self._coerce_ms(timing_map.get("infer_ms"))
         duration_ms = self._coerce_ms(timing_map.get("duration_ms"))
-        cam1_capture_ms = self._coerce_ms(timing_map.get("cam1_capture_ms"))
-        cam1_match_ms = self._coerce_ms(timing_map.get("cam1_match_ms"))
-        cam1_infer_ms = self._coerce_ms(timing_map.get("cam1_infer_ms"))
-        cam1_total_ms = self._coerce_ms(timing_map.get("cam1_total_ms"))
-        cam2_capture_ms = self._coerce_ms(timing_map.get("cam2_capture_ms"))
-        cam2_match_ms = self._coerce_ms(timing_map.get("cam2_match_ms"))
-        cam2_infer_ms = self._coerce_ms(timing_map.get("cam2_infer_ms"))
-        cam2_total_ms = self._coerce_ms(timing_map.get("cam2_total_ms"))
-
         self.lbl_capture_time.setText(self._format_timing_label(tr("runtime.capture"), capture_ms))
         self.lbl_match_time.setText(self._format_timing_label(tr("runtime.match"), match_ms))
         self.lbl_infer_time.setText(self._format_timing_label(tr("runtime.infer"), infer_ms))
         self._set_total_duration_labels(duration_ms)
-        self.lbl_cam1_timing.setText(
-            self._format_camera_timing_text("Cam1", cam1_capture_ms, cam1_match_ms, cam1_infer_ms, cam1_total_ms)
-        )
-        self.lbl_cam2_timing.setText(
-            self._format_camera_timing_text("Cam2", cam2_capture_ms, cam2_match_ms, cam2_infer_ms, cam2_total_ms)
-        )
+        for role in CAMERA_ROLES:
+            label = getattr(self, f"lbl_{role}_timing", None)
+            if label is None:
+                continue
+            label.setText(
+                self._format_camera_timing_text(
+                    role.upper(),
+                    self._coerce_ms(timing_map.get(f"{role}_capture_ms")),
+                    self._coerce_ms(timing_map.get(f"{role}_match_ms")),
+                    self._coerce_ms(timing_map.get(f"{role}_infer_ms")),
+                    self._coerce_ms(timing_map.get(f"{role}_total_ms")),
+                )
+            )
         self._refresh_camera_timing_visibility()
 
     @staticmethod
@@ -980,17 +1029,24 @@ class RuntimeModePage(QtWidgets.QWidget):
 
     def _refresh_camera_timing_visibility(self) -> None:
         display_roles = self._display_role_set()
-        self.lbl_cam1_timing.setVisible("cam1" in display_roles)
-        self.lbl_cam2_timing.setVisible("cam2" in display_roles)
+        for role in CAMERA_ROLES:
+            label = getattr(self, f"lbl_{role}_timing", None)
+            if label is not None:
+                label.setVisible(role in display_roles)
 
     def _display_role_set(self) -> set[str]:
         return set(self._active_role_set or self._configured_role_set)
 
     def _refresh_camera_role_layout(self) -> None:
-        show_cam2 = "cam2" in self._display_role_set()
-        self.view_cam2.setVisible(show_cam2)
+        display_roles = self._display_role_set()
+        for role in CAMERA_ROLES:
+            view = getattr(self, f"view_{role}", None)
+            if view is not None:
+                view.setVisible(role in display_roles)
         if hasattr(self, "_camera_splitter"):
-            self._camera_splitter.setSizes([1, 1] if show_cam2 else [1, 0])
+            self._camera_splitter.setSizes([
+                1 if role in display_roles else 0 for role in CAMERA_ROLES
+            ])
 
     @staticmethod
     def _sanitize_runtime_status_text_v3(status_text: str) -> str:
@@ -1010,19 +1066,20 @@ class RuntimeModePage(QtWidgets.QWidget):
         return text
 
     def _refresh_trigger_buttons(self) -> None:
-        allow_cam1 = (not self._busy) and ("cam1" in self._active_role_set) and self._has_enabled_items("cam1")
-        allow_cam2 = (
-            (not self._busy)
-            and ("cam2" in self._configured_role_set)
-            and ("cam2" in self._active_role_set)
-            and self._has_enabled_items("cam2")
-        )
         allow_full_trigger = (not self._busy) and any(
             self._has_enabled_items(role) for role in self._active_role_set
         )
         self.btn_simulate_foot.setEnabled(allow_full_trigger)
-        self.btn_trigger_cam1.setEnabled(allow_cam1)
-        self.btn_trigger_cam2.setEnabled(allow_cam2)
+        for role in CAMERA_ROLES:
+            button = getattr(self, f"btn_trigger_{role}", None)
+            if button is None:
+                continue
+            button.setEnabled(
+                (not self._busy)
+                and (role in self._configured_role_set)
+                and (role in self._active_role_set)
+                and self._has_enabled_items(role)
+            )
 
     def _has_enabled_items(self, camera_id: str) -> bool:
         camera_text = str(camera_id or "").strip()

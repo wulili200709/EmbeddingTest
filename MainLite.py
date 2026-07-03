@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import ctypes
+import os
 import sys
 from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from common.app_paths import packaged_embedding_test_root
+
+os.environ["LC_SYSTEM_LITE"] = "1"
+
 from ui.debug_main_window import DebugMainWindow
 
 

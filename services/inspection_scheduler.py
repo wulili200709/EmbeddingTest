@@ -60,6 +60,9 @@ class InspectionScheduler:
         if int(camera_index) == 2:
             self.state_machine.transition_to(RunState.CapturingCam2)
             return
+        if int(camera_index) == 3:
+            self.state_machine.transition_to(RunState.CapturingCam3)
+            return
         raise ValueError(f"unsupported camera index: {camera_index}")
 
     def on_inspecting_started(self) -> None:

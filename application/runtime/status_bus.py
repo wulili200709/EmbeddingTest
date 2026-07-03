@@ -11,6 +11,7 @@ _RUN_STATE_ZH_FOR_STATUS = {
     "ReleasedPendingConsume": "已放行，待消费",
     "CapturingCam1": "采集中(相机1)",
     "CapturingCam2": "采集中(相机2)",
+    "CapturingCam3": "采集中(相机3)",
     "Inspecting": "检测中",
     "Aggregating": "汇总结果",
     "CompletedOk": "本轮完成 OK",

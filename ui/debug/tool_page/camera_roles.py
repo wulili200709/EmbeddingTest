@@ -1,26 +1,22 @@
 from __future__ import annotations
 
 import os
-import re
 from typing import List
 
-
-_CAMERA_ROLE_RE = re.compile(r"(?:^|[_-])(cam[12])(?=[_.-]|$)", re.IGNORECASE)
+from common.camera_roles import (
+    DEFAULT_CAMERA_ROLE,
+    camera_role_from_text,
+    normalize_camera_role as _normalize_camera_role,
+)
 
 
 def normalize_camera_role(camera_id: object) -> str:
-    text = str(camera_id or "").strip().lower()
-    if text in {"cam1", "cam2"}:
-        return text
-    return ""
+    return _normalize_camera_role(camera_id)
 
 
 def camera_role_from_path(path: str) -> str:
     name = os.path.basename(str(path or "")).lower()
-    match = _CAMERA_ROLE_RE.search(name)
-    if not match:
-        return ""
-    return normalize_camera_role(match.group(1))
+    return camera_role_from_text(name)
 
 
 def selected_image_list_camera_role(tool_page) -> str:
@@ -34,7 +30,7 @@ def selected_image_list_camera_role(tool_page) -> str:
         role = normalize_camera_role(role_getter())
         if role:
             return role
-    return "cam1"
+    return DEFAULT_CAMERA_ROLE
 
 
 def filter_paths_for_camera(tool_page, paths: List[str], camera_id: object) -> List[str]:

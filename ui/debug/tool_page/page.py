@@ -28,6 +28,7 @@ from typing import Dict, List, Optional, Tuple
 import cv2
 from PySide6 import QtCore, QtGui, QtWidgets
 import algorithms.lazy_api as qr_core
+from common.camera_roles import CAMERA_ROLES, DEFAULT_CAMERA_ROLE, configured_camera_roles
 from common.algorithm_codes import learning_backbone_storage_code
 from common import labelme_io
 
@@ -144,7 +145,7 @@ class ToolPage(QtWidgets.QWidget):
         self.session = session
         self.algo = algo
         self.lite_mode = bool(lite_mode)
-        self._configured_camera_roles: List[str] = ["cam1", "cam2"]
+        self._configured_camera_roles: List[str] = list(CAMERA_ROLES)
 
         self.train_files: List[str] = []
         self.ok_files: List[str] = []
@@ -445,9 +446,9 @@ class ToolPage(QtWidgets.QWidget):
             if normalized and normalized not in roles:
                 roles.append(normalized)
         if not roles:
-            roles = ["cam1"]
-        if "cam1" not in roles:
-            roles.insert(0, "cam1")
+            roles = [DEFAULT_CAMERA_ROLE]
+        if DEFAULT_CAMERA_ROLE not in roles:
+            roles.insert(0, DEFAULT_CAMERA_ROLE)
         return roles
 
     def set_configured_camera_roles(self, roles: List[str]) -> None:
@@ -457,9 +458,9 @@ class ToolPage(QtWidgets.QWidget):
             if role_text and role_text not in normalized:
                 normalized.append(role_text)
         if not normalized:
-            normalized = ["cam1"]
-        if "cam1" not in normalized:
-            normalized.insert(0, "cam1")
+            normalized = [DEFAULT_CAMERA_ROLE]
+        if DEFAULT_CAMERA_ROLE not in normalized:
+            normalized.insert(0, DEFAULT_CAMERA_ROLE)
         self._configured_camera_roles = normalized
         self._apply_configured_camera_roles_to_ui()
 
@@ -474,7 +475,7 @@ class ToolPage(QtWidgets.QWidget):
             return
         allowed_roles = set(self.configured_camera_roles())
         model = combo.model() if hasattr(combo, "model") else None
-        for role in ("cam1", "cam2"):
+        for role in CAMERA_ROLES:
             index = combo.findData(role) if hasattr(combo, "findData") else -1
             if index < 0 or model is None or not hasattr(model, "item"):
                 continue
@@ -888,6 +889,48 @@ class ToolPage(QtWidgets.QWidget):
         )
         self.lbl_status.setText(msg)
 
+    def _export_current_backbone_onnx(self) -> None:
+        if not self.lite_mode:
+            return
+        algorithm = self.current_algorithm()
+        if not self._is_embedding_algorithm(algorithm):
+            QtWidgets.QMessageBox.information(self, tr("common.info"), "请选择学习工具后再导出 ONNX。")
+            return
+        backbone = self.algo.resolve_learning_algorithm(algorithm)
+        display_name = self.algo.algorithm_display_name(backbone) or backbone
+        button = getattr(self, "btn_export_onnx", None)
+        if button is not None:
+            button.setEnabled(False)
+        self.lbl_training_validation.setText(f"Status: exporting ONNX {display_name}...")
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
+        try:
+            info = dict(qr_core.export_backbone_onnx(backbone, device="cpu") or {})
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "导出ONNX失败", f"{exc}\n\n{traceback.format_exc()}")
+            return
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+            if button is not None:
+                button.setEnabled(True)
+
+        opsets = ", ".join(
+            f"{domain}:{version}"
+            for domain, version in list(info.get("opsets", []) or [])
+        ) or "-"
+        input_shape = info.get("input_shape", []) or []
+        input_text = "x".join(str(value) for value in input_shape) if input_shape else "-"
+        onnx_path = str(info.get("onnx_path", "") or "")
+        runtime_path = str(info.get("runtime_path", "") or "")
+        self.lbl_training_validation.setText(f"Status: ONNX exported {display_name} opset={opsets} input={input_text}")
+        QtWidgets.QMessageBox.information(
+            self,
+            "导出ONNX完成",
+            f"ONNX: {onnx_path}\n"
+            f"ORT: {runtime_path}\n"
+            f"opset: {opsets}\n"
+            f"input: {input_text}",
+        )
+
     def predict_image(
         self,
         path: str,
@@ -992,8 +1035,8 @@ class ToolPage(QtWidgets.QWidget):
         header_layout.addWidget(self.lbl_current_camera_caption)
         self.cmb_current_camera_role = QtWidgets.QComboBox()
         self.cmb_current_camera_role.setFixedWidth(84)
-        self.cmb_current_camera_role.addItem("cam1", "cam1")
-        self.cmb_current_camera_role.addItem("cam2", "cam2")
+        for role in CAMERA_ROLES:
+            self.cmb_current_camera_role.addItem(role, role)
         self.cmb_current_camera_role.setStyleSheet(_input_style)
         self.cmb_current_camera_role.currentTextChanged.connect(self._on_current_camera_role_changed)
         header_layout.addWidget(self.cmb_current_camera_role)

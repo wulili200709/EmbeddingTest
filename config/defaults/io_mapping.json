@@ -40,12 +40,16 @@
       "channel": 4,
       "active_high": false
     },
+    "light_cam3": {
+      "channel": 6,
+      "active_high": false
+    },
     "buzzer": {
       "channel": 5,
       "active_high": false
     },
     "reserved_out_1": {
-      "channel": 6,
+      "channel": 7,
       "active_high": false
     }
   }

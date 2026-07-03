@@ -11,6 +11,7 @@ from typing import Optional
 from PySide6 import QtCore
 
 from common.app_paths import packaged_embedding_test_root, packaged_repo_root
+from common.camera_roles import ROLE_TO_CAMERA_INDEX, camera_index_for_role
 from .capture_policy import DEFAULT_LIGHT_STABLE_MS
 
 
@@ -59,7 +60,10 @@ def _rebuild_runner(runtime) -> bool:
             runtime._io_controller,
         )
     if runtime._io_controller is not None:
-        runtime._light_controller = runtime_controller_module.LightController(runtime._io_controller)
+        runtime._light_controller = runtime_controller_module.LightController(
+            runtime._io_controller,
+            supported_cameras=ROLE_TO_CAMERA_INDEX.values(),
+        )
         tower_settings = dict(getattr(runtime, "_tower_light_settings", {}) or {})
         runtime._tower_light_controller = runtime_controller_module.TowerLightController(
             runtime._io_controller,
@@ -94,7 +98,7 @@ def _rebuild_runner(runtime) -> bool:
         tower_light_controller=runtime._tower_light_controller,
         inspect_callback=runtime._inspect_frame,
         precheck_callback=runtime._precheck,
-        role_to_camera_index={"cam1": 1, "cam2": 2},
+        role_to_camera_index=dict(ROLE_TO_CAMERA_INDEX),
         light_stable_ms=DEFAULT_LIGHT_STABLE_MS,
     )
     runtime._tower_light_controller.enter_waiting()
@@ -297,7 +301,7 @@ def _apply_camera_settings_now(
             else (runtime._camera_settings_store.load_for_role(role, serial=serial) or {})
         )
         if hasattr(runtime._light_controller, "set_camera_light_mode"):
-            camera_index = 1 if role == "cam1" else 2 if role == "cam2" else 0
+            camera_index = camera_index_for_role(role)
             if camera_index > 0:
                 runtime._light_controller.set_camera_light_mode(
                     camera_index,

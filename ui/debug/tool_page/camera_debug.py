@@ -9,6 +9,7 @@ from pathlib import Path
 from PySide6 import QtGui
 
 from common.app_paths import packaged_embedding_test_root, packaged_repo_root
+from common.camera_roles import DEFAULT_CAMERA_ROLE, normalize_camera_role
 from infrastructure.camera_settings_store import (
     LIGHT_SOURCE_MODE_BOARD_IO,
     light_source_mode_from_mapping,
@@ -28,31 +29,35 @@ def _selected_debug_camera_role(tool_page) -> str:
     if combo is None:
         getter = getattr(tool_page, "current_camera_role", None)
         if callable(getter):
-            return str(getter() or "cam1").strip() or "cam1"
-        return "cam1"
-    return str(combo.currentData() or combo.currentText() or "cam1").strip() or "cam1"
+            return normalize_camera_role(getter(), default=DEFAULT_CAMERA_ROLE)
+        return DEFAULT_CAMERA_ROLE
+    return normalize_camera_role(combo.currentData() or combo.currentText(), default=DEFAULT_CAMERA_ROLE)
 
 
 def _load_debug_role_binding(tool_page, role: str) -> str:
-    role_text = str(role or "").strip() or "cam1"
+    role_text = normalize_camera_role(role, default=DEFAULT_CAMERA_ROLE)
     preferred_serial = str(tool_page._camera_settings_store.serial_for_role(role_text) or "").strip()
     if preferred_serial:
         return preferred_serial
-    if role_text == "cam2":
-        return str(tool_page.session.load_session().runtime_cam2_serial or "").strip()
-    return str(tool_page.session.load_session().runtime_cam1_serial or "").strip()
+    session_data = tool_page.session.load_session()
+    return str(getattr(session_data, "runtime_camera_serials", {}).get(role_text, "") or "").strip()
 
 
 def _save_debug_role_binding(tool_page, role: str, serial: str) -> None:
-    role_text = str(role or "").strip() or "cam1"
+    role_text = normalize_camera_role(role, default=DEFAULT_CAMERA_ROLE)
     serial_text = str(serial or "").strip()
     current_settings = tool_page._camera_settings_store.load_for_role(role_text, serial=serial_text) or {}
     tool_page._camera_settings_store.save_for_role(role_text, serial_text, current_settings)
     session_data = tool_page.session.load_session()
-    if role_text == "cam2":
-        session_data.runtime_cam2_serial = serial_text
+    serials = dict(getattr(session_data, "runtime_camera_serials", {}) or {})
+    if serial_text:
+        serials[role_text] = serial_text
     else:
-        session_data.runtime_cam1_serial = serial_text
+        serials.pop(role_text, None)
+    session_data.runtime_camera_serials = serials
+    session_data.runtime_cam1_serial = serials.get("cam1", "")
+    session_data.runtime_cam2_serial = serials.get("cam2", "")
+    session_data.runtime_cam3_serial = serials.get("cam3", "")
     tool_page.session.save_session(session_data)
 
 

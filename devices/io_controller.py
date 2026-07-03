@@ -107,13 +107,8 @@ class IoController:
         self.set_output("buzzer", bool(on))
 
     def set_camera_light(self, camera_index: int, on: bool) -> None:
-        if int(camera_index) == 1:
-            self.set_output("light_cam1", on)
-            return
-        if int(camera_index) == 2:
-            self.set_output("light_cam2", on)
-            return
-        raise ValueError(f"unsupported camera index: {camera_index}")
+        output_name = f"light_cam{int(camera_index)}"
+        self.set_output(output_name, on)
 
     def read_foot_switch(self) -> bool:
         return self.read_input("foot_switch")

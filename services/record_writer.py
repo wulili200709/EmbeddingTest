@@ -16,6 +16,7 @@ class TestRecord:
     final_result: str = ""
     camera1_result: str = ""
     camera2_result: str = ""
+    camera3_result: str = ""
     duration_ms: int = 0
     is_error: bool = False
     error_code: str = ""
@@ -35,6 +36,7 @@ class TestRecord:
         final_result: str = "",
         camera1_result: str = "",
         camera2_result: str = "",
+        camera3_result: str = "",
         duration_ms: int = 0,
         is_error: bool = False,
         error_code: str = "",
@@ -52,6 +54,7 @@ class TestRecord:
             final_result=final_result,
             camera1_result=camera1_result,
             camera2_result=camera2_result,
+            camera3_result=camera3_result,
             duration_ms=int(duration_ms),
             is_error=bool(is_error),
             error_code=error_code,
@@ -107,6 +110,7 @@ class CsvRecordWriter:
         "final_result",
         "camera1_result",
         "camera2_result",
+        "camera3_result",
         "error_message",
     ]
 
@@ -145,6 +149,7 @@ class CsvRecordWriter:
             "final_result": record.final_result,
             "camera1_result": record.camera1_result,
             "camera2_result": record.camera2_result,
+            "camera3_result": record.camera3_result,
             "error_message": record.error_message,
         }
         row.update(dict(record.extra_fields or {}))
@@ -238,6 +243,7 @@ class TestRecordService:
         serial_no: str = "",
         camera1_result: str = "",
         camera2_result: str = "",
+        camera3_result: str = "",
         duration_ms: int = 0,
         is_error: bool = False,
         error_code: str = "",
@@ -254,6 +260,7 @@ class TestRecordService:
             final_result=final_result,
             camera1_result=camera1_result,
             camera2_result=camera2_result,
+            camera3_result=camera3_result,
             duration_ms=duration_ms,
             is_error=is_error,
             error_code=error_code,

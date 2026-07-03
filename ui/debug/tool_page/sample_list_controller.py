@@ -130,7 +130,14 @@ class SampleListController:
         if not visible:
             QtWidgets.QMessageBox.information(self.owner, tr("common.info"), tr("debug.clear_current_test_list_empty"))
             return
-        role_text = tr("runtime.camera1") if current_role == "cam1" else tr("runtime.camera2")
+        if current_role == "cam1":
+            role_text = tr("runtime.camera1")
+        elif current_role == "cam2":
+            role_text = tr("runtime.camera2")
+        elif current_role == "cam3":
+            role_text = tr("runtime.camera3")
+        else:
+            role_text = current_role
         confirm = QtWidgets.QMessageBox.question(
             self.owner,
             tr("debug.clear_current_test_list"),

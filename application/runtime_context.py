@@ -2,13 +2,18 @@
 
 from dataclasses import dataclass
 import os
-import re
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Protocol
 
 import algorithms.lazy_api as qr_core
 import numpy as np
 from common.algorithm_codes import learning_backbone_storage_code
+from common.camera_roles import (
+    CAMERA_ROLES,
+    DEFAULT_CAMERA_ROLE,
+    camera_role_from_text,
+    normalize_camera_role,
+)
 from algorithms.measurement import (
     BRIGHT_BLOCK_CENTER_ALGORITHM,
     BRIGHT_BLOCK_Y_DISTANCE_ALGORITHM,
@@ -41,14 +46,8 @@ if TYPE_CHECKING:
     from ui.debug import ToolPage
 
 
-_CAMERA_ROLE_RE = re.compile(r"(?:^|[_-])(cam[12])(?=[_.-]|$)", re.IGNORECASE)
-
-
 def _camera_role_from_path(path: str) -> str:
-    match = _CAMERA_ROLE_RE.search(os.path.basename(str(path or "")))
-    if not match:
-        return "cam1"
-    return str(match.group(1) or "cam1").lower()
+    return camera_role_from_text(os.path.basename(str(path or "")), default=DEFAULT_CAMERA_ROLE)
 
 
 class RuntimePredictorProtocol(Protocol):
@@ -529,7 +528,11 @@ class ProductRuntimeContext:
         ]
 
         match_ms = None
-        camera_role = str(enabled_items[0].camera_id or "cam1").strip() if enabled_items else "cam1"
+        camera_role = (
+            normalize_camera_role(enabled_items[0].camera_id, default=DEFAULT_CAMERA_ROLE)
+            if enabled_items
+            else DEFAULT_CAMERA_ROLE
+        )
         if self.loc_method == "shape":
             recipe = self._ensure_recipe_loaded(camera_role)
             ref_image = self._reference_image(recipe)
@@ -599,7 +602,7 @@ class ProductRuntimeContext:
             and not _is_measurement_item(self.algo, item)
         ]
 
-        role = str(camera_role or "cam1").strip() or "cam1"
+        role = normalize_camera_role(camera_role, default=DEFAULT_CAMERA_ROLE)
         match_ms = 0.0
         roi_shapes: tuple[RuntimePreviewShape, ...] = ()
         if self.loc_method == "shape":
@@ -803,7 +806,7 @@ class ProductRuntimeContext:
         items = load_inspection_items(self.session.inspection_items_path)
         synced_items: List[InspectionItem] = []
         remaining_items: List[InspectionItem] = []
-        for role in ("cam1", "cam2"):
+        for role in CAMERA_ROLES:
             recipe = self._load_recipe_if_available(role)
             self._recipes_by_role[role] = recipe
             role_items = [
@@ -833,10 +836,10 @@ class ProductRuntimeContext:
             )
         remaining_items = [
             item for item in items
-            if str(getattr(item, "camera_id", "") or "").strip() not in {"cam1", "cam2"}
+            if normalize_camera_role(getattr(item, "camera_id", "")) not in set(CAMERA_ROLES)
         ]
         synced_items = remaining_items + synced_items
-        self._recipe = self._recipes_by_role.get("cam1")
+        self._recipe = self._recipes_by_role.get(DEFAULT_CAMERA_ROLE)
         if [item.to_dict() for item in synced_items] != [item.to_dict() for item in items]:
             save_inspection_items(synced_items, self.session.inspection_items_path)
         self._inspection_items = synced_items
@@ -851,10 +854,10 @@ class ProductRuntimeContext:
             return None
 
     def _ensure_recipe_loaded(self, camera_role: str = "cam1"):
-        role = str(camera_role or "cam1").strip() or "cam1"
+        role = normalize_camera_role(camera_role, default=DEFAULT_CAMERA_ROLE)
         if role not in self._recipes_by_role or self._recipes_by_role.get(role) is None:
             self._recipes_by_role[role] = self._load_recipe_if_available(role)
-        if role == "cam1":
+        if role == DEFAULT_CAMERA_ROLE:
             self._recipe = self._recipes_by_role.get(role)
         return self._recipes_by_role.get(role)
 

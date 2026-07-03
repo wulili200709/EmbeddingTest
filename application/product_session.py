@@ -7,7 +7,7 @@ import re
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from common.safe_io import atomic_write_json, backup_path_for, load_json_with_backup
 from common.path_utils import (
@@ -53,6 +53,8 @@ class SessionData:
     loc_method: str = "shape"
     runtime_cam1_serial: Optional[str] = None
     runtime_cam2_serial: Optional[str] = None
+    runtime_cam3_serial: Optional[str] = None
+    runtime_camera_serials: Dict[str, str] = field(default_factory=dict)
     runtime_capture_policy: Optional[str] = None
 
 
@@ -188,6 +190,34 @@ class ProductSession:
         existing_payload = load_json_with_backup(self.session_json, default={})
         if not isinstance(existing_payload, dict):
             existing_payload = {}
+        existing_serials = existing_payload.get("runtime_camera_serials", {})
+        if not isinstance(existing_serials, dict):
+            existing_serials = {}
+        runtime_serials = {
+            str(role).strip(): str(serial).strip()
+            for role, serial in dict(existing_serials).items()
+            if str(role).strip() and str(serial).strip()
+        }
+        runtime_serials.update(
+            {
+                str(role).strip(): str(serial).strip()
+                for role, serial in dict(data.runtime_camera_serials or {}).items()
+                if str(role).strip() and str(serial).strip()
+            }
+        )
+        legacy_updates = {
+            "cam1": data.runtime_cam1_serial,
+            "cam2": data.runtime_cam2_serial,
+            "cam3": data.runtime_cam3_serial,
+        }
+        for role, serial in legacy_updates.items():
+            if serial is not None:
+                serial_text = str(serial).strip()
+                if serial_text:
+                    runtime_serials[role] = serial_text
+                else:
+                    runtime_serials.pop(role, None)
+
         payload = {
             "train_files": [product_relative_path(path, base_dir=self.product_dir) for path in data.train_files],
             "ok_files": [product_relative_path(path, base_dir=self.product_dir) for path in data.ok_files],
@@ -195,16 +225,10 @@ class ProductSession:
             "test_files": [product_relative_path(path, base_dir=self.product_dir) for path in data.test_files],
             "ref_image": product_relative_path(data.ref_image or "", base_dir=self.product_dir),
             "loc_method": data.loc_method,
-            "runtime_cam1_serial": (
-                str(data.runtime_cam1_serial).strip()
-                if data.runtime_cam1_serial is not None
-                else str(existing_payload.get("runtime_cam1_serial", "")).strip()
-            ),
-            "runtime_cam2_serial": (
-                str(data.runtime_cam2_serial).strip()
-                if data.runtime_cam2_serial is not None
-                else str(existing_payload.get("runtime_cam2_serial", "")).strip()
-            ),
+            "runtime_cam1_serial": runtime_serials.get("cam1", ""),
+            "runtime_cam2_serial": runtime_serials.get("cam2", ""),
+            "runtime_cam3_serial": runtime_serials.get("cam3", ""),
+            "runtime_camera_serials": runtime_serials,
             "runtime_capture_policy": (
                 str(data.runtime_capture_policy).strip()
                 if data.runtime_capture_policy is not None
@@ -236,6 +260,23 @@ class ProductSession:
         if not train_files:
             train_files = list(dict.fromkeys(legacy_ok_files + legacy_ng_files))
 
+        raw_serials = raw.get("runtime_camera_serials", {})
+        if not isinstance(raw_serials, dict):
+            raw_serials = {}
+        runtime_serials = {
+            str(role).strip(): str(serial).strip()
+            for role, serial in raw_serials.items()
+            if str(role).strip() and str(serial).strip()
+        }
+        for role, key in (
+            ("cam1", "runtime_cam1_serial"),
+            ("cam2", "runtime_cam2_serial"),
+            ("cam3", "runtime_cam3_serial"),
+        ):
+            serial = str(raw.get(key, "")).strip()
+            if serial:
+                runtime_serials.setdefault(role, serial)
+
         return SessionData(
             train_files=train_files,
             ok_files=legacy_ok_files,
@@ -243,8 +284,10 @@ class ProductSession:
             test_files=_filter(raw.get("test_files", [])),
             ref_image=ref_image,
             loc_method=loc_method,
-            runtime_cam1_serial=str(raw.get("runtime_cam1_serial", "")).strip(),
-            runtime_cam2_serial=str(raw.get("runtime_cam2_serial", "")).strip(),
+            runtime_cam1_serial=runtime_serials.get("cam1", ""),
+            runtime_cam2_serial=runtime_serials.get("cam2", ""),
+            runtime_cam3_serial=runtime_serials.get("cam3", ""),
+            runtime_camera_serials=runtime_serials,
             runtime_capture_policy=str(raw.get("runtime_capture_policy", "ng_only")).strip() or "ng_only",
         )
 

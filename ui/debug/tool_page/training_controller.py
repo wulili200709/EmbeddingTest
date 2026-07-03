@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import List
 
 from PySide6 import QtCore, QtWidgets
@@ -60,10 +61,20 @@ class TrainingController:
 
     def set_running(self, running: bool) -> None:
         self.owner._training_in_progress = bool(running)
-        for attr in ("btn_train", "btn_train_current", "btn_test", "btn_export_test", "btn_clear_session"):
+        for attr in ("btn_train", "btn_train_current", "btn_test", "btn_export_test", "btn_clear_session", "btn_export_onnx"):
             button = getattr(self.owner, attr, None)
             if button is not None:
                 button.setEnabled(not running)
+        progress_bar = getattr(self.owner, "training_progress_bar", None)
+        if progress_bar is not None:
+            progress_bar.setVisible(bool(running))
+            if running:
+                progress_bar.setRange(0, 0)
+                progress_bar.setFormat("training...")
+            else:
+                progress_bar.setRange(0, 100)
+                progress_bar.setValue(0)
+                progress_bar.setFormat("")
 
     def on_progress(self, message: str) -> None:
         text = str(message or "").strip()
@@ -76,6 +87,22 @@ class TrainingController:
         validation_label = getattr(self.owner, "lbl_training_validation", None)
         if validation_label is not None:
             validation_label.setText(status_text)
+        progress_bar = getattr(self.owner, "training_progress_bar", None)
+        if progress_bar is not None:
+            progress_bar.setVisible(True)
+            match = re.search(r"\((\d+)/(\d+)\)", text)
+            if match is None:
+                match = re.search(r"\b(?:OK|NG)\s+(\d+)/(\d+)\b", text, flags=re.IGNORECASE)
+            if match is not None:
+                current = max(0, int(match.group(1)))
+                total = max(1, int(match.group(2)))
+                percent = max(0, min(100, int(round(current * 100.0 / total))))
+                progress_bar.setRange(0, 100)
+                progress_bar.setValue(percent)
+                progress_bar.setFormat(f"{current}/{total}  {percent}%")
+            else:
+                progress_bar.setRange(0, 0)
+                progress_bar.setFormat(text[:48])
 
     def start_worker(self, payload: dict) -> None:
         if getattr(self.owner, "_training_in_progress", False):

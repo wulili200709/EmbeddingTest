@@ -5,6 +5,7 @@ from typing import Optional
 from PySide6 import QtCore
 
 from algorithms.lazy_api import is_ready as is_qr_core_ready
+from common.camera_roles import CAMERA_ROLES, DEFAULT_CAMERA_ROLE, normalize_camera_role
 from infrastructure.camera_settings_store import CameraSettingsStore
 from ui.window_common import update_runtime_preview
 
@@ -33,16 +34,21 @@ def prepare_runtime_for_debug_camera(window, serial: str) -> None:
 
 def restore_runtime_camera_bindings_from_session(window) -> None:
     session_data = window.session.load_session()
-    cam1_serial = str(session_data.runtime_cam1_serial or "").strip() or _stored_camera_serial_for_role(window, "cam1")
-    cam2_serial = str(session_data.runtime_cam2_serial or "").strip() or _stored_camera_serial_for_role(window, "cam2")
-    window.runtime_page.edit_cam1_serial.setText(cam1_serial)
-    window.runtime_page.edit_cam2_serial.setText(cam2_serial)
-    if (
-        cam1_serial != str(session_data.runtime_cam1_serial or "").strip()
-        or cam2_serial != str(session_data.runtime_cam2_serial or "").strip()
-    ):
-        session_data.runtime_cam1_serial = cam1_serial
-        session_data.runtime_cam2_serial = cam2_serial
+    changed = False
+    serials = dict(getattr(session_data, "runtime_camera_serials", {}) or {})
+    for role in CAMERA_ROLES:
+        serial = str(serials.get(role, "")).strip() or _stored_camera_serial_for_role(window, role)
+        window.runtime_page.set_camera_serial(role, serial)
+        if serial != str(serials.get(role, "")).strip():
+            serials[role] = serial
+            changed = True
+    if changed:
+        session_data.runtime_camera_serials = {
+            role: serial for role, serial in serials.items() if str(serial).strip()
+        }
+        session_data.runtime_cam1_serial = session_data.runtime_camera_serials.get("cam1", "")
+        session_data.runtime_cam2_serial = session_data.runtime_camera_serials.get("cam2", "")
+        session_data.runtime_cam3_serial = session_data.runtime_camera_serials.get("cam3", "")
         window.session.save_session(session_data)
     sync_configured_roles = getattr(window, "_sync_configured_camera_roles", None)
     if callable(sync_configured_roles):
@@ -55,16 +61,21 @@ def persist_runtime_camera_bindings(
 ) -> None:
     session_data = window.session.load_session()
     current_bindings = dict(bindings or window.runtime_page.camera_bindings())
-    session_data.runtime_cam1_serial = (
-        str(current_bindings.get("cam1", "")).strip()
-        or str(session_data.runtime_cam1_serial or "").strip()
-        or _stored_camera_serial_for_role(window, "cam1")
-    )
-    session_data.runtime_cam2_serial = (
-        str(current_bindings.get("cam2", "")).strip()
-        or str(session_data.runtime_cam2_serial or "").strip()
-        or _stored_camera_serial_for_role(window, "cam2")
-    )
+    serials = dict(getattr(session_data, "runtime_camera_serials", {}) or {})
+    for role in CAMERA_ROLES:
+        serial = (
+            str(current_bindings.get(role, "")).strip()
+            or str(serials.get(role, "")).strip()
+            or _stored_camera_serial_for_role(window, role)
+        )
+        if serial:
+            serials[role] = serial
+        else:
+            serials.pop(role, None)
+    session_data.runtime_camera_serials = serials
+    session_data.runtime_cam1_serial = serials.get("cam1", "")
+    session_data.runtime_cam2_serial = serials.get("cam2", "")
+    session_data.runtime_cam3_serial = serials.get("cam3", "")
     window.session.save_session(session_data)
 
 
@@ -182,8 +193,8 @@ def activate_runtime_workspace_legacy(window) -> str:
     bindings = window.runtime_page.camera_bindings()
     debug_serial = window.tool_page.connected_debug_camera_serial()
 
-    if debug_serial and not str(bindings.get("cam1", "")).strip():
-        window.runtime_page.edit_cam1_serial.setText(debug_serial)
+    if debug_serial and not str(bindings.get(DEFAULT_CAMERA_ROLE, "")).strip():
+        window.runtime_page.set_camera_serial(DEFAULT_CAMERA_ROLE, debug_serial)
         sync_configured_roles = getattr(window, "_sync_configured_camera_roles", None)
         if callable(sync_configured_roles):
             sync_configured_roles()
@@ -219,13 +230,13 @@ def ensure_runtime_camera_connection(window, *, debug_role: str = "", debug_seri
 
     bindings = window.runtime_page.camera_bindings()
     debug_serial = str(debug_serial or window.tool_page.connected_debug_camera_serial()).strip()
-    debug_role = str(debug_role or getattr(window.tool_page, "_selected_debug_camera_role", lambda: "cam1")()).strip() or "cam1"
+    debug_role = normalize_camera_role(
+        debug_role or getattr(window.tool_page, "_selected_debug_camera_role", lambda: DEFAULT_CAMERA_ROLE)(),
+        default=DEFAULT_CAMERA_ROLE,
+    )
 
     if debug_serial and not str(bindings.get(debug_role, "")).strip():
-        if debug_role == "cam2":
-            window.runtime_page.edit_cam2_serial.setText(debug_serial)
-        else:
-            window.runtime_page.edit_cam1_serial.setText(debug_serial)
+        window.runtime_page.set_camera_serial(debug_role, debug_serial)
         sync_configured_roles = getattr(window, "_sync_configured_camera_roles", None)
         if callable(sync_configured_roles):
             sync_configured_roles()

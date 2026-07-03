@@ -505,7 +505,16 @@ class AlgorithmController:
 
         if self.is_embedding_algorithm(algorithm):
             device = qr_core.get_device()
+            lite_runtime = str(os.environ.get("LC_SYSTEM_LITE", "")).strip().lower() in {"1", "true", "yes", "lite"}
+            if lite_runtime and callable(progress_callback):
+                progress_callback(f"preparing backbone {learning_backbone_storage_code(algorithm)} on {device}")
             feat_net = self.get_feat_net(algorithm, device)
+            if lite_runtime and callable(progress_callback):
+                info = self._feat_net_runtime_info(feat_net)
+                backend = str(info.get("backend_label", "") or "TORCH").strip()
+                model_path = str(info.get("model_path", "") or "").strip()
+                model_hint = f" {os.path.basename(model_path)}" if model_path else ""
+                progress_callback(f"backbone ready {backend}{model_hint}")
             model = qr_core.train_register_model(
                 ok_files,
                 ng_files,

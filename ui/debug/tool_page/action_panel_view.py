@@ -31,6 +31,20 @@ def build_action_panel(
     owner.lbl_training_validation.setWordWrap(True)
     owner.lbl_training_validation.setStyleSheet(f"color:{text_dim};font-size:11px;padding:0 2px 4px 2px;")
     action_vbox.addWidget(owner.lbl_training_validation)
+    if getattr(owner, "lite_mode", False):
+        owner.training_progress_bar = QtWidgets.QProgressBar()
+        owner.training_progress_bar.setRange(0, 100)
+        owner.training_progress_bar.setValue(0)
+        owner.training_progress_bar.setTextVisible(True)
+        owner.training_progress_bar.setFormat("")
+        owner.training_progress_bar.setFixedHeight(16)
+        owner.training_progress_bar.setVisible(False)
+        owner.training_progress_bar.setStyleSheet(
+            "QProgressBar{background:#2f2f2f;color:#e6e6e6;border:1px solid #555;"
+            "border-radius:3px;text-align:center;font-size:10px;}"
+            "QProgressBar::chunk{background:#2d8cff;border-radius:2px;}"
+        )
+        action_vbox.addWidget(owner.training_progress_bar)
 
     action_btn_style = (
         "QPushButton{background:#2d5aa0;color:white;border:none;"
@@ -87,6 +101,15 @@ def build_action_panel(
     owner.btn_train_current_cancel.clicked.connect(lambda: owner._cancel_training_pending_action("current"))
     train_current_row.addWidget(owner.btn_train_current_cancel, 0)
     action_vbox.addLayout(train_current_row)
+
+    if getattr(owner, "lite_mode", False):
+        owner.btn_export_onnx = QtWidgets.QPushButton(
+            standard_icon(standard_pixmap.SP_DialogSaveButton),
+            "导出ONNX",
+        )
+        owner.btn_export_onnx.setStyleSheet(compact_btn)
+        owner.btn_export_onnx.clicked.connect(owner._export_current_backbone_onnx)
+        action_vbox.addWidget(owner.btn_export_onnx)
 
     act_row = QtWidgets.QHBoxLayout()
     act_row.setSpacing(4)

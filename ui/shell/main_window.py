@@ -6,6 +6,7 @@ from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from common.camera_roles import CAMERA_ROLES, DEFAULT_CAMERA_ROLE
 from algorithms.lazy_api import is_ready as is_qr_core_ready
 from application import (
     DEFAULT_RELEASE_PASSWORD,
@@ -381,10 +382,12 @@ class MainWindow(QtWidgets.QMainWindow):
         _show_shell_about_dialog(self)
 
     def _configured_runtime_camera_roles(self) -> list[str]:
-        roles = ["cam1"]
-        if self.runtime_page.edit_cam2_serial.text().strip():
-            roles.append("cam2")
-        return roles
+        roles = [
+            role
+            for role in CAMERA_ROLES
+            if self.runtime_page.camera_serial(role)
+        ]
+        return roles or [DEFAULT_CAMERA_ROLE]
 
     def _sync_configured_camera_roles(self) -> None:
         roles = self._configured_runtime_camera_roles()
@@ -574,14 +577,14 @@ class MainWindow(QtWidgets.QMainWindow):
     def _show_connect_dialog(self) -> None:
         bindings = prompt_connect_camera_bindings(
             self,
-            cam1_serial=self.runtime_page.edit_cam1_serial.text(),
-            cam2_serial=self.runtime_page.edit_cam2_serial.text(),
+            cam1_serial=self.runtime_page.camera_serial("cam1"),
+            cam2_serial=self.runtime_page.camera_serial("cam2"),
+            cam3_serial=self.runtime_page.camera_serial("cam3"),
         )
         if bindings is None:
             return
-        cam1_serial, cam2_serial = bindings
-        self.runtime_page.edit_cam1_serial.setText(cam1_serial)
-        self.runtime_page.edit_cam2_serial.setText(cam2_serial)
+        for role, serial in zip(CAMERA_ROLES, bindings):
+            self.runtime_page.set_camera_serial(role, serial)
         self._sync_configured_camera_roles()
         self.runtime_page.connectCamerasRequested.emit(
             self.runtime_page.camera_bindings()

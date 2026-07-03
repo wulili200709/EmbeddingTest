@@ -9,10 +9,11 @@ from common.algorithm_codes import (
     SHARED_BACKBONE_ALGORITHM_CODE,
     normalize_tool_algorithm_code,
 )
+from common.camera_roles import CAMERA_ROLES, DEFAULT_CAMERA_ROLE, normalize_camera_role
 from common.safe_io import atomic_write_json, load_json_with_backup
 
 
-SUPPORTED_CAMERA_IDS = ("cam1", "cam2")
+SUPPORTED_CAMERA_IDS = CAMERA_ROLES
 POST_DISTANCE_ALGORITHMS = {"line_distance", "line_distance_ref_normal", "center_distance"}
 
 
@@ -43,9 +44,7 @@ class InspectionItem:
         *,
         algorithm_type: str | None = None,
     ) -> None:
-        normalized_camera_id = str(camera_id or "cam1").strip() or "cam1"
-        if normalized_camera_id not in SUPPORTED_CAMERA_IDS:
-            normalized_camera_id = "cam1"
+        normalized_camera_id = normalize_camera_role(camera_id, default=DEFAULT_CAMERA_ROLE)
         resolved_algorithm = normalize_tool_algorithm_code(
             algorithm_code if algorithm_type is None else algorithm_type
         )
@@ -67,14 +66,14 @@ class InspectionItem:
 
     @property
     def model_key(self) -> str:
-        camera = _slug_token(self.camera_id, "cam1")
+        camera = _slug_token(self.camera_id, DEFAULT_CAMERA_ROLE)
         item = _slug_token(self.item_id or self.roi_label or self.display_name, "roi")
         return f"{camera}__{item}"
 
     @classmethod
     def from_dict(cls, data: dict) -> "InspectionItem":
         roi_label = str(data.get("roi_label", "")).strip()
-        camera_id = str(data.get("camera_id", "cam1")).strip() or "cam1"
+        camera_id = normalize_camera_role(data.get("camera_id"), default=DEFAULT_CAMERA_ROLE)
         display_name = str(data.get("display_name", "")).strip() or roi_label or "roi"
         item_id = str(data.get("item_id", "")).strip() or roi_label or display_name
         algorithm_code = str(data.get("algorithm_code", "")).strip()
@@ -124,7 +123,7 @@ def save_inspection_items(items: Iterable[InspectionItem], path: str) -> None:
 def build_default_item(
     roi_label: str,
     *,
-    camera_id: str = "cam1",
+    camera_id: str = DEFAULT_CAMERA_ROLE,
     display_name: str = "",
     algorithm_code: str = SHARED_BACKBONE_ALGORITHM_CODE,
 ) -> InspectionItem:
@@ -143,7 +142,7 @@ def sync_items_with_labels(
     existing_items: Iterable[InspectionItem],
     labels: Iterable[str],
     *,
-    default_camera_id: str = "cam1",
+    default_camera_id: str = DEFAULT_CAMERA_ROLE,
     display_names_by_label: Mapping[str, str] | None = None,
 ) -> List[InspectionItem]:
     """

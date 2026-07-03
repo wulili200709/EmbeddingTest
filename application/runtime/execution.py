@@ -210,6 +210,9 @@ def _write_runtime_record_sync(runtime, record_service, runtime_result, *, lock_
             camera2_result=runtime_result.camera_results.get("cam2", None).result
             if runtime_result.camera_results.get("cam2") is not None
             else "",
+            camera3_result=runtime_result.camera_results.get("cam3", None).result
+            if runtime_result.camera_results.get("cam3") is not None
+            else "",
             duration_ms=runtime_result.duration_ms,
             is_error=runtime_result.is_system_error,
             error_message=runtime_result.error_message,
@@ -288,7 +291,7 @@ def _finalize_trigger_outcome(runtime, outcome, release_status_before) -> None:
 
     runtime.recordPathChanged.emit(runtime._last_record_path or "-")
     runtime.triggerResultReady.emit(outcome.final_result, detail_text)
-    for role in ("cam1", "cam2"):
+    for role in current_roles:
         source = current_preview_frames.get(role)
         if source is None:
             source = ""

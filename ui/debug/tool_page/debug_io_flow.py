@@ -16,6 +16,7 @@ _DEBUG_IO_NAME_LABELS = {
     "tower_blue": ("debug.io_name.tower_blue", "DO_TOWER_BLUE"),
     "light_cam1": ("debug.io_name.light_cam1", "DO_LIGHT_CAM1"),
     "light_cam2": ("debug.io_name.light_cam2", "DO_LIGHT_CAM2"),
+    "light_cam3": ("debug.io_name.light_cam3", "DO_LIGHT_CAM3"),
     "buzzer": ("debug.io_name.buzzer", "DO_BUZZER"),
     "reserved_out_1": ("debug.io_name.reserved_out_1", "DO_RESERVED_1"),
     "reserved_out_2": ("debug.io_name.reserved_out_2", "DO_RESERVED_2"),

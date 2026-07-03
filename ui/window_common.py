@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional
-import re
 
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from common import labelme_io
 from common.app_paths import packaged_embedding_test_root, writable_embedding_test_root
+from common.camera_roles import DEFAULT_CAMERA_ROLE, camera_role_from_text, normalize_camera_role
 from application import AlgorithmController, ProductSession
 from application.runtime.preview_frame import RuntimePreviewFrame, RuntimePreviewShape
 from application.runtime.preview_frame import read_exported_runtime_preview_measurements
@@ -30,14 +30,8 @@ def embedding_test_root(anchor_file: str) -> Path:
     return packaged_embedding_test_root(anchor_file)
 
 
-_CAMERA_ROLE_RE = re.compile(r"(?:^|[_-])(cam[12])(?=[_.-]|$)", re.IGNORECASE)
-
-
 def _camera_role_from_path(path: str) -> str:
-    match = _CAMERA_ROLE_RE.search(Path(path).name)
-    if not match:
-        return "cam1"
-    return str(match.group(1) or "cam1").lower()
+    return camera_role_from_text(Path(path).name, default=DEFAULT_CAMERA_ROLE)
 
 
 def default_session_dir(anchor_file: str) -> str:
@@ -149,8 +143,8 @@ def update_runtime_preview(runtime_page, role: str, source: object) -> None:
 
 
 def _runtime_preview_display_size(runtime_page, role: str) -> QtCore.QSize | None:
-    role_text = str(role or "cam1").strip()
-    view_name = "view_cam2" if role_text == "cam2" else "view_cam1"
+    role_text = normalize_camera_role(role, default=DEFAULT_CAMERA_ROLE)
+    view_name = f"view_{role_text}"
     view = getattr(runtime_page, view_name, None)
     if view is None or not hasattr(view, "size"):
         return None

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from PySide6 import QtWidgets
 
+from common.camera_roles import CAMERA_ROLES
 from ui.i18n import tr
 from ui.runtime import RuntimeImageView
 
@@ -51,8 +52,8 @@ def build_camera_debug_page(
     role_layout.addWidget(owner.lbl_debug_role)
     owner.cmb_debug_camera_role = QtWidgets.QComboBox()
     owner.cmb_debug_camera_role.setStyleSheet(input_style)
-    owner.cmb_debug_camera_role.addItem("cam1", "cam1")
-    owner.cmb_debug_camera_role.addItem("cam2", "cam2")
+    for role in CAMERA_ROLES:
+        owner.cmb_debug_camera_role.addItem(role, role)
     owner.cmb_debug_camera_role.currentIndexChanged.connect(owner._on_debug_camera_role_changed)
     role_layout.addWidget(owner.cmb_debug_camera_role, 1)
     cam_left_vbox.addWidget(role_row)

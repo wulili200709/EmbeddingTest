@@ -10,7 +10,7 @@ ROOT = Path(globals().get("SPECPATH", Path.cwd())).resolve()
 APP_ROOT = ROOT
 RES_ROOT = APP_ROOT / "res"
 CONFIG_ROOT = APP_ROOT / "config"
-SESSION_ROOT = APP_ROOT / ".qr_session"
+ORT_BACKBONE_CACHE_ROOT = APP_ROOT / ".cache" / "ort_backbones"
 ICON_PATH = RES_ROOT / "logo.ico"
 PYD_TAG = f"cp{sys.version_info.major}{sys.version_info.minor}"
 
@@ -22,10 +22,14 @@ def _pair(src: Path, dest: str = "."):
 datas = []
 for src, dest in (
     (RES_ROOT, "EmbeddingTest/res"),
-    (SESSION_ROOT, "EmbeddingTest/.qr_session"),
 ):
     if src.exists():
         datas.append(_pair(src, dest))
+
+for pattern in ("*_opset12_v1.onnx", "*_opset12_v1.ort"):
+    for path in ORT_BACKBONE_CACHE_ROOT.glob(pattern):
+        if path.exists():
+            datas.append(_pair(path, "EmbeddingTest/.cache/ort_backbones"))
 
 for src, dest in (
     (CONFIG_ROOT / "defaults", "EmbeddingTest/config/defaults"),
@@ -54,11 +58,15 @@ for path in APP_ROOT.glob("*.pyd"):
 
 hiddenimports = sorted(
     set(
-        collect_submodules("common")
+        collect_submodules("algorithms")
+        + collect_submodules("common")
         + collect_submodules("config")
         + collect_submodules("shape")
         + collect_submodules("ui.shape_template")
         + [
+            "algorithms.api",
+            "algorithms.embedding",
+            "algorithms.embedding_core",
             "algorithms.lazy_api",
             "algorithms.localization",
             "algorithms.measurement",
@@ -154,17 +162,13 @@ a = Analysis(
         "jinja2",
         "matplotlib",
         "matplotlib_inline",
-        "onnx",
-        "onnxruntime",
         "pandas",
         "scipy",
         "services",
         "sklearn",
         "tensorboard",
         "third_party.MvImport",
-        "torch",
         "torch.utils.tensorboard",
-        "torchvision",
     ],
     noarchive=False,
 )

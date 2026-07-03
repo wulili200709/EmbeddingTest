@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 
 from PySide6 import QtCore
 
+from common.camera_roles import CAMERA_ROLES, camera_index_for_role
 from . import bindings
 from .capture_policy import (
     DEFAULT_LIGHT_STABLE_MS,
@@ -26,6 +27,7 @@ _RUN_STATE_ZH_FOR_STATUS = {
     "ReleasedPendingConsume": "已放行，待消耗",
     "CapturingCam1": "采集中（相机1）",
     "CapturingCam2": "采集中（相机2）",
+    "CapturingCam3": "采集中（相机3）",
     "Inspecting": "检测中",
     "Aggregating": "汇总结果",
     "CompletedOk": "本轮完成 OK",
@@ -438,21 +440,19 @@ class RuntimeController(QtCore.QObject):
     def connect_cameras(self, bindings_obj) -> None:
         """解析绑定关系并连接相机。"""
         self._sync_camera_settings_store_path()
-        bindings = dict(bindings_obj or {})
-        cam1 = str(bindings.get("cam1", "")).strip()
-        cam2 = str(bindings.get("cam2", "")).strip()
-        bindings = {}
-        if cam1:
-            bindings["cam1"] = cam1
-        if cam2:
-            bindings["cam2"] = cam2
+        raw_bindings = dict(bindings_obj or {})
+        bindings = {
+            role: str(raw_bindings.get(role, "")).strip()
+            for role in CAMERA_ROLES
+            if str(raw_bindings.get(role, "")).strip()
+        }
 
         if not bindings:
             self.warningOccurred.emit("请先填写至少一个相机序列号")
             return
 
-        if "cam2" in bindings and "cam1" not in bindings:
-            self.warningOccurred.emit("最小运行链路需要先配置 Cam1，再决定是否接入 Cam2")
+        if any(role != "cam1" for role in bindings) and "cam1" not in bindings:
+            self.warningOccurred.emit("最小运行链路需要先配置 Cam1，再决定是否接入后续相机")
             return
 
         if not self._rebuild_runner():
@@ -468,7 +468,7 @@ class RuntimeController(QtCore.QObject):
                     force_trigger_mode="software",
                 )
             )
-            camera_index = 1 if role == "cam1" else 2 if role == "cam2" else 0
+            camera_index = camera_index_for_role(role)
             if camera_index > 0 and hasattr(self._light_controller, "set_camera_light_mode"):
                 self._light_controller.set_camera_light_mode(
                     camera_index,
@@ -492,20 +492,18 @@ class RuntimeController(QtCore.QObject):
 
     def try_connect_cameras(self, bindings_obj) -> bool:
         self._sync_camera_settings_store_path()
-        bindings = dict(bindings_obj or {})
-        cam1 = str(bindings.get("cam1", "")).strip()
-        cam2 = str(bindings.get("cam2", "")).strip()
-        bindings = {}
-        if cam1:
-            bindings["cam1"] = cam1
-        if cam2:
-            bindings["cam2"] = cam2
+        raw_bindings = dict(bindings_obj or {})
+        bindings = {
+            role: str(raw_bindings.get(role, "")).strip()
+            for role in CAMERA_ROLES
+            if str(raw_bindings.get(role, "")).strip()
+        }
 
         if not bindings:
             return False
 
-        if "cam2" in bindings and "cam1" not in bindings:
-            self.logAppended.emit("[camera] startup auto-connect skipped: Cam2 requires Cam1")
+        if any(role != "cam1" for role in bindings) and "cam1" not in bindings:
+            self.logAppended.emit("[camera] startup auto-connect skipped: follow-up cameras require Cam1")
             self._update_status("startup auto-connect skipped: missing Cam1 binding")
             return False
 
@@ -522,7 +520,7 @@ class RuntimeController(QtCore.QObject):
                     force_trigger_mode="software",
                 )
             )
-            camera_index = 1 if role == "cam1" else 2 if role == "cam2" else 0
+            camera_index = camera_index_for_role(role)
             if camera_index > 0 and hasattr(self._light_controller, "set_camera_light_mode"):
                 self._light_controller.set_camera_light_mode(
                     camera_index,
@@ -610,7 +608,7 @@ class RuntimeController(QtCore.QObject):
 
         if hasattr(self._light_controller, "set_camera_light_mode"):
             for role in matched_roles:
-                camera_index = 1 if role == "cam1" else 2 if role == "cam2" else 0
+                camera_index = camera_index_for_role(role)
                 if camera_index <= 0:
                     continue
                 self._light_controller.set_camera_light_mode(

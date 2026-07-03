@@ -18,4 +18,10 @@ if (-not (Test-Path -LiteralPath $exePath)) {
     throw "Build output executable not found: $exePath"
 }
 
+$sessionDir = Join-Path $exeDir "EmbeddingTest\.qr_session"
+if (Test-Path -LiteralPath $sessionDir) {
+    Remove-Item -LiteralPath $sessionDir -Recurse -Force
+}
+New-Item -ItemType Directory -Path $sessionDir -Force | Out-Null
+
 Write-Host "Built LC System Lite: $exePath"

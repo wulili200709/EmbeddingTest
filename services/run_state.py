@@ -8,6 +8,7 @@ class RunState(str, Enum):
     ReleasedPendingConsume = "ReleasedPendingConsume"
     CapturingCam1 = "CapturingCam1"
     CapturingCam2 = "CapturingCam2"
+    CapturingCam3 = "CapturingCam3"
     Inspecting = "Inspecting"
     Aggregating = "Aggregating"
     CompletedOk = "CompletedOk"
@@ -23,6 +24,7 @@ class RunStateMachine:
         RunState.WaitingTrigger: {
             RunState.CapturingCam1,
             RunState.CapturingCam2,
+            RunState.CapturingCam3,
             RunState.Inspecting,
             RunState.LockedByNg,
             RunState.Error,
@@ -31,6 +33,7 @@ class RunStateMachine:
         RunState.ReleasedPendingConsume: {
             RunState.CapturingCam1,
             RunState.CapturingCam2,
+            RunState.CapturingCam3,
             RunState.Inspecting,
             RunState.LockedByNg,
             RunState.Error,
@@ -38,10 +41,16 @@ class RunStateMachine:
         },
         RunState.CapturingCam1: {
             RunState.CapturingCam2,
+            RunState.CapturingCam3,
             RunState.Inspecting,
             RunState.Error,
         },
         RunState.CapturingCam2: {
+            RunState.CapturingCam3,
+            RunState.Inspecting,
+            RunState.Error,
+        },
+        RunState.CapturingCam3: {
             RunState.Inspecting,
             RunState.Error,
         },

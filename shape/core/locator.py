@@ -8,6 +8,7 @@ from typing import Optional, Tuple
 import cv2
 
 from common import labelme_io
+from common.camera_roles import DEFAULT_CAMERA_ROLE, normalize_camera_role
 
 from .recipe_labels import clearable_roi_labels, output_labels_from_shape_recipe
 from .recipe import ShapeRecipe, load_recipe, save_recipe
@@ -70,8 +71,7 @@ def _delete_stale_shape_roi_shapes(tgt_img_path: str, recipe: ShapeRecipe) -> li
 
 
 def _normalize_camera_role(camera_role: str) -> str:
-    role = str(camera_role or "").strip().lower()
-    return role if role in {"cam1", "cam2"} else "cam1"
+    return normalize_camera_role(camera_role, default=DEFAULT_CAMERA_ROLE)
 
 
 def product_paths(product_dir: str, camera_role: str = "cam1") -> ProductShapePaths:

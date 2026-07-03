@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Tuple
 
 from common import labelme_io
 from common.app_logging import get_app_logger
+from common.camera_roles import normalize_camera_role
 from common.path_utils import product_relative_path, resolve_product_path
 from common.safe_io import atomic_write_json, backup_path_for, load_json_with_backup
 from ui.i18n import tr
@@ -14,10 +15,7 @@ LOGGER = get_app_logger(__name__)
 
 
 def _normalize_camera_role(camera_id: object) -> str:
-    text = str(camera_id or "").strip().lower()
-    if text in {"cam1", "cam2"}:
-        return text
-    return ""
+    return normalize_camera_role(camera_id)
 
 
 class RoiAnnotationController:

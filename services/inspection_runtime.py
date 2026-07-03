@@ -5,6 +5,8 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from typing import Callable
 
+from common.camera_roles import ROLE_TO_CAMERA_INDEX
+
 from .camera import FrameGrabService, HikFrame
 from .inspection_scheduler import InspectionScheduler
 from .permission_manager import PermissionManager
@@ -56,7 +58,7 @@ class InspectionRuntime:
         self.tower_light_controller = tower_light_controller
         self.inspect_callback = inspect_callback
         self.precheck_callback = precheck_callback
-        self.role_to_camera_index = role_to_camera_index or {"cam1": 1, "cam2": 2}
+        self.role_to_camera_index = role_to_camera_index or dict(ROLE_TO_CAMERA_INDEX)
         self.light_stable_ms = max(0, int(light_stable_ms))
 
     def on_foot_trigger(self) -> FinalInspectionOutcome | None:
@@ -151,13 +153,12 @@ class InspectionRuntime:
         timeout_ms: int,
     ) -> dict[str, CameraInspectionOutcome]:
         """
-        第一版双相机推荐时序：
-          1. cam1 采图完成后立即提交检测线程
-          2. 不等待 cam1 检测完成，直接继续 cam2 采图
+        多相机推荐时序：
+          1. 每个相机采图完成后立即提交检测线程
+          2. 不等待前一相机检测完成，直接继续下一相机采图
           3. 全部采图结束后，再统一等待所有检测结果
 
-        对单相机场景同样成立：
-          - 只有 cam1 时，拍完后立即提交检测，然后直接进入等待结果
+        对单相机、双相机场景同样成立。
         """
         return self._capture_and_inspect_for_roles(
             self._ordered_roles(), timeout_ms=timeout_ms

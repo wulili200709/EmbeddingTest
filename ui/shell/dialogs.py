@@ -327,7 +327,8 @@ def prompt_connect_camera_bindings(
     *,
     cam1_serial: str,
     cam2_serial: str,
-) -> tuple[str, str] | None:
+    cam3_serial: str = "",
+) -> tuple[str, str, str] | None:
     dialog = QtWidgets.QDialog(parent)
     dialog.setWindowTitle("连接相机")
     dialog.setMinimumWidth(360)
@@ -337,9 +338,13 @@ def prompt_connect_camera_bindings(
     edit_cam1 = QtWidgets.QLineEdit(cam1_serial)
     edit_cam1.setPlaceholderText("Cam1 序列号")
     edit_cam2 = QtWidgets.QLineEdit(cam2_serial)
+    edit_cam3 = QtWidgets.QLineEdit(cam3_serial)
+    edit_cam3.setPlaceholderText("Cam3 序列号（可选）")
     edit_cam2.setPlaceholderText("Cam2 序列号（可选）")
     layout.addRow("Cam1 序列号", edit_cam1)
     layout.addRow("Cam2 序列号", edit_cam2)
+
+    layout.addRow("Cam3 序列号", edit_cam3)
 
     button_box = QtWidgets.QDialogButtonBox(
         QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
@@ -350,7 +355,7 @@ def prompt_connect_camera_bindings(
 
     if dialog.exec() != QtWidgets.QDialog.Accepted:
         return None
-    return edit_cam1.text().strip(), edit_cam2.text().strip()
+    return edit_cam1.text().strip(), edit_cam2.text().strip(), edit_cam3.text().strip()
 
 
 def prompt_tower_light_settings(
