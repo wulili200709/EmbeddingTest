@@ -79,6 +79,7 @@ class OrtBackboneRunner:
     session: Any
     input_name: str
     output_name: str
+    input_shape: Tuple[object, ...]
     providers: Tuple[str, ...]
     device: str
     model_path: str
@@ -91,6 +92,24 @@ class OrtBackboneRunner:
         else:
             batch_np = np.asarray(batch, dtype=np.float32)
         batch_np = np.ascontiguousarray(batch_np.astype(np.float32, copy=False))
+        fixed_batch = self._fixed_batch_size()
+        if fixed_batch == 1 and batch_np.ndim >= 1 and batch_np.shape[0] > 1:
+            outputs = [
+                self._run_session(batch_np[index : index + 1])
+                for index in range(int(batch_np.shape[0]))
+            ]
+            return np.concatenate(outputs, axis=0)
+        return self._run_session(batch_np)
+
+    def _fixed_batch_size(self) -> Optional[int]:
+        if not self.input_shape:
+            return None
+        first_dim = self.input_shape[0]
+        if isinstance(first_dim, (int, np.integer)) and int(first_dim) > 0:
+            return int(first_dim)
+        return None
+
+    def _run_session(self, batch_np: np.ndarray) -> np.ndarray:
         outputs = self.session.run([self.output_name], {self.input_name: batch_np})
         return np.asarray(outputs[0], dtype=np.float32)
 
@@ -293,6 +312,7 @@ def _load_ort_backbone(name: str, *, device: str) -> Optional[OrtBackboneRunner]
         session=session,
         input_name=str(inputs[0].name),
         output_name=str(outputs[0].name),
+        input_shape=tuple(getattr(inputs[0], "shape", ()) or ()),
         providers=tuple(str(provider) for provider in providers),
         device=device,
         model_path=str(model_path),
