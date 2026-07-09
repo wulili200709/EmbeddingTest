@@ -328,34 +328,62 @@ def prompt_connect_camera_bindings(
     cam1_serial: str,
     cam2_serial: str,
     cam3_serial: str = "",
-) -> tuple[str, str, str] | None:
+    enabled_roles: list[str] | None = None,
+) -> tuple[dict[str, str], list[str]] | None:
     dialog = QtWidgets.QDialog(parent)
     dialog.setWindowTitle("连接相机")
-    dialog.setMinimumWidth(360)
+    dialog.setMinimumWidth(420)
     _apply_dialog_theme(dialog)
-    layout = QtWidgets.QFormLayout(dialog)
+    layout = QtWidgets.QGridLayout(dialog)
+    layout.setColumnStretch(1, 1)
 
+    enabled = {str(role).strip() for role in (enabled_roles or []) if str(role).strip()}
+    if not enabled:
+        enabled = {"cam1"}
+
+    chk_cam1 = QtWidgets.QCheckBox("Cam1")
+    chk_cam1.setChecked(True)
+    chk_cam1.setEnabled(False)
     edit_cam1 = QtWidgets.QLineEdit(cam1_serial)
     edit_cam1.setPlaceholderText("Cam1 序列号")
+
+    chk_cam2 = QtWidgets.QCheckBox("Cam2")
+    chk_cam2.setChecked("cam2" in enabled)
     edit_cam2 = QtWidgets.QLineEdit(cam2_serial)
+
+    chk_cam3 = QtWidgets.QCheckBox("Cam3")
+    chk_cam3.setChecked("cam3" in enabled)
     edit_cam3 = QtWidgets.QLineEdit(cam3_serial)
     edit_cam3.setPlaceholderText("Cam3 序列号（可选）")
     edit_cam2.setPlaceholderText("Cam2 序列号（可选）")
-    layout.addRow("Cam1 序列号", edit_cam1)
-    layout.addRow("Cam2 序列号", edit_cam2)
 
-    layout.addRow("Cam3 序列号", edit_cam3)
+    layout.addWidget(chk_cam1, 0, 0)
+    layout.addWidget(edit_cam1, 0, 1)
+    layout.addWidget(chk_cam2, 1, 0)
+    layout.addWidget(edit_cam2, 1, 1)
+    layout.addWidget(chk_cam3, 2, 0)
+    layout.addWidget(edit_cam3, 2, 1)
 
     button_box = QtWidgets.QDialogButtonBox(
         QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
     )
     button_box.accepted.connect(dialog.accept)
     button_box.rejected.connect(dialog.reject)
-    layout.addRow(button_box)
+    layout.addWidget(button_box, 3, 0, 1, 2)
 
     if dialog.exec() != QtWidgets.QDialog.Accepted:
         return None
-    return edit_cam1.text().strip(), edit_cam2.text().strip(), edit_cam3.text().strip()
+    serials = {
+        "cam1": edit_cam1.text().strip(),
+        "cam2": edit_cam2.text().strip(),
+        "cam3": edit_cam3.text().strip(),
+    }
+    roles = ["cam1"]
+    if chk_cam2.isChecked():
+        roles.append("cam2")
+    if chk_cam3.isChecked():
+        roles.append("cam3")
+    return serials, roles
 
 
 def prompt_tower_light_settings(

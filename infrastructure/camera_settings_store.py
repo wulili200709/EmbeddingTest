@@ -150,6 +150,18 @@ class CameraSettingsStore:
             by_serial[serial_text] = normalized
         atomic_write_json(self._path, payload, ensure_ascii=False, indent=2)
 
+    def save_serial_for_role(self, role: str, serial: str) -> None:
+        role_text = str(role).strip()
+        if not role_text:
+            return
+        payload = self._load_all()
+        by_role = payload.get("by_role")
+        if not isinstance(by_role, dict):
+            by_role = {}
+            payload["by_role"] = by_role
+        by_role[role_text] = {"serial": str(serial or "").strip()}
+        atomic_write_json(self._path, payload, ensure_ascii=False, indent=2)
+
     def serial_for_role(self, role: str) -> str:
         role_text = str(role).strip()
         if not role_text:

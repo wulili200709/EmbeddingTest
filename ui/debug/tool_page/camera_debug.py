@@ -11,6 +11,7 @@ from PySide6 import QtGui
 from common.app_paths import packaged_embedding_test_root, packaged_repo_root
 from common.camera_roles import DEFAULT_CAMERA_ROLE, normalize_camera_role
 from infrastructure.camera_settings_store import (
+    CameraSettingsStore,
     LIGHT_SOURCE_MODE_BOARD_IO,
     light_source_mode_from_mapping,
 )
@@ -36,29 +37,24 @@ def _selected_debug_camera_role(tool_page) -> str:
 
 def _load_debug_role_binding(tool_page, role: str) -> str:
     role_text = normalize_camera_role(role, default=DEFAULT_CAMERA_ROLE)
-    preferred_serial = str(tool_page._camera_settings_store.serial_for_role(role_text) or "").strip()
+    preferred_serial = str(CameraSettingsStore().serial_for_role(role_text) or "").strip()
     if preferred_serial:
         return preferred_serial
+    preferred_serial = str(tool_page._camera_settings_store.serial_for_role(role_text) or "").strip()
+    if preferred_serial:
+        CameraSettingsStore().save_serial_for_role(role_text, preferred_serial)
+        return preferred_serial
     session_data = tool_page.session.load_session()
-    return str(getattr(session_data, "runtime_camera_serials", {}).get(role_text, "") or "").strip()
+    legacy_serial = str(getattr(session_data, "runtime_camera_serials", {}).get(role_text, "") or "").strip()
+    if legacy_serial:
+        CameraSettingsStore().save_serial_for_role(role_text, legacy_serial)
+    return legacy_serial
 
 
 def _save_debug_role_binding(tool_page, role: str, serial: str) -> None:
     role_text = normalize_camera_role(role, default=DEFAULT_CAMERA_ROLE)
     serial_text = str(serial or "").strip()
-    current_settings = tool_page._camera_settings_store.load_for_role(role_text, serial=serial_text) or {}
-    tool_page._camera_settings_store.save_for_role(role_text, serial_text, current_settings)
-    session_data = tool_page.session.load_session()
-    serials = dict(getattr(session_data, "runtime_camera_serials", {}) or {})
-    if serial_text:
-        serials[role_text] = serial_text
-    else:
-        serials.pop(role_text, None)
-    session_data.runtime_camera_serials = serials
-    session_data.runtime_cam1_serial = serials.get("cam1", "")
-    session_data.runtime_cam2_serial = serials.get("cam2", "")
-    session_data.runtime_cam3_serial = serials.get("cam3", "")
-    tool_page.session.save_session(session_data)
+    CameraSettingsStore().save_serial_for_role(role_text, serial_text)
 
 
 def _apply_debug_role_binding_to_camera_combo(tool_page) -> None:
@@ -68,7 +64,7 @@ def _apply_debug_role_binding_to_camera_combo(tool_page) -> None:
     role = tool_page._selected_debug_camera_role()
     preferred_serial = tool_page._load_debug_role_binding(role)
     if not preferred_serial:
-        preferred_serial = tool_page._camera_settings_store.serial_for_role(role)
+        preferred_serial = CameraSettingsStore().serial_for_role(role)
     if not preferred_serial:
         return
     index = combo.findData(preferred_serial)

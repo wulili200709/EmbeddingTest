@@ -492,11 +492,11 @@ class RuntimeModePage(QtWidgets.QWidget):
         count_grid.setVerticalSpacing(4)
 
         self.lbl_ok_count = QtWidgets.QLabel("OK: 0")
-        self.lbl_ok_count.setStyleSheet(f"color:{_OK_GREEN};font-size:12px;font-weight:bold;")
+        self.lbl_ok_count.setStyleSheet(f"color:{_OK_GREEN};font-size:18px;font-weight:bold;")
         count_grid.addWidget(self.lbl_ok_count, 0, 0)
 
         self.lbl_ng_count = QtWidgets.QLabel("NG: 0")
-        self.lbl_ng_count.setStyleSheet(f"color:{_NG_RED};font-size:12px;font-weight:bold;")
+        self.lbl_ng_count.setStyleSheet(f"color:{_NG_RED};font-size:18px;font-weight:bold;")
         count_grid.addWidget(self.lbl_ng_count, 0, 1)
 
         total_layout.addLayout(count_grid)
@@ -618,6 +618,8 @@ class RuntimeModePage(QtWidgets.QWidget):
     def camera_bindings(self) -> dict[str, str]:
         bindings: dict[str, str] = {}
         for role in CAMERA_ROLES:
+            if role not in self._configured_role_set:
+                continue
             serial = self.camera_serial(role)
             if serial:
                 bindings[role] = serial
@@ -713,6 +715,7 @@ class RuntimeModePage(QtWidgets.QWidget):
             f"background:{bg};color:white;font-size:16px;font-weight:bold;border-radius:4px;"
         )
         self.lbl_final_result.setToolTip(str(detail_text or ""))
+        self.lbl_final_result.show()
         if result_upper in {"OK", "NG"}:
             self._increment_result_counter(result_upper)
 

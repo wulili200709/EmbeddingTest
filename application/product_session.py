@@ -15,6 +15,7 @@ from common.path_utils import (
     resolve_existing_product_path,
     resolve_existing_product_paths,
 )
+from common.camera_roles import configured_camera_roles
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,7 @@ class SessionData:
     runtime_cam2_serial: Optional[str] = None
     runtime_cam3_serial: Optional[str] = None
     runtime_camera_serials: Dict[str, str] = field(default_factory=dict)
+    runtime_camera_roles: List[str] = field(default_factory=list)
     runtime_capture_policy: Optional[str] = None
 
 
@@ -217,6 +219,12 @@ class ProductSession:
                     runtime_serials[role] = serial_text
                 else:
                     runtime_serials.pop(role, None)
+        raw_roles = (
+            data.runtime_camera_roles
+            if data.runtime_camera_roles
+            else existing_payload.get("runtime_camera_roles", [])
+        )
+        runtime_roles = configured_camera_roles(raw_roles) if raw_roles else []
 
         payload = {
             "train_files": [product_relative_path(path, base_dir=self.product_dir) for path in data.train_files],
@@ -229,6 +237,7 @@ class ProductSession:
             "runtime_cam2_serial": runtime_serials.get("cam2", ""),
             "runtime_cam3_serial": runtime_serials.get("cam3", ""),
             "runtime_camera_serials": runtime_serials,
+            "runtime_camera_roles": runtime_roles,
             "runtime_capture_policy": (
                 str(data.runtime_capture_policy).strip()
                 if data.runtime_capture_policy is not None
@@ -288,6 +297,11 @@ class ProductSession:
             runtime_cam2_serial=runtime_serials.get("cam2", ""),
             runtime_cam3_serial=runtime_serials.get("cam3", ""),
             runtime_camera_serials=runtime_serials,
+            runtime_camera_roles=(
+                configured_camera_roles(raw.get("runtime_camera_roles", []) or [])
+                if raw.get("runtime_camera_roles")
+                else []
+            ),
             runtime_capture_policy=str(raw.get("runtime_capture_policy", "ng_only")).strip() or "ng_only",
         )
 

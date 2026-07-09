@@ -6,7 +6,12 @@ from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from common.camera_roles import CAMERA_ROLES, DEFAULT_CAMERA_ROLE
+from common.camera_roles import (
+    CAMERA_ROLES,
+    DEFAULT_CAMERA_ROLE,
+    configured_camera_roles,
+    normalize_camera_role,
+)
 from algorithms.lazy_api import is_ready as is_qr_core_ready
 from application import (
     DEFAULT_RELEASE_PASSWORD,
@@ -315,6 +320,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tool_page.sessionLoaded.connect(self._sync_shell_status)
         self.tool_page.sessionLoaded.connect(self._restore_runtime_camera_bindings_from_session)
         self.tool_page.sessionLoaded.connect(self._restore_runtime_capture_policy_from_session)
+        self.tool_page.inspectionItemsChanged.connect(self._sync_configured_camera_roles)
         connect_runtime_refresh_sources(
             self.tool_page,
             self.runtime_ctrl,
@@ -382,12 +388,32 @@ class MainWindow(QtWidgets.QMainWindow):
         _show_shell_about_dialog(self)
 
     def _configured_runtime_camera_roles(self) -> list[str]:
-        roles = [
-            role
-            for role in CAMERA_ROLES
-            if self.runtime_page.camera_serial(role)
-        ]
-        return roles or [DEFAULT_CAMERA_ROLE]
+        roles: list[str] = []
+        try:
+            session_data = self.session.load_session()
+            roles.extend(getattr(session_data, "runtime_camera_roles", []) or [])
+        except Exception:
+            pass
+
+        for item in list(getattr(self.tool_page, "inspection_items", []) or []):
+            if not bool(getattr(item, "enabled", True)):
+                continue
+            role = normalize_camera_role(getattr(item, "camera_id", ""))
+            if role:
+                roles.append(role)
+
+        if not roles:
+            roles.extend(
+                role
+                for role in CAMERA_ROLES
+                if self.runtime_page.camera_serial(role)
+            )
+        return configured_camera_roles(roles or [DEFAULT_CAMERA_ROLE])
+
+    def _persist_product_runtime_camera_roles(self, roles: list[str]) -> None:
+        session_data = self.session.load_session()
+        session_data.runtime_camera_roles = configured_camera_roles(roles or [DEFAULT_CAMERA_ROLE])
+        self.session.save_session(session_data)
 
     def _sync_configured_camera_roles(self) -> None:
         roles = self._configured_runtime_camera_roles()
@@ -575,16 +601,33 @@ class MainWindow(QtWidgets.QMainWindow):
         _reload_debug_session_impl(self)
 
     def _show_connect_dialog(self) -> None:
-        bindings = prompt_connect_camera_bindings(
+        result = prompt_connect_camera_bindings(
             self,
             cam1_serial=self.runtime_page.camera_serial("cam1"),
             cam2_serial=self.runtime_page.camera_serial("cam2"),
             cam3_serial=self.runtime_page.camera_serial("cam3"),
+            enabled_roles=self._configured_runtime_camera_roles(),
         )
-        if bindings is None:
+        if result is None:
             return
-        for role, serial in zip(CAMERA_ROLES, bindings):
+        serials, enabled_roles = result
+        missing_roles = [
+            role
+            for role in enabled_roles
+            if not str(serials.get(role, "")).strip()
+        ]
+        if missing_roles:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "连接相机",
+                "已启用的相机需要填写序列号：" + ", ".join(missing_roles),
+            )
+            return
+        for role in CAMERA_ROLES:
+            serial = str(serials.get(role, "")).strip()
             self.runtime_page.set_camera_serial(role, serial)
+        self._persist_runtime_camera_bindings(serials)
+        self._persist_product_runtime_camera_roles(enabled_roles)
         self._sync_configured_camera_roles()
         self.runtime_page.connectCamerasRequested.emit(
             self.runtime_page.camera_bindings()

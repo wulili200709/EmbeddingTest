@@ -81,7 +81,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "runtime.trigger_cam2": "▶ 触发相机2",
         "runtime.trigger_cam3": "▶ 触发相机3",
         "runtime.items": "  检测项",
-        "runtime.stats": "数据统计",
+        "runtime.stats": "总结果",
         "runtime.capture": "取图",
         "runtime.match": "匹配",
         "runtime.infer": "推理",
