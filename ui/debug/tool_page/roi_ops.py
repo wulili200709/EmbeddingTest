@@ -8,13 +8,16 @@ from typing import List, Optional, Tuple
 from PySide6 import QtGui
 
 from common import labelme_io
+from common.camera_roles import DEFAULT_CAMERA_ROLE, normalize_camera_role
 
 from shape.core.recipe_labels import output_labels_from_shape_recipe
 from ui.debug import OverlayShape
 from ui.debug.tool_page.roi_measurement_overlays import measurement_overlays_for_path
 from ui.roi_overlay_colors import (
+    ROI_DISABLED_COLOR,
     SEARCH_REGION_COLOR,
     SEARCH_REGION_WIDTH,
+    is_roi_label,
     overlay_style_for_label,
 )
 
@@ -31,7 +34,36 @@ def _selected_tool_roi_label(tool_page) -> str:
     return str(getattr(selected_item, "roi_label", "") or "").strip()
 
 
+def _roi_label_enabled_for_current_role(tool_page, label: str) -> bool:
+    label_text = str(label or "").strip()
+    if not is_roi_label(label_text):
+        return True
+    current_role = normalize_camera_role(
+        tool_page.current_camera_role() if hasattr(tool_page, "current_camera_role") else "",
+        default=DEFAULT_CAMERA_ROLE,
+    )
+    found = False
+    enabled = True
+    for item in list(getattr(tool_page, "inspection_items", []) or []):
+        item_label = str(getattr(item, "roi_label", "") or "").strip()
+        if item_label != label_text:
+            continue
+        item_role = normalize_camera_role(
+            getattr(item, "camera_id", ""),
+            default=DEFAULT_CAMERA_ROLE,
+        )
+        if item_role != current_role:
+            continue
+        found = True
+        enabled = bool(getattr(item, "enabled", True))
+        if not enabled:
+            break
+    return True if not found else enabled
+
+
 def _overlay_style_for_tool_label(tool_page, img_path: str, label: str) -> tuple[QtGui.QColor, float, bool]:
+    if not _roi_label_enabled_for_current_role(tool_page, label):
+        return QtGui.QColor(ROI_DISABLED_COLOR), 1.5, True
     status = tool_page._roi_status_for_path(img_path, label)
     color, width, dash = overlay_style_for_label(label, status=status)
     selected_label = _selected_tool_roi_label(tool_page)
@@ -192,6 +224,9 @@ def _on_shapes_changed(tool_page) -> None:
         return
     st = tool_page.canvas.roi
     ok = (st.shape_type == "rect" and st.xywh is not None) or (st.shape_type == "polygon" and st.points is not None)
+    has_permission = getattr(tool_page.window(), "_has_permission", None)
+    if callable(has_permission):
+        ok = ok and bool(has_permission("template.edit_roi"))
     tool_page.btn_save.setEnabled(ok)
 
 

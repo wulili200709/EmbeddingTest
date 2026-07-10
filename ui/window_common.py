@@ -14,7 +14,7 @@ from application.runtime.preview_frame import RuntimePreviewFrame, RuntimePrevie
 from application.runtime.preview_frame import read_exported_runtime_preview_measurements
 from shape.core import locator as shape_locator
 from ui.i18n import tr
-from ui.roi_overlay_colors import overlay_style_for_label, search_region_style
+from ui.roi_overlay_colors import is_roi_label, overlay_style_for_label, search_region_style
 
 
 _RUNTIME_OVERLAY_WIDTH_MULTIPLIER = 3.0
@@ -64,13 +64,22 @@ def connect_runtime_refresh_sources(tool_page, runtime_ctrl, *, session_loaded_m
     )
 
 
-def connect_runtime_page(runtime_page, runtime_ctrl) -> None:
+def connect_runtime_page(
+    runtime_page,
+    runtime_ctrl,
+    *,
+    connect_handler=None,
+    disconnect_handler=None,
+    trigger_handler=None,
+    trigger_camera_handler=None,
+    release_handler=None,
+) -> None:
     runtime_page.refreshCamerasRequested.connect(runtime_ctrl.refresh_cameras)
-    runtime_page.connectCamerasRequested.connect(runtime_ctrl.connect_cameras)
-    runtime_page.disconnectCamerasRequested.connect(runtime_ctrl.disconnect)
-    runtime_page.triggerRequested.connect(runtime_ctrl.trigger)
-    runtime_page.triggerCameraRequested.connect(runtime_ctrl.trigger_camera)
-    runtime_page.releaseRequested.connect(runtime_ctrl.release)
+    runtime_page.connectCamerasRequested.connect(connect_handler or runtime_ctrl.connect_cameras)
+    runtime_page.disconnectCamerasRequested.connect(disconnect_handler or runtime_ctrl.disconnect)
+    runtime_page.triggerRequested.connect(trigger_handler or runtime_ctrl.trigger)
+    runtime_page.triggerCameraRequested.connect(trigger_camera_handler or runtime_ctrl.trigger_camera)
+    runtime_page.releaseRequested.connect(release_handler or runtime_ctrl.release)
 
     runtime_ctrl.runtimeStateChanged.connect(runtime_page.set_runtime_state)
     runtime_ctrl.productNameChanged.connect(runtime_page.set_current_product)
@@ -111,11 +120,13 @@ def update_runtime_preview(runtime_page, role: str, source: object) -> None:
         roi_statuses = {}
         if hasattr(runtime_page, "roi_statuses_for_camera"):
             roi_statuses = dict(runtime_page.roi_statuses_for_camera(role) or {})
+        visible_roi_labels = _runtime_visible_roi_labels(runtime_page, role)
         runtime_page.set_camera_pixmap(
             role,
             _render_runtime_overlay_pixmap(
                 source,
                 roi_statuses=roi_statuses,
+                visible_roi_labels=visible_roi_labels,
                 display_size=display_size,
             ),
         )
@@ -126,11 +137,13 @@ def update_runtime_preview(runtime_page, role: str, source: object) -> None:
         roi_statuses = {}
         if hasattr(runtime_page, "roi_statuses_for_camera"):
             roi_statuses = dict(runtime_page.roi_statuses_for_camera(role) or {})
+        visible_roi_labels = _runtime_visible_roi_labels(runtime_page, role)
         runtime_page.set_camera_pixmap(
             role,
             _render_runtime_overlay_pixmap(
                 path,
                 roi_statuses=roi_statuses,
+                visible_roi_labels=visible_roi_labels,
                 display_size=display_size,
             ),
         )
@@ -154,10 +167,18 @@ def _runtime_preview_display_size(runtime_page, role: str) -> QtCore.QSize | Non
     return QtCore.QSize(size)
 
 
+def _runtime_visible_roi_labels(runtime_page, role: str) -> set[str] | None:
+    getter = getattr(runtime_page, "roi_labels_for_camera", None)
+    if not callable(getter):
+        return None
+    return {str(label).strip() for label in getter(role) or set() if str(label).strip()}
+
+
 def _render_runtime_overlay_pixmap(
     source: str | RuntimePreviewFrame,
     *,
     roi_statuses: Optional[dict[str, str]] = None,
+    visible_roi_labels: Optional[set[str]] = None,
     display_size: QtCore.QSize | None = None,
 ) -> QtGui.QPixmap:
     pixmap = _runtime_source_pixmap(source)
@@ -169,7 +190,12 @@ def _render_runtime_overlay_pixmap(
     painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
 
     _draw_runtime_search_region(painter, source)
-    _draw_runtime_roi_shapes(painter, source, roi_statuses=roi_statuses)
+    _draw_runtime_roi_shapes(
+        painter,
+        source,
+        roi_statuses=roi_statuses,
+        visible_roi_labels=visible_roi_labels,
+    )
     _draw_runtime_measurements(painter, source, canvas.size(), display_size=display_size)
 
     painter.end()
@@ -251,12 +277,18 @@ def _draw_runtime_roi_shapes(
     source: str | RuntimePreviewFrame,
     *,
     roi_statuses: Optional[dict[str, str]] = None,
+    visible_roi_labels: Optional[set[str]] = None,
 ) -> None:
     roi_statuses = {
         str(label).strip(): str(status or "").strip().lower()
         for label, status in dict(roi_statuses or {}).items()
         if str(label).strip()
     }
+    visible_roi_labels = (
+        {str(label).strip() for label in visible_roi_labels if str(label).strip()}
+        if visible_roi_labels is not None
+        else None
+    )
     shapes = _runtime_source_shapes(source)
     if not shapes:
         return
@@ -291,12 +323,16 @@ def _draw_runtime_roi_shapes(
 
     seen_labels: set[str] = set()
     for label in _sorted_runtime_shape_labels(shapes):
+        if visible_roi_labels is not None and is_roi_label(label) and label not in visible_roi_labels:
+            continue
         seen_labels.add(label)
         color, width, dash = overlay_style_for_label(label, status=roi_statuses.get(label, ""))
         draw_shape(label, color, width=width, dash=dash)
 
     for label in ["anchor", "roi", "anchor_mask"]:
         if label in seen_labels:
+            continue
+        if visible_roi_labels is not None and is_roi_label(label) and label not in visible_roi_labels:
             continue
         color, width, dash = overlay_style_for_label(label, status=roi_statuses.get(label, ""))
         draw_shape(label, color, width=width, dash=dash)

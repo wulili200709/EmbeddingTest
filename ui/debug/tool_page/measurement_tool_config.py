@@ -34,6 +34,20 @@ def _set_combo_current_data(combo: QtWidgets.QComboBox, value: object) -> None:
         combo.setCurrentIndex(index)
 
 
+def _require_tool_permission(tool_page, permission_key: str, action_name: str) -> bool:
+    top_level = tool_page.window()
+    require_permission = getattr(top_level, "_require_permission", None)
+    if callable(require_permission):
+        return bool(require_permission(permission_key, action_name))
+    return True
+
+
+def _audit_tool_event(tool_page, **payload) -> None:
+    audit_event = getattr(tool_page.window(), "_audit_event", None)
+    if callable(audit_event):
+        audit_event(**payload)
+
+
 def _populate_line_tool_combo(combo: QtWidgets.QComboBox, options: list[tuple[str, str]]) -> None:
     combo.blockSignals(True)
     try:
@@ -214,6 +228,12 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
     is_center_distance = _is_center_distance_algorithm(algorithm)
     is_single_roi_distance = _is_single_roi_distance_algorithm(algorithm)
     is_direct_distance = is_line_distance or is_center_distance or is_single_roi_distance
+    permission_key = "inspection.edit_limits" if is_direct_distance else "template.edit_params"
+    action_name = "修改上下限" if is_direct_distance else "修改模板参数"
+    if not _require_tool_permission(tool_page, permission_key, action_name):
+        _update_measurement_params_panel(tool_page)
+        return
+    before = dict(item.params or {})
     line_a = dict(params.get("line" if is_find_line else "line_a") or {})
     line_b = dict(params.get("line_b") or {})
     if is_find_line:
@@ -316,5 +336,14 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
     tool_page.spin_measurement_lower.setEnabled(is_direct_distance and tool_page.chk_measurement_lower.isChecked())
     tool_page.spin_measurement_upper.setEnabled(is_direct_distance and tool_page.chk_measurement_upper.isChecked())
     _persist_inspection_items(tool_page)
+    if before != params:
+        _audit_tool_event(
+            tool_page,
+            module="检测项" if is_direct_distance else "模板参数",
+            action=action_name,
+            target=str(getattr(item, "item_id", "") or ""),
+            before_value=str(before),
+            after_value=str(params),
+        )
     _update_learning_backbone_hint(tool_page)
 

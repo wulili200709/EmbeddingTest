@@ -151,6 +151,22 @@ class TrainingController:
         success_names = [str(name) for name in result.get("success_names", []) if str(name)]
         failure_messages = [str(message) for message in result.get("failure_messages", []) if str(message)]
         mode = str(result.get("mode", "") or "")
+        audit_event = getattr(self.owner.window(), "_audit_event", None)
+        if callable(audit_event) and (success_names or failure_messages):
+            if failure_messages and success_names:
+                audit_result = "部分成功"
+            elif failure_messages:
+                audit_result = "失败"
+            else:
+                audit_result = "成功"
+            audit_event(
+                module="模型训练",
+                action="重新训练",
+                target=str(self.owner.current_camera_role()),
+                after_value=f"mode={mode}, success={len(success_names)}, failed={len(failure_messages)}",
+                result=audit_result,
+                remark="\n".join(failure_messages[:10]),
+            )
 
         display_rows = list(result.get("display_rows", []) or [])
         if display_rows:
@@ -248,6 +264,16 @@ class TrainingController:
 
         if not tasks:
             if failure_messages:
+                audit_event = getattr(self.owner.window(), "_audit_event", None)
+                if callable(audit_event):
+                    audit_event(
+                        module="模型训练",
+                        action="重新训练",
+                        target=str(current_role),
+                        after_value=f"mode=all, success=0, failed={len(failure_messages)}",
+                        result="失败",
+                        remark="\n".join(failure_messages[:10]),
+                    )
                 self.owner.lbl_status.setText("Status: train failed")
                 QtWidgets.QMessageBox.warning(
                     self.owner,
@@ -285,6 +311,16 @@ class TrainingController:
         try:
             task = self.build_task_for_item(inspection_item)
         except Exception as exc:
+            audit_event = getattr(self.owner.window(), "_audit_event", None)
+            if callable(audit_event):
+                audit_event(
+                    module="模型训练",
+                    action="重新训练",
+                    target=str(inspection_item.camera_id),
+                    after_value="mode=current, success=0, failed=1",
+                    result="失败",
+                    remark=str(exc),
+                )
             QtWidgets.QMessageBox.warning(self.owner, tr("debug.train_failed_title"), str(exc))
             return
 

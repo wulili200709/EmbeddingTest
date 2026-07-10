@@ -133,7 +133,7 @@ def build_menu_bar(window) -> None:
     ).triggered.connect(window._show_connect_dialog)
     act_disconnect_camera = runtime_menu.addAction(
         shell_icon(SP.SP_DialogDiscardButton), tr("action.disconnect_camera")
-    ).triggered.connect(window.runtime_ctrl.disconnect)
+    ).triggered.connect(window._disconnect_runtime_cameras)
     capture_menu = runtime_menu.addMenu(shell_icon(SP.SP_DialogSaveButton), tr("menu.runtime_capture"))
     window.runtime_capture_policy_group = QtGui.QActionGroup(window)
     window.runtime_capture_policy_group.setExclusive(True)
@@ -206,6 +206,30 @@ def build_menu_bar(window) -> None:
         shell_icon(SP.SP_DialogSaveButton), tr("action.save_runtime_records")
     ).triggered.connect(window._show_runtime_records_directory_dialog)
 
+    system_menu = QtWidgets.QMenu(tr("menu.system"), window)
+    system_menu.setStyleSheet(menu_style)
+    window.act_auth_login = system_menu.addAction(shell_icon(SP.SP_DialogApplyButton), tr("action.auth_login"))
+    window.act_auth_login.triggered.connect(window._show_login_dialog)
+    window.act_auth_logout = system_menu.addAction(shell_icon(SP.SP_DialogCloseButton), tr("action.auth_logout"))
+    window.act_auth_logout.triggered.connect(window._logout_current_user)
+    window.act_change_current_password = system_menu.addAction(
+        shell_icon(SP.SP_FileDialogDetailedView), tr("action.change_current_password")
+    )
+    window.act_change_current_password.triggered.connect(
+        lambda checked=False: window._show_change_current_user_password()
+    )
+    system_menu.addSeparator()
+    window.act_user_permissions = system_menu.addAction(
+        shell_icon(SP.SP_FileDialogDetailedView), tr("action.user_permissions")
+    )
+    window.act_user_permissions.triggered.connect(window._show_user_permission_dialog)
+    window.act_audit_log = system_menu.addAction(shell_icon(SP.SP_FileDialogListView), tr("action.audit_log"))
+    window.act_audit_log.triggered.connect(window._show_audit_log_dialog)
+    window.act_software_versions = system_menu.addAction(
+        shell_icon(SP.SP_FileDialogInfoView), tr("action.software_versions")
+    )
+    window.act_software_versions.triggered.connect(window._show_software_version_dialog)
+
     language_menu = QtWidgets.QMenu(tr("menu.language"), window)
     language_menu.setStyleSheet(menu_style)
     language_group = QtGui.QActionGroup(window)
@@ -247,6 +271,11 @@ def build_menu_bar(window) -> None:
     )
     window.btn_menu_path = top_layout.itemAt(top_layout.count() - 1).widget()
     top_layout.addWidget(
+        _make_popup_button(tr("menu.system"), shell_icon(SP.SP_FileDialogInfoView), system_menu),
+        0,
+    )
+    window.btn_menu_system = top_layout.itemAt(top_layout.count() - 1).widget()
+    top_layout.addWidget(
         _make_popup_button(tr("menu.language"), shell_icon(SP.SP_FileDialogInfoView), language_menu),
         0,
     )
@@ -268,6 +297,7 @@ def build_menu_bar(window) -> None:
             "runtime": runtime_menu,
             "capture": capture_menu,
             "path": path_menu,
+            "system": system_menu,
             "language": language_menu,
         },
         "actions": {
@@ -293,6 +323,12 @@ def build_menu_bar(window) -> None:
             "save_image_path": path_menu.actions()[4],
             "open_runtime_records": path_menu.actions()[6],
             "save_runtime_records": path_menu.actions()[7],
+            "auth_login": window.act_auth_login,
+            "auth_logout": window.act_auth_logout,
+            "change_current_password": window.act_change_current_password,
+            "user_permissions": window.act_user_permissions,
+            "audit_log": window.act_audit_log,
+            "software_versions": window.act_software_versions,
         },
         "buttons": {
             "file": window.btn_menu_file,
@@ -300,6 +336,7 @@ def build_menu_bar(window) -> None:
             "tools": window.btn_menu_tools,
             "control": window.btn_menu_control,
             "path": window.btn_menu_path,
+            "system": window.btn_menu_system,
             "language": window.btn_menu_language,
             "help": window.btn_menu_help,
         },
@@ -328,6 +365,8 @@ def build_status_bar(window) -> None:
     window.lbl_status_path = QtWidgets.QLabel(tr("status.product_dir", path=window.session.product_dir))
     window.lbl_status_path.setStyleSheet(label_style)
     window.lbl_status_path.setMinimumWidth(260)
+    window.lbl_status_user = QtWidgets.QLabel("")
+    window.lbl_status_user.setStyleSheet(label_style)
     window._bottom_status_bar.addPermanentWidget(window.lbl_status_workspace)
     window._bottom_status_bar.addPermanentWidget(_make_separator())
     window._bottom_status_bar.addPermanentWidget(window.lbl_status_product)
@@ -336,6 +375,8 @@ def build_status_bar(window) -> None:
     window._bottom_status_bar.addPermanentWidget(_make_separator())
     window._bottom_status_bar.addPermanentWidget(window.lbl_status_io_dot)
     window._bottom_status_bar.addPermanentWidget(window.lbl_status_io_text)
+    window._bottom_status_bar.addPermanentWidget(_make_separator())
+    window._bottom_status_bar.addPermanentWidget(window.lbl_status_user)
     window._bottom_status_bar.addPermanentWidget(_make_separator())
     window._bottom_status_bar.addPermanentWidget(window.lbl_status_path, 1)
     sync_shell_status(window)
@@ -414,12 +455,13 @@ def retranslate_shell_chrome(window) -> None:
         "runtime": "menu.control",
         "capture": "menu.runtime_capture",
         "path": "menu.path",
+        "system": "menu.system",
         "language": "menu.language",
     }
     for name, key in menu_keys.items():
         menu = menus.get(name)
         if menu is not None:
-            menu.setTitle(tr(key))
+            menu.setTitle(tr(key) if "." in key else key)
 
     button_keys = {
         "file": "menu.file",
@@ -427,13 +469,14 @@ def retranslate_shell_chrome(window) -> None:
         "tools": "menu.tools",
         "control": "menu.control",
         "path": "menu.path",
+        "system": "menu.system",
         "language": "menu.language",
         "help": "menu.help",
     }
     for name, key in button_keys.items():
         button = buttons.get(name)
         if button is not None:
-            button.setText(tr(key))
+            button.setText(tr(key) if "." in key else key)
 
     action_keys = {
         "exit": "action.exit",
@@ -458,11 +501,17 @@ def retranslate_shell_chrome(window) -> None:
         "save_image_path": "action.save_image_path",
         "open_runtime_records": "action.open_runtime_records",
         "save_runtime_records": "action.save_runtime_records",
+        "auth_login": "action.auth_login",
+        "auth_logout": "action.auth_logout",
+        "change_current_password": "action.change_current_password",
+        "user_permissions": "action.user_permissions",
+        "audit_log": "action.audit_log",
+        "software_versions": "action.software_versions",
     }
     for name, key in action_keys.items():
         action = actions.get(name)
         if action is not None:
-            action.setText(tr(key))
+            action.setText(tr(key) if "." in key else key)
 
     if hasattr(window, "act_show_debug"):
         window.act_show_debug.setText(tr("action.switch_debug"))

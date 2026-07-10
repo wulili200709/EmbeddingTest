@@ -21,7 +21,7 @@ from algorithms.measurement import (
     LINE_DISTANCE_ALGORITHMS,
 )
 from ui.i18n import tr, tr_runtime_state, tr_status_text
-from ui.roi_overlay_colors import merge_roi_statuses
+from ui.roi_overlay_colors import is_roi_label, merge_roi_statuses
 
 
 _DARK_BG = "#2d2d2d"
@@ -890,7 +890,22 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._camera_preview_sources[role_text] = source
 
     def roi_statuses_for_camera(self, camera_id: str) -> dict[str, str]:
-        return merge_roi_statuses(self._inspection_rows, camera_id=camera_id)
+        rows = [row for row in self._inspection_rows if bool(row.get("enabled", True))]
+        return merge_roi_statuses(rows, camera_id=camera_id)
+
+    def roi_labels_for_camera(self, camera_id: str) -> set[str]:
+        wanted_camera = normalize_camera_role(camera_id, default=DEFAULT_CAMERA_ROLE)
+        labels: set[str] = set()
+        for row in self._inspection_rows:
+            if not bool(row.get("enabled", True)):
+                continue
+            label = str(row.get("roi_label", "") or "").strip()
+            if not is_roi_label(label):
+                continue
+            row_camera = normalize_camera_role(row.get("camera_id", ""), default=DEFAULT_CAMERA_ROLE)
+            if row_camera == wanted_camera:
+                labels.add(label)
+        return labels
 
     def clear_camera_views(self) -> None:
         self._active_role_set = set()

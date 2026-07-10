@@ -736,6 +736,9 @@ class ToolPage(QtWidgets.QWidget):
             action.setChecked(code == current_algorithm)
 
     def open_camera_debug_dialog(self) -> None:
+        require_permission = getattr(self.window(), "_require_permission", None)
+        if callable(require_permission) and not require_permission("camera.edit_params", "相机工具"):
+            return
         if self.lite_mode or not hasattr(self, "camera_debug_page"):
             QtWidgets.QMessageBox.information(self, "LC System Lite", "轻量版未加载相机调试模块。")
             return
@@ -748,6 +751,9 @@ class ToolPage(QtWidgets.QWidget):
         self._refresh_debug_camera_list()
 
     def open_io_debug_dialog(self) -> None:
+        require_permission = getattr(self.window(), "_require_permission", None)
+        if callable(require_permission) and not require_permission("io.debug", "IO调试"):
+            return
         if self.lite_mode or not hasattr(self, "io_debug_page"):
             QtWidgets.QMessageBox.information(self, "LC System Lite", "轻量版未加载 DI/DO 调试模块。")
             return
@@ -778,6 +784,12 @@ class ToolPage(QtWidgets.QWidget):
 
     def _apply_runtime_io_debug_state(self) -> None:
         if self.lite_mode or not hasattr(self, "btn_debug_open_io"):
+            return
+        has_permission = getattr(self.window(), "_has_permission", None)
+        if callable(has_permission) and not has_permission("io.debug"):
+            self.btn_debug_open_io.setEnabled(False)
+            self.btn_debug_close_io.setEnabled(False)
+            self.btn_debug_refresh_io.setEnabled(False)
             return
         if self._runtime_io_ready and self._runtime_io_controller is not None:
             if (
@@ -810,6 +822,9 @@ class ToolPage(QtWidgets.QWidget):
         self.lbl_debug_io_mapping_summary.setToolTip(self._runtime_io_status_detail)
 
     def open_template_match_dialog(self) -> None:
+        require_permission = getattr(self.window(), "_require_permission", None)
+        if callable(require_permission) and not require_permission("template.edit_roi", "模板区域设置"):
+            return
         self._show_tool_dialog(
             "template_match",
             self.template_match_box,
@@ -817,12 +832,21 @@ class ToolPage(QtWidgets.QWidget):
         )
 
     def open_margin_validation_tool(self) -> None:
+        require_permission = getattr(self.window(), "_require_permission", None)
+        if callable(require_permission) and not require_permission("template.edit_params", "模板参数分析"):
+            return
         self._run_margin_validation()
 
     def open_embedding_analysis_tool(self) -> None:
+        require_permission = getattr(self.window(), "_require_permission", None)
+        if callable(require_permission) and not require_permission("template.edit_params", "模板参数分析"):
+            return
         self._open_embedding_analysis_dialog()
 
     def open_baseline_debug_tool(self) -> None:
+        require_permission = getattr(self.window(), "_require_permission", None)
+        if callable(require_permission) and not require_permission("template.edit_params", "模板参数分析"):
+            return
         self._run_traditional_baseline_debug()
 
     def current_product_name(self) -> str:
@@ -1653,6 +1677,14 @@ class ToolPage(QtWidgets.QWidget):
 
         selected_path = self._current_selected_path()
         current_tab_kind = self._current_sample_tab_kind()
+        has_permission = getattr(self.window(), "_has_permission", None)
+        can_manage_samples = True
+        if callable(has_permission):
+            can_manage_samples = bool(has_permission("sample.manage"))
+        for attr_name in ("btn_import_train", "btn_sample_annotation", "btn_add_test"):
+            button = getattr(self, attr_name, None)
+            if button is not None:
+                button.setEnabled(can_manage_samples)
         for attr_name, enabled in (
             ("btn_train_to_test", current_tab_kind == "train" and bool(selected_path)),
             ("btn_del_ok", current_tab_kind == "train" and bool(selected_path)),
@@ -1662,7 +1694,7 @@ class ToolPage(QtWidgets.QWidget):
         ):
             button = getattr(self, attr_name, None)
             if button is not None:
-                button.setEnabled(enabled)
+                button.setEnabled(enabled and can_manage_samples)
 
     def _select_path_in_current_tab(self, path: str) -> None:
         self.sample_list_controller.select_path_in_current_tab(path)
@@ -1671,6 +1703,9 @@ class ToolPage(QtWidgets.QWidget):
         self.sample_list_controller.move_selected_sample_to(target_kind)
 
     def _open_sample_annotation_dialog(self) -> None:
+        require_permission = getattr(self.window(), "_require_permission", None)
+        if callable(require_permission) and not require_permission("sample.manage", "样本标注"):
+            return
         dialog = getattr(self, "_sample_annotation_preview_dialog", None)
         if dialog is None:
             dialog = _SampleAnnotationPreviewDialog(self, self)
@@ -1788,18 +1823,32 @@ class ToolPage(QtWidgets.QWidget):
             self._load_shape_for_label(p, label)
 
     def _clear_current_rect(self) -> None:
+        top_level = self.window()
+        require_permission = getattr(top_level, "_require_permission", None)
+        if callable(require_permission) and not require_permission("template.edit_roi", "清空ROI"):
+            return
         ret = QtWidgets.QMessageBox.question(
             self,
             tr("debug.clear_annotation_title"),
             tr("debug.clear_annotation_confirm"),
         )
+        if ret != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
         p = self.canvas.image_path()
+        label_name = self._current_label()
         if p is not None:
             try:
-                deleted = labelme_io.delete_labelme_shape(p, label_name=self._current_label())
+                deleted = labelme_io.delete_labelme_shape(p, label_name=label_name)
             except Exception:
                 deleted = False
             if deleted:
+                audit_event = getattr(top_level, "_audit_event", None)
+                if callable(audit_event):
+                    audit_event(
+                        module="模板ROI",
+                        action="清空ROI",
+                        target=f"{os.path.basename(p)}:{label_name}",
+                    )
                 self._load_canvas_image(p)
                 return
         self.canvas.update()
@@ -1809,6 +1858,10 @@ class ToolPage(QtWidgets.QWidget):
     def _save_current_rect(self) -> None:
         p = self.canvas.image_path()
         if p is None:
+            return
+        top_level = self.window()
+        require_permission = getattr(top_level, "_require_permission", None)
+        if callable(require_permission) and not require_permission("template.edit_roi", "保存ROI"):
             return
         st = self.canvas.roi
         label_name = self._current_label()
@@ -1833,6 +1886,14 @@ class ToolPage(QtWidgets.QWidget):
             tr("debug.annotation_saved_title"),
             tr("debug.annotation_saved_message", path=jpath, label=label_name, shape=st.shape_type),
         )
+        audit_event = getattr(top_level, "_audit_event", None)
+        if callable(audit_event):
+            audit_event(
+                module="模板ROI",
+                action="保存ROI",
+                target=f"{os.path.basename(p)}:{label_name}",
+                after_value=str(st.xywh if st.shape_type == "rect" else st.points),
+            )
         self._load_canvas_image(p)
 
     # ------------------------------------------------------------------
@@ -1900,26 +1961,33 @@ class ToolPage(QtWidgets.QWidget):
             and selected_item is not None
             and selected_item.enabled
         )
-        self.cmb_mode.setEnabled(embedding)
-        self.spin_margin.setEnabled(embedding)
-        self.spin_topk.setEnabled(topk_enabled)
+        top_level = self.window()
+        has_permission = getattr(top_level, "_has_permission", None)
+        can_train = True
+        can_edit_template_params = True
+        if callable(has_permission):
+            can_train = bool(has_permission("model.train"))
+            can_edit_template_params = bool(has_permission("template.edit_params"))
+        self.cmb_mode.setEnabled(embedding and can_edit_template_params)
+        self.spin_margin.setEnabled(embedding and can_edit_template_params)
+        self.spin_topk.setEnabled(topk_enabled and can_edit_template_params)
         topk_label = getattr(self, "lbl_topk", None)
         if topk_label is not None:
             enabled_style = getattr(self, "_algo_param_label_style", "")
             disabled_style = getattr(self, "_algo_param_label_disabled_style", enabled_style)
             topk_label.setEnabled(topk_enabled)
             topk_label.setStyleSheet(enabled_style if topk_enabled else disabled_style)
-        self.btn_train.setEnabled(has_enabled_items)
+        self.btn_train.setEnabled(has_enabled_items and can_train)
         train_current_button = getattr(self, "btn_train_current", None)
         if train_current_button is not None:
-            train_current_button.setEnabled(selected_tool_enabled)
+            train_current_button.setEnabled(selected_tool_enabled and can_train)
         self.btn_test.setEnabled(algorithm_selected)
         margin_button = getattr(self, "btn_validate_margin", None)
         if margin_button is not None:
-            margin_button.setEnabled(embedding)
+            margin_button.setEnabled(embedding and can_edit_template_params)
         embedding_button = getattr(self, "btn_embedding_analysis", None)
         if embedding_button is not None:
-            embedding_button.setEnabled(embedding)
+            embedding_button.setEnabled(embedding and can_edit_template_params)
         if getattr(self, "_training_in_progress", False):
             self._set_training_running(True)
         self._sync_training_action_buttons()
@@ -1928,6 +1996,16 @@ class ToolPage(QtWidgets.QWidget):
     def _on_runtime_params_changed(self, *args) -> None:
         if self._updating_runtime_params:
             return
+        top_level = self.window()
+        require_permission = getattr(top_level, "_require_permission", None)
+        if callable(require_permission) and not require_permission("template.edit_params", "修改模板参数"):
+            self._apply_runtime_params_to_ui()
+            return
+        before = {
+            "score_mode": self.algo.product_params.score_mode,
+            "margin": self.algo.product_params.margin,
+            "topk": self.algo.product_params.topk,
+        }
         self.algo.product_params.algorithm = self.current_algorithm()
         self.algo.product_params.score_mode = self.cmb_mode.currentText()
         self.algo.product_params.margin = float(self.spin_margin.value())
@@ -1937,12 +2015,30 @@ class ToolPage(QtWidgets.QWidget):
         self._save_runtime_params()
         self._update_runtime_widgets()
         self._update_learning_backbone_hint()
+        audit_event = getattr(top_level, "_audit_event", None)
+        if callable(audit_event):
+            audit_event(
+                module="模板参数",
+                action="修改判定参数",
+                before_value=str(before),
+                after_value=str({
+                    "score_mode": self.algo.product_params.score_mode,
+                    "margin": self.algo.product_params.margin,
+                    "topk": self.algo.product_params.topk,
+                }),
+            )
 
     def _on_algorithm_changed(self, *args) -> None:
         algorithm = self.current_algorithm()
         if self._updating_runtime_params:
             return
+        top_level = self.window()
+        require_permission = getattr(top_level, "_require_permission", None)
+        if callable(require_permission) and not require_permission("template.edit_params", "修改模板参数"):
+            self._apply_runtime_params_to_ui()
+            return
         selected_item = self._selected_inspection_item()
+        before = str(getattr(selected_item, "algorithm_code", "") if selected_item is not None else self.algo.product_params.algorithm)
         if algorithm in SUPPORTED_EMBEDDING_ALGORITHMS:
             self.algo.set_learning_backbone(algorithm)
         if not algorithm:
@@ -1964,6 +2060,15 @@ class ToolPage(QtWidgets.QWidget):
         self._save_runtime_params()
         self._update_runtime_widgets()
         self._update_learning_backbone_hint()
+        audit_event = getattr(top_level, "_audit_event", None)
+        if callable(audit_event) and before != str(algorithm or ""):
+            audit_event(
+                module="模板参数",
+                action="修改算法",
+                target=str(getattr(selected_item, "item_id", "") if selected_item is not None else ""),
+                before_value=before,
+                after_value=str(algorithm or ""),
+            )
         try:
             _, msg = self.algo.load_model_for_algorithm(
                 algorithm,
@@ -2042,9 +2147,17 @@ class ToolPage(QtWidgets.QWidget):
         return self.training_controller.train_inspection_item(inspection_item)
 
     def _train_all_tools(self) -> None:
+        top_level = self.window()
+        require_permission = getattr(top_level, "_require_permission", None)
+        if callable(require_permission) and not require_permission("model.train", "重新训练"):
+            return
         self.training_controller.train_all_tools()
 
     def _train(self) -> None:
+        top_level = self.window()
+        require_permission = getattr(top_level, "_require_permission", None)
+        if callable(require_permission) and not require_permission("model.train", "重新训练"):
+            return
         self.training_controller.train_current()
 
     # ------------------------------------------------------------------

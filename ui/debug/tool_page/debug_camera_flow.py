@@ -20,30 +20,49 @@ from ui.debug.tool_page.debug_camera_runtime import (
 from ui.i18n import tr
 
 
+def _require_debug_camera_param_permission(self) -> bool:
+    require_permission = getattr(self.window(), "_require_permission", None)
+    if callable(require_permission):
+        return bool(require_permission("camera.edit_params", "修改相机参数"))
+    return True
+
+
 def _on_debug_camera_param_editing_finished(self) -> None:
     if self._debug_camera_block_spin_apply:
         return
+    if not _require_debug_camera_param_permission(self):
+        self._load_saved_debug_camera_settings_to_ui(self._selected_debug_camera_serial())
+        return
     serial = self._selected_debug_camera_serial()
+    payload = self._debug_camera_settings_payload_from_ui()
     if self._debug_camera_device() is None:
         if serial:
-            self._save_debug_camera_settings(
-                serial, self._debug_camera_settings_payload_from_ui()
-            )
+            self._save_debug_camera_settings(serial, payload)
+            self.cameraSettingsApplied.emit(serial, payload)
         return
     self._apply_debug_camera_settings(quiet=True)
+    serial = self._selected_debug_camera_serial()
+    if serial:
+        self.cameraSettingsApplied.emit(serial, self._debug_camera_settings_payload_from_ui())
 
 
 def _on_debug_camera_trigger_activated(self, _index: int) -> None:
     if self._debug_camera_block_spin_apply:
         return
+    if not _require_debug_camera_param_permission(self):
+        self._load_saved_debug_camera_settings_to_ui(self._selected_debug_camera_serial())
+        return
     serial = self._selected_debug_camera_serial()
+    payload = self._debug_camera_settings_payload_from_ui()
     if self._debug_camera_device() is None:
         if serial:
-            self._save_debug_camera_settings(
-                serial, self._debug_camera_settings_payload_from_ui()
-            )
+            self._save_debug_camera_settings(serial, payload)
+            self.cameraSettingsApplied.emit(serial, payload)
         return
     self._apply_debug_camera_settings(quiet=True)
+    serial = self._selected_debug_camera_serial()
+    if serial:
+        self.cameraSettingsApplied.emit(serial, self._debug_camera_settings_payload_from_ui())
 
 
 def _save_debug_camera_image(self) -> None:
@@ -207,6 +226,9 @@ def _refresh_debug_camera_info(self) -> None:
 
 
 def _connect_debug_camera(self) -> None:
+    require_permission = getattr(self.window(), "_require_permission", None)
+    if callable(require_permission) and not require_permission("runtime.connect_camera", "连接调试相机"):
+        return
     if not self._ensure_debug_camera_services():
         return
     serial = self._selected_debug_camera_serial()
@@ -235,6 +257,13 @@ def _connect_debug_camera(self) -> None:
     self._set_debug_preview_placeholder("Debug camera connected; live preview is available")
     self._set_debug_camera_status(f"Connected {role} debug camera: {serial}")
     self.debugCameraConnected.emit(role, serial)
+
+
+def _disconnect_debug_camera_requested(self) -> None:
+    require_permission = getattr(self.window(), "_require_permission", None)
+    if callable(require_permission) and not require_permission("runtime.connect_camera", "断开调试相机"):
+        return
+    self._disconnect_debug_camera()
 
 
 def _disconnect_debug_camera(self) -> None:
@@ -304,6 +333,8 @@ def _refresh_debug_camera_settings(self) -> None:
 
 
 def _apply_debug_camera_settings(self, *, quiet: bool = False) -> None:
+    if not quiet and not _require_debug_camera_param_permission(self):
+        return
     device = self._debug_camera_device()
     if device is None:
         if not quiet:

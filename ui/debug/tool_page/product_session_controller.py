@@ -140,6 +140,10 @@ class ProductSessionController:
         self.owner.productChangeRequested.emit(product_name)
 
     def new_product(self) -> None:
+        top_level = self.owner.window()
+        require_permission = getattr(top_level, "_require_permission", None)
+        if callable(require_permission) and not require_permission("product.create", "新增产品"):
+            return
         name, ok = QtWidgets.QInputDialog.getText(
             self.owner,
             tr("debug.new_product_title"),
@@ -152,10 +156,17 @@ class ProductSessionController:
         if error:
             QtWidgets.QMessageBox.warning(self.owner, tr("common.error"), error)
             return
+        audit_event = getattr(top_level, "_audit_event", None)
+        if callable(audit_event):
+            audit_event(module="产品", action="新增产品", after_value=product_name, product_name=product_name)
         self.owner.cmb_product.addItem(product_name)
         self.owner.cmb_product.setCurrentText(product_name)
 
     def request_delete_product(self) -> None:
+        top_level = self.owner.window()
+        require_permission = getattr(top_level, "_require_permission", None)
+        if callable(require_permission) and not require_permission("product.delete", "删除产品"):
+            return
         name = str(self.owner.cmb_product.currentText() or self.owner.session.current_product or "").strip()
         if not name:
             return

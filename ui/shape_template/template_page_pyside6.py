@@ -521,7 +521,7 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         recipe_form = QtWidgets.QFormLayout(recipe_box)
         self.cmb_backend_create = QtWidgets.QComboBox()
         self.cmb_backend_create.addItems([label for label, _ in BACKEND_ITEMS])
-        self.cmb_backend_create.setCurrentText("Original")
+        self.cmb_backend_create.setCurrentText(_DEFAULT_FIND_BACKEND_LABEL)
         self.spin_threshold_create = QtWidgets.QDoubleSpinBox()
         self.spin_threshold_create.setRange(0.0, 100.0)
         self.spin_threshold_create.setValue(50.0)
@@ -906,11 +906,12 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         if not hasattr(self, "cmb_backend_find"):
             return
         idx = self.cmb_backend_find.findText(_DEFAULT_FIND_BACKEND_LABEL)
-        with QtCore.QSignalBlocker(self.cmb_backend_find):
-            if idx >= 0:
-                self.cmb_backend_find.setCurrentIndex(idx)
-            else:
-                self.cmb_backend_find.setCurrentText(_DEFAULT_FIND_BACKEND_LABEL)
+        for combo in (self.cmb_backend_create, self.cmb_backend_find):
+            with QtCore.QSignalBlocker(combo):
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+                else:
+                    combo.setCurrentText(_DEFAULT_FIND_BACKEND_LABEL)
 
     def _recipe_from_controls(self, *, use_find_values: bool = False) -> ShapeRecipe:
         if use_find_values:
@@ -1033,7 +1034,6 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         self._refresh_reference_region_fields()
         self._set_reference_dirty(False)
         self._sync_recipe_controls("create")
-        self._apply_find_backend_default()
 
     def _apply_reference_roi_from_recipe(self) -> bool:
         if not self._reference_regions:

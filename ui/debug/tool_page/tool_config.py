@@ -49,6 +49,20 @@ def _current_camera_role(tool_page) -> str:
     return "cam1"
 
 
+def _require_tool_permission(tool_page, permission_key: str, action_name: str) -> bool:
+    top_level = tool_page.window()
+    require_permission = getattr(top_level, "_require_permission", None)
+    if callable(require_permission):
+        return bool(require_permission(permission_key, action_name))
+    return True
+
+
+def _audit_tool_event(tool_page, **payload) -> None:
+    audit_event = getattr(tool_page.window(), "_audit_event", None)
+    if callable(audit_event):
+        audit_event(**payload)
+
+
 def _visible_inspection_item_indexes(tool_page) -> list[int]:
     current_role = _current_camera_role(tool_page)
     visible: list[int] = []
@@ -96,6 +110,8 @@ def _current_picker_algorithm(tool_page) -> str:
 
 
 def _add_line_distance_tool(tool_page) -> None:
+    if not _require_tool_permission(tool_page, "inspection.edit_items", "新增检测项"):
+        return
     camera_role = _current_camera_role(tool_page)
     selected_item = _selected_inspection_item(tool_page)
     selected_algorithm = (
@@ -178,6 +194,13 @@ def _add_line_distance_tool(tool_page) -> None:
         )
     )
     _persist_inspection_items(tool_page)
+    _audit_tool_event(
+        tool_page,
+        module="检测项",
+        action="新增检测项",
+        target=item_id,
+        after_value="line_distance",
+    )
     _refresh_inspection_items_table(tool_page)
     table = getattr(tool_page, "inspection_items_table", None)
     if table is not None:
@@ -189,6 +212,8 @@ def _add_line_distance_tool(tool_page) -> None:
 
 
 def _add_center_distance_tool(tool_page, *, center_options: list[str] | None = None) -> None:
+    if not _require_tool_permission(tool_page, "inspection.edit_items", "新增检测项"):
+        return
     camera_role = _current_camera_role(tool_page)
     if center_options is None:
         center_options = [
@@ -240,6 +265,13 @@ def _add_center_distance_tool(tool_page, *, center_options: list[str] | None = N
         )
     )
     _persist_inspection_items(tool_page)
+    _audit_tool_event(
+        tool_page,
+        module="检测项",
+        action="新增检测项",
+        target=item_id,
+        after_value=CENTER_DISTANCE_ALGORITHM,
+    )
     _refresh_inspection_items_table(tool_page)
     table = getattr(tool_page, "inspection_items_table", None)
     if table is not None:
@@ -262,6 +294,9 @@ def _update_delete_line_distance_button(tool_page) -> None:
             or _is_center_distance_algorithm(normalize_tool_algorithm_code(getattr(item, "algorithm_code", "")))
         )
     )
+    has_permission = getattr(tool_page.window(), "_has_permission", None)
+    if callable(has_permission):
+        can_delete = can_delete and bool(has_permission("inspection.edit_items"))
     button.setEnabled(can_delete)
     button.setVisible(can_delete)
 
@@ -299,6 +334,8 @@ def _inspection_item_display_name(inspection_item) -> str:
 
 
 def _delete_selected_line_distance_tool(tool_page) -> None:
+    if not _require_tool_permission(tool_page, "inspection.edit_items", "删除检测项"):
+        return
     row = _selected_inspection_item_row(tool_page)
     if row < 0 or row >= len(getattr(tool_page, "inspection_items", []) or []):
         QtWidgets.QMessageBox.information(
@@ -324,8 +361,17 @@ def _delete_selected_line_distance_tool(tool_page) -> None:
         _inspection_item_display_name(inspection_item)
         or tr("debug.algorithm.line_distance")
     )
+    item_id = str(getattr(inspection_item, "item_id", "") or "")
+    algorithm = str(getattr(inspection_item, "algorithm_code", "") or "")
     del tool_page.inspection_items[row]
     _persist_inspection_items(tool_page)
+    _audit_tool_event(
+        tool_page,
+        module="检测项",
+        action="删除检测项",
+        target=item_id,
+        before_value=algorithm,
+    )
     _refresh_inspection_items_table(tool_page)
     _update_delete_line_distance_button(tool_page)
     status_label = getattr(tool_page, "lbl_status", None)

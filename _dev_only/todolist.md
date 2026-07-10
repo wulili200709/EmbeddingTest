@@ -4166,3 +4166,71 @@ line2dup 是旧版本里“位置修正/自动 ROI”的内部算法名。后来
 
 application/product_session.py (line 227)：读取 session 时，如果看到 line2dup 会强制改成 shape
 ui/debug/tool_page/page.py (line 98)：SUPPORTED_LOC_MODES = ["shape"]
+
+# 一个相机拍摄两次
+不是模拟一台真的相机2，而是模拟“第二个拍照工位/检测通道”。
+
+实际硬件还是：
+
+相机：1 台
+光源：2 路
+拍照：拍两次
+软件里表现为：
+
+Cam1 = 同一台相机 + 光源1 + 第一次拍照 + Cam1 的 ROI/模板/参数
+Cam2 = 同一台相机 + 光源2 + 第二次拍照 + Cam2 的 ROI/模板/参数
+所以界面上仍然像两路相机一样显示 Cam1、Cam2、各自结果，但底层只连接一次同一个相机序列号。区别在于 Cam2 不再代表第二台物理相机，而是代表第二次拍照的逻辑通道。
+
+这个做法比硬填同一个序列号到 Cam1/Cam2 稳定，因为不会重复打开同一台相机。
+更合理的做法是改成：
+
+物理相机：1 台
+检测角色：2 个逻辑拍照位
+Cam1 = 光源1拍照结果
+Cam2 = 光源2拍照结果
+两个角色共用同一个相机序列号
+这样界面上仍然可以保留 Cam1/Cam2 两路检测项、ROI、模板、结果显示，但底层连接时只打开一次相机。运行时按顺序：
+
+打开光源1
+同一台相机拍第1张
+关闭/切换光源
+打开光源2
+同一台相机拍第2张
+分别按 Cam1/Cam2 的模板和检测项判断
+最终结果汇总 OK/NG
+如果两次曝光/增益不一样，还要在每次拍照前切换对应 Cam1/Cam2 的相机参数。
+
+结论：**现在不改代码，不能当成两个相机稳定连接；要支持这个场景，需要做“单相机多光源/多拍照位”模式。**这个方向是可行的，而且可以复用现在 Cam1/Cam2 的大部分界面和检测结构。
+ 
+ # 数据库相关
+ records/audit.db-wal
+WAL 日志文件，意思是 Write-Ahead Log。软件运行时，新写入的数据可能会先写到这个文件里，再合并回 audit.db。所以软件运行中它可能会变大
+records/audit.db-shm
+共享内存辅助文件。
+它不是靠“首次启动标记”判断的，而是靠 audit.db 文件和里面的数据是否存在。
+## 软件启动后会自动生成新的空数据库，并创建默认账号：admin，但是你怎么知道是首次启动呢
+代码逻辑在 infrastructure/audit_store.py (line 128)：
+
+软件启动创建 AuditStore()
+如果 records 文件夹不存在，就自动创建
+连接 SQLite：
+sqlite3.connect("records/audit.db")
+如果 audit.db 不存在，SQLite 会自动新建这个文件
+执行：
+CREATE TABLE IF NOT EXISTS ...
+表不存在就创建，存在就不动
+再检查默认账号：
+SELECT id FROM users WHERE user_name='admin'
+如果查不到 admin，才插入默认账号 admin / 123456
+所以“首次启动”的实际含义是：
+
+records/audit.db 不存在
+或者 audit.db 里没有 users 表 / 没有 admin 用户
+如果旧电脑已经有 records/audit.db，软件启动时不会当成空库，也不会清空履历，只会补齐缺失的表或默认数据。
+
+部署新电脑时，只要不带：
+
+records/audit.db
+records/audit.db-wal
+records/audit.db-shm
+软件启动后就会自动生成新库，并创建默认 admin。

@@ -16,6 +16,20 @@ from ui.debug.tool_page.measurement_algorithms import (
 from ui.i18n import tr
 
 
+def _require_tool_permission(tool_page, permission_key: str, action_name: str) -> bool:
+    top_level = tool_page.window()
+    require_permission = getattr(top_level, "_require_permission", None)
+    if callable(require_permission):
+        return bool(require_permission(permission_key, action_name))
+    return True
+
+
+def _audit_tool_event(tool_page, **payload) -> None:
+    audit_event = getattr(tool_page.window(), "_audit_event", None)
+    if callable(audit_event):
+        audit_event(**payload)
+
+
 def _refresh_inspection_items_table(tool_page) -> None:
     from ui.debug.tool_page.tool_config import (
         _inspection_combo_style,
@@ -219,6 +233,13 @@ def _on_inspection_items_table_item_changed(tool_page, table_item: QtWidgets.QTa
     if row < 0 or row >= len(tool_page.inspection_items):
         return
     inspection_item = tool_page.inspection_items[row]
+    if not _require_tool_permission(tool_page, "inspection.edit_items", "修改检测项"):
+        _refresh_inspection_items_table(tool_page)
+        return
+    before = {
+        "enabled": bool(getattr(inspection_item, "enabled", True)),
+        "display_name": str(getattr(inspection_item, "display_name", "") or ""),
+    }
 
     if table_item.column() == 0:
         inspection_item.enabled = table_item.checkState() == QtCore.Qt.CheckState.Checked
@@ -235,6 +256,19 @@ def _on_inspection_items_table_item_changed(tool_page, table_item: QtWidgets.QTa
         return
 
     _persist_inspection_items(tool_page)
+    after = {
+        "enabled": bool(getattr(inspection_item, "enabled", True)),
+        "display_name": str(getattr(inspection_item, "display_name", "") or ""),
+    }
+    if before != after:
+        _audit_tool_event(
+            tool_page,
+            module="检测项",
+            action="修改检测项",
+            target=str(getattr(inspection_item, "item_id", "") or ""),
+            before_value=str(before),
+            after_value=str(after),
+        )
     _refresh_inspection_items_table(tool_page)
 
 
@@ -245,11 +279,24 @@ def _on_inspection_item_camera_changed(tool_page, row: int, camera_id: str) -> N
         return
     if row < 0 or row >= len(tool_page.inspection_items):
         return
+    if not _require_tool_permission(tool_page, "inspection.edit_items", "修改检测项相机"):
+        _refresh_inspection_items_table(tool_page)
+        return
     normalized = str(camera_id or "cam1").strip() or "cam1"
     if normalized not in SUPPORTED_CAMERA_IDS:
         normalized = "cam1"
+    before = str(getattr(tool_page.inspection_items[row], "camera_id", "") or "")
     tool_page.inspection_items[row].camera_id = normalized
     _persist_inspection_items(tool_page)
+    if before != normalized:
+        _audit_tool_event(
+            tool_page,
+            module="检测项",
+            action="修改检测项相机",
+            target=str(getattr(tool_page.inspection_items[row], "item_id", "") or ""),
+            before_value=before,
+            after_value=normalized,
+        )
     _refresh_inspection_items_table(tool_page)
     tool_page._refresh_lists()
 
@@ -261,7 +308,11 @@ def _on_inspection_item_algorithm_changed(tool_page, row: int, algorithm_code: o
         return
     if row < 0 or row >= len(tool_page.inspection_items):
         return
+    if not _require_tool_permission(tool_page, "inspection.edit_items", "修改检测项算法"):
+        _refresh_inspection_items_table(tool_page)
+        return
     normalized = normalize_tool_algorithm_code(algorithm_code)
+    before = str(getattr(tool_page.inspection_items[row], "algorithm_code", "") or "")
     tool_page.inspection_items[row].algorithm_code = normalized
     spec = tool_page.algo.tool_algorithm_spec(normalized)
     if spec is not None and not dict(tool_page.inspection_items[row].params or {}):
@@ -283,6 +334,15 @@ def _on_inspection_item_algorithm_changed(tool_page, row: int, algorithm_code: o
                 tool_page._updating_runtime_params = False
         tool_page._update_runtime_widgets()
     _persist_inspection_items(tool_page)
+    if before != normalized:
+        _audit_tool_event(
+            tool_page,
+            module="检测项",
+            action="修改检测项算法",
+            target=str(getattr(tool_page.inspection_items[row], "item_id", "") or ""),
+            before_value=before,
+            after_value=normalized,
+        )
     _refresh_inspection_items_table(tool_page)
 
 

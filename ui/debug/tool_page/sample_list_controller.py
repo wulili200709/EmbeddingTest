@@ -11,6 +11,23 @@ class SampleListController:
     def __init__(self, owner) -> None:
         self.owner = owner
 
+    def _require_manage_permission(self, action_name: str) -> bool:
+        require_permission = getattr(self.owner.window(), "_require_permission", None)
+        if callable(require_permission):
+            return bool(require_permission("sample.manage", action_name))
+        return True
+
+    def _audit(self, action: str, *, target: str = "", before_value: str = "", after_value: str = "") -> None:
+        audit_event = getattr(self.owner.window(), "_audit_event", None)
+        if callable(audit_event):
+            audit_event(
+                module="样本",
+                action=action,
+                target=target,
+                before_value=before_value,
+                after_value=after_value,
+            )
+
     def current_selected_path(self) -> Optional[str]:
         if self.owner.tabs.currentIndex() == 0:
             items = self.owner.ok_list.selectedItems()
@@ -60,6 +77,8 @@ class SampleListController:
         self.owner._update_sample_panel_widgets()
 
     def move_selected_sample_to(self, target_kind: str) -> None:
+        if not self._require_manage_permission("移动样本"):
+            return
         path = self.current_selected_path()
         if not path:
             return
@@ -78,9 +97,12 @@ class SampleListController:
         self.owner._refresh_lists()
         self.owner._clear_training_roi_review_state()
         self.owner._save_session()
+        self._audit("移动样本", target=str(path), after_value=normalized_target)
         self.select_path_in_current_tab(path)
 
     def add_images_to(self, kind: str) -> None:
+        if not self._require_manage_permission("添加样本"):
+            return
         files, _ = QtWidgets.QFileDialog.getOpenFileNames(
             self.owner,
             tr("debug.add_images_title", kind=kind),
@@ -99,8 +121,11 @@ class SampleListController:
         self.owner._refresh_lists()
         self.owner._clear_training_roi_review_state()
         self.owner._save_session()
+        self._audit("添加样本", target=normalized_kind, after_value=f"count={len(files)}")
 
     def remove_selected_from(self, kind: str) -> None:
+        if not self._require_manage_permission("删除样本"):
+            return
         normalized_kind = str(kind or "").strip().upper()
         if normalized_kind == "TRAIN":
             path = self.current_selected_path()
@@ -123,8 +148,11 @@ class SampleListController:
         self.owner._refresh_lists()
         self.owner._clear_training_roi_review_state()
         self.owner._save_session()
+        self._audit("删除样本", target=normalized_kind, before_value=str(path or ""))
 
     def clear_current_test_list(self) -> None:
+        if not self._require_manage_permission("清空测试样本"):
+            return
         current_role = self.owner._selected_image_list_camera_role()
         visible = self.owner._sample_paths_for_kind("test", current_role)
         if not visible:
@@ -150,3 +178,4 @@ class SampleListController:
         self.owner._refresh_lists()
         self.owner._clear_training_roi_review_state()
         self.owner._save_session()
+        self._audit("清空测试样本", target=str(current_role), before_value=f"count={len(remove_set)}")

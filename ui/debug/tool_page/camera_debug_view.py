@@ -115,7 +115,7 @@ def build_camera_debug_page(
         tr("debug.disconnect"),
     )
     owner.btn_debug_disconnect_camera.setStyleSheet(compact_btn)
-    owner.btn_debug_disconnect_camera.clicked.connect(owner._disconnect_debug_camera)
+    owner.btn_debug_disconnect_camera.clicked.connect(owner._disconnect_debug_camera_requested)
     cam_tb_layout.addWidget(owner.btn_debug_disconnect_camera)
 
     cam_tb_layout.addSpacing(12)

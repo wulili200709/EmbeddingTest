@@ -18,6 +18,14 @@ from application import (
     ProductRuntimeContext,
     RuntimeController,
 )
+from infrastructure.audit_store import AuditStore, PermissionService
+from ui.shell.audit_dialogs import (
+    AuditLogDialog,
+    ChangePasswordDialog,
+    LoginDialog,
+    SoftwareVersionDialog,
+    UserPermissionDialog,
+)
 from ui.shell.chrome import (
     build_menu_bar as _build_shell_menu_bar,
     build_status_bar as _build_shell_status_bar,
@@ -33,7 +41,6 @@ from ui.shell.dialogs import (
     RuntimeModeSettingsStore,
     RuntimeRecordSettingsStore,
     TowerLightSettingsStore,
-    confirm_admin_password,
     prompt_change_release_password,
     prompt_connect_camera_bindings,
     prompt_password_dialog,
@@ -70,6 +77,7 @@ from ui.shell.runtime_bridge import (
 )
 from ui.shell.support import (
     APP_NAME as _APP_NAME,
+    APP_VERSION as _APP_VERSION,
     WINDOWS_APP_ID as _WINDOWS_APP_ID,
     app_icon as _app_icon,
     resource_path as _resource_path,
@@ -135,6 +143,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._runtime_mode_settings = self._runtime_mode_store.load()
         self._release_password = self._password_settings["run_password"]
         self._admin_password = self._password_settings["engineer_password"]
+        self._audit_store = AuditStore()
+        self._permission_service = PermissionService(self._audit_store)
         self._auto_show_release_dialog_on_ng = bool(
             self._runtime_mode_settings.get(
                 "auto_show_release_dialog_on_ng",
@@ -176,6 +186,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._connect_signals()
         self._build_menu_bar()
         self._build_status_bar()
+        self._sync_permission_ui()
 
         # ── 初始化加载 ─────────────────────────────────────────────────
         self.tool_page.load_session()          # 发射 sessionLoaded → refresh_all_status
@@ -186,8 +197,301 @@ class MainWindow(QtWidgets.QMainWindow):
         QtCore.QTimer.singleShot(80, self.runtime_ctrl.initialize_startup_io)
         QtCore.QTimer.singleShot(80, self._start_algorithm_engine_warmup)
         QtCore.QTimer.singleShot(2000, self._startup_auto_connect_runtime_cameras)
-      
+
+    def _has_permission(self, permission_key: str) -> bool:
+        return self._permission_service.has(permission_key)
+
+    def _require_permission(self, permission_key: str, action_name: str = "") -> bool:
+        if self._has_permission(permission_key):
+            return True
+        message = tr("auth.permission_denied_message", action=action_name or permission_key)
+        QtWidgets.QMessageBox.warning(self, tr("auth.permission_denied_title"), message)
+        return False
+
+    def _audit_event(
+        self,
+        *,
+        module: str,
+        action: str,
+        target: str = "",
+        before_value: str = "",
+        after_value: str = "",
+        result: str = "成功",
+        remark: str = "",
+        product_name: str | None = None,
+    ) -> None:
+        ctx = self._permission_service.audit_context()
+        try:
+            self._audit_store.log_event(
+                user_name=ctx["user_name"],
+                role_name=ctx["role_name"],
+                product_name=self.session.current_product if product_name is None else product_name,
+                module=module,
+                action=action,
+                target=target,
+                before_value=before_value,
+                after_value=after_value,
+                result=result,
+                remark=remark,
+                software_version=_APP_VERSION,
+            )
+        except Exception:
+            pass
+
+    def _sync_permission_ui(self) -> None:
+        role_key = getattr(self._permission_service.current_user, "role_key", "")
+        role_name = tr(f"role.{role_key}") if role_key else self._permission_service.role_name
+        user_text = tr(
+            "status.user_role",
+            user=self._permission_service.user_name,
+            role=role_name,
+        )
+        if hasattr(self, "lbl_status_user"):
+            self.lbl_status_user.setText(user_text)
+        if hasattr(self, "act_auth_login"):
+            self.act_auth_login.setEnabled(self._permission_service.user_name == "operator")
+        if hasattr(self, "act_auth_logout"):
+            self.act_auth_logout.setEnabled(self._permission_service.user_name != "operator")
+        if hasattr(self, "act_change_current_password"):
+            self.act_change_current_password.setEnabled(self._permission_service.user_name != "operator")
+        if hasattr(self, "act_user_permissions"):
+            self.act_user_permissions.setEnabled(self._has_permission("user.manage"))
+        if hasattr(self, "act_audit_log"):
+            self.act_audit_log.setEnabled(self._has_permission("audit.view"))
+        if hasattr(self, "act_software_versions"):
+            self.act_software_versions.setEnabled(
+                self._has_permission("software.version_log") or self._has_permission("audit.view")
+            )
+
+        refs = getattr(self, "_shell_i18n_refs", {}) or {}
+        actions = refs.get("actions", {})
+        permission_by_action = {
+            "camera_tool": "camera.edit_params",
+            "io_tool": "io.debug",
+            "template_editor": "template.edit_roi",
+            "auto_region": "template.edit_roi",
+            "margin_validation": "template.edit_params",
+            "embedding_analysis": "template.edit_params",
+            "baseline_debug": "template.edit_params",
+            "connect_camera": "runtime.connect_camera",
+            "disconnect_camera": "runtime.connect_camera",
+            "foot_trigger": "runtime.run",
+            "password_release": "runtime.release_ng",
+            "tower_light": "settings.tower_light",
+            "change_release_password": "settings.passwords",
+            "save_image_path": "settings.record_path",
+            "save_runtime_records": "settings.record_path",
+        }
+        for action_name, permission in permission_by_action.items():
+            action = actions.get(action_name)
+            if action is not None:
+                action.setEnabled(self._has_permission(permission))
+
+        if hasattr(self, "tool_page"):
+            if hasattr(self.tool_page, "cmb_product"):
+                self.tool_page.cmb_product.setEnabled(self._has_permission("product.select"))
+            if hasattr(self.tool_page, "btn_new_product"):
+                self.tool_page.btn_new_product.setEnabled(self._has_permission("product.create"))
+            if hasattr(self.tool_page, "btn_delete_product"):
+                self.tool_page.btn_delete_product.setEnabled(self._has_permission("product.delete"))
+            if hasattr(self.tool_page, "inspection_items_table"):
+                self.tool_page.inspection_items_table.setEnabled(self._has_permission("inspection.edit_items"))
+            for attr in (
+                "btn_import_train",
+                "btn_train_to_test",
+                "btn_sample_annotation",
+                "btn_del_ok",
+                "btn_test_to_train",
+                "btn_add_test",
+                "btn_del_test",
+                "btn_sample_annotation_test",
+            ):
+                button = getattr(self.tool_page, attr, None)
+                if button is not None:
+                    button.setEnabled(self._has_permission("sample.manage"))
+            for attr in ("btn_algorithm_picker", "cmb_mode", "spin_margin", "spin_topk"):
+                widget = getattr(self.tool_page, attr, None)
+                if widget is not None:
+                    widget.setEnabled(self._has_permission("template.edit_params"))
+            for attr in (
+                "btn_save",
+                "btn_clear",
+                "btn_set_ref",
+                "btn_pick_ref",
+                "btn_autogen",
+                "btn_autogen_all",
+                "btn_clear_roi_batch",
+                "cmb_shape",
+                "cmb_label",
+            ):
+                widget = getattr(self.tool_page, attr, None)
+                if widget is not None:
+                    widget.setEnabled(self._has_permission("template.edit_roi"))
+            widget = getattr(self.tool_page, "cmb_loc", None)
+            if widget is not None:
+                widget.setEnabled(self._has_permission("template.edit_params"))
+            for attr in ("btn_add_line_distance_tool", "btn_delete_line_distance_tool"):
+                button = getattr(self.tool_page, attr, None)
+                if button is not None:
+                    button.setEnabled(self._has_permission("inspection.edit_items"))
+            for attr in (
+                "btn_debug_read_camera_settings",
+                "btn_debug_apply_camera_settings",
+                "spin_debug_exposure",
+                "spin_debug_gain",
+                "spin_debug_digital_shift",
+                "chk_debug_digital_shift_enable",
+                "cmb_debug_trigger_mode",
+                "cmb_debug_light_source_mode",
+            ):
+                widget = getattr(self.tool_page, attr, None)
+                if widget is not None:
+                    widget.setEnabled(self._has_permission("camera.edit_params"))
+            for attr in ("btn_debug_connect_camera", "btn_debug_disconnect_camera"):
+                button = getattr(self.tool_page, attr, None)
+                if button is not None:
+                    button.setEnabled(self._has_permission("runtime.connect_camera"))
+            apply_io_state = getattr(self.tool_page, "_apply_runtime_io_debug_state", None)
+            if callable(apply_io_state):
+                apply_io_state()
+            for attr in ("btn_train", "btn_train_current"):
+                button = getattr(self.tool_page, attr, None)
+                if button is not None:
+                    button.setEnabled(self._has_permission("model.train"))
+            update_runtime_widgets = getattr(self.tool_page, "_update_runtime_widgets", None)
+            if callable(update_runtime_widgets):
+                update_runtime_widgets()
+        if hasattr(self, "runtime_page"):
+            runtime_allowed = self._has_permission("runtime.run")
+            camera_allowed = self._has_permission("runtime.connect_camera")
+            release_allowed = self._has_permission("runtime.release_ng")
+            for attr in ("btn_trigger", "btn_simulate_foot", "btn_trigger_cam1", "btn_trigger_cam2", "btn_trigger_cam3"):
+                button = getattr(self.runtime_page, attr, None)
+                if button is not None:
+                    button.setEnabled(runtime_allowed)
+            for attr in ("btn_connect_cameras", "btn_disconnect_cameras"):
+                button = getattr(self.runtime_page, attr, None)
+                if button is not None:
+                    button.setEnabled(camera_allowed)
+            button = getattr(self.runtime_page, "btn_release", None)
+            if button is not None:
+                button.setEnabled(release_allowed)
+
+    def _show_login_dialog(self) -> None:
+        dialog = LoginDialog(self)
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        user_name, password = dialog.credentials()
+        user = self._permission_service.login(user_name, password)
+        if user is None:
+            QtWidgets.QMessageBox.warning(self, tr("auth.login.title"), tr("auth.login_failed"))
+            return
+        self._audit_event(module="权限", action="登录", product_name="")
+        self._sync_permission_ui()
+        self._bottom_status_bar.showMessage(tr("auth.logged_in", user=user.user_name), 3000)
+
+    def _logout_current_user(self) -> None:
+        if self._permission_service.user_name != "operator":
+            self._audit_event(module="权限", action="退出登录", product_name="")
+        self._permission_service.logout()
+        self._sync_permission_ui()
+        self._bottom_status_bar.showMessage(tr("auth.logged_out_operator"), 3000)
+
+    def _show_change_current_user_password(self, *, required: bool = False) -> bool:
+        dialog = ChangePasswordDialog(self, title=tr("auth.change_current_password.title"))
+        while True:
+            if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+                return not required
+            try:
+                self._audit_store.set_user_password_by_name(
+                    self._permission_service.user_name,
+                    dialog.password(),
+                    must_change_password=False,
+                )
+            except Exception as exc:
+                QtWidgets.QMessageBox.warning(self, tr("auth.change_password.title"), str(exc))
+                if not required:
+                    return False
+                continue
+            self._permission_service.current_user.must_change_password = False
+            self._audit_event(module="权限", action="修改密码", product_name="")
+            QtWidgets.QMessageBox.information(
+                self,
+                tr("auth.change_password.title"),
+                tr("auth.password_updated"),
+            )
+            return True
+
+    def _show_user_permission_dialog(self) -> None:
+        if not self._require_permission("user.manage", tr("action.user_permissions")):
+            return
+        dialog = UserPermissionDialog(self, self._audit_store)
+        dialog.exec()
+        self._audit_event(module="权限", action="维护用户与权限", product_name="")
+        self._sync_permission_ui()
+
+    def _show_audit_log_dialog(self) -> None:
+        if not self._require_permission("audit.view", tr("action.audit_log")):
+            return
+        dialog = AuditLogDialog(
+            self,
+            self._audit_store,
+            can_export=self._has_permission("audit.export"),
+        )
+        dialog.exec()
+
+    def _show_software_version_dialog(self) -> None:
+        if not (
+            self._has_permission("software.version_log") or self._has_permission("audit.view")
+        ):
+            self._require_permission("audit.view", tr("action.software_versions"))
+            return
+        dialog = SoftwareVersionDialog(
+            self,
+            self._audit_store,
+            can_edit=self._has_permission("software.version_log"),
+            current_user=self._permission_service.user_name,
+            software_version=_APP_VERSION,
+        )
+        dialog.exec()
+
+    def _disconnect_runtime_cameras(self) -> None:
+        if not self._require_permission("runtime.connect_camera", "断开相机"):
+            return
+        before = ", ".join(self.runtime_ctrl.connected_roles())
+        self.runtime_ctrl.disconnect()
+        self._audit_event(module="运行", action="断开相机", before_value=before)
+
+    def _connect_runtime_cameras(self, bindings) -> None:
+        if not self._require_permission("runtime.connect_camera", "连接相机"):
+            return
+        self.runtime_ctrl.connect_cameras(bindings)
+
+    def _trigger_runtime(self) -> None:
+        if not self._require_permission("runtime.run", "运行检测"):
+            return
+        self.runtime_ctrl.trigger()
+
+    def _trigger_runtime_camera(self, camera_index: int) -> None:
+        if not self._require_permission("runtime.run", "运行检测"):
+            return
+        self.runtime_ctrl.trigger_camera(camera_index)
+
+    def _release_runtime(self, password: str) -> None:
+        if not self._require_permission("runtime.release_ng", "NG放行"):
+            return
+        self.runtime_ctrl.release(password)
+        self._audit_event(module="运行", action="NG放行")
+
     def _on_camera_settings_applied(self, serial: str, settings_payload) -> None:
+        if not self._require_permission("camera.edit_params", "修改相机参数"):
+            return
+        self._audit_event(
+            module="相机参数",
+            action="修改相机参数",
+            target=str(serial or ""),
+            after_value=str(dict(settings_payload or {})),
+        )
         self.runtime_ctrl.apply_camera_settings_for_serial(serial, settings_payload)
 
     def _prepare_runtime_for_debug_camera(self, serial: str) -> None:
@@ -221,12 +525,23 @@ class MainWindow(QtWidgets.QMainWindow):
         persist: bool,
         show_message: bool,
     ) -> None:
+        if persist and not self._require_permission("settings.record_path", "运行图片保留策略"):
+            return
+        before = str(self._runtime_capture_policy)
         _apply_runtime_capture_policy_impl(
             self,
             policy,
             persist=persist,
             show_message=show_message,
         )
+        if persist and before != str(self._runtime_capture_policy):
+            self._audit_event(
+                module="设置",
+                action="修改图片保留策略",
+                before_value=before,
+                after_value=str(self._runtime_capture_policy),
+                product_name="",
+            )
 
     def _restore_runtime_capture_policy_from_session(self) -> None:
         _restore_runtime_capture_policy_from_session_impl(self)
@@ -271,7 +586,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return True
 
     def _show_change_release_password_dialog(self) -> None:
-        if not confirm_admin_password(self, admin_password=self._admin_password):
+        if not self._require_permission("settings.passwords", "修改放行密码"):
             return
 
         while True:
@@ -280,6 +595,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
             if not self._apply_release_password(new_password):
                 continue
+            self._audit_event(module="设置", action="修改放行密码", product_name="")
             QtWidgets.QMessageBox.information(self, "修改放行密码", "放行密码已更新。")
             return
 
@@ -288,9 +604,10 @@ class MainWindow(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------
 
     def _show_tower_light_settings_dialog(self) -> None:
-        if not confirm_admin_password(self, admin_password=self._admin_password):
+        if not self._require_permission("settings.tower_light", "三色灯时序设置"):
             return
 
+        before = dict(self._tower_light_settings)
         new_settings = prompt_tower_light_settings(
             self,
             current_settings=self._tower_light_settings,
@@ -310,6 +627,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._tower_light_settings = dict(new_settings)
         self.runtime_ctrl.update_tower_light_settings(self._tower_light_settings)
+        self._audit_event(
+            module="三色灯设置",
+            action="修改时序参数",
+            before_value=str(before),
+            after_value=str(new_settings),
+            product_name="",
+        )
         self._bottom_status_bar.showMessage("\u5854\u706f\u65f6\u5e8f\u53c2\u6570\u5df2\u66f4\u65b0", 3000)
 
     def _connect_signals(self) -> None:
@@ -318,6 +642,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tool_page.productDeleteRequested.connect(self._on_product_delete_request)
         self.tool_page.sessionClearRequested.connect(self._on_session_clear_request)
         self.tool_page.sessionLoaded.connect(self._sync_shell_status)
+        self.tool_page.sessionLoaded.connect(self._sync_permission_ui)
         self.tool_page.sessionLoaded.connect(self._restore_runtime_camera_bindings_from_session)
         self.tool_page.sessionLoaded.connect(self._restore_runtime_capture_policy_from_session)
         self.tool_page.inspectionItemsChanged.connect(self._sync_configured_camera_roles)
@@ -326,7 +651,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.runtime_ctrl,
             session_loaded_message="工具页会话已加载",
         )
-        connect_runtime_page(self.runtime_page, self.runtime_ctrl)
+        connect_runtime_page(
+            self.runtime_page,
+            self.runtime_ctrl,
+            connect_handler=self._connect_runtime_cameras,
+            disconnect_handler=self._disconnect_runtime_cameras,
+            trigger_handler=self._trigger_runtime,
+            trigger_camera_handler=self._trigger_runtime_camera,
+            release_handler=self._release_runtime,
+        )
         self.tool_page.debugCameraConnectRequested.connect(self._prepare_runtime_for_debug_camera)
         self.tool_page.debugCameraConnected.connect(self._on_debug_camera_connected)
         self.tool_page.cameraSettingsApplied.connect(self._on_camera_settings_applied)
@@ -380,6 +713,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.runtime_page.retranslate_ui()
         if hasattr(self, "tool_page") and hasattr(self.tool_page, "retranslate_ui"):
             self.tool_page.retranslate_ui()
+        self._sync_permission_ui()
 
     def _update_brand_banner_pixmap(self) -> None:
         _update_brand_banner_pixmap_impl(self)
@@ -542,6 +876,8 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def _show_runtime_records_directory_dialog(self) -> None:
+        if not self._require_permission("settings.record_path", "运行记录保存目录"):
+            return
         current_dir = str(self._runtime_record_settings.get("runtime_records_dir", "")).strip()
         if not current_dir:
             current_dir = str(Path(self.session.product_dir) / "runtime_records")
@@ -567,9 +903,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._runtime_record_settings = settings
         self._apply_runtime_records_directory_setting()
+        self._audit_event(
+            module="设置",
+            action="修改运行记录目录",
+            before_value=current_dir,
+            after_value=str(selected_dir),
+            product_name="",
+        )
         self._bottom_status_bar.showMessage("运行记录保存目录已更新", 3000)
 
     def _show_runtime_capture_directory_dialog(self) -> None:
+        if not self._require_permission("settings.record_path", "运行图片保存目录"):
+            return
         current_dir = str(self._runtime_record_settings.get("runtime_images_dir", "")).strip()
         if not current_dir:
             current_dir = str(Path(self.session.product_dir) / "runtime_capture")
@@ -595,12 +940,21 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._runtime_record_settings = settings
         self._apply_runtime_capture_directory_setting()
+        self._audit_event(
+            module="设置",
+            action="修改运行图片目录",
+            before_value=current_dir,
+            after_value=str(selected_dir),
+            product_name="",
+        )
         self._bottom_status_bar.showMessage("运行图片保存目录已更新", 3000)
 
     def _reload_debug_session(self) -> None:
         _reload_debug_session_impl(self)
 
     def _show_connect_dialog(self) -> None:
+        if not self._require_permission("runtime.connect_camera", "连接相机"):
+            return
         result = prompt_connect_camera_bindings(
             self,
             cam1_serial=self.runtime_page.camera_serial("cam1"),
@@ -629,11 +983,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self._persist_runtime_camera_bindings(serials)
         self._persist_product_runtime_camera_roles(enabled_roles)
         self._sync_configured_camera_roles()
+        self._audit_event(
+            module="运行",
+            action="连接相机",
+            after_value=", ".join(
+                f"{role}={serials.get(role, '')}" for role in enabled_roles
+            ),
+        )
         self.runtime_page.connectCamerasRequested.emit(
             self.runtime_page.camera_bindings()
         )
 
     def _show_release_dialog(self) -> None:
+        if not self._require_permission("runtime.release_ng", "NG放行"):
+            return
         pwd, ok = prompt_password_dialog(
             self,
             title=tr("dialog.release_title"),
@@ -655,7 +1018,20 @@ class MainWindow(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------
 
     def _on_product_change_request(self, new_name: str) -> None:
+        if not self._require_permission("product.select", "选择产品"):
+            self.tool_page.refresh_product_selector()
+            return
+        before = str(self.session.current_product or "")
         _on_product_change_request_impl(self, new_name)
+        after = str(self.session.current_product or "")
+        if before != after:
+            self._audit_event(
+                module="产品",
+                action="选择产品",
+                before_value=before,
+                after_value=after,
+            )
+        self._sync_permission_ui()
 
     def _on_product_delete_request(self, product_name: str) -> None:
         name = str(product_name or "").strip()
@@ -668,7 +1044,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Default \u4ea7\u54c1\u4e0d\u80fd\u5220\u9664",
             )
             return
-        if not confirm_admin_password(self, admin_password=self._admin_password):
+        if not self._require_permission("product.delete", "删除产品"):
             return
         ret = QtWidgets.QMessageBox.question(
             self,
@@ -691,6 +1067,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self._preload_current_embedding_model()
         self._sync_shell_status()
         self.runtime_ctrl.refresh_all_status("\u4ea7\u54c1\u5df2\u5220\u9664\uff0c\u8bf7\u91cd\u65b0\u8fde\u63a5\u8fd0\u884c\u94fe\u8def")
+        self._audit_event(
+            module="产品",
+            action="删除产品",
+            before_value=name,
+            product_name=name,
+        )
         self._bottom_status_bar.showMessage(f"\u4ea7\u54c1\u5df2\u5220\u9664: {name}", 3000)
 
     def _on_session_clear_request(self) -> None:

@@ -9,6 +9,7 @@ ROI_DEFAULT_COLOR = QtGui.QColor(55, 155, 55)
 ROI_NG_COLOR = QtGui.QColor(220, 30, 30)
 ROI_PASS_COLOR = QtGui.QColor(47, 143, 70)
 ROI_UNLABELED_COLOR = QtGui.QColor(55, 132, 255)
+ROI_DISABLED_COLOR = QtGui.QColor(140, 140, 140)
 ROI_STROKE_WIDTH = 2.0
 SEARCH_REGION_COLOR = QtGui.QColor(0, 0, 255)
 SEARCH_REGION_WIDTH = 0.5
@@ -33,7 +34,13 @@ def is_pass_status(status: object) -> bool:
     return str(status or "").strip().lower() == "pass"
 
 
+def is_disabled_status(status: object) -> bool:
+    return str(status or "").strip().lower() in {"disabled", "inactive"}
+
+
 def color_for_roi_status(status: object) -> QtGui.QColor:
+    if is_disabled_status(status):
+        return QtGui.QColor(ROI_DISABLED_COLOR)
     if is_ng_status(status):
         return QtGui.QColor(ROI_NG_COLOR)
     if is_pass_status(status):
@@ -93,6 +100,7 @@ __all__ = [
     "ROI_NG_COLOR",
     "ROI_PASS_COLOR",
     "ROI_UNLABELED_COLOR",
+    "ROI_DISABLED_COLOR",
     "ROI_STROKE_WIDTH",
     "SEARCH_REGION_COLOR",
     "SEARCH_REGION_WIDTH",
@@ -103,6 +111,7 @@ __all__ = [
     "is_ng_status",
     "is_ok_status",
     "is_pass_status",
+    "is_disabled_status",
     "is_roi_label",
     "merge_roi_statuses",
     "overlay_style_for_label",

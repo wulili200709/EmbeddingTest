@@ -14,7 +14,11 @@ from ui.i18n import tr
 LOGGER = get_app_logger(__name__)
 
 def _set_reference(self, path: str) -> None:
+    require_permission = getattr(self.window(), "_require_permission", None)
+    if callable(require_permission) and not require_permission("template.edit_roi", "设置参考图"):
+        return
     camera_role = self.current_camera_role()
+    before = str(self.ref_image or "")
     self._clear_training_roi_review_state(camera_role)
     self.ref_image = path
     if self.lbl_ref is not None:
@@ -33,6 +37,15 @@ def _set_reference(self, path: str) -> None:
     except Exception as exc:
         LOGGER.exception("Failed to persist reference image %s: %s", path, exc)
     self._save_session()
+    audit_event = getattr(self.window(), "_audit_event", None)
+    if callable(audit_event):
+        audit_event(
+            module="模板ROI",
+            action="设置参考图",
+            target=str(camera_role),
+            before_value=before,
+            after_value=str(path or ""),
+        )
 
 def _set_ref_from_current(self) -> None:
     p = self.canvas.image_path()
@@ -53,6 +66,9 @@ def _pick_ref_image(self) -> None:
 def _open_shape_template_page(self) -> None:
     from ui.debug import ShapeTemplateDialog
 
+    require_permission = getattr(self.window(), "_require_permission", None)
+    if callable(require_permission) and not require_permission("template.edit_roi", "模板区域设置"):
+        return
     if self._template_editor_dialog is not None and self._template_editor_dialog.isVisible():
         self._template_editor_dialog.raise_()
         self._template_editor_dialog.activateWindow()
@@ -89,6 +105,14 @@ def _on_shape_model_saved(self, model_path: str, recipe_path: str) -> None:
     self._reload_inspection_items()
     self._apply_current_role_recipe_state()
     self.lbl_status.setText(f"Status: template model saved {os.path.basename(model_path)}")
+    audit_event = getattr(self.window(), "_audit_event", None)
+    if callable(audit_event):
+        audit_event(
+            module="模板ROI",
+            action="保存模板模型",
+            target=str(camera_role),
+            after_value=f"model={os.path.basename(model_path)}, recipe={os.path.basename(recipe_path)}",
+        )
 
 def _on_shape_reference_regions_changed(self) -> None:
     self._clear_training_roi_review_state(self.current_camera_role())
@@ -97,6 +121,13 @@ def _on_shape_reference_regions_changed(self) -> None:
     if current_path and os.path.exists(current_path):
         self._load_canvas_image(current_path)
     self.lbl_status.setText("Status: reference ROI synchronized to runtime")
+    audit_event = getattr(self.window(), "_audit_event", None)
+    if callable(audit_event):
+        audit_event(
+            module="模板ROI",
+            action="修改模板区域",
+            target=str(self.current_camera_role()),
+        )
 
 def _sync_shape_recipe_and_items(self) -> None:
     try:
@@ -110,8 +141,26 @@ def _update_loc_ui(self) -> None:
     return None
 
 def _on_loc_method_changed(self, method: str) -> None:
+    if str(method or "") == str(self.loc_method or ""):
+        self._update_loc_ui()
+        return
+    require_permission = getattr(self.window(), "_require_permission", None)
+    if callable(require_permission) and not require_permission("template.edit_params", "修改定位方式"):
+        blocker = QtCore.QSignalBlocker(self.cmb_loc)
+        self.cmb_loc.setCurrentText(self.loc_method)
+        del blocker
+        return
+    before = str(self.loc_method or "")
     self.loc_method = method
     self._clear_training_roi_review_state()
     self._update_loc_ui()
     self._save_session()
+    audit_event = getattr(self.window(), "_audit_event", None)
+    if callable(audit_event) and before != str(method or ""):
+        audit_event(
+            module="模板参数",
+            action="修改定位方式",
+            before_value=before,
+            after_value=str(method or ""),
+        )
 

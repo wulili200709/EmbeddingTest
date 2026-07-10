@@ -137,6 +137,7 @@ _TOOL_PAGE_BINDINGS = (
             "_on_debug_camera_selected",
             "_refresh_debug_camera_info",
             "_connect_debug_camera",
+            "_disconnect_debug_camera_requested",
             "_disconnect_debug_camera",
             "_refresh_debug_camera_settings",
             "_apply_debug_camera_settings",

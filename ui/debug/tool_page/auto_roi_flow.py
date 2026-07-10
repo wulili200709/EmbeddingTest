@@ -84,6 +84,10 @@ def _autogen_roi_for_images(
     *,
     camera_role=None,
 ) -> None:
+    if not silent:
+        require_permission = getattr(self.window(), "_require_permission", None)
+        if callable(require_permission) and not require_permission("template.edit_roi", "自动生成ROI"):
+            return
     if not paths:
         if not silent:
             QtWidgets.QMessageBox.information(self, "Info", "No image to process")
@@ -171,6 +175,17 @@ def _autogen_roi_for_images(
     if ok:
         self._reload_inspection_items()
         self.roiGeometryChanged.emit()
+        if not silent:
+            audit_event = getattr(self.window(), "_audit_event", None)
+            if callable(audit_event):
+                audit_event(
+                    module="模板ROI",
+                    action="自动生成ROI",
+                    target=str(role),
+                    after_value=f"images={ok}, labels={','.join(labels)}",
+                    result="成功" if not errs else "部分成功",
+                    remark="\n".join(errs[:10]),
+                )
 
     cur = self.canvas.image_path()
     if cur and cur in todo:
@@ -200,6 +215,10 @@ def _clear_roi_for_images(
     silent: bool = False,
     camera_role=None,
 ) -> None:
+    if not silent:
+        require_permission = getattr(self.window(), "_require_permission", None)
+        if callable(require_permission) and not require_permission("template.edit_roi", "清除ROI"):
+            return
     if not paths:
         if not silent:
             QtWidgets.QMessageBox.information(self, tr("common.info"), "No image to process")
@@ -233,6 +252,15 @@ def _clear_roi_for_images(
 
     if touched:
         self.roiGeometryChanged.emit()
+        if not silent:
+            audit_event = getattr(self.window(), "_audit_event", None)
+            if callable(audit_event):
+                audit_event(
+                    module="模板ROI",
+                    action="批量清除ROI",
+                    target=str(role),
+                    before_value=f"images={touched}, labels={','.join(labels)}",
+                )
 
     if not silent:
         QtWidgets.QMessageBox.information(
