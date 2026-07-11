@@ -175,39 +175,65 @@ class InspectionRuntime:
 
         futures: dict[str, Future[CameraInspectionOutcome]] = {}
         capture_ms_by_role: dict[str, float] = {}
+        outcomes: dict[str, CameraInspectionOutcome] = {}
         with ThreadPoolExecutor(max_workers=max(1, len(roles))) as executor:
             for role in roles:
                 camera_index = self.role_to_camera_index.get(role)
                 if camera_index is None:
-                    raise RuntimeError(f"missing camera index mapping for role={role}")
+                    outcomes[role] = CameraInspectionOutcome(
+                        role=role,
+                        result="NG",
+                        message=f"{role} missing camera index mapping",
+                    )
+                    continue
 
                 capture_t0 = time.perf_counter()
-                self.light_controller.prepare_capture(camera_index)
-                requires_stable_delay = True
-                requires_stable_delay_getter = getattr(
-                    self.light_controller,
-                    "requires_stable_delay",
-                    None,
-                )
-                if callable(requires_stable_delay_getter):
-                    requires_stable_delay = bool(
-                        requires_stable_delay_getter(camera_index)
+                light_prepared = False
+                try:
+                    self.light_controller.prepare_capture(camera_index)
+                    light_prepared = True
+                    requires_stable_delay = True
+                    requires_stable_delay_getter = getattr(
+                        self.light_controller,
+                        "requires_stable_delay",
+                        None,
                     )
-                if self.light_stable_ms > 0 and requires_stable_delay:
-                    time.sleep(self.light_stable_ms / 1000.0)
-                self.scheduler.on_capture_started(camera_index)
-                frame = self.frame_grab_service.capture_once(role, timeout_ms=timeout_ms)
-                self.light_controller.finish_capture(camera_index)
-                capture_ms_by_role[role] = (time.perf_counter() - capture_t0) * 1000.0
-                futures[role] = executor.submit(self.inspect_callback, role, frame)
+                    if callable(requires_stable_delay_getter):
+                        requires_stable_delay = bool(
+                            requires_stable_delay_getter(camera_index)
+                        )
+                    if self.light_stable_ms > 0 and requires_stable_delay:
+                        time.sleep(self.light_stable_ms / 1000.0)
+                    self.scheduler.on_capture_started(camera_index)
+                    frame = self.frame_grab_service.capture_once(role, timeout_ms=timeout_ms)
+                    capture_ms_by_role[role] = (time.perf_counter() - capture_t0) * 1000.0
+                    futures[role] = executor.submit(self.inspect_callback, role, frame)
+                except Exception as exc:
+                    capture_ms_by_role[role] = (time.perf_counter() - capture_t0) * 1000.0
+                    outcomes[role] = CameraInspectionOutcome(
+                        role=role,
+                        result="NG",
+                        message=f"{role} {exc}",
+                        capture_ms=float(capture_ms_by_role.get(role, 0.0) or 0.0),
+                    )
+                finally:
+                    if light_prepared:
+                        self.light_controller.finish_capture(camera_index)
 
             self.scheduler.on_inspecting_started()
-            outcomes: dict[str, CameraInspectionOutcome] = {}
             for role, future in futures.items():
-                outcomes[role] = replace(
-                    future.result(),
-                    capture_ms=float(capture_ms_by_role.get(role, 0.0) or 0.0),
-                )
+                try:
+                    outcomes[role] = replace(
+                        future.result(),
+                        capture_ms=float(capture_ms_by_role.get(role, 0.0) or 0.0),
+                    )
+                except Exception as exc:
+                    outcomes[role] = CameraInspectionOutcome(
+                        role=role,
+                        result="NG",
+                        message=f"{role} {exc}",
+                        capture_ms=float(capture_ms_by_role.get(role, 0.0) or 0.0),
+                    )
             return outcomes
 
     def _ordered_roles(self) -> list[str]:

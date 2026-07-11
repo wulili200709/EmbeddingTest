@@ -13,6 +13,7 @@ from PySide6 import QtCore
 from common.app_paths import packaged_embedding_test_root, packaged_repo_root
 from common.camera_roles import ROLE_TO_CAMERA_INDEX, camera_index_for_role
 from .capture_policy import DEFAULT_LIGHT_STABLE_MS
+from .capture_channels import physical_connected_roles
 
 
 def _load_nkio_runtime_options(mapping_path: Path) -> dict[str, str]:
@@ -270,7 +271,7 @@ def _matching_runtime_roles_by_serial(runtime, serial: str) -> list[str]:
     if not serial_text or runtime._frame_grab_service is None:
         return []
     matched_roles: list[str] = []
-    for role in runtime._connected_roles():
+    for role in physical_connected_roles(runtime):
         try:
             device = runtime._frame_grab_service.get_device(role)
         except Exception:

@@ -78,6 +78,13 @@ def persist_runtime_camera_bindings(
         _save_global_camera_role_binding(role, serial)
 
 
+def _runtime_physical_bindings(window, bindings: dict[str, str]) -> dict[str, str]:
+    normalizer = getattr(window, "_runtime_physical_camera_bindings", None)
+    if callable(normalizer):
+        return normalizer(bindings)
+    return dict(bindings or {})
+
+
 def normalize_runtime_capture_policy(policy: str) -> str:
     return "all" if str(policy or "").strip().lower() == "all" else "ng_only"
 
@@ -150,6 +157,7 @@ def startup_auto_connect_runtime_cameras(window, *, import_error) -> None:
     if not bindings:
         restore_runtime_camera_bindings_from_session(window)
         bindings = window.runtime_page.camera_bindings()
+    bindings = _runtime_physical_bindings(window, bindings)
     if not bindings:
         window._startup_runtime_auto_connect_done = True
         return
@@ -198,6 +206,7 @@ def activate_runtime_workspace_legacy(window) -> str:
         if callable(sync_configured_roles):
             sync_configured_roles()
         bindings = window.runtime_page.camera_bindings()
+    bindings = _runtime_physical_bindings(window, bindings)
 
     if not bindings:
         return ""
@@ -240,6 +249,7 @@ def ensure_runtime_camera_connection(window, *, debug_role: str = "", debug_seri
         if callable(sync_configured_roles):
             sync_configured_roles()
         bindings = window.runtime_page.camera_bindings()
+    bindings = _runtime_physical_bindings(window, bindings)
 
     if not bindings:
         return ""

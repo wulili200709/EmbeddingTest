@@ -4,12 +4,17 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from common.app_paths import writable_embedding_test_root
+from common.camera_roles import CAMERA_ROLES, DEFAULT_CAMERA_ROLE, normalize_camera_role
 from common.safe_io import atomic_write_json, load_json_with_backup
 
 
 _CAMERA_SETTINGS_FILENAME = "camera_settings.json"
 LIGHT_SOURCE_MODE_BOARD_IO = "board_io"
 LIGHT_SOURCE_MODE_CAMERA_LINE1_STROBE = "camera_line1_strobe"
+CAPTURE_MODE_INDEPENDENT = "independent"
+CAPTURE_MODE_SINGLE_MULTI_LIGHT = "single_multi_light"
+CAPTURE_LIGHT_OUTPUTS = ("DO_LIGHT_CAM1", "DO_LIGHT_CAM2", "DO_LIGHT_CAM3")
+CAPTURE_DEFAULT_EXPOSURE_US = 5000.0
 
 _CAMERA_APPLY_SETTING_KEYS = (
     "exposure_time_us",
@@ -72,6 +77,105 @@ def light_source_mode_from_mapping(
     if not isinstance(settings, Mapping):
         return normalize_light_source_mode(default)
     return normalize_light_source_mode(settings.get("light_source_mode"), default=default)
+
+
+def normalize_capture_mode(value: object) -> str:
+    text = str(value or "").strip().lower()
+    if text in {"single_multi_light", "single_camera_multi_light", "multi_light", "single"}:
+        return CAPTURE_MODE_SINGLE_MULTI_LIGHT
+    return CAPTURE_MODE_INDEPENDENT
+
+
+def normalize_capture_light_output(value: object, *, default: str = "DO_LIGHT_CAM1") -> str:
+    text = str(value or "").strip().upper()
+    if text in CAPTURE_LIGHT_OUTPUTS:
+        return text
+    default_text = str(default or "").strip().upper()
+    return default_text if default_text in CAPTURE_LIGHT_OUTPUTS else CAPTURE_LIGHT_OUTPUTS[0]
+
+
+def default_capture_channels(mode: object = CAPTURE_MODE_INDEPENDENT) -> list[dict[str, Any]]:
+    normalized_mode = normalize_capture_mode(mode)
+    channels: list[dict[str, Any]] = []
+    for index, role in enumerate(CAMERA_ROLES, start=1):
+        channels.append(
+            {
+                "enabled": True,
+                "role": role,
+                "physical_role": role if normalized_mode == CAPTURE_MODE_INDEPENDENT else DEFAULT_CAMERA_ROLE,
+                "light_output": f"DO_LIGHT_CAM{index}",
+                "exposure_time_us": CAPTURE_DEFAULT_EXPOSURE_US,
+                "gain": 0.0,
+                "stable_delay_ms": 50,
+            }
+        )
+    return channels
+
+
+def _normalize_capture_channel(
+    channel: Mapping[str, Any] | None,
+    *,
+    role: str,
+    mode: str,
+    index: int,
+) -> dict[str, Any]:
+    raw = channel if isinstance(channel, Mapping) else {}
+    role_text = normalize_camera_role(raw.get("role"), default=role) or role
+    default_light = f"DO_LIGHT_CAM{index}"
+    default_physical = role_text if mode == CAPTURE_MODE_INDEPENDENT else DEFAULT_CAMERA_ROLE
+
+    def _float_value(key: str, default: float) -> float:
+        try:
+            return float(raw.get(key, default))
+        except (TypeError, ValueError):
+            return float(default)
+
+    def _int_value(key: str, default: int) -> int:
+        try:
+            return max(0, int(float(raw.get(key, default))))
+        except (TypeError, ValueError):
+            return int(default)
+
+    return {
+        "enabled": bool(raw.get("enabled", True)),
+        "role": role_text,
+        "physical_role": normalize_camera_role(raw.get("physical_role"), default=default_physical)
+        or default_physical,
+        "light_output": normalize_capture_light_output(raw.get("light_output"), default=default_light),
+        "exposure_time_us": _float_value("exposure_time_us", CAPTURE_DEFAULT_EXPOSURE_US),
+        "gain": _float_value("gain", 0.0),
+        "stable_delay_ms": _int_value("stable_delay_ms", 50),
+    }
+
+
+def normalize_capture_channels(
+    channels: object,
+    *,
+    mode: object = CAPTURE_MODE_INDEPENDENT,
+) -> list[dict[str, Any]]:
+    normalized_mode = normalize_capture_mode(mode)
+    raw_by_role: dict[str, Mapping[str, Any]] = {}
+    has_explicit_list = isinstance(channels, list)
+    if isinstance(channels, list):
+        for raw in channels:
+            if not isinstance(raw, Mapping):
+                continue
+            role = normalize_camera_role(raw.get("role"), default="")
+            if role:
+                raw_by_role[role] = raw
+    normalized_channels: list[dict[str, Any]] = []
+    for index, role in enumerate(CAMERA_ROLES, start=1):
+        raw = raw_by_role.get(role)
+        channel = _normalize_capture_channel(
+            raw,
+            role=role,
+            mode=normalized_mode,
+            index=index,
+        )
+        if has_explicit_list and raw is None:
+            channel["enabled"] = False
+        normalized_channels.append(channel)
+    return normalized_channels
 
 
 class CameraSettingsStore:
@@ -174,6 +278,19 @@ class CameraSettingsStore:
         if not isinstance(raw, dict):
             return ""
         return str(raw.get("serial", "")).strip()
+
+    def load_capture_config(self) -> dict[str, Any]:
+        payload = self._load_all()
+        mode = normalize_capture_mode(payload.get("capture_mode"))
+        channels = normalize_capture_channels(payload.get("capture_channels"), mode=mode)
+        return {"capture_mode": mode, "capture_channels": channels}
+
+    def save_capture_config(self, mode: object, channels: object) -> None:
+        payload = self._load_all()
+        normalized_mode = normalize_capture_mode(mode)
+        payload["capture_mode"] = normalized_mode
+        payload["capture_channels"] = normalize_capture_channels(channels, mode=normalized_mode)
+        atomic_write_json(self._path, payload, ensure_ascii=False, indent=2)
 
     def _load_all(self) -> dict[str, Any]:
         raw = load_json_with_backup(self._path, default={})

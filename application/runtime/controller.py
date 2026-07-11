@@ -12,6 +12,7 @@ from PySide6 import QtCore
 
 from common.camera_roles import CAMERA_ROLES, camera_index_for_role
 from . import bindings
+from .capture_channels import is_single_multi_light_mode
 from .capture_policy import (
     DEFAULT_LIGHT_STABLE_MS,
     DEFAULT_RELEASE_PASSWORD,
@@ -59,6 +60,7 @@ try:
         CameraInspectionOutcome,
         CsvRecordWriter,
         CsvReleaseLogWriter,
+        FinalInspectionOutcome,
         FrameGrabService,
         HikCameraManager,
         HikCameraSettings,
@@ -74,6 +76,7 @@ except Exception:
     CameraInspectionOutcome = None  # type: ignore[assignment,misc]
     CsvRecordWriter = None          # type: ignore[assignment,misc]
     CsvReleaseLogWriter = None      # type: ignore[assignment,misc]
+    FinalInspectionOutcome = None   # type: ignore[assignment,misc]
     FrameGrabService = None         # type: ignore[assignment,misc]
     HikCameraManager = None         # type: ignore[assignment,misc]
     HikCameraSettings = None        # type: ignore[assignment,misc]
@@ -455,6 +458,12 @@ class RuntimeController(QtCore.QObject):
             self.warningOccurred.emit("最小运行链路需要先配置 Cam1，再决定是否接入后续相机")
             return
 
+        if self._frame_grab_service is not None and self._frame_grab_service.roles():
+            self.warningOccurred.emit("相机已经连接")
+            self.logAppended.emit("[camera] connect skipped: camera already connected")
+            self._update_status("相机已经连接")
+            return
+
         if not self._rebuild_runner():
             return
 
@@ -506,6 +515,9 @@ class RuntimeController(QtCore.QObject):
             self.logAppended.emit("[camera] startup auto-connect skipped: follow-up cameras require Cam1")
             self._update_status("startup auto-connect skipped: missing Cam1 binding")
             return False
+
+        if self._frame_grab_service is not None and self._frame_grab_service.roles():
+            return True
 
         if not self._rebuild_runner():
             return False
@@ -659,8 +671,11 @@ class RuntimeController(QtCore.QObject):
         role_text = f"cam{int(cam_index)}"
         original_precheck = getattr(self._runner, "precheck_callback", None)
         try:
-            self._runner.precheck_callback = lambda: self._precheck_for_roles([role_text])
-            outcome = self._runner.on_single_camera_debug_trigger(cam_index)
+            if is_single_multi_light_mode(self):
+                outcome = self._run_single_multi_light_trigger([role_text])
+            else:
+                self._runner.precheck_callback = lambda: self._precheck_for_roles([role_text])
+                outcome = self._runner.on_single_camera_debug_trigger(cam_index)
         except Exception as exc:
             self.logAppended.emit(f"[运行] 触发异常：{exc}")
             self.triggerResultReady.emit("ERROR", str(exc))
@@ -694,6 +709,7 @@ class RuntimeController(QtCore.QObject):
 
     def trigger(self) -> None:
         """执行脚踏触发检测流程。"""
+        self._sync_camera_settings_store_path()
         self._reload_runtime_context()
         if self._runner is None:
             self.logAppended.emit("[运行] 忽略触发：请先刷新并连接相机")
@@ -719,7 +735,10 @@ class RuntimeController(QtCore.QObject):
         self._update_status("开始执行脚踏触发链路")
 
         try:
-            outcome = self._runner.on_foot_trigger()
+            if is_single_multi_light_mode(self):
+                outcome = self._run_single_multi_light_trigger()
+            else:
+                outcome = self._runner.on_foot_trigger()
         except Exception as exc:
             self.logAppended.emit(f"[运行] 触发异常：{exc}")
             self.triggerResultReady.emit("ERROR", str(exc))

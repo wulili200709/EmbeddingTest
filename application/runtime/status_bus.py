@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from domain import build_pending_result, recipe_name_from_path
+from .capture_channels import active_runtime_roles, is_single_multi_light_mode, physical_connected_roles
 
 _RUN_STATE_ZH_FOR_STATUS = {
     "WaitingTrigger": "等待触发",
@@ -88,13 +89,9 @@ def _update_status(runtime, message=None) -> None:
     runtime.recordPathChanged.emit(runtime._last_record_path or "-")
 
 def _connected_roles(runtime) -> list[str]:
-    roles: list[str] = []
-    if runtime._frame_grab_service is not None:
-        try:
-            roles = [str(role) for role in runtime._frame_grab_service.roles()]
-        except Exception:
-            roles = []
-    return roles
+    if is_single_multi_light_mode(runtime):
+        return active_runtime_roles(runtime)
+    return physical_connected_roles(runtime)
 
 
 def _current_item_signature(runtime) -> list[tuple[str, str, str, str, str, bool, str]]:

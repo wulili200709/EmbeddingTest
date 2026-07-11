@@ -11,10 +11,10 @@
   },
   "by_role": {
     "cam1": {
-      "serial": "DA9587542"
+      "serial": "DA9587415"
     },
     "cam2": {
-      "serial": ""
+      "serial": "DA9587415"
     },
     "cam3": {
       "serial": ""

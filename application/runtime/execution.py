@@ -5,13 +5,21 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import time
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
 from domain import aggregate_runtime_outcome, recipe_name_from_path
 from common.algorithm_codes import learning_backbone_storage_code
+from common.camera_roles import camera_index_for_role
 
 from .capture_policy import normalize_capture_retention_policy
+from .capture_channels import (
+    channels_for_roles,
+    light_output_index,
+    physical_connected_roles,
+)
 from .preview_frame import RuntimePreviewFrame, build_runtime_preview_frame, export_runtime_preview_frame
 
 _MIN_RUNTIME_CAPTURE_FREE_BYTES = 1 * 1024 * 1024 * 1024
@@ -343,6 +351,273 @@ def _finalize_trigger_outcome(runtime, outcome, release_status_before) -> None:
 
 def _precheck(runtime):
     return _precheck_for_roles(runtime, runtime._connected_roles())
+
+
+def _precheck_for_capture_channels(runtime, channels: list[dict]) -> tuple[bool, str]:
+    from . import controller as runtime_controller_module
+
+    if runtime._frame_grab_service is None or not runtime._frame_grab_service.roles():
+        return False, "camera not connected"
+
+    if runtime._runtime_context.loc_method != "shape":
+        return False, "runtime currently only supports shape localization"
+
+    if not channels:
+        return False, "capture channel is not enabled"
+
+    connected_physical_roles = set(physical_connected_roles(runtime))
+    missing_physical_roles = sorted(
+        {
+            str(channel.get("physical_role", "")).strip()
+            for channel in channels
+            if str(channel.get("physical_role", "")).strip()
+            and str(channel.get("physical_role", "")).strip() not in connected_physical_roles
+        }
+    )
+    if missing_physical_roles:
+        return False, f"physical camera not connected: {', '.join(missing_physical_roles)}"
+
+    active_roles = {
+        str(channel.get("role", "")).strip()
+        for channel in channels
+        if str(channel.get("role", "")).strip()
+    }
+    if not active_roles:
+        return False, "capture channel is not enabled"
+
+    missing_recipe_roles = [
+        role for role in sorted(active_roles)
+        if not os.path.exists(_recipe_path_for_role(runtime, role))
+    ]
+    if missing_recipe_roles:
+        if len(missing_recipe_roles) == 1:
+            return False, f"please generate and save a shape template first for {missing_recipe_roles[0]}"
+        return False, "please generate and save shape templates first for enabled capture channels"
+
+    enabled_items = [
+        item
+        for item in runtime._runtime_context.inspection_items
+        if item.enabled and item.camera_id in active_roles
+    ]
+    if not enabled_items:
+        if len(active_roles) == 1:
+            role = next(iter(active_roles))
+            return False, f"please enable at least one inspection tool for {role}"
+        return False, "please enable at least one inspection tool for enabled capture channels"
+
+    unknown_algorithms = sorted(
+        {
+            str(item.algorithm_code or "").strip()
+            for item in enabled_items
+            if runtime._algo.tool_algorithm_spec(item.algorithm_code) is None
+        }
+    )
+    if unknown_algorithms:
+        return False, f"unsupported inspection algorithm: {unknown_algorithms[0]}"
+
+    learning_items = [
+        item
+        for item in enabled_items
+        if runtime._algo.is_learning_tool(item.algorithm_code)
+    ]
+    if learning_items:
+        algorithm = runtime._algo.current_learning_backbone()
+        if not str(algorithm or "").strip():
+            return False, "please choose a learning tool subtype first"
+        try:
+            for item in learning_items:
+                runtime._runtime_context.load_embedding_model(algorithm, model_key=item.model_key)
+            if runtime._algo.model is not None:
+                runtime._algo.get_feat_net(
+                    runtime._algo.model.backbone,
+                    getattr(runtime._algo.model, "device", None),
+                )
+        except Exception as exc:
+            return False, f"failed to load model: {exc}"
+        if runtime._algo.model is None:
+            return False, f"algorithm {learning_backbone_storage_code(algorithm)} does not have a trained model yet"
+
+    traditional_items = [
+        item
+        for item in enabled_items
+        if runtime._algo.is_traditional_tool(item.algorithm_code)
+    ]
+    for item in traditional_items:
+        algorithm = runtime._algo.resolve_tool_algorithm(item.algorithm_code)
+        model_dict = runtime._algo.get_traditional_model_dict(algorithm, model_key=item.model_key)
+        if not isinstance(model_dict, dict):
+            return False, f"traditional algorithm {algorithm} is not trained yet"
+
+    if runtime_controller_module.frame_to_bgr_image is None:
+        return False, "camera frame conversion service is unavailable"
+    return True, ""
+
+
+def _channel_float(channel: dict, key: str, default: float) -> float:
+    try:
+        return float(channel.get(key, default))
+    except Exception:
+        return float(default)
+
+
+def _channel_int(channel: dict, key: str, default: int) -> int:
+    try:
+        return max(0, int(float(channel.get(key, default))))
+    except Exception:
+        return int(default)
+
+
+def _apply_capture_channel_camera_settings(runtime, channel: dict) -> None:
+    from . import controller as runtime_controller_module
+
+    if runtime._frame_grab_service is None or runtime_controller_module.HikCameraSettings is None:
+        return
+    physical_role = str(channel.get("physical_role", "")).strip()
+    if not physical_role:
+        return
+    device = runtime._frame_grab_service.get_device(physical_role)
+    serial = str(getattr(device, "serial_number", "") or "").strip()
+    payload = runtime._camera_settings_store.load_for_role(physical_role, serial=serial) or {}
+    payload = dict(payload)
+    payload["exposure_time_us"] = _channel_float(channel, "exposure_time_us", 5000.0)
+    payload["gain"] = _channel_float(channel, "gain", 0.0)
+    settings = runtime_controller_module.HikCameraSettings(
+        **runtime_controller_module.hik_settings_kwargs_from_mapping(
+            payload,
+            default_trigger_mode="software",
+            force_trigger_mode="software",
+        )
+    )
+    device.apply_settings(settings)
+
+
+def _run_single_multi_light_trigger(runtime, requested_roles=None):
+    from . import controller as runtime_controller_module
+
+    channels = channels_for_roles(runtime, requested_roles)
+    decision = runtime._scheduler.begin_precheck()
+    if not decision.allowed:
+        return None
+
+    ok, reason = _precheck_for_capture_channels(runtime, channels)
+    if not ok:
+        runtime._scheduler.on_precheck_failed()
+        return runtime_controller_module.FinalInspectionOutcome(
+            final_result="PRECHECK_FAILED",
+            camera_outcomes={},
+            duration_ms=0,
+            error_message=reason,
+        )
+
+    started_at = time.perf_counter()
+    camera_outcomes = {}
+    try:
+        runtime._tower_light_controller.enter_inspecting()
+        try:
+            runtime.logAppended.emit(
+                "[runtime] single-multi-light channels: "
+                + ", ".join(
+                    f"{channel.get('role')}<=physical:{channel.get('physical_role')} "
+                    f"light:{channel.get('light_output')}"
+                    for channel in channels
+                )
+            )
+        except Exception:
+            pass
+        for channel in channels:
+            virtual_role = str(channel.get("role", "")).strip()
+            physical_role = str(channel.get("physical_role", "")).strip()
+            light_index = light_output_index(channel)
+            virtual_index = camera_index_for_role(virtual_role, default=light_index)
+
+            capture_t0 = time.perf_counter()
+            light_prepared = False
+            try:
+                runtime.logAppended.emit(
+                    f"[runtime] single-multi-light capture {virtual_role} "
+                    f"<= {physical_role}, light={channel.get('light_output')}, "
+                    f"exposure={channel.get('exposure_time_us')}, gain={channel.get('gain')}"
+                )
+            except Exception:
+                pass
+            try:
+                _apply_capture_channel_camera_settings(runtime, channel)
+                if hasattr(runtime._light_controller, "set_camera_light_mode"):
+                    runtime._light_controller.set_camera_light_mode(light_index, "board_io")
+                try:
+                    runtime._light_controller.prepare_capture(light_index)
+                    light_prepared = True
+                    requires_stable_delay = True
+                    requires_stable_delay_getter = getattr(
+                        runtime._light_controller,
+                        "requires_stable_delay",
+                        None,
+                    )
+                    if callable(requires_stable_delay_getter):
+                        requires_stable_delay = bool(requires_stable_delay_getter(light_index))
+                    stable_delay_ms = _channel_int(channel, "stable_delay_ms", 50)
+                    if stable_delay_ms > 0 and requires_stable_delay:
+                        time.sleep(stable_delay_ms / 1000.0)
+                    runtime._scheduler.on_capture_started(virtual_index)
+                    frame = runtime._frame_grab_service.capture_once(physical_role, timeout_ms=1000)
+                finally:
+                    if light_prepared:
+                        runtime._light_controller.finish_capture(light_index)
+                capture_ms = (time.perf_counter() - capture_t0) * 1000.0
+                outcome = runtime._inspect_frame(virtual_role, frame)
+                camera_outcomes[virtual_role] = replace(outcome, capture_ms=float(capture_ms))
+                try:
+                    runtime.logAppended.emit(
+                        f"[runtime] single-multi-light {virtual_role} "
+                        f"captured by {physical_role}, result={outcome.result}"
+                    )
+                except Exception:
+                    pass
+            except Exception as channel_exc:
+                capture_ms = (time.perf_counter() - capture_t0) * 1000.0
+                camera_outcomes[virtual_role] = runtime_controller_module.CameraInspectionOutcome(
+                    role=virtual_role,
+                    result="NG",
+                    message=f"{virtual_role} {channel_exc}",
+                    capture_ms=float(capture_ms),
+                    match_ms=0.0,
+                    infer_ms=0.0,
+                )
+                try:
+                    runtime.logAppended.emit(
+                        f"[runtime] single-multi-light {virtual_role} failed: {channel_exc}"
+                    )
+                except Exception:
+                    pass
+
+        runtime._scheduler.on_inspecting_started()
+        runtime._scheduler.on_aggregating_started()
+        final_ok = all(outcome.result == "OK" for outcome in camera_outcomes.values())
+        duration_ms = int((time.perf_counter() - started_at) * 1000.0)
+        runtime._scheduler.on_completed(final_ok=final_ok)
+        if final_ok:
+            runtime._tower_light_controller.show_ok()
+        else:
+            runtime._tower_light_controller.show_ng()
+        return runtime_controller_module.FinalInspectionOutcome(
+            final_result="OK" if final_ok else "NG",
+            camera_outcomes=camera_outcomes,
+            duration_ms=duration_ms,
+        )
+    except Exception as exc:
+        duration_ms = int((time.perf_counter() - started_at) * 1000.0)
+        try:
+            runtime.logAppended.emit(f"[runtime] single-multi-light error: {exc}")
+        except Exception:
+            pass
+        runtime._scheduler.on_error(lock_as_ng=True)
+        runtime._tower_light_controller.show_ng()
+        return runtime_controller_module.FinalInspectionOutcome(
+            final_result="NG",
+            camera_outcomes=camera_outcomes,
+            duration_ms=duration_ms,
+            error_message=str(exc),
+        )
 
 
 def _precheck_for_roles(runtime, roles) -> tuple[bool, str]:

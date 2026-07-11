@@ -329,6 +329,7 @@ def prompt_connect_camera_bindings(
     cam2_serial: str,
     cam3_serial: str = "",
     enabled_roles: list[str] | None = None,
+    visible_roles: list[str] | None = None,
 ) -> tuple[dict[str, str], list[str]] | None:
     dialog = QtWidgets.QDialog(parent)
     dialog.setWindowTitle("连接相机")
@@ -340,6 +341,7 @@ def prompt_connect_camera_bindings(
     enabled = {str(role).strip() for role in (enabled_roles or []) if str(role).strip()}
     if not enabled:
         enabled = {"cam1"}
+    visible = {str(role).strip() for role in (visible_roles or []) if str(role).strip()}
 
     chk_cam1 = QtWidgets.QCheckBox("Cam1")
     chk_cam1.setChecked(True)
@@ -363,6 +365,15 @@ def prompt_connect_camera_bindings(
     layout.addWidget(edit_cam2, 1, 1)
     layout.addWidget(chk_cam3, 2, 0)
     layout.addWidget(edit_cam3, 2, 1)
+    if visible:
+        for role, checkbox, editor in (
+            ("cam1", chk_cam1, edit_cam1),
+            ("cam2", chk_cam2, edit_cam2),
+            ("cam3", chk_cam3, edit_cam3),
+        ):
+            row_visible = role in visible
+            checkbox.setVisible(row_visible)
+            editor.setVisible(row_visible)
 
     button_box = QtWidgets.QDialogButtonBox(
         QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel

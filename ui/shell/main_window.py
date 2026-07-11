@@ -19,6 +19,11 @@ from application import (
     RuntimeController,
 )
 from infrastructure.audit_store import AuditStore, PermissionService
+from infrastructure.camera_settings_store import (
+    CAPTURE_MODE_SINGLE_MULTI_LIGHT,
+    CameraSettingsStore,
+    normalize_capture_mode,
+)
 from ui.shell.audit_dialogs import (
     AuditLogDialog,
     ChangePasswordDialog,
@@ -343,10 +348,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 "chk_debug_digital_shift_enable",
                 "cmb_debug_trigger_mode",
                 "cmb_debug_light_source_mode",
+                "capture_mode_frame",
             ):
                 widget = getattr(self.tool_page, attr, None)
                 if widget is not None:
                     widget.setEnabled(self._has_permission("camera.edit_params"))
+            table = getattr(self.tool_page, "capture_channel_table", None)
+            if table is not None:
+                table.setEnabled(self._has_permission("camera.edit_params"))
             for attr in ("btn_debug_connect_camera", "btn_debug_disconnect_camera"):
                 button = getattr(self.tool_page, attr, None)
                 if button is not None:
@@ -465,7 +474,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def _connect_runtime_cameras(self, bindings) -> None:
         if not self._require_permission("runtime.connect_camera", "连接相机"):
             return
-        self.runtime_ctrl.connect_cameras(bindings)
+        if self.runtime_ctrl.connected_roles():
+            QtWidgets.QMessageBox.information(self, "连接相机", "相机已经连接。")
+            self.runtime_ctrl.refresh_all_status("相机已经连接")
+            return
+        self.runtime_ctrl.connect_cameras(self._runtime_physical_camera_bindings(bindings))
 
     def _trigger_runtime(self) -> None:
         if not self._require_permission("runtime.run", "运行检测"):
@@ -723,11 +736,26 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _configured_runtime_camera_roles(self) -> list[str]:
         roles: list[str] = []
+        capture_mode_roles: list[str] = []
         try:
             session_data = self.session.load_session()
             roles.extend(getattr(session_data, "runtime_camera_roles", []) or [])
         except Exception:
             pass
+
+        try:
+            capture_config = CameraSettingsStore(self.session.camera_settings_path).load_capture_config()
+            if normalize_capture_mode(capture_config.get("capture_mode")) == CAPTURE_MODE_SINGLE_MULTI_LIGHT:
+                for channel in list(capture_config.get("capture_channels", []) or []):
+                    if not bool(channel.get("enabled", True)):
+                        continue
+                    role = normalize_camera_role(channel.get("role", ""))
+                    if role and role not in capture_mode_roles:
+                        capture_mode_roles.append(role)
+        except Exception:
+            pass
+        if capture_mode_roles:
+            return configured_camera_roles(capture_mode_roles)
 
         for item in list(getattr(self.tool_page, "inspection_items", []) or []):
             if not bool(getattr(item, "enabled", True)):
@@ -743,6 +771,34 @@ class MainWindow(QtWidgets.QMainWindow):
                 if self.runtime_page.camera_serial(role)
             )
         return configured_camera_roles(roles or [DEFAULT_CAMERA_ROLE])
+
+    def _runtime_physical_camera_roles(self) -> list[str]:
+        try:
+            capture_config = CameraSettingsStore(self.session.camera_settings_path).load_capture_config()
+            if normalize_capture_mode(capture_config.get("capture_mode")) == CAPTURE_MODE_SINGLE_MULTI_LIGHT:
+                physical_roles: list[str] = []
+                for channel in list(capture_config.get("capture_channels", []) or []):
+                    if not bool(channel.get("enabled", True)):
+                        continue
+                    role = normalize_camera_role(channel.get("physical_role", ""))
+                    if role and role not in physical_roles:
+                        physical_roles.append(role)
+                return configured_camera_roles(physical_roles or [DEFAULT_CAMERA_ROLE])
+        except Exception:
+            pass
+        return list(CAMERA_ROLES)
+
+    def _runtime_physical_camera_bindings(self, bindings: Optional[dict[str, str]] = None) -> dict[str, str]:
+        raw_bindings = dict(bindings or {})
+        physical_roles = set(self._runtime_physical_camera_roles())
+        result: dict[str, str] = {}
+        for role in CAMERA_ROLES:
+            if role not in physical_roles:
+                continue
+            serial = str(raw_bindings.get(role, "") or self.runtime_page.camera_serial(role)).strip()
+            if serial:
+                result[role] = serial
+        return result
 
     def _persist_product_runtime_camera_roles(self, roles: list[str]) -> None:
         session_data = self.session.load_session()
@@ -955,19 +1011,28 @@ class MainWindow(QtWidgets.QMainWindow):
     def _show_connect_dialog(self) -> None:
         if not self._require_permission("runtime.connect_camera", "连接相机"):
             return
+        if self.runtime_ctrl.connected_roles():
+            QtWidgets.QMessageBox.information(self, "连接相机", "相机已经连接。")
+            self.runtime_ctrl.refresh_all_status("相机已经连接")
+            return
+        physical_roles = self._runtime_physical_camera_roles()
+        configured_roles = self._configured_runtime_camera_roles()
+        single_multi_light = set(physical_roles) != set(CAMERA_ROLES)
         result = prompt_connect_camera_bindings(
             self,
             cam1_serial=self.runtime_page.camera_serial("cam1"),
             cam2_serial=self.runtime_page.camera_serial("cam2"),
             cam3_serial=self.runtime_page.camera_serial("cam3"),
-            enabled_roles=self._configured_runtime_camera_roles(),
+            enabled_roles=physical_roles if single_multi_light else configured_roles,
+            visible_roles=physical_roles if single_multi_light else None,
         )
         if result is None:
             return
         serials, enabled_roles = result
+        connect_roles = physical_roles if single_multi_light else enabled_roles
         missing_roles = [
             role
-            for role in enabled_roles
+            for role in connect_roles
             if not str(serials.get(role, "")).strip()
         ]
         if missing_roles:
@@ -981,17 +1046,17 @@ class MainWindow(QtWidgets.QMainWindow):
             serial = str(serials.get(role, "")).strip()
             self.runtime_page.set_camera_serial(role, serial)
         self._persist_runtime_camera_bindings(serials)
-        self._persist_product_runtime_camera_roles(enabled_roles)
+        self._persist_product_runtime_camera_roles(configured_roles if single_multi_light else enabled_roles)
         self._sync_configured_camera_roles()
         self._audit_event(
             module="运行",
             action="连接相机",
             after_value=", ".join(
-                f"{role}={serials.get(role, '')}" for role in enabled_roles
+                f"{role}={serials.get(role, '')}" for role in connect_roles
             ),
         )
         self.runtime_page.connectCamerasRequested.emit(
-            self.runtime_page.camera_bindings()
+            self._runtime_physical_camera_bindings(serials)
         )
 
     def _show_release_dialog(self) -> None:

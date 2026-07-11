@@ -193,6 +193,7 @@ class ToolPage(QtWidgets.QWidget):
         self._current_camera_role = "cam1"
         # Guard against recursive setValue/apply callbacks in camera controls.
         self._debug_camera_block_spin_apply = False
+        self._capture_config_loading = False
         self._main_right_panel: Optional[QtWidgets.QFrame] = None
         self._algorithm_picker_style_default = ""
         self._algorithm_picker_style_compact = ""
@@ -325,6 +326,46 @@ class ToolPage(QtWidgets.QWidget):
             self.cmb_debug_light_source_mode.setCurrentIndex(max(0, index))
             self.cmb_debug_light_source_mode.setToolTip(tr("debug.camera_line1_tip"))
             del blocker
+        if hasattr(self, "cmb_capture_mode"):
+            current_data = self.cmb_capture_mode.currentData()
+            blocker = QtCore.QSignalBlocker(self.cmb_capture_mode)
+            self.cmb_capture_mode.clear()
+            self.cmb_capture_mode.addItem(tr("debug.capture_mode_independent"), "independent")
+            self.cmb_capture_mode.addItem(tr("debug.capture_mode_single_multi_light"), "single_multi_light")
+            index = self.cmb_capture_mode.findData(current_data)
+            self.cmb_capture_mode.setCurrentIndex(max(0, index))
+            del blocker
+        if hasattr(self, "lbl_capture_mode_title"):
+            self.lbl_capture_mode_title.setText(tr("debug.capture_mode"))
+        if hasattr(self, "lbl_capture_channel_title"):
+            self.lbl_capture_channel_title.setText(tr("debug.capture_channels"))
+        if hasattr(self, "capture_channel_table"):
+            self.capture_channel_table.setHorizontalHeaderLabels([
+                tr("debug.capture_table.enabled"),
+                tr("debug.capture_table.channel"),
+                tr("debug.capture_table.camera"),
+                tr("debug.capture_table.light"),
+                tr("debug.capture_table.exposure"),
+                tr("debug.capture_table.gain"),
+            ])
+            light_options = [
+                (tr("debug.io_name.light_cam1"), "DO_LIGHT_CAM1"),
+                (tr("debug.io_name.light_cam2"), "DO_LIGHT_CAM2"),
+                (tr("debug.io_name.light_cam3"), "DO_LIGHT_CAM3"),
+            ]
+            for row in range(self.capture_channel_table.rowCount()):
+                combo = self.capture_channel_table.cellWidget(row, 3)
+                if not isinstance(combo, QtWidgets.QComboBox):
+                    continue
+                current_data = combo.currentData()
+                blocker = QtCore.QSignalBlocker(combo)
+                combo.clear()
+                for label, data in light_options:
+                    combo.addItem(label, data)
+                index = combo.findData(current_data)
+                combo.setCurrentIndex(index if index >= 0 else min(row, combo.count() - 1))
+                del blocker
+            self._update_capture_channel_visibility()
         form = getattr(self, "cam_params_form", None)
         if form is not None:
             row_labels = {
@@ -473,15 +514,25 @@ class ToolPage(QtWidgets.QWidget):
     def _apply_camera_role_options_to_combo(self, combo: object) -> None:
         if combo is None:
             return
-        allowed_roles = set(self.configured_camera_roles())
-        model = combo.model() if hasattr(combo, "model") else None
-        for role in CAMERA_ROLES:
-            index = combo.findData(role) if hasattr(combo, "findData") else -1
-            if index < 0 or model is None or not hasattr(model, "item"):
-                continue
-            item = model.item(index)
-            if item is not None:
-                item.setEnabled(role in allowed_roles)
+        allowed_roles = self.configured_camera_roles()
+        current_role = _normalize_camera_role(
+            combo.currentData() if hasattr(combo, "currentData") else ""
+        ) or _normalize_camera_role(getattr(self, "_current_camera_role", DEFAULT_CAMERA_ROLE)) or DEFAULT_CAMERA_ROLE
+        blocker = QtCore.QSignalBlocker(combo) if hasattr(combo, "blockSignals") else None
+        try:
+            if hasattr(combo, "clear"):
+                combo.clear()
+            if hasattr(combo, "addItem"):
+                for role in allowed_roles:
+                    combo.addItem(role, role)
+            if hasattr(combo, "findData") and hasattr(combo, "setCurrentIndex"):
+                index = combo.findData(current_role)
+                if index < 0:
+                    index = combo.findData(allowed_roles[0])
+                combo.setCurrentIndex(index if index >= 0 else 0)
+        finally:
+            if blocker is not None:
+                del blocker
         if hasattr(combo, "setEnabled"):
             combo.setEnabled(len(allowed_roles) > 1)
 
@@ -489,7 +540,7 @@ class ToolPage(QtWidgets.QWidget):
         allowed_roles = self.configured_camera_roles()
         self._apply_camera_role_options_to_combo(getattr(self, "cmb_current_camera_role", None))
         self._apply_camera_role_options_to_combo(getattr(self, "cmb_debug_camera_role", None))
-        if self.current_camera_role() not in set(allowed_roles):
+        if _normalize_camera_role(getattr(self, "_current_camera_role", "")) not in set(allowed_roles):
             self._set_current_camera_role(allowed_roles[0], sync_debug_role=True)
         else:
             refresh_role_status = getattr(self, "_refresh_debug_role_status", None)

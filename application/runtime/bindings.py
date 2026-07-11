@@ -29,6 +29,7 @@ _RUNTIME_CONTROLLER_BINDINGS = (
         execution,
         (
             "_finalize_trigger_outcome",
+            "_run_single_multi_light_trigger",
             "_precheck",
             "_precheck_for_roles",
             "_save_frame",

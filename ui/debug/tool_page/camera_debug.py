@@ -6,15 +6,22 @@ import configparser
 import json
 from pathlib import Path
 
-from PySide6 import QtGui
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from common.app_paths import packaged_embedding_test_root, packaged_repo_root
-from common.camera_roles import DEFAULT_CAMERA_ROLE, normalize_camera_role
+from common.camera_roles import CAMERA_ROLES, DEFAULT_CAMERA_ROLE, normalize_camera_role
 from infrastructure.camera_settings_store import (
+    CAPTURE_DEFAULT_EXPOSURE_US,
+    CAPTURE_LIGHT_OUTPUTS,
+    CAPTURE_MODE_INDEPENDENT,
+    CAPTURE_MODE_SINGLE_MULTI_LIGHT,
     CameraSettingsStore,
     LIGHT_SOURCE_MODE_BOARD_IO,
     light_source_mode_from_mapping,
+    normalize_capture_light_output,
+    normalize_capture_mode,
 )
+from ui.i18n import tr
 
 
 def _embedding_test_root(tool_page) -> Path:
@@ -127,6 +134,207 @@ def _save_debug_camera_settings(tool_page, serial: str, settings: dict[str, obje
         return
     role = tool_page._selected_debug_camera_role()
     tool_page._camera_settings_store.save_for_role(role, serial_text, settings)
+
+
+def _capture_light_output_label(output: object) -> str:
+    output_text = normalize_capture_light_output(output)
+    label_keys = {
+        "DO_LIGHT_CAM1": "debug.io_name.light_cam1",
+        "DO_LIGHT_CAM2": "debug.io_name.light_cam2",
+        "DO_LIGHT_CAM3": "debug.io_name.light_cam3",
+    }
+    return str(label_keys.get(output_text, output_text))
+
+
+def _populate_capture_light_combo(combo: QtWidgets.QComboBox, selected: object = "") -> None:
+    current = normalize_capture_light_output(selected)
+    blocker = QtCore.QSignalBlocker(combo)
+    try:
+        combo.clear()
+        for output in CAPTURE_LIGHT_OUTPUTS:
+            combo.addItem(tr(_capture_light_output_label(output)), output)
+        index = combo.findData(current)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+    finally:
+        del blocker
+
+
+def _capture_mode_from_ui(tool_page) -> str:
+    combo = getattr(tool_page, "cmb_capture_mode", None)
+    if combo is None:
+        return CAPTURE_MODE_INDEPENDENT
+    return normalize_capture_mode(combo.currentData() or combo.currentText())
+
+
+def _capture_physical_role(role: str, mode: str) -> str:
+    return role if mode == CAPTURE_MODE_INDEPENDENT else DEFAULT_CAMERA_ROLE
+
+
+def _update_capture_channel_visibility(tool_page) -> None:
+    visible = _capture_mode_from_ui(tool_page) == CAPTURE_MODE_SINGLE_MULTI_LIGHT
+    for attr in ("lbl_capture_channel_title", "capture_channel_table"):
+        widget = getattr(tool_page, attr, None)
+        if widget is not None:
+            widget.setVisible(visible)
+
+
+def _sync_capture_camera_roles(tool_page) -> None:
+    sync_roles = getattr(tool_page.window(), "_sync_configured_camera_roles", None)
+    if callable(sync_roles):
+        sync_roles()
+
+
+def _capture_channels_from_ui(tool_page) -> list[dict[str, object]]:
+    table = getattr(tool_page, "capture_channel_table", None)
+    if table is None:
+        return []
+    mode = _capture_mode_from_ui(tool_page)
+    channels: list[dict[str, object]] = []
+    for row in range(table.rowCount()):
+        role_item = table.item(row, 1)
+        role = normalize_camera_role(role_item.text() if role_item is not None else "", default="")
+        if not role:
+            continue
+        enabled_item = table.item(row, 0)
+        enabled = (
+            enabled_item.checkState() == QtCore.Qt.CheckState.Checked
+            if enabled_item is not None
+            else True
+        )
+        physical_widget = table.cellWidget(row, 2)
+        light_widget = table.cellWidget(row, 3)
+        exposure_widget = table.cellWidget(row, 4)
+        gain_widget = table.cellWidget(row, 5)
+        physical_role = (
+            physical_widget.currentData()
+            if isinstance(physical_widget, QtWidgets.QComboBox)
+            else _capture_physical_role(role, mode)
+        )
+        light_output = (
+            light_widget.currentData()
+            if isinstance(light_widget, QtWidgets.QComboBox)
+            else f"DO_LIGHT_CAM{row + 1}"
+        )
+        exposure = (
+            float(exposure_widget.value())
+            if isinstance(exposure_widget, QtWidgets.QDoubleSpinBox)
+            else CAPTURE_DEFAULT_EXPOSURE_US
+        )
+        gain = float(gain_widget.value()) if isinstance(gain_widget, QtWidgets.QDoubleSpinBox) else 0.0
+        channels.append(
+            {
+                "enabled": enabled,
+                "role": role,
+                "physical_role": normalize_camera_role(
+                    physical_role,
+                    default=_capture_physical_role(role, mode),
+                ),
+                "light_output": normalize_capture_light_output(light_output, default=f"DO_LIGHT_CAM{row + 1}"),
+                "exposure_time_us": exposure,
+                "gain": gain,
+                "stable_delay_ms": 50,
+            }
+        )
+    return channels
+
+
+def _set_capture_channel_row(tool_page, row: int, channel: dict[str, object]) -> None:
+    table = getattr(tool_page, "capture_channel_table", None)
+    if table is None:
+        return
+    role = normalize_camera_role(channel.get("role"), default=CAMERA_ROLES[row])
+    enabled_item = table.item(row, 0)
+    if enabled_item is not None:
+        enabled_item.setCheckState(
+            QtCore.Qt.CheckState.Checked
+            if bool(channel.get("enabled", True))
+            else QtCore.Qt.CheckState.Unchecked
+        )
+    role_item = table.item(row, 1)
+    if role_item is not None:
+        role_item.setText(role)
+
+    physical_combo = table.cellWidget(row, 2)
+    if isinstance(physical_combo, QtWidgets.QComboBox):
+        physical_role = normalize_camera_role(
+            channel.get("physical_role"),
+            default=role,
+        )
+        index = physical_combo.findData(physical_role)
+        physical_combo.setCurrentIndex(index if index >= 0 else row)
+
+    light_combo = table.cellWidget(row, 3)
+    if isinstance(light_combo, QtWidgets.QComboBox):
+        _populate_capture_light_combo(light_combo, channel.get("light_output"))
+
+    exposure_spin = table.cellWidget(row, 4)
+    if isinstance(exposure_spin, QtWidgets.QDoubleSpinBox):
+        exposure_spin.setValue(
+            float(channel.get("exposure_time_us", CAPTURE_DEFAULT_EXPOSURE_US) or CAPTURE_DEFAULT_EXPOSURE_US)
+        )
+
+    gain_spin = table.cellWidget(row, 5)
+    if isinstance(gain_spin, QtWidgets.QDoubleSpinBox):
+        gain_spin.setValue(float(channel.get("gain", 0.0) or 0.0))
+
+
+def _load_capture_config_to_ui(tool_page) -> None:
+    if not hasattr(tool_page, "capture_channel_table"):
+        return
+    tool_page._capture_config_loading = True
+    try:
+        config = tool_page._camera_settings_store.load_capture_config()
+        mode = normalize_capture_mode(config.get("capture_mode"))
+        combo = getattr(tool_page, "cmb_capture_mode", None)
+        if combo is not None:
+            index = combo.findData(mode)
+            combo.setCurrentIndex(index if index >= 0 else 0)
+        channels = list(config.get("capture_channels", []) or [])
+        for row, channel in enumerate(channels[: len(CAMERA_ROLES)]):
+            _set_capture_channel_row(tool_page, row, dict(channel))
+    finally:
+        tool_page._capture_config_loading = False
+        _update_capture_channel_visibility(tool_page)
+
+
+def _save_capture_config_from_ui(tool_page) -> None:
+    if getattr(tool_page, "_capture_config_loading", False):
+        return
+    if not hasattr(tool_page, "capture_channel_table"):
+        return
+    mode = _capture_mode_from_ui(tool_page)
+    tool_page._camera_settings_store.save_capture_config(mode, _capture_channels_from_ui(tool_page))
+
+
+def _on_capture_mode_changed(tool_page, _index: int = 0) -> None:
+    _update_capture_channel_visibility(tool_page)
+    table = getattr(tool_page, "capture_channel_table", None)
+    if table is not None and not getattr(tool_page, "_capture_config_loading", False):
+        mode = _capture_mode_from_ui(tool_page)
+        for row in range(table.rowCount()):
+            role_item = table.item(row, 1)
+            role = normalize_camera_role(
+                role_item.text() if role_item is not None else "",
+                default=CAMERA_ROLES[row],
+            )
+            physical_combo = table.cellWidget(row, 2)
+            if not isinstance(physical_combo, QtWidgets.QComboBox):
+                continue
+            target_role = _capture_physical_role(role, mode)
+            index = physical_combo.findData(target_role)
+            if index >= 0:
+                physical_combo.setCurrentIndex(index)
+    _save_capture_config_from_ui(tool_page)
+    _sync_capture_camera_roles(tool_page)
+
+
+def _on_capture_channel_item_changed(tool_page, _item=None) -> None:
+    _save_capture_config_from_ui(tool_page)
+    _sync_capture_camera_roles(tool_page)
+
+
+def _on_capture_channel_editor_changed(tool_page, *_args) -> None:
+    _save_capture_config_from_ui(tool_page)
 
 
 def _set_debug_preview_placeholder(tool_page, text: str) -> None:

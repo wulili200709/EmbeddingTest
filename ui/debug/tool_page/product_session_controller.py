@@ -46,6 +46,9 @@ class ProductSessionController:
             self.owner._deferred_session_load_scheduled = False
 
         self.sync_camera_settings_store_path()
+        load_capture_config = getattr(self.owner, "_load_capture_config_to_ui", None)
+        if callable(load_capture_config):
+            load_capture_config()
 
         self.owner.algo.load_params(self.owner.session.product_params_path)
         self.owner.algo.model = None

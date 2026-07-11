@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 from common.camera_roles import CAMERA_ROLES
+from infrastructure.camera_settings_store import CAPTURE_DEFAULT_EXPOSURE_US
 from ui.i18n import tr
 from ui.runtime import RuntimeImageView
 
@@ -166,7 +167,7 @@ def build_camera_debug_page(
     cam_main.addWidget(cam_center, 1)
 
     cam_right = QtWidgets.QFrame()
-    cam_right.setFixedWidth(240)
+    cam_right.setFixedWidth(430)
     cam_right.setStyleSheet(f"QFrame{{background:{panel_bg};border-left:1px solid #505050;}}")
     cam_right_vbox = QtWidgets.QVBoxLayout(cam_right)
     cam_right_vbox.setContentsMargins(0, 0, 0, 0)
@@ -249,6 +250,127 @@ def build_camera_debug_page(
     owner.cmb_debug_light_source_mode.activated.connect(owner._on_debug_camera_trigger_activated)
 
     cam_right_vbox.addWidget(cam_params)
+    cam_right_vbox.addSpacing(8)
+
+    owner.capture_mode_frame = QtWidgets.QFrame()
+    owner.capture_mode_frame.setStyleSheet(
+        "QFrame{background:#333333;border-top:1px solid #505050;border-bottom:1px solid #505050;}"
+    )
+    capture_mode_layout = QtWidgets.QVBoxLayout(owner.capture_mode_frame)
+    capture_mode_layout.setContentsMargins(12, 10, 12, 10)
+    capture_mode_layout.setSpacing(8)
+
+    owner.lbl_capture_mode_title = QtWidgets.QLabel(tr("debug.capture_mode"))
+    owner.lbl_capture_mode_title.setStyleSheet(f"color:{text_light};font-size:12px;font-weight:bold;")
+    capture_mode_layout.addWidget(owner.lbl_capture_mode_title)
+
+    owner.cmb_capture_mode = QtWidgets.QComboBox()
+    owner.cmb_capture_mode.addItem(tr("debug.capture_mode_independent"), "independent")
+    owner.cmb_capture_mode.addItem(tr("debug.capture_mode_single_multi_light"), "single_multi_light")
+    owner.cmb_capture_mode.setCurrentIndex(0)
+    owner.cmb_capture_mode.setStyleSheet(input_style)
+    capture_mode_layout.addWidget(owner.cmb_capture_mode)
+
+    owner.lbl_capture_channel_title = QtWidgets.QLabel(tr("debug.capture_channels"))
+    owner.lbl_capture_channel_title.setStyleSheet(f"color:{text_light};font-size:12px;font-weight:bold;")
+    capture_mode_layout.addWidget(owner.lbl_capture_channel_title)
+
+    owner.capture_channel_table = QtWidgets.QTableWidget(3, 6)
+    owner.capture_channel_table.setHorizontalHeaderLabels([
+        tr("debug.capture_table.enabled"),
+        tr("debug.capture_table.channel"),
+        tr("debug.capture_table.camera"),
+        tr("debug.capture_table.light"),
+        tr("debug.capture_table.exposure"),
+        tr("debug.capture_table.gain"),
+    ])
+    owner.capture_channel_table.verticalHeader().setVisible(False)
+    owner.capture_channel_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+    owner.capture_channel_table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
+    owner.capture_channel_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+    owner.capture_channel_table.setAlternatingRowColors(True)
+    owner.capture_channel_table.setMinimumHeight(162)
+    owner.capture_channel_table.setMaximumHeight(178)
+    owner.capture_channel_table.setStyleSheet(
+        "QTableWidget{background:#303030;color:#d0d0d0;gridline-color:#454545;border:1px solid #454545;font-size:12px;}"
+        "QTableWidget::item:selected{background:#5f9ed1;color:#101010;}"
+        "QHeaderView::section{background:#3a3a3a;color:#d0d0d0;border:1px solid #454545;padding:3px;font-size:12px;}"
+    )
+    capture_header = owner.capture_channel_table.horizontalHeader()
+    capture_header.setStretchLastSection(False)
+    for column, width in ((0, 38), (1, 48), (2, 64), (3, 92), (4, 94), (5, 74)):
+        capture_header.setSectionResizeMode(column, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        owner.capture_channel_table.setColumnWidth(column, width)
+
+    channel_rows = [
+        ("cam1", "DO_LIGHT_CAM1", CAPTURE_DEFAULT_EXPOSURE_US, 0.0),
+        ("cam2", "DO_LIGHT_CAM2", CAPTURE_DEFAULT_EXPOSURE_US, 0.0),
+        ("cam3", "DO_LIGHT_CAM3", CAPTURE_DEFAULT_EXPOSURE_US, 0.0),
+    ]
+    for row, (channel, light_output, exposure, gain) in enumerate(channel_rows):
+        enabled_item = QtWidgets.QTableWidgetItem("")
+        enabled_item.setFlags(
+            QtCore.Qt.ItemFlag.ItemIsEnabled
+            | QtCore.Qt.ItemFlag.ItemIsSelectable
+            | QtCore.Qt.ItemFlag.ItemIsUserCheckable
+        )
+        enabled_item.setCheckState(QtCore.Qt.CheckState.Checked)
+        enabled_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        owner.capture_channel_table.setItem(row, 0, enabled_item)
+        channel_item = QtWidgets.QTableWidgetItem(channel)
+        channel_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        owner.capture_channel_table.setItem(row, 1, channel_item)
+
+        physical_combo = QtWidgets.QComboBox()
+        for role in CAMERA_ROLES:
+            physical_combo.addItem(role, role)
+        physical_combo.setCurrentIndex(row)
+        physical_combo.setStyleSheet(input_style)
+        physical_combo.currentIndexChanged.connect(owner._on_capture_channel_editor_changed)
+        owner.capture_channel_table.setCellWidget(row, 2, physical_combo)
+
+        light_combo = QtWidgets.QComboBox()
+        light_combo.addItem(tr("debug.io_name.light_cam1"), "DO_LIGHT_CAM1")
+        light_combo.addItem(tr("debug.io_name.light_cam2"), "DO_LIGHT_CAM2")
+        light_combo.addItem(tr("debug.io_name.light_cam3"), "DO_LIGHT_CAM3")
+        light_combo.setCurrentIndex(row)
+        light_combo.setMinimumWidth(88)
+        light_combo.view().setMinimumWidth(110)
+        light_combo.setStyleSheet(
+            input_style
+            + "QComboBox{font-size:12px;padding-left:4px;padding-right:18px;}"
+        )
+        light_combo.currentIndexChanged.connect(owner._on_capture_channel_editor_changed)
+        owner.capture_channel_table.setCellWidget(row, 3, light_combo)
+
+        exposure_spin = QtWidgets.QDoubleSpinBox()
+        exposure_spin.setDecimals(0)
+        exposure_spin.setRange(1.0, 1000000.0)
+        exposure_spin.setValue(float(exposure))
+        exposure_spin.setKeyboardTracking(False)
+        exposure_spin.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
+        exposure_spin.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        exposure_spin.setMinimumWidth(86)
+        exposure_spin.setStyleSheet(input_style)
+        exposure_spin.valueChanged.connect(owner._on_capture_channel_editor_changed)
+        owner.capture_channel_table.setCellWidget(row, 4, exposure_spin)
+
+        gain_spin = QtWidgets.QDoubleSpinBox()
+        gain_spin.setDecimals(2)
+        gain_spin.setRange(0.0, 48.0)
+        gain_spin.setValue(float(gain))
+        gain_spin.setKeyboardTracking(False)
+        gain_spin.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
+        gain_spin.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        gain_spin.setMinimumWidth(68)
+        gain_spin.setStyleSheet(input_style)
+        gain_spin.valueChanged.connect(owner._on_capture_channel_editor_changed)
+        owner.capture_channel_table.setCellWidget(row, 5, gain_spin)
+    owner.capture_channel_table.itemChanged.connect(owner._on_capture_channel_item_changed)
+    owner.cmb_capture_mode.currentIndexChanged.connect(owner._on_capture_mode_changed)
+    capture_mode_layout.addWidget(owner.capture_channel_table)
+    owner._update_capture_channel_visibility()
+    cam_right_vbox.addWidget(owner.capture_mode_frame)
     cam_right_vbox.addSpacing(8)
 
     cam_btns_w = QtWidgets.QWidget()
