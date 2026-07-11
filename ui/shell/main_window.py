@@ -649,6 +649,19 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self._bottom_status_bar.showMessage("\u5854\u706f\u65f6\u5e8f\u53c2\u6570\u5df2\u66f4\u65b0", 3000)
 
+    def _on_runtime_camera_layout_settings_changed(self, settings: dict) -> None:
+        merged = dict(self._runtime_mode_settings)
+        merged.update(dict(settings or {}))
+        try:
+            self._runtime_mode_store.save(merged)
+        except Exception as exc:
+            self._bottom_status_bar.showMessage(
+                f"\u8fd0\u884c\u753b\u9762\u5e03\u5c40\u4fdd\u5b58\u5931\u8d25: {exc}",
+                5000,
+            )
+            return
+        self._runtime_mode_settings = merged
+
     def _connect_signals(self) -> None:
         # ToolPage → MainWindow（跨组件协调）
         self.tool_page.productChangeRequested.connect(self._on_product_change_request)
@@ -682,6 +695,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.runtime_ctrl.triggerResultReady.connect(self._update_sidebar_runtime_result)
         self.runtime_ctrl.triggerResultReady.connect(self._on_runtime_trigger_result)
         self.runtime_ctrl.ioStatusChanged.connect(self._on_runtime_io_status_changed)
+        self.runtime_page.cameraLayoutSettingsChanged.connect(
+            self._on_runtime_camera_layout_settings_changed
+        )
 
         connect_runtime_dialogs(self, self.runtime_ctrl)
 

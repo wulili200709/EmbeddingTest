@@ -1,3 +1,9 @@
 {
-  "auto_show_release_dialog_on_ng": true
+  "auto_show_release_dialog_on_ng": true,
+  "camera_layout": "two_top_one_bottom",
+  "camera_slots": [
+    "cam3",
+    "cam1",
+    "cam2"
+  ]
 }

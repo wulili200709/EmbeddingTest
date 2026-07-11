@@ -64,6 +64,21 @@ class InspectionRuntime:
     def on_foot_trigger(self) -> FinalInspectionOutcome | None:
         return self._run_inspection_trigger(self._ordered_roles())
 
+    def on_roles_trigger(self, roles: list[str]) -> FinalInspectionOutcome | None:
+        requested = {
+            str(role).strip()
+            for role in roles
+            if str(role).strip()
+        }
+        ordered_roles = [
+            role for role in self._ordered_roles()
+            if role in requested
+        ]
+        return self._run_inspection_trigger(
+            ordered_roles,
+            no_roles_message="当前没有启用的检测通道",
+        )
+
     def on_single_camera_debug_trigger(self, camera_index: int) -> FinalInspectionOutcome | None:
         """仅采集并检测指定物理序号相机对应的路（用于运行页手动调试）。"""
         wanted = int(camera_index)

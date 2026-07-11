@@ -5,6 +5,7 @@ from pathlib import Path
 from PySide6 import QtWidgets
 
 from common.app_paths import writable_embedding_test_root
+from common.camera_roles import CAMERA_ROLES, normalize_camera_role
 from common.safe_io import atomic_write_json, load_json_with_backup
 
 
@@ -168,12 +169,14 @@ class RuntimeModeSettingsStore:
         config_dir.mkdir(parents=True, exist_ok=True)
         return config_dir / RUNTIME_MODE_SETTINGS_FILENAME
 
-    def default_settings(self) -> dict[str, bool]:
+    def default_settings(self) -> dict[str, object]:
         return {
             "auto_show_release_dialog_on_ng": True,
+            "camera_layout": "two_top_one_bottom",
+            "camera_slots": list(CAMERA_ROLES),
         }
 
-    def load(self) -> dict[str, bool]:
+    def load(self) -> dict[str, object]:
         settings = self.default_settings()
         path = self.path()
         raw = load_json_with_backup(path, default={})
@@ -192,6 +195,18 @@ class RuntimeModeSettingsStore:
                 raw_value,
                 default=settings["auto_show_release_dialog_on_ng"],
             )
+            layout = str(raw.get("camera_layout", settings["camera_layout"]) or "").strip()
+            if layout in {
+                "row",
+                "two_top_one_bottom",
+                "one_top_two_bottom",
+                "main_left",
+                "main_right",
+            }:
+                settings["camera_layout"] = layout
+            settings["camera_slots"] = self._normalize_camera_slots(
+                raw.get("camera_slots", settings["camera_slots"])
+            )
 
         try:
             self.save(settings)
@@ -205,7 +220,17 @@ class RuntimeModeSettingsStore:
                 settings.get("auto_show_release_dialog_on_ng", True),
                 default=True,
             ),
+            "camera_layout": str(settings.get("camera_layout", "two_top_one_bottom") or "two_top_one_bottom").strip(),
+            "camera_slots": self._normalize_camera_slots(settings.get("camera_slots", list(CAMERA_ROLES))),
         }
+        if payload["camera_layout"] not in {
+            "row",
+            "two_top_one_bottom",
+            "one_top_two_bottom",
+            "main_left",
+            "main_right",
+        }:
+            payload["camera_layout"] = "two_top_one_bottom"
         atomic_write_json(self.path(), payload, ensure_ascii=False, indent=2)
 
     @staticmethod
@@ -220,6 +245,19 @@ class RuntimeModeSettingsStore:
         if text in {"0", "false", "no", "n", "off"}:
             return False
         return bool(default)
+
+    @staticmethod
+    def _normalize_camera_slots(value: object) -> list[str]:
+        normalized: list[str] = []
+        raw_slots = list(value) if isinstance(value, (list, tuple)) else []
+        for role in raw_slots:
+            role_text = normalize_camera_role(role)
+            if role_text and role_text not in normalized:
+                normalized.append(role_text)
+        for role in CAMERA_ROLES:
+            if role not in normalized:
+                normalized.append(role)
+        return normalized[: len(CAMERA_ROLES)]
 
 
 def prompt_password_dialog(

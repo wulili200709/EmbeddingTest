@@ -353,6 +353,72 @@ def _precheck(runtime):
     return _precheck_for_roles(runtime, runtime._connected_roles())
 
 
+def _enabled_items_for_roles(runtime, active_roles: set[str]) -> list[object]:
+    return [
+        item
+        for item in runtime._runtime_context.inspection_items
+        if item.enabled and item.camera_id in active_roles
+    ]
+
+
+def _enabled_item_roles(runtime, active_roles: set[str]) -> set[str]:
+    return {
+        str(item.camera_id or "").strip()
+        for item in _enabled_items_for_roles(runtime, active_roles)
+        if str(item.camera_id or "").strip()
+    }
+
+
+def _capture_channels_with_enabled_items(runtime, channels: list[dict]) -> list[dict]:
+    channel_roles = {
+        str(channel.get("role", "")).strip()
+        for channel in channels
+        if str(channel.get("role", "")).strip()
+    }
+    item_roles = _enabled_item_roles(runtime, channel_roles)
+    return [
+        channel
+        for channel in channels
+        if str(channel.get("role", "")).strip() in item_roles
+    ]
+
+
+def _warm_runtime_models(runtime, enabled_items: list[object]) -> None:
+    learning_items = [
+        item
+        for item in enabled_items
+        if runtime._algo.is_learning_tool(item.algorithm_code)
+    ]
+    if learning_items:
+        algorithm = runtime._algo.current_learning_backbone()
+        if str(algorithm or "").strip():
+            try:
+                for item in learning_items:
+                    runtime._runtime_context.load_embedding_model(
+                        algorithm,
+                        model_key=item.model_key,
+                    )
+                if runtime._algo.model is not None:
+                    runtime._algo.get_feat_net(
+                        runtime._algo.model.backbone,
+                        getattr(runtime._algo.model, "device", None),
+                    )
+            except Exception:
+                pass
+
+    traditional_items = [
+        item
+        for item in enabled_items
+        if runtime._algo.is_traditional_tool(item.algorithm_code)
+    ]
+    for item in traditional_items:
+        try:
+            algorithm = runtime._algo.resolve_tool_algorithm(item.algorithm_code)
+            runtime._algo.get_traditional_model_dict(algorithm, model_key=item.model_key)
+        except Exception:
+            pass
+
+
 def _precheck_for_capture_channels(runtime, channels: list[dict]) -> tuple[bool, str]:
     from . import controller as runtime_controller_module
 
@@ -365,18 +431,6 @@ def _precheck_for_capture_channels(runtime, channels: list[dict]) -> tuple[bool,
     if not channels:
         return False, "capture channel is not enabled"
 
-    connected_physical_roles = set(physical_connected_roles(runtime))
-    missing_physical_roles = sorted(
-        {
-            str(channel.get("physical_role", "")).strip()
-            for channel in channels
-            if str(channel.get("physical_role", "")).strip()
-            and str(channel.get("physical_role", "")).strip() not in connected_physical_roles
-        }
-    )
-    if missing_physical_roles:
-        return False, f"physical camera not connected: {', '.join(missing_physical_roles)}"
-
     active_roles = {
         str(channel.get("role", "")).strip()
         for channel in channels
@@ -385,68 +439,8 @@ def _precheck_for_capture_channels(runtime, channels: list[dict]) -> tuple[bool,
     if not active_roles:
         return False, "capture channel is not enabled"
 
-    missing_recipe_roles = [
-        role for role in sorted(active_roles)
-        if not os.path.exists(_recipe_path_for_role(runtime, role))
-    ]
-    if missing_recipe_roles:
-        if len(missing_recipe_roles) == 1:
-            return False, f"please generate and save a shape template first for {missing_recipe_roles[0]}"
-        return False, "please generate and save shape templates first for enabled capture channels"
-
-    enabled_items = [
-        item
-        for item in runtime._runtime_context.inspection_items
-        if item.enabled and item.camera_id in active_roles
-    ]
-    if not enabled_items:
-        if len(active_roles) == 1:
-            role = next(iter(active_roles))
-            return False, f"please enable at least one inspection tool for {role}"
-        return False, "please enable at least one inspection tool for enabled capture channels"
-
-    unknown_algorithms = sorted(
-        {
-            str(item.algorithm_code or "").strip()
-            for item in enabled_items
-            if runtime._algo.tool_algorithm_spec(item.algorithm_code) is None
-        }
-    )
-    if unknown_algorithms:
-        return False, f"unsupported inspection algorithm: {unknown_algorithms[0]}"
-
-    learning_items = [
-        item
-        for item in enabled_items
-        if runtime._algo.is_learning_tool(item.algorithm_code)
-    ]
-    if learning_items:
-        algorithm = runtime._algo.current_learning_backbone()
-        if not str(algorithm or "").strip():
-            return False, "please choose a learning tool subtype first"
-        try:
-            for item in learning_items:
-                runtime._runtime_context.load_embedding_model(algorithm, model_key=item.model_key)
-            if runtime._algo.model is not None:
-                runtime._algo.get_feat_net(
-                    runtime._algo.model.backbone,
-                    getattr(runtime._algo.model, "device", None),
-                )
-        except Exception as exc:
-            return False, f"failed to load model: {exc}"
-        if runtime._algo.model is None:
-            return False, f"algorithm {learning_backbone_storage_code(algorithm)} does not have a trained model yet"
-
-    traditional_items = [
-        item
-        for item in enabled_items
-        if runtime._algo.is_traditional_tool(item.algorithm_code)
-    ]
-    for item in traditional_items:
-        algorithm = runtime._algo.resolve_tool_algorithm(item.algorithm_code)
-        model_dict = runtime._algo.get_traditional_model_dict(algorithm, model_key=item.model_key)
-        if not isinstance(model_dict, dict):
-            return False, f"traditional algorithm {algorithm} is not trained yet"
+    enabled_items = _enabled_items_for_roles(runtime, active_roles)
+    _warm_runtime_models(runtime, enabled_items)
 
     if runtime_controller_module.frame_to_bgr_image is None:
         return False, "camera frame conversion service is unavailable"
@@ -643,66 +637,9 @@ def _precheck_for_roles(runtime, roles) -> tuple[bool, str]:
         active_roles &= requested_roles
     if not active_roles:
         return False, "requested camera is not connected"
-    missing_recipe_roles = [
-        role for role in sorted(active_roles)
-        if not os.path.exists(_recipe_path_for_role(runtime, role))
-    ]
-    if missing_recipe_roles:
-        if len(missing_recipe_roles) == 1:
-            return False, f"please generate and save a shape template first for {missing_recipe_roles[0]}"
-        return False, "please generate and save shape templates first for connected cameras"
-    enabled_items = [
-        item
-        for item in runtime._runtime_context.inspection_items
-        if item.enabled and item.camera_id in active_roles
-    ]
-    if not enabled_items:
-        if len(active_roles) == 1:
-            role = next(iter(active_roles))
-            return False, f"please enable at least one inspection tool for {role}"
-        return False, "please enable at least one inspection tool for connected cameras"
 
-    unknown_algorithms = sorted(
-        {
-            str(item.algorithm_code or "").strip()
-            for item in enabled_items
-            if runtime._algo.tool_algorithm_spec(item.algorithm_code) is None
-        }
-    )
-    if unknown_algorithms:
-        return False, f"unsupported inspection algorithm: {unknown_algorithms[0]}"
-
-    learning_items = [
-        item
-        for item in enabled_items
-        if runtime._algo.is_learning_tool(item.algorithm_code)
-    ]
-    if learning_items:
-        algorithm = runtime._algo.current_learning_backbone()
-        if not str(algorithm or "").strip():
-            return False, "please choose a learning tool subtype first"
-        try:
-            for item in learning_items:
-                runtime._runtime_context.load_embedding_model(algorithm, model_key=item.model_key)
-            if runtime._algo.model is not None:
-                runtime._algo.get_feat_net(
-                    runtime._algo.model.backbone,
-                    getattr(runtime._algo.model, "device", None),
-                )
-        except Exception as exc:
-            return False, f"failed to load model: {exc}"
-        if runtime._algo.model is None:
-            return False, f"algorithm {learning_backbone_storage_code(algorithm)} does not have a trained model yet"
-    traditional_items = [
-        item
-        for item in enabled_items
-        if runtime._algo.is_traditional_tool(item.algorithm_code)
-    ]
-    for item in traditional_items:
-        algorithm = runtime._algo.resolve_tool_algorithm(item.algorithm_code)
-        model_dict = runtime._algo.get_traditional_model_dict(algorithm, model_key=item.model_key)
-        if not isinstance(model_dict, dict):
-            return False, f"traditional algorithm {algorithm} is not trained yet"
+    enabled_items = _enabled_items_for_roles(runtime, active_roles)
+    _warm_runtime_models(runtime, enabled_items)
 
     if runtime_controller_module.frame_to_bgr_image is None:
         return False, "camera frame conversion service is unavailable"

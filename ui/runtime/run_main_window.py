@@ -8,6 +8,7 @@ from application import (
     RuntimeController,
 )
 from .runtime_mode_pyside6 import RuntimeModePage
+from ui.shell.dialogs import RuntimeModeSettingsStore
 from ui.window_common import (
     build_default_session_and_algo,
     connect_runtime_dialogs,
@@ -27,9 +28,12 @@ class RunMainWindow(QtWidgets.QMainWindow):
 
         self.session, self.algo = build_default_session_and_algo(__file__)
         self.runtime_context = ProductRuntimeContext(self.session, self.algo)
+        self.runtime_mode_store = RuntimeModeSettingsStore()
+        self.runtime_mode_settings = self.runtime_mode_store.load()
 
         self.runtime_page = RuntimeModePage()
         self.runtime_page.edit_release_password.setText(DEFAULT_RELEASE_PASSWORD)
+        self.runtime_page.set_camera_layout_settings(self.runtime_mode_settings)
         self.setCentralWidget(self.runtime_page)
 
         self.runtime_ctrl = RuntimeController(
@@ -47,11 +51,20 @@ class RunMainWindow(QtWidgets.QMainWindow):
     def _connect_signals(self) -> None:
         connect_runtime_page(self.runtime_page, self.runtime_ctrl)
         self.runtime_ctrl.previewUpdated.connect(self._on_runtime_preview_updated)
+        self.runtime_page.cameraLayoutSettingsChanged.connect(
+            self._on_runtime_camera_layout_settings_changed
+        )
 
         connect_runtime_dialogs(self, self.runtime_ctrl)
 
     def _on_runtime_preview_updated(self, role: str, source: object) -> None:
         update_runtime_preview(self.runtime_page, role, source)
+
+    def _on_runtime_camera_layout_settings_changed(self, settings: dict) -> None:
+        merged = dict(self.runtime_mode_settings)
+        merged.update(dict(settings or {}))
+        self.runtime_mode_store.save(merged)
+        self.runtime_mode_settings = merged
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self.runtime_ctrl.disconnect(silent=True)

@@ -126,6 +126,7 @@ def build_main_window_ui(window) -> None:
 
     window.runtime_page = RuntimeModePage()
     window.runtime_page.edit_release_password.setText(window._release_password)
+    window.runtime_page.set_camera_layout_settings(window._runtime_mode_settings)
     window.main_pages.addWidget(window.runtime_page)
 
     window._bottom_status_bar = QtWidgets.QStatusBar()

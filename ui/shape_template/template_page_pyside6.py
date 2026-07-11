@@ -203,6 +203,7 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         self._build_progress: Optional[QtWidgets.QProgressDialog] = None
 
         self._build_ui()
+        self._disable_enter_default_buttons()
         self._load_recipe()
         if self.image_path and os.path.exists(self.image_path):
             self._set_image(self.image_path, reset_state=False)
@@ -225,6 +226,11 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         self._build_create_tab()
         self._build_reference_tab()
         self._build_find_tab()
+
+    def _disable_enter_default_buttons(self) -> None:
+        for button in self.findChildren(QtWidgets.QPushButton):
+            button.setAutoDefault(False)
+            button.setDefault(False)
 
     def retranslate_ui(self) -> None:
         self.setWindowTitle(tr("template.title", product=self.product_name))

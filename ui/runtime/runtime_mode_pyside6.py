@@ -35,6 +35,15 @@ _PASS_YELLOW = "#2f8f46"
 _PENDING_GRAY = "#666666"
 _RUNNING_YELLOW = "#eab308"
 
+_DEFAULT_CAMERA_LAYOUT = "two_top_one_bottom"
+_CAMERA_LAYOUT_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("two_top_one_bottom", "runtime.layout.two_top_one_bottom"),
+    ("main_left", "runtime.layout.main_left"),
+    ("main_right", "runtime.layout.main_right"),
+    ("one_top_two_bottom", "runtime.layout.one_top_two_bottom"),
+    ("row", "runtime.layout.row"),
+)
+
 
 def _camera_title(camera_id: str) -> str:
     role = normalize_camera_role(camera_id, default=DEFAULT_CAMERA_ROLE)
@@ -218,6 +227,80 @@ class _CameraSectionHeader(QtWidgets.QFrame):
         self.set_result(self.lbl_result.text())
 
 
+class _CameraSlotFrame(QtWidgets.QFrame):
+    def __init__(self, index: int, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._index = int(index)
+        self._view: RuntimeImageView | None = None
+        self.setStyleSheet(
+            f"_CameraSlotFrame{{background:{_DARK_BG};border:1px solid #3f3f3f;}}"
+        )
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Expanding,
+        )
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        header = QtWidgets.QFrame()
+        header.setFixedHeight(30)
+        header.setStyleSheet("background:#343434;border-bottom:1px solid #454545;")
+        header_layout = QtWidgets.QHBoxLayout(header)
+        header_layout.setContentsMargins(8, 3, 8, 3)
+        header_layout.setSpacing(8)
+
+        self.lbl_title = QtWidgets.QLabel()
+        self.lbl_title.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
+        header_layout.addWidget(self.lbl_title)
+
+        self.cmb_camera = QtWidgets.QComboBox()
+        self.cmb_camera.setMinimumWidth(96)
+        self.cmb_camera.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Minimum,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+        self.cmb_camera.setStyleSheet(
+            "QComboBox{background:#404040;color:#e0e0e0;border:1px solid #555555;"
+            "padding:2px 18px 2px 6px;border-radius:3px;font-size:12px;}"
+            "QComboBox::drop-down{border:none;width:18px;}"
+            "QComboBox QAbstractItemView{background:#404040;color:#e0e0e0;"
+            "selection-background-color:#4f7ecb;}"
+        )
+        header_layout.addWidget(self.cmb_camera, 1)
+        layout.addWidget(header)
+
+        self._content = QtWidgets.QWidget()
+        self._content.setStyleSheet(f"background:{_DARK_BG};")
+        self._content_layout = QtWidgets.QVBoxLayout(self._content)
+        self._content_layout.setContentsMargins(0, 0, 0, 0)
+        self._content_layout.setSpacing(0)
+        layout.addWidget(self._content, 1)
+        self.retranslate_ui()
+
+    def retranslate_ui(self) -> None:
+        self.lbl_title.setText(tr("runtime.slot", index=self._index + 1))
+        self.cmb_camera.setToolTip(tr("runtime.slot_camera_tip"))
+
+    def detach_view(self) -> RuntimeImageView | None:
+        view = self._view
+        self._view = None
+        while self._content_layout.count():
+            item = self._content_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+        return view
+
+    def set_view(self, view: RuntimeImageView | None) -> None:
+        self.detach_view()
+        self._view = view
+        if view is None:
+            return
+        self._content_layout.addWidget(view)
+
+
 class RuntimeModePage(QtWidgets.QWidget):
     refreshCamerasRequested = QtCore.Signal()
     connectCamerasRequested = QtCore.Signal(object)
@@ -225,6 +308,7 @@ class RuntimeModePage(QtWidgets.QWidget):
     triggerRequested = QtCore.Signal()
     triggerCameraRequested = QtCore.Signal(int)
     releaseRequested = QtCore.Signal(str)
+    cameraLayoutSettingsChanged = QtCore.Signal(dict)
 
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
@@ -251,6 +335,11 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._last_duration_ms = 0.0
         self._ok_count_total = 0
         self._ng_count_total = 0
+        self._camera_layout_id = _DEFAULT_CAMERA_LAYOUT
+        self._camera_slot_roles: list[str] = list(CAMERA_ROLES)
+        self._camera_views_by_role: dict[str, RuntimeImageView] = {}
+        self._camera_slots: list[_CameraSlotFrame] = []
+        self._updating_camera_layout_controls = False
         self._build_ui()
 
     def retranslate_ui(self) -> None:
@@ -261,6 +350,11 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.btn_trigger_cam3.setText(tr("runtime.trigger_cam3"))
         self.lbl_panel_title.setText(tr("runtime.items"))
         self.lbl_total_label.setText(tr("runtime.stats"))
+        self.lbl_camera_layout_caption.setText(tr("runtime.view_layout"))
+        self._populate_camera_layout_combo()
+        self._populate_camera_slot_combos()
+        for slot in self._camera_slots:
+            slot.retranslate_ui()
 
         if self._available_camera_count is None:
             self.lbl_header_info.setText(tr("runtime.external_trigger"))
@@ -384,22 +478,54 @@ class RuntimeModePage(QtWidgets.QWidget):
         camera_layout.setContentsMargins(2, 2, 2, 2)
         camera_layout.setSpacing(2)
 
-        camera_splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
-        camera_splitter.setChildrenCollapsible(False)
-        camera_splitter.setHandleWidth(2)
-        camera_splitter.setStyleSheet("QSplitter::handle{background:#383838;}")
+        camera_toolbar = QtWidgets.QFrame()
+        camera_toolbar.setFixedHeight(34)
+        camera_toolbar.setStyleSheet("background:#333333;border-bottom:1px solid #444444;")
+        camera_toolbar_layout = QtWidgets.QHBoxLayout(camera_toolbar)
+        camera_toolbar_layout.setContentsMargins(8, 3, 8, 3)
+        camera_toolbar_layout.setSpacing(8)
+
+        self.lbl_camera_layout_caption = QtWidgets.QLabel(tr("runtime.view_layout"))
+        self.lbl_camera_layout_caption.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
+        camera_toolbar_layout.addWidget(self.lbl_camera_layout_caption)
+
+        self.cmb_camera_layout = QtWidgets.QComboBox()
+        self.cmb_camera_layout.setMinimumWidth(128)
+        self.cmb_camera_layout.setStyleSheet(
+            "QComboBox{background:#404040;color:#e0e0e0;border:1px solid #555555;"
+            "padding:3px 20px 3px 8px;border-radius:3px;font-size:12px;}"
+            "QComboBox::drop-down{border:none;width:18px;}"
+            "QComboBox QAbstractItemView{background:#404040;color:#e0e0e0;"
+            "selection-background-color:#4f7ecb;}"
+        )
+        camera_toolbar_layout.addWidget(self.cmb_camera_layout)
+        camera_toolbar_layout.addStretch(1)
+        camera_layout.addWidget(camera_toolbar)
+
+        self._camera_grid_host = QtWidgets.QWidget()
+        self._camera_grid_host.setStyleSheet(f"background:{_DARK_BG};")
+        self._camera_grid = QtWidgets.QGridLayout(self._camera_grid_host)
+        self._camera_grid.setContentsMargins(0, 0, 0, 0)
+        self._camera_grid.setSpacing(2)
 
         self.view_cam1 = RuntimeImageView("Cam1")
         self.view_cam2 = RuntimeImageView("Cam2")
         self.view_cam3 = RuntimeImageView("Cam3")
-        camera_splitter.addWidget(self.view_cam1)
-        camera_splitter.addWidget(self.view_cam2)
-        camera_splitter.addWidget(self.view_cam3)
-        camera_splitter.setStretchFactor(0, 1)
-        camera_splitter.setStretchFactor(1, 1)
-        camera_splitter.setStretchFactor(2, 1)
-        camera_layout.addWidget(camera_splitter, 1)
-        self._camera_splitter = camera_splitter
+        self._camera_views_by_role = {
+            "cam1": self.view_cam1,
+            "cam2": self.view_cam2,
+            "cam3": self.view_cam3,
+        }
+        self._camera_slots = [_CameraSlotFrame(index) for index in range(len(CAMERA_ROLES))]
+        self._populate_camera_layout_combo()
+        self._populate_camera_slot_combos()
+        self.cmb_camera_layout.currentIndexChanged.connect(self._on_camera_layout_changed)
+        for slot_index, slot in enumerate(self._camera_slots):
+            slot.cmb_camera.currentIndexChanged.connect(
+                lambda _index, slot_index=slot_index: self._on_camera_slot_changed(slot_index)
+            )
+        camera_layout.addWidget(self._camera_grid_host, 1)
+        self._apply_camera_layout()
 
         right_panel = QtWidgets.QFrame()
         right_panel.setMinimumWidth(240)
@@ -615,6 +741,211 @@ class RuntimeModePage(QtWidgets.QWidget):
     # 公开接口（保持与旧版完全一致的方法签名）
     # ------------------------------------------------------------------
 
+    def set_camera_layout_settings(self, settings: dict[str, object]) -> None:
+        self._camera_layout_id = self._normalize_camera_layout_id(
+            dict(settings or {}).get("camera_layout", self._camera_layout_id)
+        )
+        self._camera_slot_roles = self._normalize_camera_slot_roles(
+            dict(settings or {}).get("camera_slots", self._camera_slot_roles)
+        )
+        self._apply_camera_layout(refresh_previews=True)
+
+    def camera_layout_settings(self) -> dict[str, object]:
+        return {
+            "camera_layout": self._camera_layout_id,
+            "camera_slots": list(self._camera_slot_roles),
+        }
+
+    @staticmethod
+    def _normalize_camera_layout_id(layout_id: object) -> str:
+        value = str(layout_id or "").strip()
+        valid = {option_id for option_id, _label_key in _CAMERA_LAYOUT_OPTIONS}
+        return value if value in valid else _DEFAULT_CAMERA_LAYOUT
+
+    @staticmethod
+    def _normalize_camera_slot_roles(roles: object) -> list[str]:
+        normalized: list[str] = []
+        raw_roles = list(roles) if isinstance(roles, (list, tuple)) else []
+        for role in raw_roles:
+            role_text = normalize_camera_role(role)
+            if role_text and role_text not in normalized:
+                normalized.append(role_text)
+        for role in CAMERA_ROLES:
+            if role not in normalized:
+                normalized.append(role)
+        return normalized[: len(CAMERA_ROLES)]
+
+    def _populate_camera_layout_combo(self) -> None:
+        if not hasattr(self, "cmb_camera_layout"):
+            return
+        current = self._camera_layout_id
+        self._updating_camera_layout_controls = True
+        try:
+            self.cmb_camera_layout.blockSignals(True)
+            self.cmb_camera_layout.clear()
+            for layout_id, label_key in _CAMERA_LAYOUT_OPTIONS:
+                self.cmb_camera_layout.addItem(tr(label_key), layout_id)
+            self._set_combo_current_data(self.cmb_camera_layout, current)
+        finally:
+            self.cmb_camera_layout.blockSignals(False)
+            self._updating_camera_layout_controls = False
+
+    def _populate_camera_slot_combos(self) -> None:
+        if not self._camera_slots:
+            return
+        self._updating_camera_layout_controls = True
+        try:
+            for slot_index, slot in enumerate(self._camera_slots):
+                current = self._camera_slot_roles[slot_index]
+                combo = slot.cmb_camera
+                combo.blockSignals(True)
+                combo.clear()
+                for role in CAMERA_ROLES:
+                    combo.addItem(_camera_title(role), role)
+                self._set_combo_current_data(combo, current)
+                combo.blockSignals(False)
+        finally:
+            self._updating_camera_layout_controls = False
+
+    @staticmethod
+    def _set_combo_current_data(combo: QtWidgets.QComboBox, value: str) -> None:
+        index = combo.findData(value)
+        if index >= 0:
+            combo.setCurrentIndex(index)
+
+    def _on_camera_layout_changed(self) -> None:
+        if self._updating_camera_layout_controls:
+            return
+        layout_id = self._normalize_camera_layout_id(self.cmb_camera_layout.currentData())
+        if layout_id == self._camera_layout_id:
+            return
+        self._camera_layout_id = layout_id
+        self._apply_camera_layout(refresh_previews=True)
+        self._emit_camera_layout_settings_changed()
+
+    def _on_camera_slot_changed(self, slot_index: int) -> None:
+        if self._updating_camera_layout_controls:
+            return
+        if slot_index < 0 or slot_index >= len(self._camera_slot_roles):
+            return
+        slot = self._camera_slots[slot_index]
+        new_role = normalize_camera_role(slot.cmb_camera.currentData())
+        if not new_role:
+            return
+        old_role = self._camera_slot_roles[slot_index]
+        if new_role == old_role:
+            return
+        for other_index, other_role in enumerate(self._camera_slot_roles):
+            if other_index != slot_index and other_role == new_role:
+                self._camera_slot_roles[other_index] = old_role
+                break
+        self._camera_slot_roles[slot_index] = new_role
+        self._camera_slot_roles = self._normalize_camera_slot_roles(self._camera_slot_roles)
+        self._apply_camera_layout(refresh_previews=True)
+        self._emit_camera_layout_settings_changed()
+
+    def _emit_camera_layout_settings_changed(self) -> None:
+        if not self._updating_camera_layout_controls:
+            self.cameraLayoutSettingsChanged.emit(self.camera_layout_settings())
+
+    def _apply_camera_layout(self, *, refresh_previews: bool = False) -> None:
+        if not hasattr(self, "_camera_grid"):
+            return
+        self._camera_layout_id = self._normalize_camera_layout_id(self._camera_layout_id)
+        self._camera_slot_roles = self._normalize_camera_slot_roles(self._camera_slot_roles)
+        self._populate_camera_layout_combo()
+        self._populate_camera_slot_combos()
+
+        for slot in self._camera_slots:
+            slot.detach_view()
+        for view in self._camera_views_by_role.values():
+            view.hide()
+            view.setParent(None)
+        for slot_index, role in enumerate(self._camera_slot_roles):
+            slot = self._camera_slots[slot_index]
+            view = self._camera_views_by_role.get(role)
+            slot.set_view(view)
+            if view is not None:
+                view.show()
+        self._refresh_camera_role_layout()
+        if refresh_previews:
+            QtCore.QTimer.singleShot(0, self._refresh_camera_previews)
+
+    def _rebuild_camera_grid(self) -> None:
+        if not hasattr(self, "_camera_grid"):
+            return
+        while self._camera_grid.count():
+            self._camera_grid.takeAt(0)
+        for row in range(3):
+            self._camera_grid.setRowStretch(row, 0)
+        for column in range(3):
+            self._camera_grid.setColumnStretch(column, 0)
+
+        display_roles = self._display_role_set()
+        visible_slot_indexes = [
+            index
+            for index, role in enumerate(self._camera_slot_roles)
+            if role in display_roles
+        ]
+        specs, row_stretches, column_stretches = self._camera_grid_specs(visible_slot_indexes)
+        for index, row, column, row_span, column_span in specs:
+            self._camera_grid.addWidget(
+                self._camera_slots[index],
+                row,
+                column,
+                row_span,
+                column_span,
+            )
+        for row, stretch in row_stretches.items():
+            self._camera_grid.setRowStretch(row, stretch)
+        for column, stretch in column_stretches.items():
+            self._camera_grid.setColumnStretch(column, stretch)
+
+    def _camera_grid_specs(
+        self,
+        visible_slot_indexes: list[int],
+    ) -> tuple[list[tuple[int, int, int, int, int]], dict[int, int], dict[int, int]]:
+        if not visible_slot_indexes:
+            return [], {}, {}
+        if len(visible_slot_indexes) == 1:
+            return [(visible_slot_indexes[0], 0, 0, 1, 1)], {0: 1}, {0: 1}
+        if len(visible_slot_indexes) == 2:
+            return [
+                (visible_slot_indexes[0], 0, 0, 1, 1),
+                (visible_slot_indexes[1], 0, 1, 1, 1),
+            ], {0: 1}, {0: 1, 1: 1}
+
+        layout_id = self._normalize_camera_layout_id(self._camera_layout_id)
+        if layout_id == "row":
+            return [
+                (0, 0, 0, 1, 1),
+                (1, 0, 1, 1, 1),
+                (2, 0, 2, 1, 1),
+            ], {0: 1}, {0: 1, 1: 1, 2: 1}
+        if layout_id == "one_top_two_bottom":
+            return [
+                (0, 0, 0, 1, 2),
+                (1, 1, 0, 1, 1),
+                (2, 1, 1, 1, 1),
+            ], {0: 1, 1: 1}, {0: 1, 1: 1}
+        if layout_id == "main_left":
+            return [
+                (0, 0, 0, 2, 1),
+                (1, 0, 1, 1, 1),
+                (2, 1, 1, 1, 1),
+            ], {0: 1, 1: 1}, {0: 2, 1: 1}
+        if layout_id == "main_right":
+            return [
+                (0, 0, 0, 1, 1),
+                (1, 1, 0, 1, 1),
+                (2, 0, 1, 2, 1),
+            ], {0: 1, 1: 1}, {0: 1, 1: 2}
+        return [
+            (0, 0, 0, 1, 1),
+            (1, 0, 1, 1, 1),
+            (2, 1, 0, 1, 2),
+        ], {0: 1, 1: 1}, {0: 1, 1: 1}
+
     def camera_bindings(self) -> dict[str, str]:
         bindings: dict[str, str] = {}
         for role in CAMERA_ROLES:
@@ -736,7 +1067,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._active_role_set = role_set
         if not role_set:
             for role in CAMERA_ROLES:
-                view = getattr(self, f"view_{role}", None)
+                view = self._camera_views_by_role.get(role)
                 if view is not None:
                     placeholder = (
                         tr("runtime.no_camera_connected")
@@ -876,7 +1207,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         ]
 
     def set_camera_pixmap(self, role: str, pixmap: QtGui.QPixmap | None, *, placeholder: str | None = None) -> None:
-        view = getattr(self, f"view_{normalize_camera_role(role)}", None)
+        view = self._camera_views_by_role.get(normalize_camera_role(role))
         if view is not None:
             view.set_runtime_pixmap(pixmap, placeholder=placeholder)
 
@@ -911,7 +1242,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._active_role_set = set()
         self._camera_preview_sources = {role: None for role in CAMERA_ROLES}
         for role in CAMERA_ROLES:
-            view = getattr(self, f"view_{role}", None)
+            view = self._camera_views_by_role.get(role)
             if view is not None:
                 view.set_runtime_pixmap(None, placeholder=role.upper())
             label = getattr(self, f"lbl_{role}_timing", None)
@@ -1058,13 +1389,13 @@ class RuntimeModePage(QtWidgets.QWidget):
     def _refresh_camera_role_layout(self) -> None:
         display_roles = self._display_role_set()
         for role in CAMERA_ROLES:
-            view = getattr(self, f"view_{role}", None)
+            view = self._camera_views_by_role.get(role)
             if view is not None:
                 view.setVisible(role in display_roles)
-        if hasattr(self, "_camera_splitter"):
-            self._camera_splitter.setSizes([
-                1 if role in display_roles else 0 for role in CAMERA_ROLES
-            ])
+        for slot_index, slot in enumerate(self._camera_slots):
+            role = self._camera_slot_roles[slot_index]
+            slot.setVisible(role in display_roles)
+        self._rebuild_camera_grid()
 
     @staticmethod
     def _sanitize_runtime_status_text_v3(status_text: str) -> str:
