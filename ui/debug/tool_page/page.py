@@ -57,6 +57,7 @@ from shape.core.recipe_labels import (
     inspection_item_specs_from_shape_recipe,
     output_labels_from_shape_recipe,
 )
+from ncc import locator as ncc_locator
 from ui.debug import RoiCanvas
 from ui.debug.tool_page.algorithm_catalog import (
     ALGORITHM_DISPLAY_NAMES,
@@ -89,7 +90,11 @@ from ui.i18n import language_code, tr
 from ui.roi_overlay_colors import is_roi_label
 
 
-SUPPORTED_LOC_MODES = ["shape"]
+SUPPORTED_LOC_MODES = ["shape", "ncc"]
+LOC_METHOD_DISPLAY_NAMES = {
+    "shape": "位置修正工具",
+    "ncc": "NCC位置修正工具",
+}
 SUPPORTED_SHAPES = ["rect", "polygon"]
 ROI_OVERLAY_PALETTE = [
     QtGui.QColor(255, 215, 0),
@@ -102,6 +107,20 @@ ROI_OVERLAY_PALETTE = [
 
 def _pixmap_from_path(path: str) -> QtGui.QPixmap:
     return QtGui.QPixmap(path)
+
+
+def _normalize_loc_method(method: object, *, default: str = "shape") -> str:
+    value = str(method or "").strip().lower()
+    if value == "line2dup":
+        value = "shape"
+    if value in SUPPORTED_LOC_MODES:
+        return value
+    return default if default in SUPPORTED_LOC_MODES else "shape"
+
+
+def _loc_method_display_name(method: object) -> str:
+    value = _normalize_loc_method(method)
+    return LOC_METHOD_DISPLAY_NAMES.get(value, value)
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +172,7 @@ class ToolPage(QtWidgets.QWidget):
         self.test_files: List[str] = []
         self.ref_image: Optional[str] = None
         self.loc_method: str = "shape"
+        self._loc_methods_by_role: Dict[str, str] = {role: "shape" for role in CAMERA_ROLES}
         self.shape_recipe: Optional[ShapeRecipe] = None
         self._shape_recipes_by_role: Dict[str, Optional[ShapeRecipe]] = {}
         self._training_roi_ready_signatures: Dict[str, str] = {}
@@ -169,6 +189,7 @@ class ToolPage(QtWidgets.QWidget):
         self._skip_empty_autogen_message = False
         self._tool_dialogs: Dict[str, QtWidgets.QDialog] = {}
         self._template_editor_dialog: Optional[QtWidgets.QDialog] = None
+        self._ncc_workbench_dialog: Optional[QtWidgets.QDialog] = None
         self._sample_annotation_preview_dialog: Optional[QtWidgets.QDialog] = None
         self._debug_camera_manager = None
         self._debug_frame_grab_service = None
@@ -511,6 +532,67 @@ class ToolPage(QtWidgets.QWidget):
             return _normalize_camera_role(getattr(self, "_current_camera_role", "cam1")) or "cam1"
         return _normalize_camera_role(combo.currentData() or combo.currentText() or self._current_camera_role) or "cam1"
 
+    def _reset_loc_methods(self) -> None:
+        self._loc_methods_by_role = {role: "shape" for role in CAMERA_ROLES}
+        self.loc_method = self.loc_method_for_role(self.current_camera_role())
+        self._sync_loc_combo()
+
+    def _set_session_loc_methods(self, default_method: object, loc_methods: Dict[str, str] | None) -> None:
+        default = _normalize_loc_method(default_method)
+        raw_methods = dict(loc_methods or {})
+        self._loc_methods_by_role = {
+            role: _normalize_loc_method(raw_methods.get(role, default), default=default)
+            for role in CAMERA_ROLES
+        }
+        self.loc_method = self.loc_method_for_role(self.current_camera_role())
+
+    def loc_method_for_role(self, camera_role: object = None) -> str:
+        role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        return _normalize_loc_method(
+            self._loc_methods_by_role.get(role, self.loc_method),
+            default=_normalize_loc_method(self.loc_method),
+        )
+
+    def _set_loc_method_for_role(self, camera_role: object, method: object, *, sync_combo: bool = True) -> None:
+        role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        value = _normalize_loc_method(method)
+        self._loc_methods_by_role[role] = value
+        if role == self.current_camera_role():
+            self.loc_method = value
+            if sync_combo:
+                self._sync_loc_combo()
+
+    def _populate_loc_combo(self) -> None:
+        combo = getattr(self, "cmb_loc", None)
+        if combo is None:
+            return
+        blocker = QtCore.QSignalBlocker(combo)
+        combo.clear()
+        for method in SUPPORTED_LOC_MODES:
+            combo.addItem(_loc_method_display_name(method), method)
+        del blocker
+        self._sync_loc_combo()
+
+    def _sync_loc_combo(self) -> None:
+        combo = getattr(self, "cmb_loc", None)
+        if combo is None:
+            return
+        method = self.loc_method_for_role(self.current_camera_role())
+        blocker = QtCore.QSignalBlocker(combo)
+        index = combo.findData(method)
+        if index < 0:
+            index = combo.findText(method)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+        del blocker
+
+    def ncc_model_path_for_role(self, camera_role: object = None) -> str:
+        role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        return ncc_locator.resolved_model_path_for_product(self.session.product_dir, role)
+
+    def ncc_model_ready_for_role(self, camera_role: object = None) -> bool:
+        role = _normalize_camera_role(camera_role or self.current_camera_role()) or "cam1"
+        return ncc_locator.model_is_ready(self.session.product_dir, role)
+
     def _apply_camera_role_options_to_combo(self, combo: object) -> None:
         if combo is None:
             return
@@ -601,7 +683,27 @@ class ToolPage(QtWidgets.QWidget):
         return _filter_paths_for_camera(self, paths, camera_id)
 
     def _apply_current_role_recipe_state(self) -> None:
-        recipe = self.load_shape_recipe_for_role(self.current_camera_role())
+        role = self.current_camera_role()
+        method = self.loc_method_for_role(role)
+        if method == "ncc":
+            self.shape_recipe = None
+            self.ref_image = None
+            model_path = self.ncc_model_path_for_role(role)
+            if os.path.exists(model_path):
+                labels: List[str] = []
+                try:
+                    labels = ncc_locator.output_labels_for_product(self.session.product_dir, role)
+                except Exception:
+                    labels = []
+                suffix = f" ({', '.join(labels)})" if labels else ""
+                self.lbl_ref.setText(f"NCC模型: {os.path.basename(model_path)}{suffix}")
+                self.lbl_ref.setToolTip(model_path)
+            else:
+                self.lbl_ref.setText(f"NCC模型未设置: {role}")
+                self.lbl_ref.setToolTip(model_path)
+            return
+
+        recipe = self.load_shape_recipe_for_role(role)
         self.shape_recipe = recipe
         ref_image = ""
         if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
@@ -667,6 +769,8 @@ class ToolPage(QtWidgets.QWidget):
 
         if previous != normalized:
             self._clear_image_view_for_role_switch()
+        self.loc_method = self.loc_method_for_role(normalized)
+        self._sync_loc_combo()
         self._apply_current_role_recipe_state()
         self._refresh_lists()
         self._refresh_inspection_items_table()
@@ -817,6 +921,52 @@ class ToolPage(QtWidgets.QWidget):
 
     def open_template_editor_dialog(self) -> None:
         self._open_shape_template_page()
+
+    def open_ncc_match_dialog(self) -> None:
+        require_permission = getattr(self.window(), "_require_permission", None)
+        if callable(require_permission) and not require_permission("template.edit_roi", "NCC位置修正工具"):
+            return
+        try:
+            dialog = self._ncc_workbench_dialog
+            if dialog is not None and dialog.isVisible():
+                dialog.raise_()
+                dialog.activateWindow()
+                return
+
+            from ui.debug import NccMatchWorkbenchDialog
+
+            dialog = NccMatchWorkbenchDialog(
+                product_name=self.session.current_product,
+                product_dir=self.session.product_dir,
+                camera_role=self.current_camera_role(),
+                initial_image_path=str(self.canvas.image_path() or ""),
+                parent=self.window(),
+            )
+            dialog.setModal(False)
+            dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
+            if hasattr(dialog, "modelSaved"):
+                dialog.modelSaved.connect(self._on_ncc_model_saved)
+            dialog.destroyed.connect(lambda *_: setattr(self, "_ncc_workbench_dialog", None))
+            self._ncc_workbench_dialog = dialog
+            dialog.show()
+            dialog.raise_()
+            dialog.activateWindow()
+        except Exception as exc:
+            detail = traceback.format_exc()
+            self.lbl_status.setText(f"Status: failed to open NCC tool: {exc}")
+            QtWidgets.QMessageBox.critical(self, "NCC位置修正工具打开失败", f"{exc}\n\n{detail}")
+
+    def _on_ncc_model_saved(self, model_path: str) -> None:
+        role = self.current_camera_role()
+        self._set_loc_method_for_role(role, "ncc")
+        self._clear_training_roi_review_state(role)
+        self._save_session()
+        self._reload_inspection_items()
+        self._apply_current_role_recipe_state()
+        self.roiGeometryChanged.emit()
+        self.lbl_status.setText(
+            f"Status: NCC model saved for {role}: {os.path.basename(str(model_path or 'model.json'))}"
+        )
 
     def runtime_controller(self):
         parent = self.parent()
@@ -1358,9 +1508,8 @@ class ToolPage(QtWidgets.QWidget):
         self.lbl_loc_method = QtWidgets.QLabel(tr("debug.location_method"))
         auto_l.addWidget(self.lbl_loc_method, 2, 0)
         self.cmb_loc = QtWidgets.QComboBox()
-        self.cmb_loc.addItems(SUPPORTED_LOC_MODES)
-        self.cmb_loc.setCurrentText(self.loc_method)
-        self.cmb_loc.currentTextChanged.connect(self._on_loc_method_changed)
+        self._populate_loc_combo()
+        self.cmb_loc.currentIndexChanged.connect(lambda _idx: self._on_loc_method_changed(self.cmb_loc.currentData()))
         auto_l.addWidget(self.cmb_loc, 2, 1)
         self.chk_only_missing = QtWidgets.QCheckBox(tr("debug.only_missing_roi"))
         self.chk_only_missing.setChecked(True)
@@ -1577,9 +1726,9 @@ class ToolPage(QtWidgets.QWidget):
             labels.append(label)
             seen.add(label)
         if not labels:
-            labels_getter = getattr(self, "_shape_output_labels", None)
+            labels_getter = getattr(self, "_loc_output_labels", None)
             if callable(labels_getter):
-                for label in labels_getter():
+                for label in labels_getter(role):
                     text = str(label or "").strip()
                     if not is_roi_label(text) or text in seen:
                         continue
@@ -1630,6 +1779,9 @@ class ToolPage(QtWidgets.QWidget):
 
     def _mark_sample_path_all_ok(self, path: str, camera_role: object = None) -> None:
         self.roi_annotations.mark_all_ok(path, camera_role)
+
+    def _mark_sample_path_all_ng(self, path: str, camera_role: object = None) -> None:
+        self.roi_annotations.mark_all_ng(path, camera_role)
 
     def _clear_sample_path_annotations(self, path: str, camera_role: object = None) -> None:
         self.roi_annotations.clear_path(path, camera_role)
@@ -2287,7 +2439,8 @@ class ToolPage(QtWidgets.QWidget):
             "score_mode": self.cmb_mode.currentText(),
             "topk": int(self.spin_topk.value()),
             "margin": float(self.spin_margin.value()),
-            "loc_method": self.loc_method,
+            "loc_method": self.loc_method_for_role(self.current_camera_role()),
+            "loc_methods": dict(getattr(self, "_loc_methods_by_role", {}) or {}),
             "summary": summary,
             "rows": rows,
         }

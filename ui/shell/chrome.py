@@ -107,6 +107,9 @@ def build_menu_bar(window) -> None:
     act_template_editor = hardware_menu.addAction(
         shell_icon(SP.SP_FileDialogContentsView), tr("action.template_editor")
     ).triggered.connect(window.tool_page.open_template_editor_dialog)
+    hardware_menu.addAction(
+        shell_icon(SP.SP_FileDialogDetailedView), "NCC位置修正工具"
+    ).triggered.connect(window.tool_page.open_ncc_match_dialog)
     act_auto_region = hardware_menu.addAction(
         shell_icon(SP.SP_FileDialogListView), tr("action.auto_region")
     ).triggered.connect(window.tool_page.open_template_match_dialog)

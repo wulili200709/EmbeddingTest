@@ -15,7 +15,19 @@ from common.path_utils import (
     resolve_existing_product_path,
     resolve_existing_product_paths,
 )
-from common.camera_roles import configured_camera_roles
+from common.camera_roles import CAMERA_ROLES, DEFAULT_CAMERA_ROLE, configured_camera_roles
+
+
+SUPPORTED_LOC_METHODS = {"shape", "ncc"}
+
+
+def normalize_loc_method(method: object, *, default: str = "shape") -> str:
+    value = str(method or "").strip().lower()
+    if value == "line2dup":
+        value = "shape"
+    if value in SUPPORTED_LOC_METHODS:
+        return value
+    return default if default in SUPPORTED_LOC_METHODS else "shape"
 
 
 @dataclass(frozen=True)
@@ -52,6 +64,7 @@ class SessionData:
     test_files: List[str] = field(default_factory=list)
     ref_image: Optional[str] = None
     loc_method: str = "shape"
+    loc_methods: Dict[str, str] = field(default_factory=dict)
     runtime_cam1_serial: Optional[str] = None
     runtime_cam2_serial: Optional[str] = None
     runtime_cam3_serial: Optional[str] = None
@@ -225,6 +238,24 @@ class ProductSession:
             else existing_payload.get("runtime_camera_roles", [])
         )
         runtime_roles = configured_camera_roles(raw_roles) if raw_roles else []
+        default_loc_method = normalize_loc_method(data.loc_method)
+        existing_loc_methods = existing_payload.get("loc_methods", {})
+        if not isinstance(existing_loc_methods, dict):
+            existing_loc_methods = {}
+        loc_methods = {
+            str(role).strip(): normalize_loc_method(method, default=default_loc_method)
+            for role, method in existing_loc_methods.items()
+            if str(role).strip()
+        }
+        loc_methods.update(
+            {
+                str(role).strip(): normalize_loc_method(method, default=default_loc_method)
+                for role, method in dict(data.loc_methods or {}).items()
+                if str(role).strip()
+            }
+        )
+        for role in CAMERA_ROLES:
+            loc_methods.setdefault(role, default_loc_method)
 
         payload = {
             "train_files": [product_relative_path(path, base_dir=self.product_dir) for path in data.train_files],
@@ -232,7 +263,8 @@ class ProductSession:
             "ng_files": [product_relative_path(path, base_dir=self.product_dir) for path in data.ng_files],
             "test_files": [product_relative_path(path, base_dir=self.product_dir) for path in data.test_files],
             "ref_image": product_relative_path(data.ref_image or "", base_dir=self.product_dir),
-            "loc_method": data.loc_method,
+            "loc_method": default_loc_method,
+            "loc_methods": loc_methods,
             "runtime_cam1_serial": runtime_serials.get("cam1", ""),
             "runtime_cam2_serial": runtime_serials.get("cam2", ""),
             "runtime_cam3_serial": runtime_serials.get("cam3", ""),
@@ -257,11 +289,15 @@ class ProductSession:
         ref = raw.get("ref_image", "")
         ref_image = resolve_existing_product_path(ref, base_dir=self.product_dir, anchor_dir=self.product_dir)
 
-        loc_method = str(raw.get("loc_method", "shape")).strip() or "shape"
-        if loc_method == "line2dup":
-            loc_method = "shape"
-        if loc_method != "shape":
-            loc_method = "shape"
+        loc_method = normalize_loc_method(raw.get("loc_method", "shape"))
+        raw_loc_methods = raw.get("loc_methods", {})
+        if not isinstance(raw_loc_methods, dict):
+            raw_loc_methods = {}
+        loc_methods = {
+            role: normalize_loc_method(raw_loc_methods.get(role, loc_method), default=loc_method)
+            for role in CAMERA_ROLES
+        }
+        loc_method = loc_methods.get(DEFAULT_CAMERA_ROLE, loc_method)
 
         legacy_ok_files = _filter(raw.get("ok_files", []))
         legacy_ng_files = _filter(raw.get("ng_files", []))
@@ -293,6 +329,7 @@ class ProductSession:
             test_files=_filter(raw.get("test_files", [])),
             ref_image=ref_image,
             loc_method=loc_method,
+            loc_methods=loc_methods,
             runtime_cam1_serial=runtime_serials.get("cam1", ""),
             runtime_cam2_serial=runtime_serials.get("cam2", ""),
             runtime_cam3_serial=runtime_serials.get("cam3", ""),

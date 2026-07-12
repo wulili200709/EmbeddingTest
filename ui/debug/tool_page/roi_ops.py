@@ -118,12 +118,15 @@ def _set_overlay_shapes(tool_page, img_path: str, current_label: str) -> None:
     overlays: List[OverlayShape] = []
     visible_roi_labels: Optional[set[str]] = None
 
-    recipe = tool_page.shape_recipe_for_role(tool_page.current_camera_role())
-    if tool_page.loc_method == "shape":
+    current_role = tool_page.current_camera_role()
+    method_getter = getattr(tool_page, "loc_method_for_role", None)
+    loc_method = method_getter(current_role) if callable(method_getter) else tool_page.loc_method
+    recipe = tool_page.shape_recipe_for_role(current_role)
+    if loc_method == "shape":
         labels = [str(label).strip() for label in output_labels_from_shape_recipe(recipe) if str(label).strip()]
         visible_roi_labels = set(labels) if labels else None
 
-    if tool_page.loc_method == "shape" and recipe is not None and recipe.search_points:
+    if loc_method == "shape" and recipe is not None and recipe.search_points:
         points = [
             (float(pt[0]), float(pt[1]))
             for pt in (recipe.search_points or [])

@@ -425,8 +425,8 @@ def _precheck_for_capture_channels(runtime, channels: list[dict]) -> tuple[bool,
     if runtime._frame_grab_service is None or not runtime._frame_grab_service.roles():
         return False, "camera not connected"
 
-    if runtime._runtime_context.loc_method != "shape":
-        return False, "runtime currently only supports shape localization"
+    if runtime._runtime_context.loc_method not in {"shape", "ncc"}:
+        return False, "runtime currently only supports shape/NCC localization"
 
     if not channels:
         return False, "capture channel is not enabled"
@@ -620,8 +620,8 @@ def _precheck_for_roles(runtime, roles) -> tuple[bool, str]:
     if runtime._frame_grab_service is None or not runtime._frame_grab_service.roles():
         return False, "camera not connected"
 
-    if runtime._runtime_context.loc_method != "shape":
-        return False, "runtime currently only supports shape localization"
+    if runtime._runtime_context.loc_method not in {"shape", "ncc"}:
+        return False, "runtime currently only supports shape/NCC localization"
 
     active_roles = {
         str(role).strip()

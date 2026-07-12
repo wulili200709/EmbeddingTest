@@ -169,6 +169,7 @@ hiddenimports = sorted(
         + collect_submodules("devices")
         + collect_submodules("domain")
         + collect_submodules("infrastructure")
+        + collect_submodules("ncc")
         + collect_submodules("shape")
         + collect_submodules("services")
         + collect_submodules("ui")

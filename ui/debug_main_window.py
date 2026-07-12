@@ -39,6 +39,7 @@ class DebugMainWindow(QtWidgets.QMainWindow):
             tools_menu.addAction(tr("action.io_tool"), self.tool_page.open_io_debug_dialog)
             tools_menu.addSeparator()
         tools_menu.addAction(tr("action.template_editor"), self.tool_page.open_template_editor_dialog)
+        tools_menu.addAction("NCC位置修正工具", self.tool_page.open_ncc_match_dialog)
         tools_menu.addAction(tr("action.auto_region"), self.tool_page.open_template_match_dialog)
         tools_menu.addSeparator()
         tools_menu.addAction(tr("action.margin_validation"), self.tool_page.open_margin_validation_tool)

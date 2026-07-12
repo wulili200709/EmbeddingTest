@@ -97,6 +97,8 @@ def _on_template_editor_dialog_destroyed(self, *_args) -> None:
 
 def _on_shape_model_saved(self, model_path: str, recipe_path: str) -> None:
     camera_role = self.current_camera_role()
+    if hasattr(self, "_set_loc_method_for_role"):
+        self._set_loc_method_for_role(camera_role, "shape")
     self._clear_training_roi_review_state(camera_role)
     try:
         self.shape_recipe = self.shape_recipe_for_role(camera_role, force_reload=True)
@@ -138,29 +140,54 @@ def _sync_shape_recipe_and_items(self) -> None:
 
 
 def _update_loc_ui(self) -> None:
-    return None
+    method_getter = getattr(self, "loc_method_for_role", None)
+    method = method_getter(self.current_camera_role()) if callable(method_getter) else self.loc_method
+    shape_controls_enabled = method == "shape"
+    for widget_name in ("btn_set_ref", "btn_pick_ref"):
+        widget = getattr(self, widget_name, None)
+        if widget is not None:
+            widget.setEnabled(shape_controls_enabled)
 
 def _on_loc_method_changed(self, method: str) -> None:
-    if str(method or "") == str(self.loc_method or ""):
+    method_text = str(method or "").strip().lower()
+    if method_text == "line2dup":
+        method_text = "shape"
+    if method_text not in {"shape", "ncc"}:
+        method_text = "shape"
+    role = self.current_camera_role()
+    current_getter = getattr(self, "loc_method_for_role", None)
+    current_method = current_getter(role) if callable(current_getter) else self.loc_method
+    if method_text == str(current_method or ""):
         self._update_loc_ui()
         return
     require_permission = getattr(self.window(), "_require_permission", None)
     if callable(require_permission) and not require_permission("template.edit_params", "修改定位方式"):
-        blocker = QtCore.QSignalBlocker(self.cmb_loc)
-        self.cmb_loc.setCurrentText(self.loc_method)
-        del blocker
+        sync_combo = getattr(self, "_sync_loc_combo", None)
+        if callable(sync_combo):
+            sync_combo()
+        else:
+            blocker = QtCore.QSignalBlocker(self.cmb_loc)
+            self.cmb_loc.setCurrentText(self.loc_method)
+            del blocker
         return
-    before = str(self.loc_method or "")
-    self.loc_method = method
-    self._clear_training_roi_review_state()
+    before = str(current_method or "")
+    setter = getattr(self, "_set_loc_method_for_role", None)
+    if callable(setter):
+        setter(role, method_text)
+    else:
+        self.loc_method = method_text
+    self._clear_training_roi_review_state(role)
     self._update_loc_ui()
+    self._apply_current_role_recipe_state()
+    self._reload_inspection_items()
     self._save_session()
     audit_event = getattr(self.window(), "_audit_event", None)
-    if callable(audit_event) and before != str(method or ""):
+    if callable(audit_event) and before != method_text:
         audit_event(
             module="模板参数",
             action="修改定位方式",
+            target=str(role),
             before_value=before,
-            after_value=str(method or ""),
+            after_value=method_text,
         )
 

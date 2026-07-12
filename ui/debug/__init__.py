@@ -7,6 +7,7 @@ from importlib import import_module
 
 _SYMBOL_TO_MODULE = {
     "EmbeddingAnalysisDialog": ".embedding_analysis_dialog",
+    "NccMatchWorkbenchDialog": "ncc.ui.workbench_dialog",
     "ShapeTemplateDialog": "ui.shape_template.template_page_pyside6",
     "OverlayShape": ".roi_canvas_pyside6",
     "RoiCanvas": ".roi_canvas_pyside6",

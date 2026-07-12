@@ -70,6 +70,7 @@ class RoiCanvas(QtWidgets.QLabel):
         self._poly_pts: List[Tuple[float, float]] = []
         self._mouse_pos: Optional[Tuple[int, int]] = None
         self._interaction_enabled = True
+        self._outside_image_events_enabled = False
 
         self._roi_color = QtGui.QColor(0, 255, 0)
         self._roi_dash = False
@@ -128,15 +129,16 @@ class RoiCanvas(QtWidgets.QLabel):
     def reset_zoom(self) -> None:
         self.set_zoom(1.0)
 
-    def clear_roi(self) -> None:
+    def clear_roi(self, *, emit_signal: bool = True) -> None:
         self.roi.xywh = None
         self.roi.points = None
         self._poly_pts = []
         self._mouse_pos = None
         self.update()
-        self.shapesChanged.emit()
+        if emit_signal:
+            self.shapesChanged.emit()
 
-    def set_roi_rect(self, xywh: Optional[Tuple[int, int, int, int]]) -> None:
+    def set_roi_rect(self, xywh: Optional[Tuple[int, int, int, int]], *, emit_signal: bool = True) -> None:
         if xywh is None:
             self.roi.shape_type = "rect"
             self.roi.xywh = None
@@ -148,9 +150,10 @@ class RoiCanvas(QtWidgets.QLabel):
         self._poly_pts = []
         self._mouse_pos = None
         self.update()
-        self.shapesChanged.emit()
+        if emit_signal:
+            self.shapesChanged.emit()
 
-    def set_roi_polygon(self, points: Optional[List[Tuple[float, float]]]) -> None:
+    def set_roi_polygon(self, points: Optional[List[Tuple[float, float]]], *, emit_signal: bool = True) -> None:
         if not points or len(points) < 3:
             self.roi.shape_type = "polygon"
             self.roi.points = None
@@ -162,7 +165,8 @@ class RoiCanvas(QtWidgets.QLabel):
         self._poly_pts = []
         self._mouse_pos = None
         self.update()
-        self.shapesChanged.emit()
+        if emit_signal:
+            self.shapesChanged.emit()
 
     def set_overlays(self, overlays: Optional[List[OverlayShape]]) -> None:
         self._overlays = list(overlays or [])
@@ -170,6 +174,9 @@ class RoiCanvas(QtWidgets.QLabel):
 
     def set_interaction_enabled(self, enabled: bool) -> None:
         self._interaction_enabled = bool(enabled)
+
+    def set_outside_image_events_enabled(self, enabled: bool) -> None:
+        self._outside_image_events_enabled = bool(enabled)
 
     def set_roi_style(
         self,
@@ -250,12 +257,22 @@ class RoiCanvas(QtWidgets.QLabel):
         iy = max(0, min(iy, self._pixmap.height() - 1))
         return ix, iy
 
+    def _pos_to_unclamped_image_xy(self, pos: QtCore.QPoint) -> Optional[Tuple[int, int]]:
+        if self._pixmap is None or self._scaled_pm is None:
+            return None
+        x = pos.x() - self._offset.x()
+        y = pos.y() - self._offset.y()
+        return int(round(x / self._scale)), int(round(y / self._scale))
+
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         if not self.has_image():
             return
         image_xy = self._pos_to_image_xy(event.position().toPoint())
-        if image_xy is not None:
-            self.imagePressed.emit(_enum_to_int(event.button()), int(image_xy[0]), int(image_xy[1]))
+        signal_xy = image_xy
+        if signal_xy is None and self._outside_image_events_enabled:
+            signal_xy = self._pos_to_unclamped_image_xy(event.position().toPoint())
+        if signal_xy is not None:
+            self.imagePressed.emit(_enum_to_int(event.button()), int(signal_xy[0]), int(signal_xy[1]))
         if not self._interaction_enabled:
             return
 
@@ -284,8 +301,11 @@ class RoiCanvas(QtWidgets.QLabel):
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
         image_xy = self._pos_to_image_xy(event.position().toPoint()) if self.has_image() else None
-        if image_xy is not None:
-            self.imageMoved.emit(_enum_to_int(event.buttons()), int(image_xy[0]), int(image_xy[1]))
+        signal_xy = image_xy
+        if signal_xy is None and self.has_image() and self._outside_image_events_enabled:
+            signal_xy = self._pos_to_unclamped_image_xy(event.position().toPoint())
+        if signal_xy is not None:
+            self.imageMoved.emit(_enum_to_int(event.buttons()), int(signal_xy[0]), int(signal_xy[1]))
         if not self._interaction_enabled:
             return
 
@@ -298,8 +318,11 @@ class RoiCanvas(QtWidgets.QLabel):
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
         image_xy = self._pos_to_image_xy(event.position().toPoint()) if self.has_image() else None
-        if image_xy is not None:
-            self.imageReleased.emit(_enum_to_int(event.button()), int(image_xy[0]), int(image_xy[1]))
+        signal_xy = image_xy
+        if signal_xy is None and self.has_image() and self._outside_image_events_enabled:
+            signal_xy = self._pos_to_unclamped_image_xy(event.position().toPoint())
+        if signal_xy is not None:
+            self.imageReleased.emit(_enum_to_int(event.button()), int(signal_xy[0]), int(signal_xy[1]))
         if not self._interaction_enabled:
             return
 

@@ -7,6 +7,7 @@ from typing import Callable, Iterable, List, Mapping, Optional
 import algorithms.lazy_api as qr_core
 from common import labelme_io
 from common.app_logging import get_app_logger
+from ncc import locator as ncc_locator
 from shape.core import locator as shape_locator
 
 
@@ -68,8 +69,10 @@ def validate_autogen_reference(
     shape_model_path: str = "",
     shape_labels: Iterable[str] = (),
     reference_regions: Iterable[Mapping[str, object]] | None = None,
+    ncc_model_path: str = "",
+    ncc_labels: Iterable[str] = (),
 ) -> AutoRoiValidation:
-    method = str(method or "").strip()
+    method = str(method or "").strip().lower()
     ref_image = str(ref_image or "").strip()
     if method == "shape":
         if shape_model_path and not os.path.exists(shape_model_path):
@@ -103,6 +106,18 @@ def validate_autogen_reference(
                     labels=labels,
                     issue=AutoRoiIssue("auto.missing_reference_roi", {"labels": ", ".join(missing_labels)}),
                 )
+        return AutoRoiValidation(ok=True, labels=labels)
+
+    if method == "ncc":
+        if not ncc_model_path or not os.path.exists(ncc_model_path):
+            return AutoRoiValidation(
+                ok=False,
+                issue=AutoRoiIssue(
+                    message_key="template.no_model",
+                    fallback="Current product has no NCC model. Create an NCC template first.",
+                ),
+            )
+        labels = [str(label).strip() for label in ncc_labels if str(label).strip()] or ["roi"]
         return AutoRoiValidation(ok=True, labels=labels)
 
     if not ref_image or not os.path.exists(ref_image):
@@ -147,7 +162,7 @@ def run_auto_roi_batch(
     timings: dict[str, float] = {}
     errs: List[str] = []
     total = len(todo)
-    method = str(method or "").strip()
+    method = str(method or "").strip().lower()
     for index, path in enumerate(todo, start=1):
         if progress is not None:
             progress(f"{index}/{total} {os.path.basename(path)}")
@@ -156,6 +171,13 @@ def run_auto_roi_batch(
                 run = shape_locator.autogen_roi_json_from_shape_timed(
                     tgt_img_path=path,
                     ref_img_path=str(ref_image or ""),
+                    product_dir=str(product_dir or ""),
+                    camera_role=str(camera_role or "cam1"),
+                )
+                timings[path] = float(run.total_ms)
+            elif method == "ncc":
+                run = ncc_locator.autogen_roi_json_from_ncc_timed(
+                    tgt_img_path=path,
                     product_dir=str(product_dir or ""),
                     camera_role=str(camera_role or "cam1"),
                 )

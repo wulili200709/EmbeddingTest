@@ -5,6 +5,7 @@ from typing import List
 
 from PySide6 import QtWidgets
 
+from ncc import locator as ncc_locator
 from shape.core import locator as shape_locator
 from ui.debug.tool_page.camera_roles import normalize_camera_role
 from ui.i18n import tr
@@ -86,7 +87,9 @@ class TrainingRoiReview:
 
     def ensure_roi_reviewed(self, camera_role: object, *, action_name: str, action_key: str) -> bool:
         role = normalize_camera_role(camera_role or self.owner.current_camera_role()) or "cam1"
-        if self.owner.loc_method != "shape":
+        method_getter = getattr(self.owner, "loc_method_for_role", None)
+        method = method_getter(role) if callable(method_getter) else self.owner.loc_method
+        if method not in {"shape", "ncc"}:
             return True
         candidate_paths = self.task_builder.train_sample_paths_for_role(role)
         if not candidate_paths:
@@ -105,27 +108,42 @@ class TrainingRoiReview:
             self.owner._update_runtime_widgets()
             return True
 
-        recipe = self.owner.shape_recipe_for_role(role, force_reload=True)
-        if recipe is None:
-            QtWidgets.QMessageBox.warning(self.owner, tr("common.info"), tr("debug.recipe_missing", role=role))
-            return False
-        ref_image = self.owner.ref_image
-        if recipe.reference_image and os.path.exists(recipe.reference_image):
-            ref_image = recipe.reference_image
-        if not ref_image or not os.path.exists(ref_image):
-            QtWidgets.QMessageBox.warning(self.owner, tr("common.info"), tr("debug.reference_missing", role=role))
-            return False
-
         ok_count = 0
         errors: List[str] = []
+        if method == "shape":
+            recipe = self.owner.shape_recipe_for_role(role, force_reload=True)
+            if recipe is None:
+                QtWidgets.QMessageBox.warning(self.owner, tr("common.info"), tr("debug.recipe_missing", role=role))
+                return False
+            ref_image = self.owner.ref_image
+            if recipe.reference_image and os.path.exists(recipe.reference_image):
+                ref_image = recipe.reference_image
+            if not ref_image or not os.path.exists(ref_image):
+                QtWidgets.QMessageBox.warning(self.owner, tr("common.info"), tr("debug.reference_missing", role=role))
+                return False
+        else:
+            model_path = self.owner.ncc_model_path_for_role(role)
+            if not model_path or not os.path.exists(model_path):
+                QtWidgets.QMessageBox.warning(self.owner, tr("common.info"), f"NCC model missing for {role}")
+                return False
+            ref_image = ""
+            recipe = None
+
         for path in candidate_paths:
             try:
-                run = shape_locator.autogen_roi_json_from_shape_timed(
-                    tgt_img_path=path,
-                    ref_img_path=ref_image,
-                    product_dir=self.owner.session.product_dir,
-                    camera_role=role,
-                )
+                if method == "shape":
+                    run = shape_locator.autogen_roi_json_from_shape_timed(
+                        tgt_img_path=path,
+                        ref_img_path=ref_image,
+                        product_dir=self.owner.session.product_dir,
+                        camera_role=role,
+                    )
+                else:
+                    run = ncc_locator.autogen_roi_json_from_ncc_timed(
+                        tgt_img_path=path,
+                        product_dir=self.owner.session.product_dir,
+                        camera_role=role,
+                    )
                 self.owner._shape_match_ms_by_image[path] = float(run.total_ms)
                 self.owner._shape_autogen_ms_by_image[path] = float(run.total_ms)
                 ok_count += 1

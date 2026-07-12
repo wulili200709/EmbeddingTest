@@ -106,6 +106,9 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         self.btn_mark_all_ok = QtWidgets.QPushButton(tr("sample.mark_all_ok"))
         self.btn_mark_all_ok.clicked.connect(self._mark_current_image_all_ok)
         footer.addWidget(self.btn_mark_all_ok)
+        self.btn_mark_all_ng = QtWidgets.QPushButton(tr("sample.mark_all_ng"))
+        self.btn_mark_all_ng.clicked.connect(self._mark_current_image_all_ng)
+        footer.addWidget(self.btn_mark_all_ng)
         self.btn_clear_current = QtWidgets.QPushButton(tr("sample.clear_current_labels"))
         self.btn_clear_current.clicked.connect(self._clear_current_image_annotations)
         footer.addWidget(self.btn_clear_current)
@@ -339,6 +342,13 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         self._tool_page._mark_sample_path_all_ok(path, camera_role)
         self._refresh_after_annotation_change(path, camera_role)
 
+    def _mark_current_image_all_ng(self) -> None:
+        path, camera_role = self._current_path_and_role()
+        if not path:
+            return
+        self._tool_page._mark_sample_path_all_ng(path, camera_role)
+        self._refresh_after_annotation_change(path, camera_role)
+
     def _clear_current_image_annotations(self) -> None:
         path, camera_role = self._current_path_and_role()
         if not path:
@@ -363,6 +373,7 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         row = self.sample_list.currentRow()
         has_selection = count > 0 and row >= 0
         self.btn_mark_all_ok.setEnabled(has_selection)
+        self.btn_mark_all_ng.setEnabled(has_selection)
         self.btn_clear_current.setEnabled(has_selection)
         self.btn_prev.setEnabled(has_selection and row > 0)
         self.btn_next.setEnabled(has_selection and row >= 0 and row < count - 1)

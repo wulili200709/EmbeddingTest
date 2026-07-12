@@ -107,11 +107,7 @@ class TestExecutionController:
             row.setdefault("pred", response.result)
             row["match_ms"] = match_ms if match_ms > 0.0 else row.get("match_ms")
             row["total_ms"] = total_ms if total_ms > 0.0 else row.get("total_ms")
-            labels_override = (
-                self.owner._shape_output_labels()
-                if self.owner.loc_method == "shape"
-                else ["roi"]
-            )
+            labels_override = self.owner._loc_output_labels(camera_id)
             for roi_label in labels_override:
                 self.record_roi_result(p, roi_label, response.result)
             rows.append(row)

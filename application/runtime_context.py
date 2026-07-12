@@ -38,6 +38,7 @@ from domain import (
     save_inspection_items,
     sync_items_with_labels,
 )
+from ncc import locator as ncc_locator
 from shape.core import locator as shape_locator
 from shape.core.recipe_labels import inspection_item_specs_from_shape_recipe, output_labels_from_shape_recipe
 
@@ -48,6 +49,15 @@ if TYPE_CHECKING:
 
 def _camera_role_from_path(path: str) -> str:
     return camera_role_from_text(os.path.basename(str(path or "")), default=DEFAULT_CAMERA_ROLE)
+
+
+def _normalize_loc_method(method: object, *, default: str = "shape") -> str:
+    value = str(method or "").strip().lower()
+    if value == "line2dup":
+        value = "shape"
+    if value in {"shape", "ncc"}:
+        return value
+    return default if default in {"shape", "ncc"} else "shape"
 
 
 class RuntimePredictorProtocol(Protocol):
@@ -304,6 +314,12 @@ class ToolPageRuntimeContext:
     def loc_method(self) -> str:
         return self.tool_page.loc_method
 
+    def loc_method_for_role(self, camera_role: object = None) -> str:
+        getter = getattr(self.tool_page, "loc_method_for_role", None)
+        if callable(getter):
+            return _normalize_loc_method(getter(camera_role))
+        return _normalize_loc_method(self.tool_page.loc_method)
+
     def current_algorithm(self) -> str:
         return self.tool_page.current_algorithm()
 
@@ -360,7 +376,8 @@ class ToolPageRuntimeContext:
         ) or "cam1"
 
         match_ms = None
-        if tool_page.loc_method == "shape":
+        method = self.loc_method_for_role(camera_role)
+        if method == "shape":
             recipe = tool_page.shape_recipe_for_role(camera_role)
             ref_image = tool_page.ref_image
             if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
@@ -375,6 +392,15 @@ class ToolPageRuntimeContext:
                 match_ms = float(run.total_ms)
                 tool_page._shape_match_ms_by_image[path] = match_ms
                 tool_page._shape_autogen_ms_by_image[path] = float(run.total_ms)
+        elif method == "ncc":
+            run = ncc_locator.autogen_roi_json_from_ncc_timed(
+                tgt_img_path=path,
+                product_dir=tool_page.session.product_dir,
+                camera_role=camera_role,
+            )
+            match_ms = float(run.total_ms)
+            tool_page._shape_match_ms_by_image[path] = match_ms
+            tool_page._shape_autogen_ms_by_image[path] = float(run.total_ms)
         elif tool_page.ref_image and os.path.exists(tool_page.ref_image):
             tool_page._autogen_roi_for_images([path], only_missing=True, silent=True)
 
@@ -420,6 +446,7 @@ class ProductRuntimeContext:
 
     def __post_init__(self) -> None:
         self._loc_method = "shape"
+        self._loc_methods_by_role: Dict[str, str] = {role: "shape" for role in CAMERA_ROLES}
         self._inspection_items: List[InspectionItem] = []
         self._recipe = None
         self._recipes_by_role: Dict[str, object] = {}
@@ -434,6 +461,13 @@ class ProductRuntimeContext:
     @property
     def loc_method(self) -> str:
         return self._loc_method
+
+    def loc_method_for_role(self, camera_role: object = None) -> str:
+        role = normalize_camera_role(camera_role, default=DEFAULT_CAMERA_ROLE)
+        return _normalize_loc_method(
+            self._loc_methods_by_role.get(role, self._loc_method),
+            default=_normalize_loc_method(self._loc_method),
+        )
 
     def current_algorithm(self) -> str:
         return str(self.algo.product_params.algorithm or "").strip()
@@ -457,7 +491,8 @@ class ProductRuntimeContext:
         total_t0 = time.perf_counter()
         match_ms = None
         camera_role = _camera_role_from_path(path)
-        if self.loc_method == "shape":
+        method = self.loc_method_for_role(camera_role)
+        if method == "shape":
             recipe = self._ensure_recipe_loaded(camera_role)
             ref_image = self._reference_image(recipe)
             if ref_image and os.path.exists(ref_image):
@@ -469,10 +504,18 @@ class ProductRuntimeContext:
                 )
                 match_ms = float(run.total_ms)
                 self._shape_match_ms_by_image[path] = match_ms
+        elif method == "ncc":
+            run = ncc_locator.autogen_roi_json_from_ncc_timed(
+                tgt_img_path=path,
+                product_dir=self.session.product_dir,
+                camera_role=camera_role,
+            )
+            match_ms = float(run.total_ms)
+            self._shape_match_ms_by_image[path] = match_ms
 
         labels = list(labels_override or [])
         if not labels:
-            labels = self._shape_output_labels() if self.loc_method == "shape" else ["roi"]
+            labels = self._loc_output_labels(camera_role)
         effective_algorithm = ""
         if str(algorithm_override or "").strip():
             effective_algorithm = self.algo.resolve_tool_algorithm(algorithm_override)
@@ -533,7 +576,8 @@ class ProductRuntimeContext:
             if enabled_items
             else DEFAULT_CAMERA_ROLE
         )
-        if self.loc_method == "shape":
+        method = self.loc_method_for_role(camera_role)
+        if method == "shape":
             recipe = self._ensure_recipe_loaded(camera_role)
             ref_image = self._reference_image(recipe)
             if ref_image and os.path.exists(ref_image):
@@ -545,6 +589,14 @@ class ProductRuntimeContext:
                 )
                 match_ms = float(run.total_ms)
                 self._shape_match_ms_by_image[path] = match_ms
+        elif method == "ncc":
+            run = ncc_locator.autogen_roi_json_from_ncc_timed(
+                tgt_img_path=path,
+                product_dir=self.session.product_dir,
+                camera_role=camera_role,
+            )
+            match_ms = float(run.total_ms)
+            self._shape_match_ms_by_image[path] = match_ms
 
         rows_by_key = _predict_learning_items_batch_rows(
             path=path,
@@ -605,7 +657,8 @@ class ProductRuntimeContext:
         role = normalize_camera_role(camera_role, default=DEFAULT_CAMERA_ROLE)
         match_ms = 0.0
         roi_shapes: tuple[RuntimePreviewShape, ...] = ()
-        if self.loc_method == "shape":
+        method = self.loc_method_for_role(role)
+        if method == "shape":
             recipe = self._ensure_recipe_loaded(role)
             ref_image = self._reference_image(recipe)
             if ref_image and os.path.exists(ref_image):
@@ -624,6 +677,21 @@ class ProductRuntimeContext:
                     )
                     for shape in tuple(run.roi_shapes or ())
                 )
+        elif method == "ncc":
+            run = ncc_locator.autogen_runtime_roi_shapes_timed(
+                scene_bgr=image,
+                product_dir=self.session.product_dir,
+                camera_role=role,
+            )
+            match_ms = float(run.total_ms)
+            roi_shapes = tuple(
+                RuntimePreviewShape(
+                    label=str(shape.label_name or "").strip() or "roi",
+                    shape_type=str(shape.shape_type or "polygon"),
+                    points=tuple((float(x), float(y)) for x, y in tuple(shape.points or ())),
+                )
+                for shape in tuple(run.roi_shapes or ())
+            )
 
         rows_by_key = _predict_learning_items_batch_rows_from_frame(
             image_bgr=image,
@@ -800,22 +868,35 @@ class ProductRuntimeContext:
         self.algo.load_params(self.session.product_params_path)
         self._shape_match_ms_by_image = {}
         session_data = self.session.load_session()
-        self._loc_method = str(session_data.loc_method or "shape").strip() or "shape"
+        self._loc_method = _normalize_loc_method(session_data.loc_method)
+        raw_loc_methods = dict(getattr(session_data, "loc_methods", {}) or {})
+        self._loc_methods_by_role = {
+            role: _normalize_loc_method(raw_loc_methods.get(role, self._loc_method), default=self._loc_method)
+            for role in CAMERA_ROLES
+        }
         self._ref_image = str(session_data.ref_image or "").strip()
         self._recipes_by_role = {}
         items = load_inspection_items(self.session.inspection_items_path)
         synced_items: List[InspectionItem] = []
         remaining_items: List[InspectionItem] = []
         for role in CAMERA_ROLES:
+            method = self.loc_method_for_role(role)
             recipe = self._load_recipe_if_available(role)
             self._recipes_by_role[role] = recipe
             role_items = [
                 item for item in items
                 if str(getattr(item, "camera_id", "") or "").strip() == role
             ]
-            if recipe is None and not role_items:
-                continue
-            specs = inspection_item_specs_from_shape_recipe(recipe)
+            if method == "ncc":
+                if not ncc_locator.model_is_ready(self.session.product_dir, role):
+                    if role_items:
+                        synced_items.extend(role_items)
+                    continue
+                specs = ncc_locator.inspection_item_specs_for_product(self.session.product_dir, role)
+            else:
+                if recipe is None and not role_items:
+                    continue
+                specs = inspection_item_specs_from_shape_recipe(recipe)
             labels = [
                 str(spec.get("roi_label", "")).strip()
                 for spec in specs
@@ -863,6 +944,20 @@ class ProductRuntimeContext:
 
     def _shape_output_labels(self, camera_role: str = "cam1") -> List[str]:
         return output_labels_from_shape_recipe(self._ensure_recipe_loaded(camera_role))
+
+    def _ncc_output_labels(self, camera_role: str = "cam1") -> List[str]:
+        try:
+            return ncc_locator.output_labels_for_product(self.session.product_dir, camera_role)
+        except Exception:
+            return ["roi"]
+
+    def _loc_output_labels(self, camera_role: str = "cam1") -> List[str]:
+        method = self.loc_method_for_role(camera_role)
+        if method == "shape":
+            return self._shape_output_labels(camera_role)
+        if method == "ncc":
+            return self._ncc_output_labels(camera_role)
+        return ["roi"]
 
     def _reference_image(self, recipe) -> str:
         if self._ref_image and os.path.exists(self._ref_image):

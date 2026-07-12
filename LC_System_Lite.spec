@@ -61,6 +61,7 @@ hiddenimports = sorted(
         collect_submodules("algorithms")
         + collect_submodules("common")
         + collect_submodules("config")
+        + collect_submodules("ncc")
         + collect_submodules("shape")
         + collect_submodules("ui.shape_template")
         + [

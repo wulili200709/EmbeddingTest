@@ -98,7 +98,12 @@ def _save_test_result_report(
         "score_mode": tool_page.cmb_mode.currentText(),
         "margin": float(tool_page.spin_margin.value()),
         "topk": int(tool_page.spin_topk.value()),
-        "loc_method": tool_page.loc_method,
+        "loc_method": (
+            tool_page.loc_method_for_role(tool_page.current_camera_role())
+            if hasattr(tool_page, "loc_method_for_role")
+            else tool_page.loc_method
+        ),
+        "loc_methods": dict(getattr(tool_page, "_loc_methods_by_role", {}) or {}),
         "summary": summary or tool_page._summarize_test_rows(rows),
         "rows": rows,
     }

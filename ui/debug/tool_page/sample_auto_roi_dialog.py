@@ -189,8 +189,9 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
     ) -> dict | None:
         tool_page = self._tool_page
         ref_image = tool_page.ref_image
-        method = tool_page.loc_method
         role = self._camera_role()
+        method_getter = getattr(tool_page, "loc_method_for_role", None)
+        method = method_getter(role) if callable(method_getter) else tool_page.loc_method
         labels: List[str]
         pre_resolved = False
 
@@ -221,6 +222,14 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
                 shape_model_path=tool_page.shape_model_path_for_role(role),
                 shape_labels=labels,
                 reference_regions=recipe.reference_regions,
+            )
+        elif method == "ncc":
+            labels = tool_page._ncc_output_labels(role)
+            validation = validate_autogen_reference(
+                method=method,
+                ref_image="",
+                ncc_model_path=tool_page.ncc_model_path_for_role(role),
+                ncc_labels=labels,
             )
         else:
             validation = validate_autogen_reference(method=method, ref_image=ref_image)

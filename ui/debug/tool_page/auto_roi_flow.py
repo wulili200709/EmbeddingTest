@@ -42,7 +42,7 @@ def _resolve_autogen_targets(
     self._skip_empty_autogen_message = False
     if not paths:
         return []
-    labels = self._shape_output_labels(camera_role) if self.loc_method == "shape" else ["roi"]
+    labels = self._loc_output_labels(camera_role)
     missing = service_missing_roi_files(paths, labels)
     if not missing:
         if not silent:
@@ -93,9 +93,10 @@ def _autogen_roi_for_images(
             QtWidgets.QMessageBox.information(self, "Info", "No image to process")
         return
     ref_image = self.ref_image
-    method = self.loc_method
     labels: List[str] = ["roi"]
     role = self.current_camera_role() if camera_role is None else str(camera_role)
+    method_getter = getattr(self, "loc_method_for_role", None)
+    method = method_getter(role) if callable(method_getter) else self.loc_method
     if method == "shape":
         try:
             recipe = self.shape_recipe_for_role(role, force_reload=True)
@@ -121,6 +122,14 @@ def _autogen_roi_for_images(
             shape_model_path=self.shape_model_path_for_role(role),
             shape_labels=labels,
             reference_regions=recipe.reference_regions,
+        )
+    elif method == "ncc":
+        labels = self._ncc_output_labels(role)
+        validation = validate_autogen_reference(
+            method=method,
+            ref_image="",
+            ncc_model_path=self.ncc_model_path_for_role(role),
+            ncc_labels=labels,
         )
     else:
         validation = validate_autogen_reference(method=method, ref_image=ref_image)
@@ -205,7 +214,26 @@ def _autogen_roi_all(self) -> None:
     if not train_files:
         train_files = list(getattr(self, "ok_files", []) or []) + list(getattr(self, "ng_files", []) or [])
     paths = list(dict.fromkeys(train_files + list(self.test_files)))
-    self._autogen_roi_for_images(paths, only_missing=self.chk_only_missing.isChecked())
+    if not paths:
+        self._autogen_roi_for_images(paths, only_missing=self.chk_only_missing.isChecked())
+        return
+    current_role = self.current_camera_role()
+    try:
+        processed = False
+        for role in self.configured_camera_roles():
+            role_paths = _filter_paths_for_camera(self, paths, role)
+            if not role_paths:
+                continue
+            processed = True
+            self._autogen_roi_for_images(
+                role_paths,
+                only_missing=self.chk_only_missing.isChecked(),
+                camera_role=role,
+            )
+        if not processed:
+            self._autogen_roi_for_images(paths, only_missing=self.chk_only_missing.isChecked())
+    finally:
+        self._set_current_camera_role(current_role, sync_debug_role=False)
 
 def _clear_roi_for_images(
     self,

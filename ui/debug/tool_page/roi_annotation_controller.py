@@ -133,11 +133,20 @@ class RoiAnnotationController:
             self.owner._sample_roi_annotations_by_path.pop(normalized_path, None)
         self.save()
 
-    def mark_all_ok(self, path: str, camera_role: object = None) -> None:
+    def mark_all_status(self, path: str, status: object, camera_role: object = None) -> None:
         role = _normalize_camera_role(camera_role or self.owner.current_camera_role()) or "cam1"
+        status_text = str(status or "").strip().upper()
+        if status_text not in {"OK", "NG"}:
+            return
         for label in self.owner._inspection_label_names_for_role(role):
             if self.has_geometry(path, label):
-                self.set_status_for_path(path, role, label, "OK")
+                self.set_status_for_path(path, role, label, status_text)
+
+    def mark_all_ok(self, path: str, camera_role: object = None) -> None:
+        self.mark_all_status(path, "OK", camera_role)
+
+    def mark_all_ng(self, path: str, camera_role: object = None) -> None:
+        self.mark_all_status(path, "NG", camera_role)
 
     def clear_path(self, path: str, camera_role: object = None) -> None:
         role = _normalize_camera_role(camera_role or self.owner.current_camera_role()) or "cam1"

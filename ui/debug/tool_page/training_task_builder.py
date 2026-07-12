@@ -62,13 +62,20 @@ class TrainingTaskBuilder:
     def ready_signature(self, camera_role: object = None) -> str:
         role = normalize_camera_role(camera_role or self.owner.current_camera_role()) or "cam1"
         candidate_paths = self.train_sample_paths_for_role(role)
-        recipe_path = self.owner.shape_recipe_path_for_role(role)
-        model_path = self.owner.shape_model_path_for_role(role)
+        method_getter = getattr(self.owner, "loc_method_for_role", None)
+        method = method_getter(role) if callable(method_getter) else self.owner.loc_method
+        if method == "ncc":
+            recipe_path = ""
+            model_path = self.owner.ncc_model_path_for_role(role)
+        else:
+            recipe_path = self.owner.shape_recipe_path_for_role(role)
+            model_path = self.owner.shape_model_path_for_role(role)
         recipe_mtime = os.path.getmtime(recipe_path) if recipe_path and os.path.exists(recipe_path) else -1.0
         model_mtime = os.path.getmtime(model_path) if model_path and os.path.exists(model_path) else -1.0
         return "|".join(
             [
                 role,
+                str(method),
                 str(recipe_mtime),
                 str(model_mtime),
                 str(self.owner.ref_image or ""),
@@ -76,14 +83,28 @@ class TrainingTaskBuilder:
             ]
         )
 
-    def missing_training_roi_paths(self, roi_label: str, candidate_paths: List[str]) -> List[str]:
+    def missing_training_roi_paths(
+        self,
+        roi_label: str,
+        candidate_paths: List[str],
+        *,
+        camera_role: object = None,
+    ) -> List[str]:
+        role = normalize_camera_role(camera_role or self.owner.current_camera_role()) or "cam1"
         missing_paths: List[str] = []
         for path in candidate_paths:
             if not self.owner._path_has_roi_geometry(path, roi_label):
                 missing_paths.append(path)
-        if missing_paths and self.owner.loc_method == "shape":
+        method_getter = getattr(self.owner, "loc_method_for_role", None)
+        method = method_getter(role) if callable(method_getter) else self.owner.loc_method
+        if missing_paths and method in {"shape", "ncc"}:
             try:
-                self.owner._autogen_roi_for_images(missing_paths, only_missing=False, silent=True)
+                self.owner._autogen_roi_for_images(
+                    missing_paths,
+                    only_missing=False,
+                    silent=True,
+                    camera_role=role,
+                )
                 missing_paths = [
                     path for path in candidate_paths
                     if not self.owner._path_has_roi_geometry(path, roi_label)
@@ -119,7 +140,11 @@ class TrainingTaskBuilder:
             camera_id = normalize_camera_role(inspection_item.camera_id) or "cam1"
             raise RuntimeError(f"missing {'/'.join(missing_groups)} images for {camera_id}")
 
-        missing_paths = self.missing_training_roi_paths(roi_label, candidate_paths)
+        missing_paths = self.missing_training_roi_paths(
+            roi_label,
+            candidate_paths,
+            camera_role=inspection_item.camera_id,
+        )
         if missing_paths:
             missing = [os.path.basename(path) for path in missing_paths[:50]]
             raise RuntimeError(

@@ -61,12 +61,29 @@ class ProductSessionController:
         self.owner.ng_files = []
         self.owner.test_files = session_data.test_files
         self.owner._load_sample_roi_annotations()
-        self.owner.loc_method = session_data.loc_method
+        if hasattr(self.owner, "_set_session_loc_methods"):
+            self.owner._set_session_loc_methods(session_data.loc_method, session_data.loc_methods)
+        else:
+            self.owner.loc_method = session_data.loc_method
         self.owner._shape_recipes_by_role = {}
         self.owner._clear_training_roi_review_state()
-        self.owner.cmb_loc.setCurrentText(self.owner.loc_method)
+        sync_loc_combo = getattr(self.owner, "_sync_loc_combo", None)
+        if callable(sync_loc_combo):
+            sync_loc_combo()
+        else:
+            self.owner.cmb_loc.setCurrentText(self.owner.loc_method)
         self.owner._apply_current_role_recipe_state()
-        if not self.owner.ref_image and session_data.ref_image and os.path.exists(session_data.ref_image):
+        current_method = (
+            self.owner.loc_method_for_role(self.owner.current_camera_role())
+            if hasattr(self.owner, "loc_method_for_role")
+            else self.owner.loc_method
+        )
+        if (
+            current_method == "shape"
+            and not self.owner.ref_image
+            and session_data.ref_image
+            and os.path.exists(session_data.ref_image)
+        ):
             self.owner.ref_image = session_data.ref_image
             self.owner.lbl_ref.setText(f"{tr('debug.reference_image')}: {os.path.basename(self.owner.ref_image)}")
             self.owner.lbl_ref.setToolTip(self.owner.ref_image)
@@ -86,6 +103,8 @@ class ProductSessionController:
         self.owner.algo.model = None
         self.owner.shape_recipe = None
         self.owner._shape_recipes_by_role = {}
+        if hasattr(self.owner, "_reset_loc_methods"):
+            self.owner._reset_loc_methods()
         self.owner._clear_training_roi_review_state()
         self.owner.ref_image = None
         self.owner._shape_match_ms_by_image = {}
@@ -133,7 +152,16 @@ class ProductSessionController:
             ng_files=list(self.owner.ng_files),
             test_files=list(self.owner.test_files),
             ref_image=self.owner.ref_image,
-            loc_method=self.owner.loc_method,
+            loc_method=(
+                self.owner.loc_method_for_role("cam1")
+                if hasattr(self.owner, "loc_method_for_role")
+                else self.owner.loc_method
+            ),
+            loc_methods=(
+                dict(getattr(self.owner, "_loc_methods_by_role", {}) or {})
+                if hasattr(self.owner, "_loc_methods_by_role")
+                else {}
+            ),
         ))
 
     def on_product_changed(self, product_name: str) -> None:

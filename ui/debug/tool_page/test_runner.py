@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from common.algorithm_codes import learning_backbone_storage_code
+from ncc import locator as ncc_locator
 from shape.core import locator as shape_locator
 
 
@@ -37,8 +38,10 @@ def _predict_image(
     )
 
     match_ms: Optional[float] = None
-    if tool_page.loc_method == "shape":
-        camera_role = tool_page.current_camera_role()
+    camera_role = tool_page.current_camera_role()
+    method_getter = getattr(tool_page, "loc_method_for_role", None)
+    method = method_getter(camera_role) if callable(method_getter) else tool_page.loc_method
+    if method == "shape":
         recipe = tool_page.shape_recipe_for_role(camera_role)
         ref_image = tool_page.ref_image
         if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
@@ -53,12 +56,21 @@ def _predict_image(
             match_ms = float(run.total_ms)
             tool_page._shape_match_ms_by_image[path] = match_ms
             tool_page._shape_autogen_ms_by_image[path] = float(run.total_ms)
+    elif method == "ncc":
+        run = ncc_locator.autogen_roi_json_from_ncc_timed(
+            tgt_img_path=path,
+            product_dir=tool_page.session.product_dir,
+            camera_role=camera_role,
+        )
+        match_ms = float(run.total_ms)
+        tool_page._shape_match_ms_by_image[path] = match_ms
+        tool_page._shape_autogen_ms_by_image[path] = float(run.total_ms)
     elif tool_page.ref_image and os.path.exists(tool_page.ref_image):
         tool_page._autogen_roi_for_images([path], only_missing=True, silent=True)
 
     labels = [str(label).strip() for label in (labels_override or []) if str(label).strip()]
     if not labels:
-        labels = tool_page._shape_output_labels() if tool_page.loc_method == "shape" else ["roi"]
+        labels = tool_page._loc_output_labels(camera_role)
     roi = None
     if prefer_canvas_roi and len(labels) == 1 and tool_page.canvas.image_path() == path:
         roi = tool_page._roi_xywh_from_canvas()
