@@ -70,7 +70,7 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
         self._tool_page = preview_dialog._tool_page
         self.setWindowTitle(tr("sample.auto_roi_tool"))
         self.setModal(False)
-        self.resize(760, 180)
+        self.resize(760, 220)
 
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(10, 10, 10, 10)
@@ -79,6 +79,17 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
         self.lbl_scope = QtWidgets.QLabel("")
         self.lbl_scope.setStyleSheet("color:#d0d0d0;font-size:12px;")
         root.addWidget(self.lbl_scope)
+
+        template_row = QtWidgets.QHBoxLayout()
+        template_row.setSpacing(8)
+        self.lbl_location_template = QtWidgets.QLabel(tr("sample.location_template"))
+        self.cmb_location_template = QtWidgets.QComboBox()
+        self.cmb_location_template.addItem(tr("sample.location_template.shape"), "shape")
+        self.cmb_location_template.addItem(tr("sample.location_template.ncc"), "ncc")
+        self.cmb_location_template.currentIndexChanged.connect(self._on_location_template_changed)
+        template_row.addWidget(self.lbl_location_template)
+        template_row.addWidget(self.cmb_location_template, 1)
+        root.addLayout(template_row)
 
         self.lbl_ref = QtWidgets.QLabel("")
         self.lbl_ref.setStyleSheet("color:#d0d0d0;font-size:12px;")
@@ -107,6 +118,9 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
 
         self._tool_page.roiGeometryChanged.connect(self._refresh_scope)
         self._tool_page.inspectionItemsChanged.connect(self._refresh_scope)
+        self._preview_dialog.cmb_camera.currentIndexChanged.connect(lambda *_: self._refresh_scope())
+        self._preview_dialog.cmb_sample_kind.currentIndexChanged.connect(lambda *_: self._refresh_scope())
+        self._preview_dialog.sample_list.itemSelectionChanged.connect(self._refresh_scope)
         self._autogen_thread: QtCore.QThread | None = None
         self._autogen_worker: _SampleAutoRoiWorker | None = None
         self._autogen_running = False
@@ -129,33 +143,87 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
         path, _role = self._preview_dialog._current_path_and_role()
         return str(path or "").strip()
 
+    def _location_method(self, camera_role: str | None = None) -> str:
+        role = str(camera_role or self._camera_role() or "cam1")
+        method_getter = getattr(self._tool_page, "loc_method_for_role", None)
+        method = (
+            method_getter(role)
+            if callable(method_getter)
+            else getattr(self._tool_page, "loc_method", "shape")
+        )
+        return "ncc" if str(method or "").strip().lower() == "ncc" else "shape"
+
+    def _on_location_template_changed(self) -> None:
+        method = str(self.cmb_location_template.currentData() or "").strip().lower()
+        if method not in {"shape", "ncc"}:
+            return
+        camera_role = self._camera_role()
+        if method == self._location_method(camera_role):
+            self._refresh_scope()
+            return
+        self._sync_tool_page_role()
+        change_method = getattr(self._tool_page, "_on_loc_method_changed", None)
+        if callable(change_method):
+            change_method(method)
+        self._refresh_scope()
+
     def _refresh_scope(self) -> None:
         camera_role = self._camera_role()
         sample_kind = self._sample_kind()
         paths = self._scope_paths()
         current_path = self._current_path()
+        method = self._location_method(camera_role)
         sample_text = tr("debug.train_samples") if sample_kind == "train" else tr("debug.test_samples")
         self.lbl_scope.setText(
             tr("sample.current_scope", role=camera_role, sample=sample_text, count=len(paths))
             + (tr("sample.current_image_suffix", image=os.path.basename(current_path)) if current_path else "")
         )
-        recipe = self._tool_page.shape_recipe_for_role(camera_role, force_reload=False)
-        ref_image = ""
-        if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
-            ref_image = str(recipe.reference_image)
-        self.lbl_ref.setText(f"{tr('debug.reference_image')}: {os.path.basename(ref_image) if ref_image else '-'}")
-        self.lbl_ref.setToolTip(ref_image)
+        blocker = QtCore.QSignalBlocker(self.cmb_location_template)
+        method_index = self.cmb_location_template.findData(method)
+        self.cmb_location_template.setCurrentIndex(method_index if method_index >= 0 else 0)
+        del blocker
+
+        if method == "ncc":
+            model_path = self._tool_page.ncc_model_path_for_role(camera_role)
+            labels = self._tool_page._ncc_output_labels(camera_role) if os.path.exists(model_path) else []
+            suffix = f" ({', '.join(labels)})" if labels else ""
+            if os.path.exists(model_path):
+                self.lbl_ref.setText(
+                    tr("debug.ncc_model", model=os.path.basename(model_path), labels=suffix)
+                )
+            else:
+                self.lbl_ref.setText(tr("debug.ncc_model_not_set", role=camera_role))
+            self.lbl_ref.setToolTip(model_path)
+        else:
+            recipe = self._tool_page.shape_recipe_for_role(camera_role, force_reload=False)
+            model_path = self._tool_page.shape_model_path_for_role(camera_role)
+            ref_image = ""
+            if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
+                ref_image = str(recipe.reference_image)
+            if os.path.exists(model_path):
+                self.lbl_ref.setText(
+                    tr(
+                        "sample.shape_model",
+                        model=os.path.basename(model_path),
+                        reference=os.path.basename(ref_image) if ref_image else "-",
+                    )
+                )
+            else:
+                self.lbl_ref.setText(tr("sample.shape_model_not_set", role=camera_role))
+            self.lbl_ref.setToolTip("\n".join(path for path in (model_path, ref_image) if path))
         has_scope = bool(paths)
         if self._autogen_running:
             self.btn_autogen_current.setEnabled(False)
             self.btn_clear_current.setEnabled(False)
             self.btn_autogen_current_image.setEnabled(False)
             self.chk_only_missing.setEnabled(False)
+            self.cmb_location_template.setEnabled(False)
         else:
             self.btn_autogen_current.setEnabled(has_scope)
             self.btn_clear_current.setEnabled(has_scope)
             self.btn_autogen_current_image.setEnabled(bool(current_path))
             self.chk_only_missing.setEnabled(True)
+            self.cmb_location_template.setEnabled(True)
 
     def _sync_tool_page_role(self) -> None:
         self._tool_page._set_current_camera_role(self._camera_role(), sync_debug_role=True)

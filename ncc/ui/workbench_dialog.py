@@ -343,6 +343,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._syncing_mask_view = False
         self._syncing_reference_view = False
         self._syncing_reference_table = False
+        self._creating_reference_roi = False
         self._moving_reference_regions = False
         self._reference_move_start: Optional[Tuple[float, float]] = None
         self._reference_move_original: Dict[int, List[Tuple[float, float]]] = {}
@@ -697,8 +698,6 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.lbl_writeback_hint.setWordWrap(True)
         scene_form.addRow("路径", self.edt_scene_path)
         scene_form.addRow("后端", self.edt_backend)
-        scene_form.addRow("写回标签名", self.edt_writeback_label)
-        scene_form.addRow("", self.lbl_writeback_hint)
         left_layout.addWidget(scene_box)
 
         list_box = QtWidgets.QGroupBox("测试图片")
@@ -782,26 +781,36 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         search_layout.addWidget(self.lbl_search_roi)
         left_layout.addWidget(search_box)
 
-        run_box = QtWidgets.QGroupBox("执行")
-        run_layout = QtWidgets.QVBoxLayout(run_box)
+        run_layout = QtWidgets.QHBoxLayout()
         self.btn_run_match = QtWidgets.QPushButton("Run Selected")
         self.btn_run_all = QtWidgets.QPushButton("Run All")
-        self.btn_writeback = QtWidgets.QPushButton("写回 Top1 ROI")
-        self.btn_writeback_regions = QtWidgets.QPushButton("写回投影参考ROI")
+        for button in (self.btn_run_match, self.btn_run_all):
+            button.setMinimumWidth(0)
+            button.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Expanding,
+                QtWidgets.QSizePolicy.Policy.Fixed,
+            )
         run_layout.addWidget(self.btn_run_match)
         run_layout.addWidget(self.btn_run_all)
-        run_layout.addWidget(self.btn_writeback)
-        run_layout.addWidget(self.btn_writeback_regions)
-        left_layout.addWidget(run_box)
+        left_layout.addLayout(run_layout)
 
-        result_box = QtWidgets.QGroupBox("结果")
-        result_layout = QtWidgets.QVBoxLayout(result_box)
-        self.txt_find_summary = QtWidgets.QPlainTextEdit()
-        self.txt_find_summary.setReadOnly(True)
-        self.txt_find_summary.setMinimumHeight(90)
-        self.txt_find_summary.setMaximumHeight(140)
-        result_layout.addWidget(self.txt_find_summary)
-        left_layout.addWidget(result_box, 0)
+        self.btn_toggle_writeback = QtWidgets.QToolButton()
+        self.btn_toggle_writeback.setCheckable(True)
+        self.btn_toggle_writeback.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.btn_toggle_writeback.setToolTip("仅调试或生成 LabelMe 标注时使用，不影响正式运行。")
+        left_layout.addWidget(self.btn_toggle_writeback)
+
+        self.writeback_box = QtWidgets.QGroupBox("高级写回（LabelMe）")
+        writeback_layout = QtWidgets.QVBoxLayout(self.writeback_box)
+        writeback_form = QtWidgets.QFormLayout()
+        writeback_form.addRow("写回标签名", self.edt_writeback_label)
+        writeback_layout.addLayout(writeback_form)
+        writeback_layout.addWidget(self.lbl_writeback_hint)
+        self.btn_writeback = QtWidgets.QPushButton("写回 Top1 ROI")
+        self.btn_writeback_regions = QtWidgets.QPushButton("写回投影参考ROI")
+        writeback_layout.addWidget(self.btn_writeback)
+        writeback_layout.addWidget(self.btn_writeback_regions)
+        left_layout.addWidget(self.writeback_box)
 
         layout.addWidget(_make_scrollable_side_panel(left_panel, min_width=340, max_width=450))
 
@@ -822,6 +831,8 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.btn_run_all.clicked.connect(self._run_all_find)
         self.btn_writeback.clicked.connect(self._writeback_top1)
         self.btn_writeback_regions.clicked.connect(self._writeback_reference_regions)
+        self.btn_toggle_writeback.toggled.connect(self._set_writeback_actions_visible)
+        self._set_writeback_actions_visible(False)
         self.find_canvas.shapesChanged.connect(self._refresh_search_roi_status)
         for spin in (
             self.spn_target_num,
@@ -841,6 +852,17 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         ):
             checkbox.toggled.connect(self._schedule_find_options_save)
         return page
+
+    def _set_writeback_actions_visible(self, visible: bool) -> None:
+        is_visible = bool(visible)
+        self.writeback_box.setVisible(is_visible)
+        blocker = QtCore.QSignalBlocker(self.btn_toggle_writeback)
+        self.btn_toggle_writeback.setChecked(is_visible)
+        del blocker
+        self.btn_toggle_writeback.setArrowType(
+            QtCore.Qt.ArrowType.DownArrow if is_visible else QtCore.Qt.ArrowType.RightArrow
+        )
+        self.btn_toggle_writeback.setText("隐藏高级写回" if is_visible else "显示高级写回")
 
     def _finalize_ui(self) -> None:
         root_layout = self.layout()
@@ -862,16 +884,15 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         if hasattr(self, "scene_form") and isinstance(self.scene_form, QtWidgets.QFormLayout):
             if hasattr(self.scene_form, "setRowVisible"):
                 self.scene_form.setRowVisible(self.edt_backend, False)
-                self.scene_form.setRowVisible(self.lbl_writeback_hint, False)
             else:
                 label = self.scene_form.labelForField(self.edt_backend)
                 if label is not None:
                     label.hide()
                 self.edt_backend.hide()
-                self.lbl_writeback_hint.hide()
 
     def _load_model(self) -> None:
         self._loading_model = True
+        self._creating_reference_roi = False
         try:
             self._model = load_model(self._model_path).normalized()
             self._reference_regions = [region.normalized() for region in list(self._model.reference_regions or [])]
@@ -1472,7 +1493,8 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         try:
             if self._selected_reference_idx is None or not (0 <= self._selected_reference_idx < len(self._reference_regions)):
                 self.ref_canvas.clear_roi(emit_signal=False)
-                self.cmb_reference_shape.setCurrentText("rectangle")
+                if not self._creating_reference_roi:
+                    self.cmb_reference_shape.setCurrentText("rectangle")
                 return
             region = self._reference_regions[self._selected_reference_idx]
             self.cmb_reference_shape.setCurrentText("polygon" if region.shape_type == "polygon" else "rectangle")
@@ -1510,6 +1532,8 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         }
         if primary is not None and primary not in valid:
             primary = None
+        if valid:
+            self._creating_reference_roi = False
         self._selected_reference_indices = valid
         if primary is not None:
             self._selected_reference_idx = int(primary)
@@ -1549,6 +1573,8 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._refresh_reference_canvas()
 
     def _on_reference_canvas_pressed(self, button: int, x: int, y: int) -> None:
+        if self._creating_reference_roi:
+            return
         if button != int(QtCore.Qt.MouseButton.LeftButton.value):
             return
         selected = self._reference_region_at_point(float(x), float(y))
@@ -1654,6 +1680,12 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._set_reference_selection(rows, primary=primary)
 
     def _prepare_new_reference_roi(self) -> None:
+        self._creating_reference_roi = True
+        self._moving_reference_regions = False
+        self._reference_move_start = None
+        self._reference_move_original = {}
+        self.ref_canvas.set_interaction_enabled(True)
+        self.ref_canvas.unsetCursor()
         self._selected_reference_idx = None
         self._selected_reference_indices = set()
         blocker = QtCore.QSignalBlocker(self.table_reference_regions)
@@ -1664,9 +1696,10 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             del blocker
         self._refresh_reference_region_fields()
         self._refresh_reference_canvas()
-        self._set_reference_status("已切换到新增 ROI 模式，请直接在右侧画布上继续画框。")
+        self._set_reference_status(self._reference_creation_hint())
 
     def _remove_selected_reference_roi(self) -> None:
+        self._creating_reference_roi = False
         selected = {
             index
             for index in getattr(self, "_selected_reference_indices", set())
@@ -1687,6 +1720,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._set_reference_status("已删除选中的参考 ROI。")
 
     def _clear_reference_roi(self) -> None:
+        self._creating_reference_roi = False
         self._reference_regions = []
         self._selected_reference_idx = None
         self._selected_reference_indices = set()
@@ -1711,6 +1745,17 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
 
     def _on_reference_shape_changed(self, shape_name: str) -> None:
         self.ref_canvas.draw_shape = "polygon" if shape_name == "polygon" else "rect"
+        if not self._syncing_reference_view and self.ref_canvas.draw_shape == "polygon":
+            self._creating_reference_roi = True
+        if self._creating_reference_roi and not self._syncing_reference_view:
+            self.ref_canvas.clear_roi(emit_signal=False)
+            self._set_reference_status(self._reference_creation_hint())
+
+    def _reference_creation_hint(self) -> str:
+        action = "重画选中的" if self._selected_reference_idx is not None else "新增"
+        if self.ref_canvas.draw_shape == "polygon":
+            return f"{action} Polygon ROI：左键依次添加顶点（至少 3 个），右键完成；Esc 取消当前顶点。"
+        return f"{action} Rectangle ROI：在右侧画布按住左键拖动画框。"
 
     def _region_points_from_canvas(self) -> Tuple[str, List[Tuple[float, float]]]:
         if self.ref_canvas.roi.shape_type == "polygon" and self.ref_canvas.roi.points and len(self.ref_canvas.roi.points) >= 3:
@@ -1738,6 +1783,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             self._reference_regions.append(region)
             self._selected_reference_idx = len(self._reference_regions) - 1
             self._selected_reference_indices = {self._selected_reference_idx}
+            self._creating_reference_roi = False
             self._refresh_reference_region_list()
             self._refresh_reference_region_fields()
             self._refresh_reference_canvas()
@@ -1748,6 +1794,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         region = self._reference_regions[self._selected_reference_idx]
         region.shape_type = shape_type
         region.points = points
+        self._creating_reference_roi = False
         self._refresh_reference_region_list()
         self._refresh_reference_canvas()
         self._save_reference_regions_to_model()
@@ -1797,6 +1844,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             if not regions:
                 raise RuntimeError("json 中没有 roi1/roi2/... 参考 ROI。")
             self._reference_regions = regions
+            self._creating_reference_roi = False
             self._selected_reference_idx = None
             self._selected_reference_indices = set()
             self._refresh_reference_region_list()
@@ -1879,7 +1927,6 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         if self.list_find_images.count() <= 0:
             self._latest_response = None
             self.edt_scene_path.clear()
-            self.txt_find_summary.clear()
             self.find_canvas.clear_image()
             self.find_canvas.set_overlays([])
 
@@ -1888,7 +1935,6 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.list_find_images.clear()
         self._latest_response = None
         self.edt_scene_path.clear()
-        self.txt_find_summary.clear()
         self.find_canvas.clear_image()
         self.find_canvas.set_overlays([])
 
@@ -1912,14 +1958,10 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
     ) -> None:
         self._set_scene_path(scene_path)
         if response is not None:
-            self.find_canvas.set_overlays(self._match_overlays(response))
             self.edt_backend.setText(response.backend_name)
         else:
             self.edt_backend.clear()
-        if not summary_text:
-            self.txt_find_summary.clear()
-        if summary_text:
-            self.txt_find_summary.setPlainText(summary_text)
+        self._set_find_canvas_overlays(response=response, summary_text=summary_text)
 
     def _on_find_item_selected(
         self,
@@ -2058,6 +2100,74 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
                 overlays.extend(self._reference_region_match_overlays(item))
         return overlays
 
+    def _find_result_overlay_text(self, response: NccMatchResponse) -> str:
+        lines = [
+            f"NCC {response.backend_name}  time={response.elapsed_ms:.1f}ms  "
+            f"matches={len(response.matches)}  referenceROI={len(self._reference_regions)}"
+        ]
+        visible_matches = list(response.matches[:3])
+        for index, item in enumerate(visible_matches, start=1):
+            lines.append(
+                f"#{index} score={item.score:.3f}  angle={item.angle:.1f}  "
+                f"bbox=({item.bbox.x:.1f}, {item.bbox.y:.1f}, {item.bbox.width:.1f}, {item.bbox.height:.1f})"
+            )
+        omitted = len(response.matches) - len(visible_matches)
+        if omitted > 0:
+            lines.append(f"... {omitted} more match(es)")
+        return "\n".join(lines)
+
+    def _find_summary_overlay(
+        self,
+        *,
+        response: Optional[NccMatchResponse] = None,
+        summary_text: str = "",
+    ) -> Optional[OverlayShape]:
+        if response is not None:
+            text = self._find_result_overlay_text(response)
+            color = QtGui.QColor(255, 225, 60)
+        else:
+            text = str(summary_text or "").strip()
+            if not text:
+                return None
+            if text.upper().startswith("ERROR"):
+                text = f"NCC {text}"
+                color = QtGui.QColor(255, 90, 90)
+            elif "status=running" in text:
+                fields: Dict[str, str] = {}
+                for line in text.splitlines():
+                    key, separator, value = line.partition("=")
+                    if separator:
+                        fields[key.strip()] = value.strip()
+                text = (
+                    f"NCC running  elapsed={fields.get('elapsed_ms', '0')}ms  "
+                    f"queued={fields.get('queued', '0')}"
+                )
+                if fields.get("image"):
+                    text += f"  image={fields['image']}"
+                color = QtGui.QColor(80, 210, 255)
+            else:
+                color = QtGui.QColor(255, 225, 60)
+        return OverlayShape(
+            shape_type="text",
+            text=text,
+            text_pos=(12.0, 12.0),
+            color=color,
+            width=16.0,
+            dash=False,
+        )
+
+    def _set_find_canvas_overlays(
+        self,
+        *,
+        response: Optional[NccMatchResponse] = None,
+        summary_text: str = "",
+    ) -> None:
+        overlays = self._match_overlays(response) if response is not None else []
+        summary_overlay = self._find_summary_overlay(response=response, summary_text=summary_text)
+        if summary_overlay is not None:
+            overlays.append(summary_overlay)
+        self.find_canvas.set_overlays(overlays)
+
     def _summary_text_for_response(self, response: NccMatchResponse) -> str:
         lines = [
             f"backend={response.backend_name}",
@@ -2160,7 +2270,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
     def _update_find_progress_elapsed(self) -> None:
         if not self._find_running:
             return
-        self.txt_find_summary.setPlainText(self._running_find_summary_text())
+        self._set_find_canvas_overlays(summary_text=self._running_find_summary_text())
 
     def _start_find_worker(self, scene_paths: Sequence[str]) -> None:
         if self._find_running:
@@ -2247,6 +2357,9 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._find_progress_timer.stop()
         self._find_active_paths = []
         self._set_find_running(False)
+        current_item = self.list_find_images.currentItem()
+        if current_item is not None:
+            self._on_find_item_selected(current_item, None)
         self._set_status("NCC find finished")
 
     def _run_find_for_item(self, item: QtWidgets.QListWidgetItem) -> None:

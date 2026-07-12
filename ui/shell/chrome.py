@@ -100,19 +100,24 @@ def build_menu_bar(window) -> None:
     hardware_menu = tools_menu.addMenu(shell_icon(SP.SP_ComputerIcon), tr("menu.engineering_tools"))
     act_camera_tool = hardware_menu.addAction(
         shell_icon(SP.SP_DesktopIcon), tr("action.camera_tool")
-    ).triggered.connect(window.tool_page.open_camera_debug_dialog)
+    )
+    act_camera_tool.triggered.connect(window.tool_page.open_camera_debug_dialog)
     act_io_tool = hardware_menu.addAction(
         shell_icon(SP.SP_DriveNetIcon), tr("action.io_tool")
-    ).triggered.connect(window.tool_page.open_io_debug_dialog)
+    )
+    act_io_tool.triggered.connect(window.tool_page.open_io_debug_dialog)
     act_template_editor = hardware_menu.addAction(
         shell_icon(SP.SP_FileDialogContentsView), tr("action.template_editor")
-    ).triggered.connect(window.tool_page.open_template_editor_dialog)
-    hardware_menu.addAction(
-        shell_icon(SP.SP_FileDialogDetailedView), "NCC位置修正工具"
-    ).triggered.connect(window.tool_page.open_ncc_match_dialog)
+    )
+    act_template_editor.triggered.connect(window.tool_page.open_template_editor_dialog)
+    act_ncc_tool = hardware_menu.addAction(
+        shell_icon(SP.SP_FileDialogDetailedView), tr("action.ncc_tool")
+    )
+    act_ncc_tool.triggered.connect(window.tool_page.open_ncc_match_dialog)
     act_auto_region = hardware_menu.addAction(
         shell_icon(SP.SP_FileDialogListView), tr("action.auto_region")
-    ).triggered.connect(window.tool_page.open_template_match_dialog)
+    )
+    act_auto_region.triggered.connect(window.tool_page.open_template_match_dialog)
 
     tools_menu.addSeparator()
     algo_menu = tools_menu.addMenu(shell_icon(SP.SP_FileDialogInfoView), tr("menu.algorithm_tools"))
@@ -228,6 +233,10 @@ def build_menu_bar(window) -> None:
     window.act_user_permissions.triggered.connect(window._show_user_permission_dialog)
     window.act_audit_log = system_menu.addAction(shell_icon(SP.SP_FileDialogListView), tr("action.audit_log"))
     window.act_audit_log.triggered.connect(window._show_audit_log_dialog)
+    window.act_runtime_records_query = system_menu.addAction(
+        shell_icon(SP.SP_FileDialogListView), tr("action.runtime_records_query")
+    )
+    window.act_runtime_records_query.triggered.connect(window._show_runtime_records_dialog)
     window.act_software_versions = system_menu.addAction(
         shell_icon(SP.SP_FileDialogInfoView), tr("action.software_versions")
     )
@@ -305,10 +314,11 @@ def build_menu_bar(window) -> None:
         },
         "actions": {
             "exit": act_exit,
-            "camera_tool": hardware_menu.actions()[0],
-            "io_tool": hardware_menu.actions()[1],
-            "template_editor": hardware_menu.actions()[2],
-            "auto_region": hardware_menu.actions()[3],
+            "camera_tool": act_camera_tool,
+            "io_tool": act_io_tool,
+            "template_editor": act_template_editor,
+            "ncc_tool": act_ncc_tool,
+            "auto_region": act_auto_region,
             "margin_validation": algo_menu.actions()[0],
             "embedding_analysis": algo_menu.actions()[1],
             "baseline_debug": algo_menu.actions()[2],
@@ -331,6 +341,7 @@ def build_menu_bar(window) -> None:
             "change_current_password": window.act_change_current_password,
             "user_permissions": window.act_user_permissions,
             "audit_log": window.act_audit_log,
+            "runtime_records_query": window.act_runtime_records_query,
             "software_versions": window.act_software_versions,
         },
         "buttons": {
@@ -486,6 +497,7 @@ def retranslate_shell_chrome(window) -> None:
         "camera_tool": "action.camera_tool",
         "io_tool": "action.io_tool",
         "template_editor": "action.template_editor",
+        "ncc_tool": "action.ncc_tool",
         "auto_region": "action.auto_region",
         "margin_validation": "action.margin_validation",
         "embedding_analysis": "action.embedding_analysis",
@@ -509,6 +521,7 @@ def retranslate_shell_chrome(window) -> None:
         "change_current_password": "action.change_current_password",
         "user_permissions": "action.user_permissions",
         "audit_log": "action.audit_log",
+        "runtime_records_query": "action.runtime_records_query",
         "software_versions": "action.software_versions",
     }
     for name, key in action_keys.items():

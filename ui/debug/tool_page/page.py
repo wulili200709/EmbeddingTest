@@ -91,9 +91,9 @@ from ui.roi_overlay_colors import is_roi_label
 
 
 SUPPORTED_LOC_MODES = ["shape", "ncc"]
-LOC_METHOD_DISPLAY_NAMES = {
-    "shape": "位置修正工具",
-    "ncc": "NCC位置修正工具",
+LOC_METHOD_TRANSLATION_KEYS = {
+    "shape": "action.template_editor",
+    "ncc": "action.ncc_tool",
 }
 SUPPORTED_SHAPES = ["rect", "polygon"]
 ROI_OVERLAY_PALETTE = [
@@ -120,7 +120,8 @@ def _normalize_loc_method(method: object, *, default: str = "shape") -> str:
 
 def _loc_method_display_name(method: object) -> str:
     value = _normalize_loc_method(method)
-    return LOC_METHOD_DISPLAY_NAMES.get(value, value)
+    key = LOC_METHOD_TRANSLATION_KEYS.get(value)
+    return tr(key) if key else value
 
 
 # ---------------------------------------------------------------------------
@@ -333,6 +334,10 @@ class ToolPage(QtWidgets.QWidget):
             self._refresh_inspection_items_table()
         if hasattr(self, "template_match_box"):
             self.template_match_box.setTitle(tr("debug.auto_roi"))
+        if hasattr(self, "cmb_loc"):
+            self._populate_loc_combo()
+        if hasattr(self, "lbl_ref"):
+            self._apply_current_role_recipe_state()
         if hasattr(self, "btn_train_cancel"):
             self.btn_train_cancel.setToolTip(tr("debug.cancel_train_confirm"))
         if hasattr(self, "btn_train_current_cancel"):
@@ -696,10 +701,16 @@ class ToolPage(QtWidgets.QWidget):
                 except Exception:
                     labels = []
                 suffix = f" ({', '.join(labels)})" if labels else ""
-                self.lbl_ref.setText(f"NCC模型: {os.path.basename(model_path)}{suffix}")
+                self.lbl_ref.setText(
+                    tr(
+                        "debug.ncc_model",
+                        model=os.path.basename(model_path),
+                        labels=suffix,
+                    )
+                )
                 self.lbl_ref.setToolTip(model_path)
             else:
-                self.lbl_ref.setText(f"NCC模型未设置: {role}")
+                self.lbl_ref.setText(tr("debug.ncc_model_not_set", role=role))
                 self.lbl_ref.setToolTip(model_path)
             return
 
@@ -924,7 +935,9 @@ class ToolPage(QtWidgets.QWidget):
 
     def open_ncc_match_dialog(self) -> None:
         require_permission = getattr(self.window(), "_require_permission", None)
-        if callable(require_permission) and not require_permission("template.edit_roi", "NCC位置修正工具"):
+        if callable(require_permission) and not require_permission(
+            "template.edit_roi", tr("action.ncc_tool")
+        ):
             return
         try:
             dialog = self._ncc_workbench_dialog
@@ -954,7 +967,7 @@ class ToolPage(QtWidgets.QWidget):
         except Exception as exc:
             detail = traceback.format_exc()
             self.lbl_status.setText(f"Status: failed to open NCC tool: {exc}")
-            QtWidgets.QMessageBox.critical(self, "NCC位置修正工具打开失败", f"{exc}\n\n{detail}")
+            QtWidgets.QMessageBox.critical(self, tr("action.ncc_tool"), f"{exc}\n\n{detail}")
 
     def _on_ncc_model_saved(self, model_path: str) -> None:
         role = self.current_camera_role()

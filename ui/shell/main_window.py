@@ -18,7 +18,7 @@ from application import (
     ProductRuntimeContext,
     RuntimeController,
 )
-from infrastructure.audit_store import AuditStore, PermissionService
+from infrastructure.audit_store import AuditStore, PermissionService, RuntimeRecordStore
 from infrastructure.camera_settings_store import (
     CAPTURE_MODE_SINGLE_MULTI_LIGHT,
     CameraSettingsStore,
@@ -28,6 +28,7 @@ from ui.shell.audit_dialogs import (
     AuditLogDialog,
     ChangePasswordDialog,
     LoginDialog,
+    RuntimeRecordsDialog,
     SoftwareVersionDialog,
     UserPermissionDialog,
 )
@@ -149,6 +150,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._release_password = self._password_settings["run_password"]
         self._admin_password = self._password_settings["engineer_password"]
         self._audit_store = AuditStore()
+        self._runtime_results_store = RuntimeRecordStore()
         self._permission_service = PermissionService(self._audit_store)
         self._auto_show_release_dialog_on_ng = bool(
             self._runtime_mode_settings.get(
@@ -263,6 +265,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.act_user_permissions.setEnabled(self._has_permission("user.manage"))
         if hasattr(self, "act_audit_log"):
             self.act_audit_log.setEnabled(self._has_permission("audit.view"))
+        if hasattr(self, "act_runtime_records_query"):
+            self.act_runtime_records_query.setEnabled(self._has_permission("runtime_records.view"))
         if hasattr(self, "act_software_versions"):
             self.act_software_versions.setEnabled(
                 self._has_permission("software.version_log") or self._has_permission("audit.view")
@@ -434,7 +438,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def _show_user_permission_dialog(self) -> None:
         if not self._require_permission("user.manage", tr("action.user_permissions")):
             return
-        dialog = UserPermissionDialog(self, self._audit_store)
+        dialog = UserPermissionDialog(
+            self,
+            self._audit_store,
+            can_manage_runtime_records=bool(self._permission_service.current_user.is_super_admin),
+        )
         dialog.exec()
         self._audit_event(module="权限", action="维护用户与权限", product_name="")
         self._sync_permission_ui()
@@ -446,6 +454,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self,
             self._audit_store,
             can_export=self._has_permission("audit.export"),
+        )
+        dialog.exec()
+
+    def _show_runtime_records_dialog(self) -> None:
+        if not self._require_permission("runtime_records.view", tr("action.runtime_records_query")):
+            return
+        dialog = RuntimeRecordsDialog(
+            self,
+            self._runtime_results_store,
+            can_export=self._has_permission("runtime_records.export"),
         )
         dialog.exec()
 

@@ -14,7 +14,6 @@ if str(PROJECT_DIR) not in sys.path:
 
 
 from domain.inspection_models import (
-    CameraRuntimeResult,
     InspectionItemResult,
     RuntimeInspectionResult,
 )
@@ -22,29 +21,91 @@ from services.record_writer import CsvRecordWriter, TestRecordService
 
 
 class RuntimeRecordWriterTest(unittest.TestCase):
-    def test_write_product_result_includes_only_expected_item_level_columns(self) -> None:
+    def test_write_product_result_uses_camera_qualified_binary_roi_columns(self) -> None:
         runtime_result = RuntimeInspectionResult(
             task_id="runtime_001",
             product_name="demo_product",
             recipe_name="demo_recipe.json",
             final_result="NG",
             duration_ms=123,
-            camera_results={
-                "cam1": CameraRuntimeResult(
-                    camera_id="cam1",
-                    result="NG",
-                    detail="cam1 detail",
-                    image_path="capture/cam1.png",
-                ),
-            },
             item_results=[
+                InspectionItemResult(
+                    item_id="roi1",
+                    display_name="ROI 1",
+                    camera_id="cam2",
+                    roi_label="roi1",
+                    result="NG",
+                ),
                 InspectionItemResult(
                     item_id="roi1",
                     display_name="ROI 1",
                     camera_id="cam1",
                     roi_label="roi1",
+                    result=" ok ",
+                ),
+                InspectionItemResult(
+                    item_id="roi2",
+                    display_name="ROI 2",
+                    camera_id="cam1",
+                    roi_label="roi2",
+                    result="PASS",
+                ),
+                InspectionItemResult(
+                    item_id="roi3",
+                    display_name="ROI 3",
+                    camera_id="cam1",
+                    roi_label="roi3",
+                    result="MEASURED",
+                ),
+                InspectionItemResult(
+                    item_id="roi4",
+                    display_name="ROI 4",
+                    camera_id="cam1",
+                    roi_label="roi4",
+                    result="PENDING",
+                ),
+                InspectionItemResult(
+                    item_id="roi2",
+                    display_name="ROI 2",
+                    camera_id="cam2",
+                    roi_label="roi2",
+                    enabled=False,
+                    result="DISABLED",
+                ),
+                InspectionItemResult(
+                    item_id="roi5_pending",
+                    display_name="ROI 5 pending",
+                    camera_id="cam1",
+                    roi_label="roi5",
+                    result="PENDING",
+                ),
+                InspectionItemResult(
+                    item_id="roi5_pass",
+                    display_name="ROI 5 pass",
+                    camera_id="cam1",
+                    roi_label="roi5",
+                    result="PASS",
+                ),
+                InspectionItemResult(
+                    item_id="roi3_ok",
+                    display_name="ROI 3 OK",
+                    camera_id="cam2",
+                    roi_label="roi3",
+                    result="OK",
+                ),
+                InspectionItemResult(
+                    item_id="roi3_ng",
+                    display_name="ROI 3 NG",
+                    camera_id="cam2",
+                    roi_label="roi3",
                     result="NG",
-                    detail="diff=0.12",
+                ),
+                InspectionItemResult(
+                    item_id="roi4",
+                    display_name="ROI 4",
+                    camera_id="cam2",
+                    roi_label="roi4",
+                    result="INACTIVE",
                 ),
             ],
         )
@@ -55,8 +116,10 @@ class RuntimeRecordWriterTest(unittest.TestCase):
                 product_name=runtime_result.product_name,
                 recipe_name=runtime_result.recipe_name,
                 final_result=runtime_result.final_result,
-                camera1_result="NG",
+                camera1_result="OK",
+                camera2_result="NG",
                 duration_ms=runtime_result.duration_ms,
+                error_message="must not be serialized",
                 extra_fields=runtime_result.to_record_extra_fields(),
             )
 
@@ -70,23 +133,74 @@ class RuntimeRecordWriterTest(unittest.TestCase):
                 [
                     "record_time",
                     "product_name",
-                    "final_result",
-                    "camera1_result",
-                    "camera2_result",
-                    "error_message",
-                    "item_01_enabled",
-                    "item_01_name",
-                    "item_01_result",
-                    "item_01_roi_label",
+                    "cam1.ROI 1",
+                    "cam1.ROI 2",
+                    "cam1.ROI 3",
+                    "cam1.ROI 4",
+                    "cam1.ROI 5 pending",
+                    "cam1.ROI 5 pass",
+                    "cam2.ROI 1",
+                    "cam2.ROI 2",
+                    "cam2.ROI 3 OK",
+                    "cam2.ROI 3 NG",
+                    "cam2.ROI 4",
                 ],
             )
-            self.assertEqual(row["camera1_result"], "NG")
-            self.assertEqual(row["item_01_enabled"], "True")
-            self.assertEqual(row["item_01_name"], "ROI 1")
-            self.assertEqual(row["item_01_result"], "NG")
-            self.assertEqual(row["item_01_roi_label"], "roi1")
+            self.assertEqual(row["cam1.ROI 1"], "OK")
+            self.assertEqual(row["cam2.ROI 1"], "NG")
+            self.assertEqual(row["cam1.ROI 2"], "OK")
+            self.assertEqual(row["cam1.ROI 3"], "")
+            self.assertEqual(row["cam1.ROI 4"], "")
+            self.assertEqual(row["cam1.ROI 5 pending"], "")
+            self.assertEqual(row["cam1.ROI 5 pass"], "OK")
+            self.assertEqual(row["cam2.ROI 2"], "")
+            self.assertEqual(row["cam2.ROI 3 OK"], "OK")
+            self.assertEqual(row["cam2.ROI 3 NG"], "NG")
+            self.assertEqual(row["cam2.ROI 4"], "")
+            self.assertLessEqual(
+                {row[key] for key in row if key not in {"record_time", "product_name"}},
+                {"OK", "NG", ""},
+            )
 
-    def test_append_record_rewrites_legacy_header_to_current_schema(self) -> None:
+    def test_append_record_only_grows_dynamic_header(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = TestRecordService(CsvRecordWriter(tmpdir))
+            file_path = service.write_product_result(
+                product_name="demo_product",
+                final_result="OK",
+                extra_fields={"cam1.roi1": "OK"},
+            )
+            service.write_product_result(
+                product_name="demo_product",
+                final_result="NG",
+                extra_fields={"cam2.roi1": "NG"},
+            )
+            service.write_product_result(
+                product_name="demo_product",
+                final_result="OK",
+                extra_fields={"cam1.roi2": "OK"},
+            )
+
+            with file_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+                rows = list(csv.DictReader(csv_file))
+
+            self.assertEqual(
+                list(rows[0].keys()),
+                [
+                    "record_time",
+                    "product_name",
+                    "cam1.roi1",
+                    "cam2.roi1",
+                    "cam1.roi2",
+                ],
+            )
+            self.assertEqual(rows[0]["cam1.roi1"], "OK")
+            self.assertEqual(rows[0]["cam2.roi1"], "")
+            self.assertEqual(rows[1]["cam1.roi1"], "")
+            self.assertEqual(rows[1]["cam2.roi1"], "NG")
+            self.assertEqual(rows[2]["cam1.roi2"], "OK")
+
+    def test_append_record_preserves_legacy_columns_while_adding_roi(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             base_dir = Path(tmpdir)
             file_path = base_dir / f"{datetime.now().strftime('%Y-%m-%d')}.csv"
@@ -98,10 +212,7 @@ class RuntimeRecordWriterTest(unittest.TestCase):
                         "product_name",
                         "final_result",
                         "camera1_result",
-                        "camera2_result",
-                        "error_message",
                         "task_id",
-                        "item_01_id",
                     ],
                 )
                 writer.writeheader()
@@ -111,10 +222,7 @@ class RuntimeRecordWriterTest(unittest.TestCase):
                         "product_name": "legacy_product",
                         "final_result": "OK",
                         "camera1_result": "OK",
-                        "camera2_result": "",
-                        "error_message": "",
                         "task_id": "old_task",
-                        "item_01_id": "old_roi",
                     }
                 )
 
@@ -123,12 +231,7 @@ class RuntimeRecordWriterTest(unittest.TestCase):
                 product_name="demo_product",
                 final_result="NG",
                 camera1_result="NG",
-                extra_fields={
-                    "item_01_enabled": True,
-                    "item_01_name": "ROI 1",
-                    "item_01_result": "NG",
-                    "item_01_roi_label": "roi1",
-                },
+                extra_fields={"cam1.roi1": "NG"},
             )
 
             self.assertEqual(record, file_path)
@@ -136,13 +239,25 @@ class RuntimeRecordWriterTest(unittest.TestCase):
                 rows = list(csv.DictReader(csv_file))
 
             self.assertEqual(len(rows), 2)
-            self.assertNotIn("task_id", rows[0])
-            self.assertNotIn("item_01_id", rows[0])
+            self.assertEqual(
+                list(rows[0].keys()),
+                [
+                    "record_time",
+                    "product_name",
+                    "cam1.roi1",
+                    "final_result",
+                    "camera1_result",
+                    "task_id",
+                ],
+            )
             self.assertEqual(rows[0]["product_name"], "legacy_product")
-            self.assertEqual(rows[1]["item_01_name"], "ROI 1")
-            self.assertEqual(rows[1]["item_01_result"], "NG")
+            self.assertEqual(rows[0]["final_result"], "OK")
+            self.assertEqual(rows[0]["task_id"], "old_task")
+            self.assertEqual(rows[0]["cam1.roi1"], "")
+            self.assertEqual(rows[1]["final_result"], "")
+            self.assertEqual(rows[1]["cam1.roi1"], "NG")
 
-    def test_runtime_record_includes_distance_value_for_distance_item(self) -> None:
+    def test_empty_roi_label_uses_display_name_and_nonbinary_status_is_empty(self) -> None:
         runtime_result = RuntimeInspectionResult(
             task_id="runtime_002",
             product_name="demo_product",
@@ -154,7 +269,7 @@ class RuntimeRecordWriterTest(unittest.TestCase):
                     camera_id="cam1",
                     roi_label="",
                     algorithm_code="line_distance_ref_normal",
-                    result="OK",
+                    result="MEASURED",
                     value=5.724321,
                     unit="mm",
                 ),
@@ -175,8 +290,9 @@ class RuntimeRecordWriterTest(unittest.TestCase):
 
             self.assertEqual(len(rows), 1)
             row = rows[0]
-            self.assertEqual(row["item_01_distance"], "5.724321")
-            self.assertNotIn("item_01_distance_unit", row)
+            self.assertEqual(row["cam1.卡尺距离测量"], "")
+            self.assertNotIn("cam1.line_distance", row)
+            self.assertNotIn("item_01_distance", row)
 
 
 if __name__ == "__main__":

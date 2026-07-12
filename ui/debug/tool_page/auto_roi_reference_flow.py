@@ -99,6 +99,7 @@ def _on_shape_model_saved(self, model_path: str, recipe_path: str) -> None:
     camera_role = self.current_camera_role()
     if hasattr(self, "_set_loc_method_for_role"):
         self._set_loc_method_for_role(camera_role, "shape")
+    self._save_session()
     self._clear_training_roi_review_state(camera_role)
     try:
         self.shape_recipe = self.shape_recipe_for_role(camera_role, force_reload=True)
@@ -179,8 +180,8 @@ def _on_loc_method_changed(self, method: str) -> None:
     self._clear_training_roi_review_state(role)
     self._update_loc_ui()
     self._apply_current_role_recipe_state()
-    self._reload_inspection_items()
     self._save_session()
+    self._reload_inspection_items()
     audit_event = getattr(self.window(), "_audit_event", None)
     if callable(audit_event) and before != method_text:
         audit_event(

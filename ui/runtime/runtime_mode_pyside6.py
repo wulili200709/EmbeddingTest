@@ -34,6 +34,7 @@ _NG_RED = "#dc1e1e"
 _PASS_YELLOW = "#2f8f46"
 _PENDING_GRAY = "#666666"
 _RUNNING_YELLOW = "#eab308"
+_RUNTIME_ROI_RECORD_COLUMN_RE = re.compile(r"^cam\d+\..+$", re.IGNORECASE)
 
 _DEFAULT_CAMERA_LAYOUT = "two_top_one_bottom"
 _CAMERA_LAYOUT_OPTIONS: tuple[tuple[str, str], ...] = (
@@ -43,6 +44,23 @@ _CAMERA_LAYOUT_OPTIONS: tuple[tuple[str, str], ...] = (
     ("one_top_two_bottom", "runtime.layout.one_top_two_bottom"),
     ("row", "runtime.layout.row"),
 )
+
+
+def _runtime_record_row_result(row: dict[str, str]) -> str:
+    legacy_result = str(row.get("final_result", "") or "").strip().upper()
+    if legacy_result in {"OK", "NG"}:
+        return legacy_result
+
+    roi_results = [
+        str(value or "").strip().upper()
+        for key, value in row.items()
+        if _RUNTIME_ROI_RECORD_COLUMN_RE.match(str(key or ""))
+    ]
+    if "NG" in roi_results:
+        return "NG"
+    if "OK" in roi_results:
+        return "OK"
+    return ""
 
 
 def _camera_title(camera_id: str) -> str:
@@ -1460,7 +1478,7 @@ class RuntimeModePage(QtWidgets.QWidget):
                         for row in csv.DictReader(csv_file):
                             if str(row.get("product_name", "")).strip() != product_name:
                                 continue
-                            final_result = str(row.get("final_result", "")).strip().upper()
+                            final_result = _runtime_record_row_result(row)
                             if final_result == "OK":
                                 ok_count += 1
                             elif final_result == "NG":

@@ -107,11 +107,6 @@ class CsvRecordWriter:
     DEFAULT_COLUMNS = [
         "record_time",
         "product_name",
-        "final_result",
-        "camera1_result",
-        "camera2_result",
-        "camera3_result",
-        "error_message",
     ]
 
     def __init__(self, base_directory: str | Path) -> None:
@@ -130,6 +125,8 @@ class CsvRecordWriter:
 
         if file_exists:
             existing_fieldnames = self._existing_fieldnames(file_path)
+            if existing_fieldnames:
+                fieldnames = self._merge_fieldnames(existing_fieldnames, row)
             if existing_fieldnames and existing_fieldnames != fieldnames:
                 existing_rows = self._read_existing_rows(file_path)
                 self._rewrite_file(file_path, fieldnames, existing_rows)
@@ -146,18 +143,37 @@ class CsvRecordWriter:
         row = {
             "record_time": record.record_time,
             "product_name": record.product_name,
-            "final_result": record.final_result,
-            "camera1_result": record.camera1_result,
-            "camera2_result": record.camera2_result,
-            "camera3_result": record.camera3_result,
-            "error_message": record.error_message,
         }
         row.update(dict(record.extra_fields or {}))
         return row
 
     def _fieldnames_for_row(self, row: dict[str, Any]) -> list[str]:
         extra_keys = [key for key in row.keys() if key not in self.DEFAULT_COLUMNS]
-        return [*self.DEFAULT_COLUMNS, *sorted(extra_keys)]
+        return [*self.DEFAULT_COLUMNS, *extra_keys]
+
+    def _merge_fieldnames(
+        self,
+        existing_fieldnames: list[str],
+        row: dict[str, Any],
+    ) -> list[str]:
+        fieldnames = list(self.DEFAULT_COLUMNS)
+        candidate_keys = [*existing_fieldnames, *row.keys()]
+        roi_keys = [key for key in candidate_keys if self._is_roi_result_column(key)]
+        other_keys = [key for key in candidate_keys if not self._is_roi_result_column(key)]
+        for key in [*roi_keys, *other_keys]:
+            if key not in fieldnames:
+                fieldnames.append(key)
+        return fieldnames
+
+    @staticmethod
+    def _is_roi_result_column(key: object) -> bool:
+        camera_id, separator, roi_name = str(key or "").partition(".")
+        return bool(
+            separator
+            and camera_id.startswith("cam")
+            and camera_id[3:].isdigit()
+            and roi_name
+        )
 
     @staticmethod
     def _existing_fieldnames(file_path: Path) -> list[str]:

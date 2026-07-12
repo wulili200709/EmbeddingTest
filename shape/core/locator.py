@@ -7,6 +7,7 @@ from typing import Optional, Tuple
 
 import cv2
 
+from algorithms.image_io import imread
 from common import labelme_io
 from common.camera_roles import DEFAULT_CAMERA_ROLE, normalize_camera_role
 
@@ -138,13 +139,13 @@ def autogen_roi_json_from_shape_timed(
     if (not ref_img_path) and recipe.reference_image:
         ref_img_path = recipe.reference_image
 
-    scene = cv2.imread(tgt_img_path, cv2.IMREAD_COLOR)
+    scene = imread(tgt_img_path, cv2.IMREAD_COLOR)
     if scene is None:
         raise FileNotFoundError(tgt_img_path)
 
     scene_mask = None
     if scene_mask_path:
-        scene_mask = cv2.imread(scene_mask_path, cv2.IMREAD_GRAYSCALE)
+        scene_mask = imread(scene_mask_path, cv2.IMREAD_GRAYSCALE)
         if scene_mask is None:
             raise FileNotFoundError(scene_mask_path)
 

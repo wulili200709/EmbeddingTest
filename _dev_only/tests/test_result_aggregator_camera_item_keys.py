@@ -17,14 +17,14 @@ from domain.result_aggregator import aggregate_runtime_outcome
 class ResultAggregatorCameraItemKeysTest(unittest.TestCase):
     def test_same_item_id_across_cameras_keeps_each_camera_result(self) -> None:
         items = [
-            InspectionItem(item_id="roi1", display_name="roi1", camera_id="cam1", roi_label="roi1"),
-            InspectionItem(item_id="roi1", display_name="roi1", camera_id="cam2", roi_label="roi1"),
+            InspectionItem(item_id="roi1", display_name="密封圈", camera_id="cam1", roi_label="roi1"),
+            InspectionItem(item_id="roi1", display_name="密封圈", camera_id="cam2", roi_label="roi1"),
         ]
         item_results_by_camera = {
             "cam1": [
                 InspectionItemResult(
                     item_id="roi1",
-                    display_name="roi1",
+                    display_name="密封圈",
                     camera_id="cam1",
                     roi_label="roi1",
                     result="OK",
@@ -33,7 +33,7 @@ class ResultAggregatorCameraItemKeysTest(unittest.TestCase):
             "cam2": [
                 InspectionItemResult(
                     item_id="roi1",
-                    display_name="roi1",
+                    display_name="密封圈",
                     camera_id="cam2",
                     roi_label="roi1",
                     result="NG",
@@ -55,6 +55,13 @@ class ResultAggregatorCameraItemKeysTest(unittest.TestCase):
         rows = {(row.camera_id, row.item_id): row.result for row in result.item_results}
         self.assertEqual(rows[("cam1", "roi1")], "OK")
         self.assertEqual(rows[("cam2", "roi1")], "NG")
+        self.assertEqual(
+            result.to_record_extra_fields(),
+            {
+                "cam1.密封圈": "OK",
+                "cam2.密封圈": "NG",
+            },
+        )
 
 
 if __name__ == "__main__":

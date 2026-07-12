@@ -205,32 +205,39 @@ def _write_release_log_sync(
 
 
 def _write_runtime_record_sync(runtime, record_service, runtime_result, *, lock_on_ng: bool) -> None:
-    if record_service is None:
+    runtime_results_store = getattr(runtime, "_runtime_results_store", None)
+    if record_service is None and runtime_results_store is None:
         return
-    try:
-        record_service.write_product_result(
-            product_name=runtime_result.product_name,
-            recipe_name=runtime_result.recipe_name,
-            final_result=runtime_result.final_result,
-            camera1_result=runtime_result.camera_results.get("cam1", None).result
-            if runtime_result.camera_results.get("cam1") is not None
-            else "",
-            camera2_result=runtime_result.camera_results.get("cam2", None).result
-            if runtime_result.camera_results.get("cam2") is not None
-            else "",
-            camera3_result=runtime_result.camera_results.get("cam3", None).result
-            if runtime_result.camera_results.get("cam3") is not None
-            else "",
-            duration_ms=runtime_result.duration_ms,
-            is_error=runtime_result.is_system_error,
-            error_message=runtime_result.error_message,
-            lock_required=(runtime_result.final_result == "NG" and lock_on_ng),
-            release_required=(runtime_result.final_result == "NG" and lock_on_ng),
-            release_result="pending" if runtime_result.final_result == "NG" and lock_on_ng else "",
-            extra_fields=runtime_result.to_record_extra_fields(),
-        )
-    except Exception as exc:
-        runtime.logAppended.emit(f"[runtime] failed to write runtime record: {exc}")
+    if record_service is not None:
+        try:
+            record_service.write_product_result(
+                product_name=runtime_result.product_name,
+                recipe_name=runtime_result.recipe_name,
+                final_result=runtime_result.final_result,
+                camera1_result=runtime_result.camera_results.get("cam1", None).result
+                if runtime_result.camera_results.get("cam1") is not None
+                else "",
+                camera2_result=runtime_result.camera_results.get("cam2", None).result
+                if runtime_result.camera_results.get("cam2") is not None
+                else "",
+                camera3_result=runtime_result.camera_results.get("cam3", None).result
+                if runtime_result.camera_results.get("cam3") is not None
+                else "",
+                duration_ms=runtime_result.duration_ms,
+                is_error=runtime_result.is_system_error,
+                error_message=runtime_result.error_message,
+                lock_required=(runtime_result.final_result == "NG" and lock_on_ng),
+                release_required=(runtime_result.final_result == "NG" and lock_on_ng),
+                release_result="pending" if runtime_result.final_result == "NG" and lock_on_ng else "",
+                extra_fields=runtime_result.to_record_extra_fields(),
+            )
+        except Exception as exc:
+            runtime.logAppended.emit(f"[runtime] failed to write CSV runtime record: {exc}")
+    if runtime_results_store is not None:
+        try:
+            runtime_results_store.write_runtime_result(runtime_result)
+        except Exception as exc:
+            runtime.logAppended.emit(f"[runtime] failed to write database runtime record: {exc}")
 
 
 def _export_runtime_captures_sync(
@@ -736,7 +743,8 @@ def _write_release_log(runtime, *, event_type: str, result: str, message: str = 
 
 def _write_runtime_record(runtime, runtime_result) -> None:
     record_service = runtime._record_service
-    if record_service is None:
+    runtime_results_store = getattr(runtime, "_runtime_results_store", None)
+    if record_service is None and runtime_results_store is None:
         return
     runtime._submit_persistence_task(
         _write_runtime_record_sync,

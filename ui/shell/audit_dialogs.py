@@ -8,6 +8,7 @@ from infrastructure.audit_store import (
     PERMISSION_LABELS,
     PERMISSION_MODULES,
     AuditStore,
+    RuntimeRecordStore,
 )
 from ui.i18n import tr
 
@@ -38,6 +39,8 @@ PERMISSION_MODULE_KEYS = {
     "settings.passwords": "permission.module.settings",
     "audit.view": "permission.module.audit",
     "audit.export": "permission.module.audit",
+    "runtime_records.view": "permission.module.runtime_records",
+    "runtime_records.export": "permission.module.runtime_records",
     "user.manage": "permission.module.user",
     "software.version_log": "permission.module.software",
 }
@@ -219,9 +222,16 @@ class ChangePasswordDialog(QtWidgets.QDialog):
 
 
 class UserPermissionDialog(QtWidgets.QDialog):
-    def __init__(self, parent, store: AuditStore) -> None:
+    def __init__(
+        self,
+        parent,
+        store: AuditStore,
+        *,
+        can_manage_runtime_records: bool = True,
+    ) -> None:
         super().__init__(parent)
         self.store = store
+        self.can_manage_runtime_records = bool(can_manage_runtime_records)
         self.setWindowTitle(tr("auth.user_permissions.title"))
         self.resize(760, 520)
         _apply_dark_dialog_style(self)
@@ -436,6 +446,11 @@ class UserPermissionDialog(QtWidgets.QDialog):
             )
             if role_key == "super_admin":
                 item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
+            elif (
+                key in {"runtime_records.view", "runtime_records.export"}
+                and not self.can_manage_runtime_records
+            ):
+                item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
             self.list_permissions.addItem(item)
 
     def _save_role_permissions(self) -> None:
@@ -636,6 +651,246 @@ class AuditLogDialog(QtWidgets.QDialog):
                 product_name="",
             )
         QtWidgets.QMessageBox.information(self, tr("audit.export_title"), tr("audit.export_done"))
+
+
+class RuntimeRecordsDialog(QtWidgets.QDialog):
+    def __init__(self, parent, store: RuntimeRecordStore, *, can_export: bool) -> None:
+        super().__init__(parent)
+        self.store = store
+        self.can_export = can_export
+        self._rows: list[dict] = []
+        self._loading_filter_values = False
+        self._query_timer = QtCore.QTimer(self)
+        self._query_timer.setSingleShot(True)
+        self._query_timer.setInterval(200)
+        self._query_timer.timeout.connect(self._query)
+        self.setWindowTitle(tr("runtime_records.title"))
+        self.resize(1080, 720)
+        _apply_dark_dialog_style(self)
+
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(10)
+        filters = QtWidgets.QGridLayout()
+        filters.setHorizontalSpacing(8)
+        filters.setVerticalSpacing(8)
+        now = QtCore.QDateTime.currentDateTime()
+        start_of_day = QtCore.QDateTime(now.date(), QtCore.QTime(0, 0, 0))
+        self.chk_start_time = QtWidgets.QCheckBox(tr("audit.start_time"))
+        self.chk_end_time = QtWidgets.QCheckBox(tr("audit.end_time"))
+        self.edit_start = _new_audit_time_editor(start_of_day)
+        self.edit_end = _new_audit_time_editor(now)
+        self.chk_start_time.toggled.connect(self.edit_start.setEnabled)
+        self.chk_end_time.toggled.connect(self.edit_end.setEnabled)
+        self.cmb_product_filter = _new_filter_combo(tr("audit.all_products"))
+        self.cmb_result_filter = _new_filter_combo(tr("runtime_records.all_results"))
+        btn_query = QtWidgets.QPushButton(tr("audit.query"))
+        btn_export = QtWidgets.QPushButton(tr("audit.export_csv"))
+        btn_export.setEnabled(can_export)
+        btn_query.clicked.connect(self._query)
+        btn_export.clicked.connect(self._export)
+        filters.addWidget(self.chk_start_time, 0, 0)
+        filters.addWidget(self.edit_start, 0, 1)
+        filters.addWidget(self.chk_end_time, 0, 2)
+        filters.addWidget(self.edit_end, 0, 3)
+        filters.addWidget(btn_query, 0, 5)
+        filters.addWidget(btn_export, 0, 6)
+        filters.addWidget(QtWidgets.QLabel(tr("audit.product")), 1, 0)
+        filters.addWidget(self.cmb_product_filter, 1, 1)
+        filters.addWidget(QtWidgets.QLabel(tr("runtime_records.total_result")), 1, 2)
+        filters.addWidget(self.cmb_result_filter, 1, 3)
+        root.addLayout(filters)
+
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        self.table_runs = QtWidgets.QTableWidget(0, 7)
+        _configure_table(self.table_runs)
+        self.table_runs.setHorizontalHeaderLabels([
+            tr("audit.time"),
+            tr("audit.product"),
+            tr("runtime_records.total_result"),
+            tr("runtime_records.recipe"),
+            tr("runtime_records.duration_ms"),
+            tr("runtime_records.error_message"),
+            tr("runtime_records.image_paths"),
+        ])
+        self.table_runs.horizontalHeader().setStretchLastSection(True)
+        self.table_runs.itemSelectionChanged.connect(self._load_selected_roi_results)
+        splitter.addWidget(self.table_runs)
+
+        details_widget = QtWidgets.QWidget()
+        details_layout = QtWidgets.QVBoxLayout(details_widget)
+        details_layout.setContentsMargins(0, 0, 0, 0)
+        details_layout.setSpacing(6)
+        details_layout.addWidget(QtWidgets.QLabel(tr("runtime_records.roi_details")))
+        self.table_roi_results = QtWidgets.QTableWidget(0, 7)
+        _configure_table(self.table_roi_results)
+        self.table_roi_results.setHorizontalHeaderLabels([
+            tr("runtime_records.camera"),
+            tr("runtime_records.display_name"),
+            tr("runtime_records.roi_label"),
+            tr("audit.result"),
+            tr("runtime_records.value"),
+            tr("runtime_records.unit"),
+            tr("runtime_records.detail"),
+        ])
+        self.table_roi_results.horizontalHeader().setStretchLastSection(True)
+        details_layout.addWidget(self.table_roi_results, 1)
+        splitter.addWidget(details_widget)
+        splitter.setSizes([400, 260])
+        root.addWidget(splitter, 1)
+
+        self._connect_filter_auto_query()
+        self._reload_filter_values()
+        self._query()
+
+    def _connect_filter_auto_query(self) -> None:
+        self.chk_start_time.toggled.connect(self._schedule_query)
+        self.chk_end_time.toggled.connect(self._schedule_query)
+        self.edit_start.dateTimeChanged.connect(
+            lambda _value: self._schedule_query() if self.chk_start_time.isChecked() else None
+        )
+        self.edit_end.dateTimeChanged.connect(
+            lambda _value: self._schedule_query() if self.chk_end_time.isChecked() else None
+        )
+        self.cmb_product_filter.currentTextChanged.connect(self._schedule_query)
+        self.cmb_result_filter.currentTextChanged.connect(self._schedule_query)
+
+    def _schedule_query(self, *_args: object) -> None:
+        if not self._loading_filter_values:
+            self._query_timer.start()
+
+    def _query(self) -> None:
+        self._rows = self.store.query_runs(
+            start_at=self._time_filter_text(self.chk_start_time, self.edit_start),
+            end_at=self._time_filter_text(self.chk_end_time, self.edit_end),
+            product_name=_combo_filter_text(self.cmb_product_filter),
+            final_result=_combo_filter_text(self.cmb_result_filter),
+        )
+        keys = [
+            "record_time",
+            "product_name",
+            "final_result",
+            "recipe_name",
+            "duration_ms",
+            "error_message",
+            "image_paths_json",
+        ]
+        self.table_runs.blockSignals(True)
+        self.table_runs.setRowCount(len(self._rows))
+        for row_index, data in enumerate(self._rows):
+            for column_index, key in enumerate(keys):
+                value = data.get(key, "")
+                if key == "image_paths_json":
+                    value = RuntimeRecordStore.image_paths_text(value)
+                item = QtWidgets.QTableWidgetItem(str(value or ""))
+                item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+                if column_index == 0:
+                    item.setData(QtCore.Qt.ItemDataRole.UserRole, int(data.get("id", 0) or 0))
+                self.table_runs.setItem(row_index, column_index, item)
+        self.table_runs.blockSignals(False)
+        self.table_runs.resizeColumnsToContents()
+        if self._rows:
+            self.table_runs.selectRow(0)
+            self._load_selected_roi_results()
+        else:
+            self.table_roi_results.setRowCount(0)
+
+    @staticmethod
+    def _time_filter_text(
+        checkbox: QtWidgets.QCheckBox,
+        editor: QtWidgets.QDateTimeEdit,
+    ) -> str:
+        if not checkbox.isChecked():
+            return ""
+        return editor.dateTime().toString("yyyy-MM-dd HH:mm:ss")
+
+    def _reload_filter_values(self) -> None:
+        self._loading_filter_values = True
+        try:
+            self._populate_filter_combo(
+                self.cmb_product_filter,
+                self.store.runtime_filter_values("product_name"),
+            )
+            self._populate_filter_combo(
+                self.cmb_result_filter,
+                self.store.runtime_filter_values("final_result"),
+            )
+        finally:
+            self._loading_filter_values = False
+
+    @staticmethod
+    def _populate_filter_combo(combo: QtWidgets.QComboBox, values: list[str]) -> None:
+        current = combo.currentText()
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("")
+        combo.addItems(values)
+        index = combo.findText(current)
+        if index >= 0:
+            combo.setCurrentIndex(index)
+        else:
+            combo.setEditText(current)
+        combo.blockSignals(False)
+
+    def _selected_run_id(self) -> int | None:
+        row = self.table_runs.currentRow()
+        if row < 0:
+            return None
+        item = self.table_runs.item(row, 0)
+        try:
+            return int(item.data(QtCore.Qt.ItemDataRole.UserRole)) if item is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _load_selected_roi_results(self) -> None:
+        run_id = self._selected_run_id()
+        rows = self.store.roi_results_for_run(run_id) if run_id is not None else []
+        self.table_roi_results.setRowCount(len(rows))
+        keys = ["camera_id", "display_name", "roi_label", "result", "value", "unit", "detail"]
+        for row_index, data in enumerate(rows):
+            for column_index, key in enumerate(keys):
+                value = data.get(key, "")
+                text = "" if value is None else str(value)
+                item = QtWidgets.QTableWidgetItem(text)
+                item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+                self.table_roi_results.setItem(row_index, column_index, item)
+        self.table_roi_results.resizeColumnsToContents()
+
+    def _export(self) -> None:
+        if not self.can_export:
+            return
+        if not self._rows:
+            QtWidgets.QMessageBox.information(
+                self,
+                tr("runtime_records.title"),
+                tr("runtime_records.no_results"),
+            )
+            return
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            tr("runtime_records.export_title"),
+            "runtime_records.csv",
+            "CSV Files (*.csv)",
+        )
+        if not path:
+            return
+        details_by_run = self.store.roi_results_for_run_ids(
+            [row.get("id", 0) for row in self._rows]
+        )
+        self.store.export_runs_csv(self._rows, details_by_run, Path(path))
+        audit_event = getattr(self.parent(), "_audit_event", None)
+        if callable(audit_event):
+            audit_event(
+                module="运行记录",
+                action="导出运行记录",
+                after_value=str(path),
+                product_name="",
+            )
+        QtWidgets.QMessageBox.information(
+            self,
+            tr("runtime_records.export_title"),
+            tr("runtime_records.export_done"),
+        )
 
 
 class SoftwareVersionDialog(QtWidgets.QDialog):

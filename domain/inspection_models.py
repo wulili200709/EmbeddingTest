@@ -4,7 +4,17 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional
 
-DISTANCE_MEASUREMENT_ALGORITHMS = {"line_distance", "line_distance_ref_normal", "center_distance"}
+
+_RECORD_OK_RESULTS = {"OK", "PASS"}
+
+
+def _binary_record_result(value: object) -> str:
+    result = str(value or "").strip().upper()
+    if result in _RECORD_OK_RESULTS:
+        return "OK"
+    if result == "NG":
+        return "NG"
+    return ""
 
 
 @dataclass
@@ -132,14 +142,43 @@ class RuntimeInspectionResult:
 
     def to_record_extra_fields(self) -> Dict[str, object]:
         row: Dict[str, object] = {}
-        for index, item in enumerate(self.item_results, start=1):
-            prefix = f"item_{index:02d}"
-            row[f"{prefix}_enabled"] = item.enabled
-            row[f"{prefix}_name"] = item.display_name
-            row[f"{prefix}_result"] = item.result
-            row[f"{prefix}_roi_label"] = item.roi_label
-            if item.algorithm_code in DISTANCE_MEASUREMENT_ALGORITHMS and item.value is not None:
-                row[f"{prefix}_distance"] = item.value
+        indexed_items = list(enumerate(self.item_results))
+        indexed_items.sort(
+            key=lambda pair: (str(pair[1].camera_id or "").strip(), pair[0])
+        )
+        record_items: list[tuple[InspectionItemResult, str, str]] = []
+        identifiers_by_base_column: dict[str, set[str]] = {}
+        for _index, item in indexed_items:
+            camera_id = str(item.camera_id or "").strip()
+            display_name = str(item.display_name or "").strip()
+            roi_label = str(item.roi_label or "").strip()
+            item_id = str(item.item_id or "").strip()
+            roi_name = (
+                display_name
+                or roi_label
+                or item_id
+            )
+            if not camera_id or not roi_name:
+                continue
+
+            identifier = roi_label or item_id or roi_name
+            base_column = f"{camera_id}.{roi_name}"
+            identifiers_by_base_column.setdefault(base_column, set()).add(identifier)
+            record_items.append((item, roi_name, identifier))
+
+        for item, roi_name, identifier in record_items:
+            camera_id = str(item.camera_id or "").strip()
+            column_name = f"{camera_id}.{roi_name}"
+            if len(identifiers_by_base_column.get(column_name, set())) > 1:
+                column_name = f"{column_name} [{identifier}]"
+            result = _binary_record_result(item.result)
+            previous = str(row.get(column_name, "") or "").strip().upper()
+            if previous == "NG" or result == "NG":
+                row[column_name] = "NG"
+            elif previous == "OK" or result == "OK":
+                row[column_name] = "OK"
+            else:
+                row.setdefault(column_name, "")
         return row
 
 

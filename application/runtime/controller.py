@@ -54,6 +54,7 @@ from infrastructure.camera_settings_store import (
     hik_settings_kwargs_from_mapping,
     light_source_mode_from_mapping,
 )
+from infrastructure.audit_store import RuntimeRecordStore
 
 try:
     from services import (
@@ -232,6 +233,7 @@ class RuntimeController(QtCore.QObject):
             getattr(self._session, "camera_settings_path", session_product_dir / "camera_settings.json")
         )
         self._camera_settings_store = CameraSettingsStore(camera_settings_path)
+        self._runtime_results_store = RuntimeRecordStore()
         self._runtime_records_dir = session_product_dir / "runtime_records"
         self._runtime_capture_dir = session_product_dir / "runtime_capture"
 

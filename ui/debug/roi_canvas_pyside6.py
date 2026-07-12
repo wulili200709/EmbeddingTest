@@ -504,6 +504,55 @@ class RoiCanvas(QtWidgets.QLabel):
                 painter.setPen(QtGui.QPen(color))
                 painter.drawText(box, QtCore.Qt.AlignCenter, text)
 
+        def draw_text_overlay(
+            text: str,
+            color: QtGui.QColor,
+            font_size: float = 16.0,
+            text_pos: Optional[Tuple[float, float]] = None,
+        ) -> None:
+            lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+            if not lines or self._scaled_pm is None:
+                return
+
+            painter.save()
+            image_rect = QtCore.QRect(
+                self._offset.x(),
+                self._offset.y(),
+                self._scaled_pm.width(),
+                self._scaled_pm.height(),
+            )
+            painter.setClipRect(image_rect)
+
+            font = painter.font()
+            font.setPixelSize(max(10, int(round(float(font_size)))))
+            font.setBold(True)
+            painter.setFont(font)
+            metrics = QtGui.QFontMetrics(font)
+            padding = 7
+            margin_x = 12 if text_pos is None else max(0, int(round(float(text_pos[0]))))
+            margin_y = 12 if text_pos is None else max(0, int(round(float(text_pos[1]))))
+            available_width = max(80, image_rect.width() - margin_x - padding * 2 - 4)
+            visible_lines = [
+                metrics.elidedText(line, QtCore.Qt.TextElideMode.ElideRight, available_width)
+                for line in lines
+            ]
+            text_width = max(metrics.horizontalAdvance(line) for line in visible_lines)
+            line_height = metrics.height()
+            box = QtCore.QRectF(
+                image_rect.left() + margin_x,
+                image_rect.top() + margin_y,
+                text_width + padding * 2,
+                line_height * len(visible_lines) + padding * 2,
+            )
+            painter.setPen(QtCore.Qt.NoPen)
+            painter.setBrush(QtGui.QBrush(QtGui.QColor(0, 0, 0, 178)))
+            painter.drawRoundedRect(box, 4, 4)
+            painter.setPen(QtGui.QPen(color))
+            for index, line in enumerate(visible_lines):
+                baseline = box.top() + padding + metrics.ascent() + index * line_height
+                painter.drawText(QtCore.QPointF(box.left() + padding, baseline), line)
+            painter.restore()
+
         if self._scaled_pm is not None and self._overlays:
             for overlay in self._overlays:
                 if overlay.shape_type == "rect" and overlay.xywh is not None:
@@ -520,6 +569,13 @@ class RoiCanvas(QtWidgets.QLabel):
                         overlay.color,
                         text=overlay.text,
                         width=overlay.width,
+                        text_pos=overlay.text_pos,
+                    )
+                elif overlay.shape_type == "text" and overlay.text:
+                    draw_text_overlay(
+                        overlay.text,
+                        overlay.color,
+                        font_size=overlay.width,
                         text_pos=overlay.text_pos,
                     )
 

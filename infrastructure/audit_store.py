@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import hmac
+import json
 import secrets
 import sqlite3
 from dataclasses import dataclass
@@ -34,6 +35,8 @@ PERMISSIONS: tuple[PermissionDef, ...] = (
     PermissionDef("runtime.run", "运行", "运行检测"),
     PermissionDef("runtime.connect_camera", "运行", "连接/断开相机"),
     PermissionDef("runtime.release_ng", "运行", "NG放行"),
+    PermissionDef("runtime_records.view", "运行记录", "查看运行记录"),
+    PermissionDef("runtime_records.export", "运行记录", "导出运行记录"),
     PermissionDef("io.debug", "硬件", "IO调试"),
     PermissionDef("camera.edit_params", "相机", "修改相机参数"),
     PermissionDef("template.edit_roi", "模板", "修改模板/ROI"),
@@ -108,6 +111,44 @@ def utcnow_text() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _initialize_runtime_record_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS runtime_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            record_time TEXT NOT NULL,
+            product_name TEXT NOT NULL,
+            recipe_name TEXT NOT NULL DEFAULT '',
+            final_result TEXT NOT NULL DEFAULT '',
+            duration_ms INTEGER NOT NULL DEFAULT 0,
+            error_message TEXT NOT NULL DEFAULT '',
+            is_system_error INTEGER NOT NULL DEFAULT 0,
+            image_paths_json TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX IF NOT EXISTS idx_runtime_runs_time ON runtime_runs(record_time);
+        CREATE INDEX IF NOT EXISTS idx_runtime_runs_product_time ON runtime_runs(product_name, record_time);
+        CREATE INDEX IF NOT EXISTS idx_runtime_runs_result ON runtime_runs(final_result);
+        CREATE TABLE IF NOT EXISTS runtime_roi_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NOT NULL,
+            camera_id TEXT NOT NULL,
+            item_id TEXT NOT NULL DEFAULT '',
+            roi_label TEXT NOT NULL DEFAULT '',
+            display_name TEXT NOT NULL DEFAULT '',
+            result TEXT NOT NULL DEFAULT '',
+            value REAL,
+            unit TEXT NOT NULL DEFAULT '',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            detail TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY(run_id) REFERENCES runtime_runs(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_runtime_roi_run ON runtime_roi_results(run_id);
+        CREATE INDEX IF NOT EXISTS idx_runtime_roi_camera_result ON runtime_roi_results(camera_id, result);
+        CREATE INDEX IF NOT EXISTS idx_runtime_roi_label ON runtime_roi_results(roi_label);
+        """
+    )
+
+
 def _hash_password(password: str, salt_hex: str | None = None) -> tuple[str, str]:
     salt = bytes.fromhex(salt_hex) if salt_hex else secrets.token_bytes(16)
     digest = hashlib.pbkdf2_hmac(
@@ -133,6 +174,7 @@ class AuditStore:
     def connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path))
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys=ON")
         return conn
 
     def initialize(self) -> None:
@@ -193,6 +235,7 @@ class AuditStore:
                 );
                 """
             )
+            _initialize_runtime_record_schema(conn)
         self._ensure_defaults()
 
     def _ensure_defaults(self) -> None:
@@ -593,6 +636,259 @@ class AuditStore:
                 (int(limit),),
             ).fetchall()
             return [dict(row) for row in rows]
+
+
+class RuntimeRecordStore:
+    """Persist runtime inspection summaries and per-ROI results in audit.db."""
+
+    RUN_COLUMNS = [
+        "record_time",
+        "product_name",
+        "final_result",
+    ]
+
+    def __init__(self, db_path: str | Path | None = None) -> None:
+        self.db_path = Path(db_path) if db_path is not None else default_audit_db_path()
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.initialize()
+
+    def connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self.db_path))
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys=ON")
+        return conn
+
+    def initialize(self) -> None:
+        with self.connect() as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            _initialize_runtime_record_schema(conn)
+
+    def write_runtime_result(self, runtime_result: object) -> int:
+        camera_results = dict(getattr(runtime_result, "camera_results", {}) or {})
+        image_paths = {
+            str(camera_id or "").strip(): str(getattr(camera_result, "image_path", "") or "").strip()
+            for camera_id, camera_result in camera_results.items()
+            if str(camera_id or "").strip() and str(getattr(camera_result, "image_path", "") or "").strip()
+        }
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO runtime_runs(
+                    record_time, product_name, recipe_name, final_result, duration_ms,
+                    error_message, is_system_error, image_paths_json
+                )
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    utcnow_text(),
+                    str(getattr(runtime_result, "product_name", "") or "").strip(),
+                    str(getattr(runtime_result, "recipe_name", "") or "").strip(),
+                    str(getattr(runtime_result, "final_result", "") or "").strip(),
+                    int(getattr(runtime_result, "duration_ms", 0) or 0),
+                    str(getattr(runtime_result, "error_message", "") or "").strip(),
+                    int(bool(getattr(runtime_result, "is_system_error", False))),
+                    json.dumps(image_paths, ensure_ascii=False, sort_keys=True),
+                ),
+            )
+            run_id = int(cursor.lastrowid)
+            rows: list[tuple[object, ...]] = []
+            for item in list(getattr(runtime_result, "item_results", []) or []):
+                value = getattr(item, "value", None)
+                try:
+                    numeric_value = float(value) if value is not None else None
+                except (TypeError, ValueError):
+                    numeric_value = None
+                rows.append(
+                    (
+                        run_id,
+                        str(getattr(item, "camera_id", "") or "").strip(),
+                        str(getattr(item, "item_id", "") or "").strip(),
+                        str(getattr(item, "roi_label", "") or "").strip(),
+                        str(getattr(item, "display_name", "") or "").strip(),
+                        str(getattr(item, "result", "") or "").strip(),
+                        numeric_value,
+                        str(getattr(item, "unit", "") or "").strip(),
+                        int(bool(getattr(item, "enabled", True))),
+                        str(getattr(item, "detail", "") or "").strip(),
+                    )
+                )
+            if rows:
+                conn.executemany(
+                    """
+                    INSERT INTO runtime_roi_results(
+                        run_id, camera_id, item_id, roi_label, display_name, result,
+                        value, unit, enabled, detail
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    rows,
+                )
+            return run_id
+
+    def query_runs(
+        self,
+        *,
+        start_at: str = "",
+        end_at: str = "",
+        product_name: str = "",
+        final_result: str = "",
+        limit: int = 1000,
+    ) -> list[dict]:
+        clauses: list[str] = []
+        params: list[object] = []
+        if start_at:
+            clauses.append("record_time >= ?")
+            params.append(str(start_at))
+        if end_at:
+            clauses.append("record_time <= ?")
+            params.append(str(end_at))
+        if product_name:
+            clauses.append("product_name LIKE ?")
+            params.append(f"%{str(product_name)}%")
+        if final_result:
+            clauses.append("final_result = ?")
+            params.append(str(final_result).strip())
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(max(1, min(int(limit), 5000)))
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT id, record_time, product_name, recipe_name, final_result,
+                       duration_ms, error_message, is_system_error, image_paths_json
+                FROM runtime_runs
+                {where}
+                ORDER BY record_time DESC, id DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def runtime_filter_values(self, column: str, *, limit: int = 200) -> list[str]:
+        allowed_columns = {"product_name", "final_result"}
+        if column not in allowed_columns:
+            return []
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT DISTINCT {column} AS value
+                FROM runtime_runs
+                WHERE COALESCE({column}, '') <> ''
+                ORDER BY value
+                LIMIT ?
+                """,
+                (max(1, min(int(limit), 1000)),),
+            ).fetchall()
+            return [str(row["value"] or "") for row in rows if str(row["value"] or "").strip()]
+
+    def roi_results_for_run_ids(self, run_ids: Iterable[object]) -> dict[int, list[dict]]:
+        normalized_ids = []
+        for run_id in run_ids:
+            try:
+                value = int(run_id)
+            except (TypeError, ValueError):
+                continue
+            if value > 0 and value not in normalized_ids:
+                normalized_ids.append(value)
+        results: dict[int, list[dict]] = {run_id: [] for run_id in normalized_ids}
+        for start in range(0, len(normalized_ids), 900):
+            chunk = normalized_ids[start:start + 900]
+            placeholders = ", ".join("?" for _ in chunk)
+            with self.connect() as conn:
+                rows = conn.execute(
+                    f"""
+                    SELECT id, run_id, camera_id, item_id, roi_label, display_name,
+                           result, value, unit, enabled, detail
+                    FROM runtime_roi_results
+                    WHERE run_id IN ({placeholders})
+                    ORDER BY run_id, id
+                    """,
+                    chunk,
+                ).fetchall()
+            for row in rows:
+                payload = dict(row)
+                results.setdefault(int(payload["run_id"]), []).append(payload)
+        return results
+
+    def roi_results_for_run(self, run_id: object) -> list[dict]:
+        try:
+            normalized_id = int(run_id)
+        except (TypeError, ValueError):
+            return []
+        return self.roi_results_for_run_ids([normalized_id]).get(normalized_id, [])
+
+    @staticmethod
+    def image_paths_text(value: object) -> str:
+        try:
+            payload = json.loads(str(value or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return str(value or "")
+        if not isinstance(payload, dict):
+            return ""
+        return " | ".join(
+            f"{camera_id}: {path}"
+            for camera_id, path in sorted(payload.items())
+            if str(path or "").strip()
+        )
+
+    @staticmethod
+    def _csv_roi_column(row: Mapping[str, object]) -> str:
+        camera_id = str(row.get("camera_id", "") or "").strip()
+        display_name = str(row.get("display_name", "") or "").strip()
+        roi_label = str(row.get("roi_label", "") or "").strip()
+        item_id = str(row.get("item_id", "") or "").strip()
+        roi_name = display_name or roi_label or item_id
+        return f"{camera_id}.{roi_name}" if camera_id and roi_name else ""
+
+    @staticmethod
+    def _csv_roi_result(value: object) -> str:
+        result = str(value or "").strip().upper()
+        if result in {"OK", "PASS"}:
+            return "OK"
+        if result == "NG":
+            return "NG"
+        return ""
+
+    def export_runs_csv(
+        self,
+        runs: Iterable[Mapping[str, object]],
+        roi_results_by_run: Mapping[int, Iterable[Mapping[str, object]]],
+        path: str | Path,
+    ) -> None:
+        run_rows = [dict(row) for row in runs]
+        roi_columns: list[str] = []
+        for run in run_rows:
+            try:
+                run_id = int(run.get("id", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            for roi_row in roi_results_by_run.get(run_id, []):
+                column = self._csv_roi_column(roi_row)
+                if column and column not in roi_columns:
+                    roi_columns.append(column)
+        fieldnames = [*self.RUN_COLUMNS, *roi_columns]
+        with Path(path).open("w", encoding="utf-8-sig", newline="") as csv_file:
+            writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+            writer.writeheader()
+            for run in run_rows:
+                row = {key: run.get(key, "") for key in self.RUN_COLUMNS}
+                try:
+                    run_id = int(run.get("id", 0) or 0)
+                except (TypeError, ValueError):
+                    run_id = 0
+                for roi_row in roi_results_by_run.get(run_id, []):
+                    column = self._csv_roi_column(roi_row)
+                    result = self._csv_roi_result(roi_row.get("result"))
+                    if not column:
+                        continue
+                    previous = str(row.get(column, "") or "").strip().upper()
+                    if previous == "NG" or result == "NG":
+                        row[column] = "NG"
+                    elif previous == "OK" or result == "OK":
+                        row[column] = "OK"
+                    else:
+                        row.setdefault(column, "")
+                writer.writerow(row)
 
 
 class PermissionService:

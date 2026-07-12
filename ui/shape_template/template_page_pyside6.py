@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from algorithms.image_io import imread
 from shape.core.bootstrap import ensure_repo_root_on_path
 from shape.core.locator import (
     product_paths,
@@ -854,7 +855,7 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
             self._set_image(path, reset_state=True)
 
     def _set_image(self, path: str, *, reset_state: bool) -> None:
-        image_bgr = cv2.imread(path, cv2.IMREAD_COLOR)
+        image_bgr = imread(path, cv2.IMREAD_COLOR)
         if image_bgr is None:
             QtWidgets.QMessageBox.critical(self, tr("common.read_failed"), path)
             return
@@ -1963,7 +1964,7 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
             QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.set_reference_first"))
             return
 
-        scene_bgr = cv2.imread(scene_path, cv2.IMREAD_COLOR)
+        scene_bgr = imread(scene_path, cv2.IMREAD_COLOR)
         if scene_bgr is None:
             self._set_find_item_error(item, tr("template.read_image_failed", path=scene_path))
             return

@@ -5,6 +5,25 @@ from typing import Optional
 from PySide6 import QtCore, QtWidgets
 
 from ui.i18n import tr
+from ui.debug.tool_page.camera_roles import camera_role_from_path
+
+
+def _split_files_by_camera_role(files: list[str]) -> tuple[list[str], list[str]]:
+    valid_files: list[str] = []
+    invalid_files: list[str] = []
+    for path in files:
+        target = valid_files if camera_role_from_path(path) else invalid_files
+        target.append(path)
+    return valid_files, invalid_files
+
+
+def _invalid_camera_name_details(files: list[str], *, limit: int = 10) -> str:
+    visible_names = [QtCore.QFileInfo(path).fileName() for path in files[:limit]]
+    details = "\n".join(f"- {name}" for name in visible_names)
+    omitted = max(0, len(files) - len(visible_names))
+    if omitted:
+        details += f"\n{tr('debug.invalid_camera_name_more', count=omitted)}"
+    return details
 
 
 class SampleListController:
@@ -109,6 +128,19 @@ class SampleListController:
             "",
             "Images (*.jpg *.jpeg *.png *.bmp *.tif *.tiff *.webp)",
         )
+        if not files:
+            return
+        files, invalid_files = _split_files_by_camera_role(files)
+        if invalid_files:
+            QtWidgets.QMessageBox.warning(
+                self.owner,
+                tr("debug.invalid_camera_name_title"),
+                tr(
+                    "debug.invalid_camera_name_message",
+                    count=len(invalid_files),
+                    files=_invalid_camera_name_details(invalid_files),
+                ),
+            )
         if not files:
             return
         normalized_kind = str(kind or "").strip().upper()
