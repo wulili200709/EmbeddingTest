@@ -1943,7 +1943,12 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.edt_scene_path.setText(scene_path)
         self.find_canvas.set_overlays([])
         if scene_path and Path(scene_path).exists():
-            self.find_canvas.set_image(scene_path)
+            # A find result is displayed once when its item finishes and again
+            # when the worker emits ``finished``.  Reloading the same image
+            # creates a second QPixmap needlessly; Qt can abort in that native
+            # image-loading path while the worker thread is being torn down.
+            if self.find_canvas.image_path() != scene_path or not self.find_canvas.has_image():
+                self.find_canvas.set_image(scene_path)
         else:
             self.find_canvas.clear_image()
         self.find_canvas.set_roi_style(roi_color=QtGui.QColor(0, 140, 255), roi_dash=False, roi_width=1.0)
@@ -2304,9 +2309,9 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
-        worker.progressChanged.connect(self._set_status)
-        worker.itemFinished.connect(self._on_find_worker_item_finished)
-        worker.finished.connect(self._on_find_worker_finished)
+        worker.progressChanged.connect(self._set_status, QtCore.Qt.ConnectionType.QueuedConnection)
+        worker.itemFinished.connect(self._on_find_worker_item_finished, QtCore.Qt.ConnectionType.QueuedConnection)
+        worker.finished.connect(self._on_find_worker_finished, QtCore.Qt.ConnectionType.QueuedConnection)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
@@ -2357,10 +2362,19 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._find_progress_timer.stop()
         self._find_active_paths = []
         self._set_find_running(False)
+        self._set_status("NCC find finished")
+        # Let the worker's queued shutdown work complete before touching the
+        # canvas.  This also coalesces the final refresh with the image already
+        # shown by _on_find_worker_item_finished.
+        QtCore.QTimer.singleShot(0, self._refresh_current_find_scene_after_worker)
+
+    @QtCore.Slot()
+    def _refresh_current_find_scene_after_worker(self) -> None:
+        if self._find_running:
+            return
         current_item = self.list_find_images.currentItem()
         if current_item is not None:
             self._on_find_item_selected(current_item, None)
-        self._set_status("NCC find finished")
 
     def _run_find_for_item(self, item: QtWidgets.QListWidgetItem) -> None:
         scene_path = str(item.data(QtCore.Qt.ItemDataRole.UserRole) or "")

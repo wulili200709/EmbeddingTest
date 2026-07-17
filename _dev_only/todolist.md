@@ -4234,3 +4234,11 @@ records/audit.db
 records/audit.db-wal
 records/audit.db-shm
 软件启动后就会自动生成新库，并创建默认 admin。
+
+# DIO注意事项
+如果用python的源码测试6133的源码看IO，需要把这四个dll文件放在python的根目录下
+![ ](image-17.png). 
+否则一直会报错error 3。
+
+![alt text](image-18.png)
+比如这个python根目录 就在C:Users\Administrator\AppData\Local\Programs\Python\Pvthon312\python.exe 这个目录下，需要放这4个dll。

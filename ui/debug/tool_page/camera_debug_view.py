@@ -267,6 +267,7 @@ def build_camera_debug_page(
     owner.cmb_capture_mode = QtWidgets.QComboBox()
     owner.cmb_capture_mode.addItem(tr("debug.capture_mode_independent"), "independent")
     owner.cmb_capture_mode.addItem(tr("debug.capture_mode_single_multi_light"), "single_multi_light")
+    owner.cmb_capture_mode.addItem(tr("debug.capture_mode_flexible"), "flexible")
     owner.cmb_capture_mode.setCurrentIndex(0)
     owner.cmb_capture_mode.setStyleSheet(input_style)
     capture_mode_layout.addWidget(owner.cmb_capture_mode)

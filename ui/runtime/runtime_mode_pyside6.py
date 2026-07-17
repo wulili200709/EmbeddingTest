@@ -811,6 +811,9 @@ class RuntimeModePage(QtWidgets.QWidget):
     def _populate_camera_slot_combos(self) -> None:
         if not self._camera_slots:
             return
+        available_roles = [
+            role for role in CAMERA_ROLES if role in self._display_role_set()
+        ] or [DEFAULT_CAMERA_ROLE]
         self._updating_camera_layout_controls = True
         try:
             for slot_index, slot in enumerate(self._camera_slots):
@@ -818,12 +821,21 @@ class RuntimeModePage(QtWidgets.QWidget):
                 combo = slot.cmb_camera
                 combo.blockSignals(True)
                 combo.clear()
-                for role in CAMERA_ROLES:
+                for role in available_roles:
                     combo.addItem(_camera_title(role), role)
                 self._set_combo_current_data(combo, current)
+                if combo.currentIndex() < 0:
+                    combo.setCurrentIndex(0)
                 combo.blockSignals(False)
         finally:
             self._updating_camera_layout_controls = False
+
+    def _reset_camera_slot_order_for_reduced_roles(self) -> None:
+        """Keep one/two-channel views in the first canvases while layout is fixed."""
+        display_roles = [role for role in CAMERA_ROLES if role in self._display_role_set()]
+        if len(display_roles) >= len(CAMERA_ROLES):
+            return
+        self._camera_slot_roles = self._normalize_camera_slot_roles(display_roles)
 
     @staticmethod
     def _set_combo_current_data(combo: QtWidgets.QComboBox, value: str) -> None:
@@ -1077,6 +1089,8 @@ class RuntimeModePage(QtWidgets.QWidget):
 
     def set_configured_camera_roles(self, roles: list[str]) -> None:
         self._configured_role_set = set(configured_camera_roles(roles))
+        self._reset_camera_slot_order_for_reduced_roles()
+        self._populate_camera_slot_combos()
         self._refresh_camera_role_layout()
         self._refresh_trigger_buttons()
 
@@ -1097,6 +1111,8 @@ class RuntimeModePage(QtWidgets.QWidget):
             f"{tr('runtime.camera')}: "
             + (", ".join(sorted(role_set)) if role_set else tr("runtime.not_connected"))
         )
+        self._reset_camera_slot_order_for_reduced_roles()
+        self._populate_camera_slot_combos()
         self._refresh_camera_role_layout()
         self._refresh_camera_timing_visibility()
         self._refresh_trigger_buttons()
@@ -1406,6 +1422,7 @@ class RuntimeModePage(QtWidgets.QWidget):
 
     def _refresh_camera_role_layout(self) -> None:
         display_roles = self._display_role_set()
+        self._refresh_camera_layout_selector_state(display_roles)
         for role in CAMERA_ROLES:
             view = self._camera_views_by_role.get(role)
             if view is not None:
@@ -1414,6 +1431,16 @@ class RuntimeModePage(QtWidgets.QWidget):
             role = self._camera_slot_roles[slot_index]
             slot.setVisible(role in display_roles)
         self._rebuild_camera_grid()
+
+    def _refresh_camera_layout_selector_state(self, display_roles: set[str]) -> None:
+        """Only three active logical channels need a user-selectable layout."""
+        selectable = len(display_roles) == len(CAMERA_ROLES)
+        layout_combo = getattr(self, "cmb_camera_layout", None)
+        if layout_combo is not None:
+            layout_combo.setEnabled(selectable)
+        caption = getattr(self, "lbl_camera_layout_caption", None)
+        if caption is not None:
+            caption.setEnabled(selectable)
 
     @staticmethod
     def _sanitize_runtime_status_text_v3(status_text: str) -> str:

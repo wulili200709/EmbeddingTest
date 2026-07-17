@@ -13,6 +13,7 @@ LIGHT_SOURCE_MODE_BOARD_IO = "board_io"
 LIGHT_SOURCE_MODE_CAMERA_LINE1_STROBE = "camera_line1_strobe"
 CAPTURE_MODE_INDEPENDENT = "independent"
 CAPTURE_MODE_SINGLE_MULTI_LIGHT = "single_multi_light"
+CAPTURE_MODE_FLEXIBLE = "flexible"
 CAPTURE_LIGHT_OUTPUTS = ("DO_LIGHT_CAM1", "DO_LIGHT_CAM2", "DO_LIGHT_CAM3")
 CAPTURE_DEFAULT_EXPOSURE_US = 5000.0
 
@@ -83,7 +84,16 @@ def normalize_capture_mode(value: object) -> str:
     text = str(value or "").strip().lower()
     if text in {"single_multi_light", "single_camera_multi_light", "multi_light", "single"}:
         return CAPTURE_MODE_SINGLE_MULTI_LIGHT
+    if text in {"flexible", "flexible_mapping", "channel_mapping", "mixed"}:
+        return CAPTURE_MODE_FLEXIBLE
     return CAPTURE_MODE_INDEPENDENT
+
+
+def uses_channel_capture_mapping(value: object) -> bool:
+    return normalize_capture_mode(value) in {
+        CAPTURE_MODE_SINGLE_MULTI_LIGHT,
+        CAPTURE_MODE_FLEXIBLE,
+    }
 
 
 def normalize_capture_light_output(value: object, *, default: str = "DO_LIGHT_CAM1") -> str:
@@ -102,7 +112,7 @@ def default_capture_channels(mode: object = CAPTURE_MODE_INDEPENDENT) -> list[di
             {
                 "enabled": True,
                 "role": role,
-                "physical_role": role if normalized_mode == CAPTURE_MODE_INDEPENDENT else DEFAULT_CAMERA_ROLE,
+                "physical_role": role if normalized_mode != CAPTURE_MODE_SINGLE_MULTI_LIGHT else DEFAULT_CAMERA_ROLE,
                 "light_output": f"DO_LIGHT_CAM{index}",
                 "exposure_time_us": CAPTURE_DEFAULT_EXPOSURE_US,
                 "gain": 0.0,
@@ -122,7 +132,7 @@ def _normalize_capture_channel(
     raw = channel if isinstance(channel, Mapping) else {}
     role_text = normalize_camera_role(raw.get("role"), default=role) or role
     default_light = f"DO_LIGHT_CAM{index}"
-    default_physical = role_text if mode == CAPTURE_MODE_INDEPENDENT else DEFAULT_CAMERA_ROLE
+    default_physical = role_text if mode != CAPTURE_MODE_SINGLE_MULTI_LIGHT else DEFAULT_CAMERA_ROLE
 
     def _float_value(key: str, default: float) -> float:
         try:

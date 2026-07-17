@@ -13,13 +13,14 @@ from common.camera_roles import CAMERA_ROLES, DEFAULT_CAMERA_ROLE, normalize_cam
 from infrastructure.camera_settings_store import (
     CAPTURE_DEFAULT_EXPOSURE_US,
     CAPTURE_LIGHT_OUTPUTS,
+    CAPTURE_MODE_FLEXIBLE,
     CAPTURE_MODE_INDEPENDENT,
-    CAPTURE_MODE_SINGLE_MULTI_LIGHT,
     CameraSettingsStore,
     LIGHT_SOURCE_MODE_BOARD_IO,
     light_source_mode_from_mapping,
     normalize_capture_light_output,
     normalize_capture_mode,
+    uses_channel_capture_mapping,
 )
 from ui.i18n import tr
 
@@ -42,8 +43,52 @@ def _selected_debug_camera_role(tool_page) -> str:
     return normalize_camera_role(combo.currentData() or combo.currentText(), default=DEFAULT_CAMERA_ROLE)
 
 
+def _debug_capture_channel_for_role(tool_page, role: object = None) -> dict[str, object]:
+    logical_role = normalize_camera_role(
+        role if role is not None else _selected_debug_camera_role(tool_page),
+        default=DEFAULT_CAMERA_ROLE,
+    )
+    try:
+        config = tool_page._camera_settings_store.load_capture_config()
+    except Exception:
+        return {}
+    if not uses_channel_capture_mapping(config.get("capture_mode")):
+        return {}
+    for raw in list(config.get("capture_channels", []) or []):
+        if not isinstance(raw, dict) or not bool(raw.get("enabled", True)):
+            continue
+        if normalize_camera_role(raw.get("role"), default="") != logical_role:
+            continue
+        channel = dict(raw)
+        channel["role"] = logical_role
+        channel["physical_role"] = normalize_camera_role(
+            raw.get("physical_role"), default=logical_role
+        ) or logical_role
+        channel["light_output"] = normalize_capture_light_output(raw.get("light_output"))
+        return channel
+    return {}
+
+
+def _debug_physical_camera_role(tool_page, role: object = None) -> str:
+    logical_role = normalize_camera_role(
+        role if role is not None else _selected_debug_camera_role(tool_page),
+        default=DEFAULT_CAMERA_ROLE,
+    )
+    channel = _debug_capture_channel_for_role(tool_page, logical_role)
+    return normalize_camera_role(channel.get("physical_role"), default=logical_role) or logical_role
+
+
+def _debug_capture_light_index(tool_page, role: object = None) -> int:
+    channel = _debug_capture_channel_for_role(tool_page, role)
+    output = normalize_capture_light_output(channel.get("light_output"))
+    for index, camera_role in enumerate(CAMERA_ROLES, start=1):
+        if output == f"DO_LIGHT_CAM{index}" or output.endswith(camera_role.upper()):
+            return index
+    return 1
+
+
 def _load_debug_role_binding(tool_page, role: str) -> str:
-    role_text = normalize_camera_role(role, default=DEFAULT_CAMERA_ROLE)
+    role_text = _debug_physical_camera_role(tool_page, role)
     preferred_serial = str(CameraSettingsStore().serial_for_role(role_text) or "").strip()
     if preferred_serial:
         return preferred_serial
@@ -59,7 +104,7 @@ def _load_debug_role_binding(tool_page, role: str) -> str:
 
 
 def _save_debug_role_binding(tool_page, role: str, serial: str) -> None:
-    role_text = normalize_camera_role(role, default=DEFAULT_CAMERA_ROLE)
+    role_text = _debug_physical_camera_role(tool_page, role)
     serial_text = str(serial or "").strip()
     CameraSettingsStore().save_serial_for_role(role_text, serial_text)
 
@@ -83,9 +128,22 @@ def _apply_debug_role_binding_to_camera_combo(tool_page) -> None:
 
 def _refresh_debug_role_status(tool_page) -> None:
     role = tool_page._selected_debug_camera_role()
+    physical_role = _debug_physical_camera_role(tool_page, role)
+    channel = _debug_capture_channel_for_role(tool_page, role)
     current = getattr(tool_page, "lbl_debug_current_role", None)
     if current is not None:
-        current.setText(f"当前调试角色：{role}")
+        if channel:
+            current.setText(
+                tr(
+                    "debug.current_debug_mapping",
+                    role=role,
+                    physical_role=physical_role,
+                    light=str(channel.get("light_output", "") or "-"),
+                    exposure=float(channel.get("exposure_time_us", CAPTURE_DEFAULT_EXPOSURE_US) or CAPTURE_DEFAULT_EXPOSURE_US),
+                )
+            )
+        else:
+            current.setText(tr("debug.current_debug_role", role=role))
 
 
 def _debug_camera_settings_payload_from_ui(tool_page) -> dict[str, object]:
@@ -103,11 +161,11 @@ def _debug_camera_settings_payload_from_ui(tool_page) -> dict[str, object]:
 
 def _load_saved_debug_camera_settings_to_ui(tool_page, serial: str) -> bool:
     role = tool_page._selected_debug_camera_role()
+    physical_role = _debug_physical_camera_role(tool_page, role)
+    channel = _debug_capture_channel_for_role(tool_page, role)
     tool_page._debug_camera_block_spin_apply = True
     try:
-        payload = tool_page._camera_settings_store.load_for_role(role, serial=serial)
-        if not payload:
-            return False
+        payload = tool_page._camera_settings_store.load_for_role(physical_role, serial=serial) or {}
         if payload.get("exposure_time_us") is not None:
             tool_page.spin_debug_exposure.setValue(float(payload["exposure_time_us"]))
         if payload.get("gain") is not None:
@@ -123,7 +181,15 @@ def _load_saved_debug_camera_settings_to_ui(tool_page, serial: str) -> bool:
         index = tool_page.cmb_debug_light_source_mode.findData(light_source_mode)
         if index >= 0:
             tool_page.cmb_debug_light_source_mode.setCurrentIndex(index)
-        return True
+        if channel:
+            tool_page.spin_debug_exposure.setValue(
+                float(channel.get("exposure_time_us", CAPTURE_DEFAULT_EXPOSURE_US) or CAPTURE_DEFAULT_EXPOSURE_US)
+            )
+            tool_page.spin_debug_gain.setValue(float(channel.get("gain", 0.0) or 0.0))
+            board_index = tool_page.cmb_debug_light_source_mode.findData(LIGHT_SOURCE_MODE_BOARD_IO)
+            if board_index >= 0:
+                tool_page.cmb_debug_light_source_mode.setCurrentIndex(board_index)
+        return bool(payload or channel)
     finally:
         tool_page._debug_camera_block_spin_apply = False
 
@@ -133,7 +199,25 @@ def _save_debug_camera_settings(tool_page, serial: str, settings: dict[str, obje
     if not serial_text:
         return
     role = tool_page._selected_debug_camera_role()
-    tool_page._camera_settings_store.save_for_role(role, serial_text, settings)
+    physical_role = _debug_physical_camera_role(tool_page, role)
+    tool_page._camera_settings_store.save_for_role(physical_role, serial_text, settings)
+    channel = _debug_capture_channel_for_role(tool_page, role)
+    if not channel:
+        return
+    try:
+        config = tool_page._camera_settings_store.load_capture_config()
+        channels = list(config.get("capture_channels", []) or [])
+        for raw in channels:
+            if not isinstance(raw, dict):
+                continue
+            if normalize_camera_role(raw.get("role"), default="") != role:
+                continue
+            raw["exposure_time_us"] = float(settings.get("exposure_time_us", CAPTURE_DEFAULT_EXPOSURE_US))
+            raw["gain"] = float(settings.get("gain", 0.0))
+            break
+        tool_page._camera_settings_store.save_capture_config(config.get("capture_mode"), channels)
+    except Exception:
+        return
 
 
 def _capture_light_output_label(output: object) -> str:
@@ -171,7 +255,7 @@ def _capture_physical_role(role: str, mode: str) -> str:
 
 
 def _update_capture_channel_visibility(tool_page) -> None:
-    visible = _capture_mode_from_ui(tool_page) == CAPTURE_MODE_SINGLE_MULTI_LIGHT
+    visible = _capture_mode_from_ui(tool_page) != CAPTURE_MODE_INDEPENDENT
     for attr in ("lbl_capture_channel_title", "capture_channel_table"):
         widget = getattr(tool_page, attr, None)
         if widget is not None:
@@ -320,6 +404,10 @@ def _on_capture_mode_changed(tool_page, _index: int = 0) -> None:
             physical_combo = table.cellWidget(row, 2)
             if not isinstance(physical_combo, QtWidgets.QComboBox):
                 continue
+            if mode == CAPTURE_MODE_FLEXIBLE:
+                # Flexible mapping keeps the user-selected physical camera for
+                # each logical channel, including shared-camera exposures.
+                continue
             target_role = _capture_physical_role(role, mode)
             index = physical_combo.findData(target_role)
             if index >= 0:
@@ -335,6 +423,8 @@ def _on_capture_channel_item_changed(tool_page, _item=None) -> None:
 
 def _on_capture_channel_editor_changed(tool_page, *_args) -> None:
     _save_capture_config_from_ui(tool_page)
+    _apply_debug_role_binding_to_camera_combo(tool_page)
+    _refresh_debug_role_status(tool_page)
 
 
 def _set_debug_preview_placeholder(tool_page, text: str) -> None:

@@ -4,7 +4,9 @@ build/temp.win-amd64-cpython-312/Release/Git/
 dist/
 dist-build/
 dist-build-lite/
-_dev_only/
+_dev_only/*
+!_dev_only/manual_capture/
+!_dev_only/manual_capture/capture_beginner_guide.py
 __pycache__/
 *.pyc
 *.pyo

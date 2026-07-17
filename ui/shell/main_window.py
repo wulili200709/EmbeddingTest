@@ -20,9 +20,8 @@ from application import (
 )
 from infrastructure.audit_store import AuditStore, PermissionService, RuntimeRecordStore
 from infrastructure.camera_settings_store import (
-    CAPTURE_MODE_SINGLE_MULTI_LIGHT,
     CameraSettingsStore,
-    normalize_capture_mode,
+    uses_channel_capture_mapping,
 )
 from ui.shell.audit_dialogs import (
     AuditLogDialog,
@@ -779,7 +778,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         try:
             capture_config = CameraSettingsStore(self.session.camera_settings_path).load_capture_config()
-            if normalize_capture_mode(capture_config.get("capture_mode")) == CAPTURE_MODE_SINGLE_MULTI_LIGHT:
+            if uses_channel_capture_mapping(capture_config.get("capture_mode")):
                 for channel in list(capture_config.get("capture_channels", []) or []):
                     if not bool(channel.get("enabled", True)):
                         continue
@@ -809,7 +808,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _runtime_physical_camera_roles(self) -> list[str]:
         try:
             capture_config = CameraSettingsStore(self.session.camera_settings_path).load_capture_config()
-            if normalize_capture_mode(capture_config.get("capture_mode")) == CAPTURE_MODE_SINGLE_MULTI_LIGHT:
+            if uses_channel_capture_mapping(capture_config.get("capture_mode")):
                 physical_roles: list[str] = []
                 for channel in list(capture_config.get("capture_channels", []) or []):
                     if not bool(channel.get("enabled", True)):

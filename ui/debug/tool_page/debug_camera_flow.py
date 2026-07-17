@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime
 
 import cv2
@@ -236,9 +237,17 @@ def _connect_debug_camera(self) -> None:
         QtWidgets.QMessageBox.information(self, "Camera Debug", "Scan and select a camera first")
         return
     role = self._selected_debug_camera_role()
+    physical_role = self._debug_physical_camera_role(role)
+    channel = self._debug_capture_channel_for_role(role)
     self.debugCameraConnectRequested.emit(serial)
     try:
-        saved_settings = self._camera_settings_store.load_for_role(role, serial=serial)
+        saved_settings = dict(
+            self._camera_settings_store.load_for_role(physical_role, serial=serial) or {}
+        )
+        if channel:
+            saved_settings["exposure_time_us"] = float(channel.get("exposure_time_us", 5000.0) or 5000.0)
+            saved_settings["gain"] = float(channel.get("gain", 0.0) or 0.0)
+            saved_settings["light_source_mode"] = "board_io"
         settings = {
             "debug": HikCameraSettings(
                 **hik_settings_kwargs_from_mapping(
@@ -255,8 +264,10 @@ def _connect_debug_camera(self) -> None:
     self._save_debug_role_binding(role, serial)
     self._refresh_debug_camera_settings()
     self._set_debug_preview_placeholder("Debug camera connected; live preview is available")
-    self._set_debug_camera_status(f"Connected {role} debug camera: {serial}")
-    self.debugCameraConnected.emit(role, serial)
+    self._set_debug_camera_status(
+        f"Connected {role} (physical {physical_role}) debug camera: {serial}"
+    )
+    self.debugCameraConnected.emit(physical_role, serial)
 
 
 def _disconnect_debug_camera_requested(self) -> None:
@@ -308,8 +319,17 @@ def _refresh_debug_camera_settings(self) -> None:
             digital_shift = float(device.get_float_value("DigitalShift"))
         except Exception:
             digital_shift = float(self.spin_debug_digital_shift.value())
-        self.spin_debug_exposure.setValue(exposure)
-        self.spin_debug_gain.setValue(gain)
+        channel = self._debug_capture_channel_for_role()
+        self.spin_debug_exposure.setValue(
+            float(channel.get("exposure_time_us", exposure) or exposure)
+            if channel
+            else exposure
+        )
+        self.spin_debug_gain.setValue(
+            float(channel.get("gain", gain) or gain)
+            if channel
+            else gain
+        )
         self.chk_debug_digital_shift_enable.setChecked(digital_shift_enable)
         self.spin_debug_digital_shift.setValue(digital_shift)
         try:
@@ -320,10 +340,11 @@ def _refresh_debug_camera_settings(self) -> None:
         except Exception:
             pass
         serial = getattr(device, "serial_number", self._selected_debug_camera_serial())
-        self._save_debug_camera_settings(
-            serial,
-            self._debug_camera_settings_payload_from_ui(),
-        )
+        if not channel:
+            self._save_debug_camera_settings(
+                serial,
+                self._debug_camera_settings_payload_from_ui(),
+            )
         self._save_debug_role_binding(
             self._selected_debug_camera_role(),
             serial,
@@ -332,14 +353,14 @@ def _refresh_debug_camera_settings(self) -> None:
         self._debug_camera_block_spin_apply = False
 
 
-def _apply_debug_camera_settings(self, *, quiet: bool = False) -> None:
+def _apply_debug_camera_settings(self, *, quiet: bool = False) -> bool:
     if not quiet and not _require_debug_camera_param_permission(self):
         return
     device = self._debug_camera_device()
     if device is None:
         if not quiet:
             QtWidgets.QMessageBox.information(self, "Camera Debug", "Connect the debug camera first")
-        return
+        return False
     try:
         device.apply_settings(
             HikCameraSettings(
@@ -352,7 +373,7 @@ def _apply_debug_camera_settings(self, *, quiet: bool = False) -> None:
         )
     except Exception as exc:
         QtWidgets.QMessageBox.critical(self, "Camera Debug", f"Failed to apply camera parameters: {exc}")
-        return
+        return False
     serial = str(getattr(device, "serial_number", self._selected_debug_camera_serial()) or "").strip()
     payload = dict(self._debug_camera_settings_payload_from_ui())
     self._save_debug_camera_settings(serial, payload)
@@ -361,18 +382,60 @@ def _apply_debug_camera_settings(self, *, quiet: bool = False) -> None:
         self.cameraSettingsApplied.emit(serial, payload)
     self._refresh_debug_camera_settings()
     self._set_debug_camera_status("Parameters written to camera" if quiet else "Camera parameters applied")
+    return True
 
 
 def _grab_debug_camera_once(self) -> None:
     if self._debug_frame_grab_service is None or "debug" not in self._debug_frame_grab_service.roles():
         QtWidgets.QMessageBox.information(self, "Camera Debug", "Connect the debug camera first")
         return
+    role = self._selected_debug_camera_role()
+    physical_role = self._debug_physical_camera_role(role)
+    channel = self._debug_capture_channel_for_role(role)
+    device = self._debug_camera_device()
+    connected_serial = str(getattr(device, "serial_number", "") or "").strip()
+    expected_serial = self._selected_debug_camera_serial()
+    if expected_serial and connected_serial and connected_serial != expected_serial:
+        QtWidgets.QMessageBox.information(
+            self,
+            "Camera Debug",
+            f"{role} is mapped to physical {physical_role}; reconnect the mapped camera first",
+        )
+        self._set_debug_camera_status("Mapped physical camera changed; reconnect required")
+        return
+    if channel and not self._apply_debug_camera_settings(quiet=True):
+        return
+
+    light_index = None
+    io_controller = getattr(self, "_debug_io_controller", None) or getattr(self, "_runtime_io_controller", None)
+    if channel:
+        if io_controller is None or not bool(getattr(io_controller, "is_open", False)):
+            QtWidgets.QMessageBox.information(
+                self,
+                "Camera Debug",
+                "Open the DI/DO debug connection first to capture with the mapped light source",
+            )
+            self._set_debug_camera_status("Mapped light source requires an open DI/DO connection")
+            return
+        light_index = self._debug_capture_light_index(role)
     try:
+        if light_index is not None:
+            for index in range(1, 4):
+                io_controller.set_camera_light(index, index == light_index)
+            stable_delay_ms = max(0, int(float(channel.get("stable_delay_ms", 50) or 50)))
+            if stable_delay_ms:
+                time.sleep(stable_delay_ms / 1000.0)
         frame = self._debug_frame_grab_service.capture_once("debug", timeout_ms=1000)
     except Exception as exc:
         QtWidgets.QMessageBox.critical(self, "Camera Debug", f"Capture failed: {exc}")
         self._set_debug_camera_status(f"Capture failed: {exc}")
         return
+    finally:
+        if light_index is not None:
+            try:
+                io_controller.set_camera_light(light_index, False)
+            except Exception:
+                pass
     try:
         self._show_debug_preview_image(qimage_from_hik_frame(frame))
     except Exception:
@@ -381,7 +444,6 @@ def _grab_debug_camera_once(self) -> None:
     capture_dir = os.path.join(self.session.product_dir, "debug_capture")
     os.makedirs(capture_dir, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    role = self._selected_debug_camera_role()
     image_path = os.path.join(capture_dir, f"{role}_debug_cam_{stamp}.png")
     if frame_to_bgr_image is None:
         QtWidgets.QMessageBox.critical(self, "Camera Debug", "Camera image conversion service is unavailable")
@@ -398,5 +460,7 @@ def _grab_debug_camera_once(self) -> None:
         self._save_session()
     self.tabs.setCurrentIndex(1)
     self._load_canvas_image(image_path)
-    self._set_debug_camera_status(f"{role} capture saved: {os.path.basename(image_path)}")
+    self._set_debug_camera_status(
+        f"{role} captured by physical {physical_role}: {os.path.basename(image_path)}"
+    )
     self.lbl_status.setText(f"Status: {role} debug capture saved to test samples -> {os.path.basename(image_path)}")

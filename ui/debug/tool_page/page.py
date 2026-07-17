@@ -358,6 +358,7 @@ class ToolPage(QtWidgets.QWidget):
             self.cmb_capture_mode.clear()
             self.cmb_capture_mode.addItem(tr("debug.capture_mode_independent"), "independent")
             self.cmb_capture_mode.addItem(tr("debug.capture_mode_single_multi_light"), "single_multi_light")
+            self.cmb_capture_mode.addItem(tr("debug.capture_mode_flexible"), "flexible")
             index = self.cmb_capture_mode.findData(current_data)
             self.cmb_capture_mode.setCurrentIndex(max(0, index))
             del blocker

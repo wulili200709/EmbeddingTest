@@ -4,9 +4,8 @@ from typing import Any
 
 from common.camera_roles import CAMERA_ROLES, normalize_camera_role
 from infrastructure.camera_settings_store import (
-    CAPTURE_MODE_SINGLE_MULTI_LIGHT,
     normalize_capture_light_output,
-    normalize_capture_mode,
+    uses_channel_capture_mapping,
 )
 
 
@@ -38,12 +37,12 @@ def capture_config(runtime) -> dict[str, Any]:
 
 def is_single_multi_light_mode(runtime) -> bool:
     config = capture_config(runtime)
-    return normalize_capture_mode(config.get("capture_mode")) == CAPTURE_MODE_SINGLE_MULTI_LIGHT
+    return uses_channel_capture_mapping(config.get("capture_mode"))
 
 
 def enabled_single_multi_light_channels(runtime) -> list[dict[str, Any]]:
     config = capture_config(runtime)
-    if normalize_capture_mode(config.get("capture_mode")) != CAPTURE_MODE_SINGLE_MULTI_LIGHT:
+    if not uses_channel_capture_mapping(config.get("capture_mode")):
         return []
 
     channels: list[dict[str, Any]] = []

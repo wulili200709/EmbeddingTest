@@ -188,13 +188,15 @@ def _render_runtime_overlay_pixmap(
     canvas = QtGui.QPixmap(pixmap)
     painter = QtGui.QPainter(canvas)
     painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+    overlay_scale = _runtime_measurement_overlay_scale(canvas.size(), display_size)
 
-    _draw_runtime_search_region(painter, source)
+    _draw_runtime_search_region(painter, source, overlay_scale=overlay_scale)
     _draw_runtime_roi_shapes(
         painter,
         source,
         roi_statuses=roi_statuses,
         visible_roi_labels=visible_roi_labels,
+        overlay_scale=overlay_scale,
     )
     _draw_runtime_measurements(painter, source, canvas.size(), display_size=display_size)
 
@@ -227,7 +229,12 @@ def _runtime_source_pixmap(source: str | RuntimePreviewFrame) -> QtGui.QPixmap:
     return QtGui.QPixmap(str(source or ""))
 
 
-def _draw_runtime_search_region(painter: QtGui.QPainter, source: str | RuntimePreviewFrame) -> None:
+def _draw_runtime_search_region(
+    painter: QtGui.QPainter,
+    source: str | RuntimePreviewFrame,
+    *,
+    overlay_scale: float = 1.0,
+) -> None:
     if isinstance(source, RuntimePreviewFrame):
         product_dir = str(source.product_dir or "").strip()
         camera_role = str(source.camera_role or source.role or "cam1").strip() or "cam1"
@@ -252,7 +259,10 @@ def _draw_runtime_search_region(painter: QtGui.QPainter, source: str | RuntimePr
 
     color, width, dash = search_region_style()
     pen = QtGui.QPen(color)
-    pen.setWidthF(width)
+    # The pixmap is drawn at source resolution and scaled by RuntimeImageView
+    # afterwards.  Compensate here so its visible stroke width does not depend
+    # on a camera's source resolution.
+    pen.setWidthF(max(0.5, float(width) * float(overlay_scale)))
     pen.setStyle(QtCore.Qt.DashLine if dash else QtCore.Qt.SolidLine)
     painter.setPen(pen)
     painter.setBrush(QtCore.Qt.NoBrush)
@@ -278,6 +288,7 @@ def _draw_runtime_roi_shapes(
     *,
     roi_statuses: Optional[dict[str, str]] = None,
     visible_roi_labels: Optional[set[str]] = None,
+    overlay_scale: float = 1.0,
 ) -> None:
     roi_statuses = {
         str(label).strip(): str(status or "").strip().lower()
@@ -299,7 +310,10 @@ def _draw_runtime_roi_shapes(
         shape = shape_by_label.get(label)
         if shape is None:
             return False
-        runtime_width = max(1.0, float(width) * _RUNTIME_OVERLAY_WIDTH_MULTIPLIER)
+        runtime_width = max(
+            1.0,
+            float(width) * _RUNTIME_OVERLAY_WIDTH_MULTIPLIER * float(overlay_scale),
+        )
         if shape.shape_type == "polygon" and len(shape.points) >= 3:
             pen = QtGui.QPen(color)
             pen.setWidthF(runtime_width)
