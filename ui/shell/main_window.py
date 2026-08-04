@@ -1,11 +1,13 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from common.mvs_launcher import find_mvs_executable
 from common.camera_roles import (
     CAMERA_ROLES,
     DEFAULT_CAMERA_ROLE,
@@ -159,6 +161,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self._runtime_import_error = detect_runtime_import_error()
         self._engine_warmup_thread: Optional[QtCore.QThread] = None
+        self._mvs_process: Optional[QtCore.QProcess] = None
         self._brand_banner_source = QtGui.QPixmap(str(_resource_path("logo2.png")))
         self._startup_runtime_auto_connect_done = False
         self._startup_runtime_auto_connect_attempts = 0
@@ -281,6 +284,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "margin_validation": "template.edit_params",
             "embedding_analysis": "template.edit_params",
             "baseline_debug": "template.edit_params",
+            "open_mvs": "camera.open_mvs",
             "connect_camera": "runtime.connect_camera",
             "disconnect_camera": "runtime.connect_camera",
             "foot_trigger": "runtime.run",
@@ -300,6 +304,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.tool_page.cmb_product.setEnabled(self._has_permission("product.select"))
             if hasattr(self.tool_page, "btn_new_product"):
                 self.tool_page.btn_new_product.setEnabled(self._has_permission("product.create"))
+            if hasattr(self.tool_page, "btn_copy_product"):
+                self.tool_page.btn_copy_product.setEnabled(self._has_permission("product.create"))
             if hasattr(self.tool_page, "btn_delete_product"):
                 self.tool_page.btn_delete_product.setEnabled(self._has_permission("product.delete"))
             if hasattr(self.tool_page, "inspection_items_table"):
@@ -937,6 +943,57 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(target)))
 
+    def _open_mvs(self) -> None:
+        if not self._require_permission("camera.open_mvs", tr("action.open_mvs")):
+            return
+        running_process = self._mvs_process
+        if running_process is not None and running_process.state() != QtCore.QProcess.ProcessState.NotRunning:
+            return
+        executable = find_mvs_executable()
+        if executable is None:
+            QtWidgets.QMessageBox.warning(
+                self,
+                tr("dialog.open_mvs_title"),
+                tr("dialog.open_mvs_not_found"),
+            )
+            return
+        process = QtCore.QProcess(self)
+        process.start(str(executable))
+        if not process.waitForStarted(3000):
+            QtWidgets.QMessageBox.warning(
+                self,
+                tr("dialog.open_mvs_title"),
+                tr("dialog.open_mvs_failed", path=executable),
+            )
+            process.deleteLater()
+            return
+        self._mvs_process = process
+        process.finished.connect(
+            lambda *_args, completed_process=process: self._clear_mvs_process(completed_process)
+        )
+        self._audit_event(module="相机", action="打开 MVS", target=str(executable))
+
+    def _clear_mvs_process(self, completed_process: QtCore.QProcess) -> None:
+        if self._mvs_process is completed_process:
+            self._mvs_process = None
+        completed_process.deleteLater()
+
+    def _close_mvs(self) -> None:
+        process = self._mvs_process
+        if process is None or process.state() == QtCore.QProcess.ProcessState.NotRunning:
+            return
+        process_id = process.processId()
+        if os.name == "nt" and process_id:
+            QtCore.QProcess.execute("taskkill", ["/PID", str(process_id), "/T", "/F"])
+        else:
+            process.terminate()
+        if process.state() != QtCore.QProcess.ProcessState.NotRunning:
+            process.waitForFinished(3000)
+        if process.state() != QtCore.QProcess.ProcessState.NotRunning:
+            process.kill()
+            process.waitForFinished(1000)
+        self._mvs_process = None
+
     def _open_current_product_dir(self) -> None:
         self._open_in_explorer(self.session.product_dir)
 
@@ -1204,6 +1261,19 @@ class MainWindow(QtWidgets.QMainWindow):
         QtCore.QTimer.singleShot(120, self._mark_initial_ui_ready)
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        buttons = QtWidgets.QMessageBox.StandardButton
+        message_box = QtWidgets.QMessageBox(self)
+        message_box.setIcon(QtWidgets.QMessageBox.Icon.Question)
+        message_box.setWindowTitle(tr("dialog.exit_title"))
+        message_box.setText(tr("dialog.exit_confirm"))
+        message_box.setStandardButtons(buttons.Yes | buttons.No)
+        message_box.setDefaultButton(buttons.No)
+        message_box.button(buttons.Yes).setText(tr("common.yes"))
+        message_box.button(buttons.No).setText(tr("common.no"))
+        if message_box.exec() != int(buttons.Yes):
+            event.ignore()
+            return
+
         try:
             self.tool_page._cleanup_debug_hardware()
         except Exception:
@@ -1214,6 +1284,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._engine_warmup_thread = None
         self.runtime_ctrl.disconnect(silent=True)
         self.runtime_ctrl.shutdown_persistence(wait=True)
+        self._close_mvs()
         super().closeEvent(event)
 
 

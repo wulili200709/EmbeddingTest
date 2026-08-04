@@ -724,6 +724,21 @@ class RuntimeModePage(QtWidgets.QWidget):
         )
         footer_layout.addWidget(self.lbl_footer_record, 1)
 
+        self.lbl_ng_summary = _ElidedLabel("")
+        self.lbl_ng_summary.setAlignment(QtCore.Qt.AlignCenter)
+        self.lbl_ng_summary.setMinimumSize(260, 22)
+        self.lbl_ng_summary.setMaximumWidth(720)
+        self.lbl_ng_summary.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+        self.lbl_ng_summary.setStyleSheet(
+            f"background:#5b1b1b;color:#ff7777;border:1px solid {_NG_RED};"
+            "border-radius:3px;padding:2px 10px;font-size:12px;font-weight:bold;"
+        )
+        footer_layout.addWidget(self.lbl_ng_summary)
+        self.lbl_ng_summary.hide()
+
         root.addWidget(footer)
 
         # ── 隐藏控件（保持接口兼容） ──
@@ -1171,8 +1186,34 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._items_vbox.addStretch(1)
         self._items_container.update()
         self._items_scroll.viewport().update()
+        self._refresh_ng_summary(display_grouped_rows)
         self._refresh_camera_previews()
         self._refresh_trigger_buttons()
+
+    def _refresh_ng_summary(self, grouped_rows: dict[str, list[dict]]) -> None:
+        summaries: list[str] = []
+        for camera_id in CAMERA_ROLES:
+            first_ng_row = next(
+                (
+                    row
+                    for row in grouped_rows.get(camera_id, [])
+                    if str(row.get("status_kind", "")).strip().lower() == "ng"
+                    or str(row.get("result", "")).strip().upper() == "NG"
+                ),
+                None,
+            )
+            if first_ng_row is None:
+                continue
+            camera_index = camera_index_for_role(camera_id)
+            camera_name = f"Cam{camera_index}" if camera_index else camera_id
+            item_name = self._runtime_item_display_name(first_ng_row)
+            summaries.append(
+                tr("runtime.ng_summary_item", camera=camera_name, item=item_name)
+            )
+
+        summary_text = "，".join(summaries)
+        self.lbl_ng_summary.setText(summary_text)
+        self.lbl_ng_summary.setVisible(bool(summary_text))
 
     @staticmethod
     def _runtime_item_display_name(row: dict) -> str:

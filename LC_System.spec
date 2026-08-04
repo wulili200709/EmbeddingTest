@@ -14,6 +14,7 @@ REPO_ROOT = APP_ROOT.parent
 SDK_ROOT = REPO_ROOT / "NKDIOLC_SDK"
 RES_ROOT = APP_ROOT / "res"
 CONFIG_ROOT = APP_ROOT / "config"
+RECORDS_ROOT = APP_ROOT / "records"
 SESSION_ROOT = APP_ROOT / ".qr_session"
 ORT_BACKBONE_CACHE_ROOT = APP_ROOT / ".cache" / "ort_backbones"
 MVIMPORT_ROOT = APP_ROOT / "third_party" / "MvImport"
@@ -139,6 +140,14 @@ for path in CONFIG_DATA_FILES:
     if path.exists():
         datas.append(_pair(path, "EmbeddingTest/config"))
 
+# The build script creates this clean seed database. It contains only the
+# default accounts and permissions—never development-machine audit or runtime
+# history.
+seed_audit_db = RECORDS_ROOT / ".package-seed" / "audit.db"
+if not seed_audit_db.exists():
+    raise RuntimeError("Missing package seed database; build with build_py312.ps1.")
+datas.append(_pair(seed_audit_db, "EmbeddingTest/records"))
+
 for path in MVIMPORT_DATA_FILES:
     if path.exists():
         datas.append(_pair(path, "EmbeddingTest/third_party/MvImport"))
@@ -199,6 +208,8 @@ hiddenimports = sorted(
             "ui.debug.embedding_analysis_dialog",
             "ui.debug.roi_canvas_pyside6",
             "ui.debug.tool_page",
+            "ui.debug.tool_page.camera_debug_view",
+            "ui.debug.tool_page.io_debug_view",
             "ui.debug.tool_page.page",
             "ui.runtime.runtime_mode_pyside6",
             "ui.runtime.run_main_window",

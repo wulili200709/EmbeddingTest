@@ -668,7 +668,7 @@ class ProductRuntimeContext:
                     product_dir=self.session.product_dir,
                     camera_role=role,
                 )
-                match_ms = float(run.total_ms)
+                match_ms = float(run.locate_ms)
                 roi_shapes = tuple(
                     RuntimePreviewShape(
                         label=str(shape.label_name or "").strip() or "roi",
@@ -683,7 +683,7 @@ class ProductRuntimeContext:
                 product_dir=self.session.product_dir,
                 camera_role=role,
             )
-            match_ms = float(run.total_ms)
+            match_ms = float(run.locate_ms)
             roi_shapes = tuple(
                 RuntimePreviewShape(
                     label=str(shape.label_name or "").strip() or "roi",
@@ -704,6 +704,7 @@ class ProductRuntimeContext:
         )
         shape_by_label = _runtime_shape_by_label(roi_shapes)
         for item in traditional_items:
+            item_infer_t0 = time.perf_counter()
             algorithm = self.algo.resolve_tool_algorithm(item.algorithm_code)
             model_dict = self.algo.get_traditional_model_dict(algorithm, model_key=item.model_key)
             if not isinstance(model_dict, dict):
@@ -716,17 +717,19 @@ class ProductRuntimeContext:
             )
             value = metric_value(metrics, algorithm)
             pred, diff = threshold_model.predict(value)
+            item_infer_ms = float((time.perf_counter() - item_infer_t0) * 1000.0)
             rows_by_key[item.model_key] = _runtime_prediction_row(
                 pred=pred,
                 diff=diff,
                 value=value,
                 threshold=threshold_model.threshold,
                 match_ms=match_ms,
-                infer_ms=0.0,
-                total_ms=0.0,
+                infer_ms=item_infer_ms,
+                total_ms=item_infer_ms,
                 roi_label=str(metrics.get("roi_label", "") or ""),
             )
         for item in measurement_items:
+            item_infer_t0 = time.perf_counter()
             params = dict(item.params or {})
             algorithm = self.algo.resolve_tool_algorithm(item.algorithm_code)
             measurement_payload_override = None
@@ -829,14 +832,15 @@ class ProductRuntimeContext:
                 )
             if lower is not None or upper is not None:
                 detail += f" spec={lower if lower is not None else '-'}..{upper if upper is not None else '-'}{unit}"
+            item_infer_ms = float((time.perf_counter() - item_infer_t0) * 1000.0)
             rows_by_key[item.model_key] = _runtime_prediction_row(
                 pred=pred,
                 diff=residual,
                 value=judged_value,
                 threshold=upper,
                 match_ms=match_ms,
-                infer_ms=0.0,
-                total_ms=0.0,
+                infer_ms=item_infer_ms,
+                total_ms=item_infer_ms,
                 roi_label=getattr(measurement, "roi_label", str(item.roi_label or "").strip() or "roi"),
                 detail=detail,
             )

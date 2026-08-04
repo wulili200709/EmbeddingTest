@@ -136,6 +136,9 @@ def build_menu_bar(window) -> None:
     act_refresh_cameras = runtime_menu.addAction(
         shell_icon(SP.SP_BrowserReload), tr("action.refresh_cameras")
     ).triggered.connect(window.runtime_page.refreshCamerasRequested.emit)
+    act_open_mvs = runtime_menu.addAction(
+        shell_icon(SP.SP_ComputerIcon), tr("action.open_mvs")
+    ).triggered.connect(window._open_mvs)
     act_connect_camera = runtime_menu.addAction(
         shell_icon(SP.SP_DriveNetIcon), tr("action.connect_camera")
     ).triggered.connect(window._show_connect_dialog)
@@ -323,12 +326,13 @@ def build_menu_bar(window) -> None:
             "embedding_analysis": algo_menu.actions()[1],
             "baseline_debug": algo_menu.actions()[2],
             "refresh_cameras": runtime_menu.actions()[0],
-            "connect_camera": runtime_menu.actions()[1],
-            "disconnect_camera": runtime_menu.actions()[2],
-            "tower_light": runtime_menu.actions()[4],
-            "foot_trigger": runtime_menu.actions()[6],
-            "password_release": runtime_menu.actions()[7],
-            "change_release_password": runtime_menu.actions()[8],
+            "open_mvs": runtime_menu.actions()[1],
+            "connect_camera": runtime_menu.actions()[2],
+            "disconnect_camera": runtime_menu.actions()[3],
+            "tower_light": runtime_menu.actions()[5],
+            "foot_trigger": runtime_menu.actions()[7],
+            "password_release": runtime_menu.actions()[8],
+            "change_release_password": runtime_menu.actions()[9],
             "open_system_root": path_menu.actions()[0],
             "open_product_dir": path_menu.actions()[1],
             "open_session_dir": path_menu.actions()[2],
@@ -503,6 +507,7 @@ def retranslate_shell_chrome(window) -> None:
         "embedding_analysis": "action.embedding_analysis",
         "baseline_debug": "action.baseline_debug",
         "refresh_cameras": "action.refresh_cameras",
+        "open_mvs": "action.open_mvs",
         "connect_camera": "action.connect_camera",
         "disconnect_camera": "action.disconnect_camera",
         "tower_light": "action.tower_light",

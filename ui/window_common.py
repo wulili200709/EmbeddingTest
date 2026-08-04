@@ -17,7 +17,7 @@ from ui.i18n import tr
 from ui.roi_overlay_colors import is_roi_label, overlay_style_for_label, search_region_style
 
 
-_RUNTIME_OVERLAY_WIDTH_MULTIPLIER = 3.0
+_RUNTIME_OVERLAY_WIDTH_MULTIPLIER = 1.5
 _RUNTIME_CENTER_DISTANCE_OK_COLORS = (
     QtGui.QColor("#22c55e"),
     QtGui.QColor("#40c4ff"),

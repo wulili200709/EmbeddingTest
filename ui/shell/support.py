@@ -33,11 +33,11 @@ def load_app_version() -> str:
     try:
         text = setup_path.read_text(encoding="utf-8", errors="ignore")
     except Exception:
-        return "dev"
+        return "3.0.1"
     match = re.search(r'version\s*=\s*"([^"]+)"', text)
     if match:
         return match.group(1).strip() or "dev"
-    return "dev"
+    return "3.0.1"
 
 
 APP_VERSION = load_app_version()

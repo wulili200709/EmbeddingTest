@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import Dict, List
 
 from PySide6 import QtCore, QtWidgets
 
-from application import InspectionExecutionRequest, InspectionExecutor, ToolPageRuntimeContext
+from algorithms.image_io import imread
+from application import InspectionExecutionRequest, InspectionExecutor, ProductRuntimeContext
 from common.camera_roles import normalize_camera_role
 from domain import InspectionItem
+from ui.debug import OverlayShape
 from ui.i18n import tr
-from ui.roi_overlay_colors import is_roi_label
+from ui.roi_overlay_colors import is_roi_label, overlay_style_for_label
 
 
 def _normalize_camera_role(camera_id: object) -> str:
@@ -19,6 +22,7 @@ def _normalize_camera_role(camera_id: object) -> str:
 class TestExecutionController:
     def __init__(self, owner) -> None:
         self.owner = owner
+        self._runtime_roi_shapes_by_image: Dict[str, tuple[object, ...]] = {}
 
     def target_inspection_items(self) -> List[InspectionItem]:
         current_role = self.owner.current_camera_role()
@@ -39,6 +43,60 @@ class TestExecutionController:
             return
         self.owner._roi_results_by_image.setdefault(path, {})[label] = status_text
 
+    def _show_runtime_roi_shapes(self, path: str, roi_shapes=None) -> None:
+        shapes = tuple(
+            roi_shapes
+            if roi_shapes is not None
+            else self._runtime_roi_shapes_by_image.get(path, ())
+        )
+        if not shapes:
+            return
+
+        overlays: List[OverlayShape] = []
+        for shape in shapes:
+            label = str(getattr(shape, "label", "") or "").strip()
+            points = [
+                (float(point[0]), float(point[1]))
+                for point in tuple(getattr(shape, "points", ()) or ())
+                if isinstance(point, (list, tuple)) and len(point) >= 2
+            ]
+            if not label or len(points) < 2:
+                continue
+            status = self.owner._roi_status_for_path(path, label)
+            color, width, dash = overlay_style_for_label(label, status=status)
+            shape_type = str(getattr(shape, "shape_type", "rectangle") or "rectangle").lower()
+            if shape_type == "rectangle":
+                xs = [point[0] for point in points]
+                ys = [point[1] for point in points]
+                x0, y0 = min(xs), min(ys)
+                x1, y1 = max(xs), max(ys)
+                overlays.append(
+                    OverlayShape(
+                        shape_type="rect",
+                        xywh=(
+                            int(round(x0)),
+                            int(round(y0)),
+                            max(1, int(round(x1 - x0))),
+                            max(1, int(round(y1 - y0))),
+                        ),
+                        color=color,
+                        width=width,
+                        dash=dash,
+                    )
+                )
+            elif len(points) >= 3:
+                overlays.append(
+                    OverlayShape(
+                        shape_type="polygon",
+                        points=points,
+                        color=color,
+                        width=width,
+                        dash=dash,
+                    )
+                )
+        self.owner.canvas.clear_roi()
+        self.owner.canvas.set_overlays(overlays)
+
     def execute_image(self, path: str) -> Dict[str, object]:
         p = str(path or "").strip()
         if p is None or not os.path.exists(p):
@@ -46,32 +104,40 @@ class TestExecutionController:
         self.owner.canvas.set_overlays([])
 
         target_items = self.target_inspection_items()
+        if not target_items:
+            raise RuntimeError(tr("debug.enable_one_tool", role=self.owner.current_camera_role()))
         camera_id = (
             str(target_items[0].camera_id or "").strip()
             if target_items
             else self.owner.current_camera_role()
         ) or "cam1"
 
-        executor = InspectionExecutor(ToolPageRuntimeContext(self.owner))
+        # Match production runtime behavior: all ROI projection and inference uses
+        # the one decoded image array and never updates LabelMe JSON.
+        executor = InspectionExecutor(ProductRuntimeContext(self.owner.session, self.owner.algo))
+        image_total_t0 = time.perf_counter()
+        image_bgr = imread(p)
+        if image_bgr is None:
+            raise FileNotFoundError(p)
         try:
             response = executor.execute(
                 InspectionExecutionRequest(
                     camera_id=camera_id,
                     image_path=p,
                     items=target_items,
+                    image_bgr=image_bgr,
                 )
             )
         except Exception as exc:
             raise RuntimeError(str(exc)) from exc
+        image_total_ms = float((time.perf_counter() - image_total_t0) * 1000.0)
 
         rows: List[Dict[str, object]] = []
         log_names: List[str] = []
         raw_rows = []
         match_ms = float(response.match_ms or 0.0)
         infer_ms = float(response.infer_ms or 0.0)
-        total_ms = float(response.total_ms or 0.0)
-        if total_ms <= 0.0 and (match_ms > 0.0 or infer_ms > 0.0):
-            total_ms = match_ms + infer_ms
+        total_ms = image_total_ms
         if isinstance(response.raw_row, dict):
             if isinstance(response.raw_row.get("item_rows"), list):
                 raw_rows = [dict(row) for row in response.raw_row.get("item_rows", [])]
@@ -92,12 +158,15 @@ class TestExecutionController:
                     row.setdefault("raw_pred", row.get("pred"))
                 row["pred"] = item_result.result
                 row["match_ms"] = match_ms if match_ms > 0.0 else row.get("match_ms")
-                row["total_ms"] = total_ms if total_ms > 0.0 else row.get("total_ms")
+                row["infer_ms"] = row.get("infer_ms", 0.0)
+                row["total_ms"] = total_ms
                 row["tool_name"] = display_name
                 row["camera_id"] = item_result.camera_id
                 row["roi_label"] = roi_label
                 row["algorithm"] = algorithm
+                row["file_path"] = p
                 row["file_name"] = f"{os.path.basename(p)} [{display_name}]"
+                row["json_name"] = "(memory)"
                 if roi_label:
                     self.record_roi_result(p, roi_label, item_result.result)
                 rows.append(row)
@@ -106,7 +175,11 @@ class TestExecutionController:
             row = dict(raw_rows[0]) if raw_rows else {}
             row.setdefault("pred", response.result)
             row["match_ms"] = match_ms if match_ms > 0.0 else row.get("match_ms")
-            row["total_ms"] = total_ms if total_ms > 0.0 else row.get("total_ms")
+            row["infer_ms"] = row.get("infer_ms", infer_ms)
+            row["total_ms"] = total_ms
+            row["file_path"] = p
+            row["file_name"] = os.path.basename(p)
+            row["json_name"] = "(memory)"
             labels_override = self.owner._loc_output_labels(camera_id)
             for roi_label in labels_override:
                 self.record_roi_result(p, roi_label, response.result)
@@ -129,17 +202,24 @@ class TestExecutionController:
             status_text += "  NG=" + ", ".join(ng_names[:5])
         if match_ms > 0.0:
             status_text += f"  match={match_ms:.1f}ms"
-        status_text += f"  infer={infer_ms:.1f}ms"
+        status_text += f"  infer_total={infer_ms:.1f}ms"
+        status_text += f"  total={total_ms:.1f}ms"
         if log_names:
             status_text += f"  log={log_names[-1]}"
         self.owner.lbl_status.setText(status_text)
+        runtime_roi_shapes = tuple(response.roi_shapes or ())
+        self._runtime_roi_shapes_by_image[p] = runtime_roi_shapes
         self.owner._load_canvas_image(p)
+        self._show_runtime_roi_shapes(p, runtime_roi_shapes)
         self.owner._update_sample_panel_widgets()
         return {
             "result": overall_pred,
             "rows": rows,
             "log_names": log_names,
             "status_text": status_text,
+            "match_ms": match_ms,
+            "infer_ms": infer_ms,
+            "total_ms": total_ms,
         }
 
     def run_current_image(self) -> None:
@@ -239,5 +319,6 @@ class TestExecutionController:
         path = item.data(QtCore.Qt.UserRole)
         if isinstance(path, str) and os.path.exists(path):
             self.owner._load_canvas_image(path)
+            self._show_runtime_roi_shapes(path)
             self.owner._set_status_for_current_image(path)
             self.owner._update_sample_panel_widgets()

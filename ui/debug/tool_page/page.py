@@ -1263,6 +1263,12 @@ class ToolPage(QtWidgets.QWidget):
         self.btn_new_product.clicked.connect(self._new_product)
         header_layout.addWidget(self.btn_new_product)
 
+        self.btn_copy_product = QtWidgets.QPushButton(_si(SP.SP_FileDialogDetailedView), tr("debug.copy_product"))
+        self.btn_copy_product.setFixedWidth(76)
+        self.btn_copy_product.setStyleSheet(_compact_btn)
+        self.btn_copy_product.clicked.connect(self._copy_product)
+        header_layout.addWidget(self.btn_copy_product)
+
         self.btn_delete_product = QtWidgets.QPushButton(_si(SP.SP_DialogDiscardButton), tr("debug.delete_product"))
         self.btn_delete_product.setFixedWidth(60)
         self.btn_delete_product.setStyleSheet(_compact_btn)
@@ -1306,9 +1312,12 @@ class ToolPage(QtWidgets.QWidget):
         self.canvas.shapesChanged.connect(self._on_shapes_changed)
         canvas_vbox.addWidget(self.canvas, 3)
 
-        self.table = QtWidgets.QTableWidget(0, 11)
+        self.table = QtWidgets.QTableWidget(0, 12)
         self.table.setHorizontalHeaderLabels(
-            ["\u6587\u4ef6", "GT", "Pred", "diff", "sim_ok", "sim_ng", "value", "threshold", "match_ms", "total_ms", "json"]
+            [
+                "\u6587\u4ef6", "GT", "Pred", "diff", "sim_ok", "sim_ng", "value", "threshold",
+                "match_ms", "infer_ms", "total_ms", "ROI\u6765\u6e90",
+            ]
         )
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
@@ -2006,6 +2015,9 @@ class ToolPage(QtWidgets.QWidget):
 
     def _new_product(self) -> None:
         self.product_session_controller.new_product()
+
+    def _copy_product(self) -> None:
+        self.product_session_controller.copy_product()
 
     def _request_delete_product(self) -> None:
         self.product_session_controller.request_delete_product()

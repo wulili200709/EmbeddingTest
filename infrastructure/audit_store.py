@@ -17,7 +17,13 @@ from common.app_paths import writable_embedding_test_root
 AUDIT_DB_FILENAME = "audit.db"
 DEFAULT_OPERATOR_USER = "operator"
 DEFAULT_SUPER_ADMIN_USER = "admin"
-DEFAULT_SUPER_ADMIN_PASSWORD = "123456"
+DEFAULT_SUPER_ADMIN_PASSWORD = "admin654321"
+DEFAULT_ADMIN_PASSWORD = "123456"
+DEFAULT_BOOTSTRAP_ADMIN_USERS = (
+    "YQCXN7",
+    "DE7TPA",
+    "BJA3BS",
+)
 PASSWORD_ITERATIONS = 200_000
 
 
@@ -39,6 +45,7 @@ PERMISSIONS: tuple[PermissionDef, ...] = (
     PermissionDef("runtime_records.export", "运行记录", "导出运行记录"),
     PermissionDef("io.debug", "硬件", "IO调试"),
     PermissionDef("camera.edit_params", "相机", "修改相机参数"),
+    PermissionDef("camera.open_mvs", "相机", "打开 MVS（查看序列号）"),
     PermissionDef("template.edit_roi", "模板", "修改模板/ROI"),
     PermissionDef("template.edit_params", "模板", "修改模板参数"),
     PermissionDef("sample.manage", "样本", "维护训练/测试样本"),
@@ -69,8 +76,11 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, set[str]] = {
         "runtime.run",
         "runtime.connect_camera",
         "runtime.release_ng",
+        "runtime_records.view",
+        "runtime_records.export",
         "io.debug",
         "camera.edit_params",
+        "camera.open_mvs",
         "template.edit_roi",
         "template.edit_params",
         "sample.manage",
@@ -193,6 +203,9 @@ class AuditStore:
                     PRIMARY KEY(role_key, permission_key),
                     FOREIGN KEY(role_key) REFERENCES roles(role_key)
                 );
+                CREATE TABLE IF NOT EXISTS permission_migrations (
+                    migration_key TEXT PRIMARY KEY
+                );
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_name TEXT NOT NULL UNIQUE,
@@ -257,6 +270,51 @@ class AuditStore:
                 if existing == 0:
                     self.set_role_permissions(role_key, DEFAULT_ROLE_PERMISSIONS[role_key], conn=conn)
 
+            migration_key = "add_camera_open_mvs_permission"
+            migration_applied = conn.execute(
+                "SELECT 1 FROM permission_migrations WHERE migration_key=?",
+                (migration_key,),
+            ).fetchone()
+            if migration_applied is None:
+                conn.execute(
+                    "INSERT OR IGNORE INTO role_permissions(role_key, permission_key) VALUES(?, ?)",
+                    ("admin", "camera.open_mvs"),
+                )
+                conn.execute(
+                    "INSERT INTO permission_migrations(migration_key) VALUES(?)",
+                    (migration_key,),
+                )
+
+            migration_key = "add_runtime_records_view_permission"
+            migration_applied = conn.execute(
+                "SELECT 1 FROM permission_migrations WHERE migration_key=?",
+                (migration_key,),
+            ).fetchone()
+            if migration_applied is None:
+                conn.execute(
+                    "INSERT OR IGNORE INTO role_permissions(role_key, permission_key) VALUES(?, ?)",
+                    ("admin", "runtime_records.view"),
+                )
+                conn.execute(
+                    "INSERT INTO permission_migrations(migration_key) VALUES(?)",
+                    (migration_key,),
+                )
+
+            migration_key = "add_runtime_records_export_permission"
+            migration_applied = conn.execute(
+                "SELECT 1 FROM permission_migrations WHERE migration_key=?",
+                (migration_key,),
+            ).fetchone()
+            if migration_applied is None:
+                conn.execute(
+                    "INSERT OR IGNORE INTO role_permissions(role_key, permission_key) VALUES(?, ?)",
+                    ("admin", "runtime_records.export"),
+                )
+                conn.execute(
+                    "INSERT INTO permission_migrations(migration_key) VALUES(?)",
+                    (migration_key,),
+                )
+
             row = conn.execute(
                 "SELECT id FROM users WHERE user_name=?",
                 (DEFAULT_SUPER_ADMIN_USER,),
@@ -277,6 +335,30 @@ class AuditStore:
                 "UPDATE users SET must_change_password=0 WHERE user_name=?",
                 (DEFAULT_SUPER_ADMIN_USER,),
             )
+
+            migration_key = "add_bootstrap_admin_users_20260728"
+            migration_applied = conn.execute(
+                "SELECT 1 FROM permission_migrations WHERE migration_key=?",
+                (migration_key,),
+            ).fetchone()
+            if migration_applied is None:
+                for user_name in DEFAULT_BOOTSTRAP_ADMIN_USERS:
+                    salt, digest = _hash_password(DEFAULT_ADMIN_PASSWORD)
+                    conn.execute(
+                        """
+                        INSERT INTO users(
+                            user_name, password_hash, password_salt, role_key,
+                            enabled, is_super_admin, must_change_password, created_at
+                        )
+                        VALUES(?, ?, ?, 'admin', 1, 0, 0, ?)
+                        ON CONFLICT(user_name) DO NOTHING
+                        """,
+                        (user_name, digest, salt, utcnow_text()),
+                    )
+                conn.execute(
+                    "INSERT INTO permission_migrations(migration_key) VALUES(?)",
+                    (migration_key,),
+                )
 
     def roles(self) -> list[dict]:
         with self.connect() as conn:

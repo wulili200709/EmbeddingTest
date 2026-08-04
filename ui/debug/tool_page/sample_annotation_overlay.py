@@ -12,6 +12,42 @@ from ui.debug.tool_page.sample_annotation_canvas import _pixmap_from_path
 from ui.i18n import tr
 from ui.roi_overlay_colors import overlay_style_for_label
 
+
+def _polygon_area(points: object) -> float:
+    normalized = [(float(x), float(y)) for x, y in list(points or [])]
+    if len(normalized) < 3:
+        return 0.0
+    return abs(
+        sum(
+            x1 * y2 - x2 * y1
+            for (x1, y1), (x2, y2) in zip(normalized, normalized[1:] + normalized[:1])
+        )
+    ) / 2.0
+
+
+def _hit_area(entry: dict[str, object], image_x: float, image_y: float) -> float | None:
+    shape_type = str(entry.get("shape_type", "") or "")
+    if shape_type == "polygon":
+        points = [(float(x), float(y)) for x, y in list(entry.get("points") or [])]
+        polygon = QtGui.QPolygonF([QtCore.QPointF(x, y) for x, y in points])
+        if len(polygon) < 3 or not polygon.containsPoint(
+            QtCore.QPointF(float(image_x), float(image_y)),
+            QtCore.Qt.FillRule.OddEvenFill,
+        ):
+            return None
+        return _polygon_area(points)
+
+    xywh = entry.get("xywh")
+    if not xywh:
+        return None
+    x, y, w, h = [float(v) for v in xywh]
+    x_min, x_max = sorted((x, x + w))
+    y_min, y_max = sorted((y, y + h))
+    if not (x_min <= float(image_x) <= x_max and y_min <= float(image_y) <= y_max):
+        return None
+    return abs(w * h)
+
+
 def _load_canvas_preview(self, path: str, camera_role: str) -> None:
     pixmap = _pixmap_from_path(path)
     if pixmap.isNull():
@@ -126,25 +162,14 @@ def _set_roi_status_from_canvas(self, path: str, camera_role: str, label: str, s
     self._refresh_after_annotation_change(path, camera_role)
 
 def _find_roi_label_at_point(self, image_x: float, image_y: float) -> str:
-    for entry in reversed(self._canvas_shapes):
+    candidates: list[tuple[float, int, str]] = []
+    for stack_index, entry in enumerate(reversed(self._canvas_shapes)):
         label = str(entry.get("label", "") or "").strip()
         if not label:
             continue
-        shape_type = str(entry.get("shape_type", "") or "")
-        if shape_type == "polygon":
-            points = entry.get("points") or []
-            polygon = QtGui.QPolygonF([QtCore.QPointF(float(x), float(y)) for x, y in points])
-            if len(polygon) >= 3 and polygon.containsPoint(
-                QtCore.QPointF(float(image_x), float(image_y)),
-                QtCore.Qt.FillRule.OddEvenFill,
-            ):
-                return label
+        area = _hit_area(entry, image_x, image_y)
+        if area is None:
             continue
-        xywh = entry.get("xywh")
-        if not xywh:
-            continue
-        x, y, w, h = [float(v) for v in xywh]
-        if x <= float(image_x) <= x + w and y <= float(image_y) <= y + h:
-            return label
-    return ""
+        candidates.append((area, stack_index, label))
+    return min(candidates)[2] if candidates else ""
 

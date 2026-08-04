@@ -28,6 +28,7 @@ PERMISSION_MODULE_KEYS = {
     "runtime.release_ng": "permission.module.runtime",
     "io.debug": "permission.module.hardware",
     "camera.edit_params": "permission.module.camera",
+    "camera.open_mvs": "permission.module.camera",
     "template.edit_roi": "permission.module.template",
     "template.edit_params": "permission.module.template",
     "sample.manage": "permission.module.sample",

@@ -4,6 +4,8 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $distPath = Join-Path $scriptRoot "dist"
 $workPath = Join-Path $scriptRoot "dist-build"
 $specPath = Join-Path $scriptRoot "LC_System.spec"
+$seedAuditDb = Join-Path $scriptRoot "records\.package-seed\audit.db"
+$seedGenerator = Join-Path $scriptRoot "tools\generate_seed_audit_db.py"
 $sdkRoot = Join-Path $scriptRoot "..\NKDIOLC_SDK"
 $winRingSysCandidates = @(
     (Join-Path $sdkRoot "Sample\CPP\NK_IO_LC_TEST_Console\x64\Release\WinRing0x64.sys"),
@@ -29,8 +31,17 @@ if (-not $winRingSys) {
 
 Write-Host "Using WinRing0x64.sys: $winRingSys"
 
+Write-Host "Generating clean account database..."
+& py -3.12 $seedGenerator $seedAuditDb
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to generate the clean account database."
+}
+
 Write-Host "Using Python 3.12 to build LC System..."
 & py -3.12 -m PyInstaller --noconfirm --clean --distpath $distPath --workpath $workPath $specPath
+if ($LASTEXITCODE -ne 0) {
+    throw "PyInstaller build failed."
+}
 
 $exeDir = Join-Path $distPath "LC System"
 if (-not (Test-Path -LiteralPath $exeDir)) {

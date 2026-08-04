@@ -74,6 +74,14 @@ class SessionData:
 
 
 PRODUCT_NAME_RE = re.compile(r"^[a-zA-Z0-9_]+$")
+_COPY_EXCLUDED_DIRECTORY_NAMES = {
+    "__pycache__",
+    "embedding_cache",
+    "release_logs",
+    "runtime_capture",
+    "runtime_records",
+    "test_logs",
+}
 
 
 class ProductSession:
@@ -159,6 +167,57 @@ class ProductSession:
                 return "\u4ea7\u54c1\u7f16\u53f7\u5df2\u5b58\u5728"
             self._remove_product_name(name)
         self._products_data["products"].append(name)
+        self.save_products()
+        return ""
+
+    def copy_product(self, source_name: str, target_name: str) -> str:
+        """Copy a product scheme and its training samples into a new product.
+
+        Test samples and transient runtime data are deliberately excluded so the
+        new product starts with an independent validation set and no history.
+        """
+        source = str(source_name or "").strip()
+        target = str(target_name or "").strip()
+        if not source:
+            return "请先选择复制源产品"
+        if source not in self._products_data.get("products", []):
+            return "复制源产品不存在"
+        if not target:
+            return "新产品编号不能为空"
+        if not PRODUCT_NAME_RE.match(target):
+            return "产品编号只能包含英文、数字和下划线"
+        if target == source or target in self._products_data.get("products", []):
+            return "新产品编号已存在"
+
+        source_dir = os.path.abspath(os.path.join(self.session_dir, source))
+        target_dir = os.path.abspath(os.path.join(self.session_dir, target))
+        session_root = os.path.abspath(self.session_dir)
+        if (
+            os.path.commonpath([session_root, source_dir]) != session_root
+            or os.path.commonpath([session_root, target_dir]) != session_root
+        ):
+            return "产品路径不在会话目录内"
+        if not os.path.isdir(source_dir):
+            return "复制源产品目录不存在"
+        if os.path.exists(target_dir):
+            return "新产品目录已存在"
+
+        staging_dir = os.path.join(self.session_dir, f".{target}.copying")
+        if os.path.exists(staging_dir):
+            return "存在未完成的复制任务，请先清理会话目录中对应的 .copying 目录"
+
+        def _ignore_copy_data(_directory: str, names: list[str]) -> set[str]:
+            return {name for name in names if name in _COPY_EXCLUDED_DIRECTORY_NAMES}
+
+        try:
+            shutil.copytree(source_dir, staging_dir, ignore=_ignore_copy_data)
+            self._strip_copied_test_data(staging_dir)
+            os.replace(staging_dir, target_dir)
+        except Exception as exc:
+            shutil.rmtree(staging_dir, ignore_errors=True)
+            return f"复制产品方案失败: {exc}"
+
+        self._products_data.setdefault("products", ["Default"]).append(target)
         self.save_products()
         return ""
 
@@ -367,6 +426,69 @@ class ProductSession:
         if not product_name:
             return False
         return os.path.isdir(os.path.join(self.session_dir, product_name))
+
+    @staticmethod
+    def _safe_product_relative_file(product_dir: str, stored_path: object) -> str | None:
+        raw = str(stored_path or "").strip()
+        if not raw:
+            return None
+        root = os.path.abspath(product_dir)
+        candidate = os.path.abspath(os.path.join(root, raw))
+        try:
+            if os.path.commonpath([root, candidate]) != root:
+                return None
+        except ValueError:
+            return None
+        return candidate
+
+    def _strip_copied_test_data(self, product_dir: str) -> None:
+        """Clear test references and files from a staged product copy."""
+        session_path = os.path.join(product_dir, "session.json")
+        payload = load_json_with_backup(session_path, default={})
+        if not isinstance(payload, dict):
+            payload = {}
+
+        test_files = list(payload.get("test_files", []) or [])
+        retained_files = [
+            *list(payload.get("train_files", []) or []),
+            *list(payload.get("ok_files", []) or []),
+            *list(payload.get("ng_files", []) or []),
+            payload.get("ref_image", ""),
+        ]
+        retained_paths = {
+            path
+            for item in retained_files
+            if (path := self._safe_product_relative_file(product_dir, item)) is not None
+        }
+        removed_paths: set[str] = set()
+        for item in test_files:
+            path = self._safe_product_relative_file(product_dir, item)
+            if path is None or path in retained_paths:
+                continue
+            if os.path.isfile(path):
+                os.remove(path)
+                removed_paths.add(os.path.normcase(os.path.normpath(path)))
+                annotation_path = os.path.splitext(path)[0] + ".json"
+                if os.path.isfile(annotation_path):
+                    os.remove(annotation_path)
+
+        payload["test_files"] = []
+        # A product copy is performed on the same machine, so retain the camera
+        # bindings for cam1/cam2/cam3 together with the inspection recipe.
+        atomic_write_json(session_path, payload, ensure_ascii=False, indent=2)
+
+        annotation_file = os.path.join(product_dir, "sample_annotations.json")
+        annotation_payload = load_json_with_backup(annotation_file, default={})
+        image_annotations = annotation_payload.get("images") if isinstance(annotation_payload, dict) else None
+        if isinstance(image_annotations, dict) and removed_paths:
+            kept_annotations = {}
+            for stored_path, value in image_annotations.items():
+                resolved = self._safe_product_relative_file(product_dir, stored_path)
+                if resolved is not None and os.path.normcase(os.path.normpath(resolved)) in removed_paths:
+                    continue
+                kept_annotations[str(stored_path)] = value
+            annotation_payload["images"] = kept_annotations
+            atomic_write_json(annotation_file, annotation_payload, ensure_ascii=False, indent=2)
 
     def _remove_product_name(self, name: str) -> None:
         product_name = str(name or "").strip()

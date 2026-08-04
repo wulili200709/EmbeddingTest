@@ -25,11 +25,14 @@ def _summarize_test_rows(tool_page, rows: List[Dict[str, object]]) -> Dict[str, 
         row for row in labeled_rows
         if str(row.get("gt", "")) == str(row.get("pred", ""))
     ]
-    total_ms_values = [
-        float(row["total_ms"])
-        for row in rows
-        if row.get("total_ms") is not None
-    ]
+    infer_ms_values = [float(row["infer_ms"]) for row in rows if row.get("infer_ms") is not None]
+    image_total_ms_by_path: Dict[str, float] = {}
+    for index, row in enumerate(rows):
+        if row.get("total_ms") is None:
+            continue
+        image_key = str(row.get("file_path", "") or row.get("file_name", "") or index)
+        image_total_ms_by_path.setdefault(image_key, float(row["total_ms"]))
+    total_ms_values = list(image_total_ms_by_path.values())
     return {
         "row_count": len(rows),
         "labeled_count": len(labeled_rows),
@@ -44,6 +47,10 @@ def _summarize_test_rows(tool_page, rows: List[Dict[str, object]]) -> Dict[str, 
             sum(total_ms_values) / float(len(total_ms_values))
             if total_ms_values else None
         ),
+        "avg_infer_ms": (
+            sum(infer_ms_values) / float(len(infer_ms_values))
+            if infer_ms_values else None
+        ),
     }
 
 
@@ -52,7 +59,7 @@ def _write_test_rows_csv(tool_page, csv_path: str, rows: List[Dict[str, object]]
         writer = csv.writer(f)
         writer.writerow([
             "file", "file_path", "gt", "pred", "status", "diff", "sim_ok", "sim_ng",
-            "value", "threshold", "match_ms", "total_ms", "json",
+            "value", "threshold", "match_ms", "infer_ms", "total_ms", "roi_source",
         ])
         for row in rows:
             gt = str(row.get("gt", ""))
@@ -72,6 +79,7 @@ def _write_test_rows_csv(tool_page, csv_path: str, rows: List[Dict[str, object]]
                 row.get("value", ""),
                 row.get("threshold", ""),
                 row.get("match_ms", ""),
+                row.get("infer_ms", ""),
                 row.get("total_ms", ""),
                 row.get("json_name", ""),
             ])

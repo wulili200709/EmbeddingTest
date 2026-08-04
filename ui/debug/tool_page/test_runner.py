@@ -129,6 +129,7 @@ def _populate_results_table(tool_page, rows: List[Dict[str, object]]) -> None:
             _format_number("value", with_unit=True),
             _format_number("threshold", with_unit=True),
             _format_number("match_ms", 1),
+            _format_number("infer_ms", 1),
             _format_number("total_ms", 1),
             str(row.get("json_name", "")),
         ]
@@ -155,8 +156,17 @@ def _append_test_log(tool_page, row: Dict[str, object]) -> str:
         "timestamp", "product", "algorithm", "score_mode", "margin", "topk",
         "tool_name", "camera_id", "roi_label",
         "file_name", "gt", "pred", "diff", "sim_ok", "sim_ng",
-        "value", "threshold", "match_ms", "total_ms", "json_name",
+        "value", "threshold", "match_ms", "infer_ms", "total_ms", "json_name",
     ]
+    if os.path.exists(csv_path):
+        try:
+            with open(csv_path, "r", encoding="utf-8-sig", newline="") as existing_file:
+                existing_fields = next(csv.reader(existing_file), [])
+        except OSError:
+            existing_fields = []
+        if existing_fields and existing_fields != fields:
+            stem, suffix = os.path.splitext(csv_path)
+            csv_path = stem + "_timing_v2" + suffix
     file_exists = os.path.exists(csv_path)
     with open(csv_path, "a", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fields)
@@ -181,6 +191,7 @@ def _append_test_log(tool_page, row: Dict[str, object]) -> str:
             "value": row.get("value", ""),
             "threshold": row.get("threshold", ""),
             "match_ms": row.get("match_ms", ""),
+            "infer_ms": row.get("infer_ms", ""),
             "total_ms": row.get("total_ms", ""),
             "json_name": row.get("json_name", ""),
         })

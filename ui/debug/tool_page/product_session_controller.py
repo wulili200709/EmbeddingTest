@@ -193,6 +193,67 @@ class ProductSessionController:
         self.owner.cmb_product.addItem(product_name)
         self.owner.cmb_product.setCurrentText(product_name)
 
+    def copy_product(self) -> None:
+        """Copy the selected product's recipe and training samples to a new ID."""
+        top_level = self.owner.window()
+        require_permission = getattr(top_level, "_require_permission", None)
+        if callable(require_permission) and not require_permission("product.create", "复制产品方案"):
+            return
+
+        dialog = QtWidgets.QDialog(self.owner)
+        dialog.setWindowTitle(tr("debug.copy_product_title"))
+        dialog.setModal(True)
+        layout = QtWidgets.QVBoxLayout(dialog)
+        form = QtWidgets.QFormLayout()
+        source_combo = QtWidgets.QComboBox(dialog)
+        source_combo.addItems(self.owner.session.product_names)
+        source_combo.setCurrentText(self.owner.session.current_product)
+        target_edit = QtWidgets.QLineEdit(dialog)
+        target_edit.setPlaceholderText(tr("debug.new_product_prompt"))
+        form.addRow(tr("debug.copy_source_product"), source_combo)
+        form.addRow(tr("debug.copy_target_product"), target_edit)
+        layout.addLayout(form)
+        hint = QtWidgets.QLabel(tr("debug.copy_product_hint"), dialog)
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
+            parent=dialog,
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        target_edit.setFocus()
+
+        if dialog.exec() != QtWidgets.QDialog.Accepted:
+            return
+        source_name = str(source_combo.currentText() or "").strip()
+        target_name = str(target_edit.text() or "").strip()
+        # Persist unsaved edits before using the current product as the copy source.
+        if source_name == self.owner.session.current_product:
+            self.save_session()
+        error = self.owner.session.copy_product(source_name, target_name)
+        if error:
+            QtWidgets.QMessageBox.warning(self.owner, tr("common.error"), error)
+            return
+
+        audit_event = getattr(top_level, "_audit_event", None)
+        if callable(audit_event):
+            audit_event(
+                module="产品",
+                action="复制产品方案",
+                before_value=source_name,
+                after_value=target_name,
+                product_name=target_name,
+            )
+        self.owner.cmb_product.addItem(target_name)
+        self.owner.cmb_product.setCurrentText(target_name)
+        QtWidgets.QMessageBox.information(
+            self.owner,
+            tr("common.done"),
+            tr("debug.copy_product_success").format(source=source_name, target=target_name),
+        )
+
     def request_delete_product(self) -> None:
         top_level = self.owner.window()
         require_permission = getattr(top_level, "_require_permission", None)
