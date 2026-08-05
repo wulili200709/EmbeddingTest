@@ -68,6 +68,7 @@ class RunMainWindow(QtWidgets.QMainWindow):
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self.runtime_ctrl.disconnect(silent=True)
+        self.runtime_ctrl.shutdown_persistence(wait=True)
         super().closeEvent(event)
 
 

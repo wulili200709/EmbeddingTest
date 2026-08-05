@@ -196,6 +196,7 @@ class RuntimeController(QtCore.QObject):
     warningOccurred = QtCore.Signal(str)           # → QMessageBox.warning
     errorOccurred   = QtCore.Signal(str)           # → QMessageBox.critical
     infoOccurred    = QtCore.Signal(str)           # → QMessageBox.information
+    _triggerTaskFinished = QtCore.Signal(object, str)
 
     def __init__(
         self,
@@ -217,7 +218,16 @@ class RuntimeController(QtCore.QObject):
 
         self._frame_lock = threading.RLock()
         self._inspect_lock = threading.RLock()
+        self._trigger_lock = threading.RLock()
         self._persistence_lock = threading.RLock()
+        self._trigger_executor: ThreadPoolExecutor | None = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="runtime-trigger",
+        )
+        self._trigger_future: Future | None = None
+        self._trigger_description = ""
+        self._accept_trigger_jobs = True
+        self._triggerTaskFinished.connect(self._on_trigger_task_finished)
         self._persistence_executor: ThreadPoolExecutor | None = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="runtime-persist",
@@ -312,12 +322,87 @@ class RuntimeController(QtCore.QObject):
         return future
 
     def shutdown_persistence(self, *, wait: bool = True) -> None:
+        self.shutdown_trigger_worker(wait=wait)
         with self._persistence_lock:
             executor = self._persistence_executor
             self._persistence_executor = None
         if executor is None:
             return
         executor.shutdown(wait=wait)
+
+    def _submit_trigger_task(
+        self,
+        callback: Callable[..., Any],
+        *args,
+        description: str,
+    ) -> bool:
+        with self._trigger_lock:
+            executor = self._trigger_executor
+            active = self._trigger_future
+            if (
+                not self._accept_trigger_jobs
+                or executor is None
+                or (active is not None and not active.done())
+                or self._busy
+            ):
+                self.logAppended.emit(f"[runtime] ignored {description}: inspection already running")
+                self.statusMessageChanged.emit("检测正在进行，请等待本轮完成")
+                return False
+            self._set_busy(True)
+            try:
+                future = executor.submit(callback, *args)
+            except Exception as exc:
+                self._set_busy(False)
+                self.logAppended.emit(f"[runtime] failed to start {description}: {exc}")
+                self.errorOccurred.emit(str(exc))
+                return False
+            self._trigger_future = future
+            self._trigger_description = str(description or "trigger task")
+
+        def _on_done(done: Future) -> None:
+            self._triggerTaskFinished.emit(done, str(description or "trigger task"))
+
+        future.add_done_callback(_on_done)
+        return True
+
+    @QtCore.Slot(object, str)
+    def _on_trigger_task_finished(self, done: Future, description: str) -> None:
+        self._complete_trigger_task(done, description)
+
+    def _complete_trigger_task(self, done: Future, description: str) -> None:
+        with self._trigger_lock:
+            if self._trigger_future is not done:
+                return
+            self._trigger_future = None
+            self._trigger_description = ""
+        try:
+            done.result()
+        except Exception as exc:
+            self.logAppended.emit(f"[runtime] {description} failed: {exc}")
+            self.errorOccurred.emit(str(exc))
+        finally:
+            self._set_busy(False)
+
+    def wait_for_trigger_task(self) -> None:
+        with self._trigger_lock:
+            future = self._trigger_future
+            description = self._trigger_description or "trigger task"
+        if future is None:
+            return
+        try:
+            future.result()
+        except Exception:
+            # The common completion handler below reports the error through Qt signals.
+            pass
+        self._complete_trigger_task(future, description)
+
+    def shutdown_trigger_worker(self, *, wait: bool = True) -> None:
+        with self._trigger_lock:
+            self._accept_trigger_jobs = False
+            executor = self._trigger_executor
+            self._trigger_executor = None
+        if executor is not None:
+            executor.shutdown(wait=wait)
 
     def initialize_startup_io(self, *, force: bool = False) -> bool:
         return self._initialize_startup_io(force=force)
@@ -559,6 +644,7 @@ class RuntimeController(QtCore.QObject):
 
     def disconnect(self, *, silent: bool = False, close_io: bool = True) -> None:
         """断开所有相机并释放运行链路资源。"""
+        self.wait_for_trigger_task()
         self._stop_di_poller()
         if close_io:
             self._close_io_controller()
@@ -643,6 +729,13 @@ class RuntimeController(QtCore.QObject):
 
 
     def trigger_camera(self, cam_index: int) -> None:
+        self._submit_trigger_task(
+            self._run_trigger_camera,
+            int(cam_index),
+            description=f"camera {int(cam_index)} trigger",
+        )
+
+    def _run_trigger_camera(self, cam_index: int) -> None:
         """手动触发指定物理序号相机的检测流程（仅该路采图+检测，调试用）。"""
         self._sync_camera_settings_store_path()
         self._reload_runtime_context()
@@ -661,12 +754,10 @@ class RuntimeController(QtCore.QObject):
             if self._permission_manager is not None
             else None
         )
-        self._set_busy(True)
         self._last_capture_paths = {}
         self._last_preview_frames = {}
         self._last_item_results_by_camera = {}
         self._last_runtime_result = self._build_pending_runtime_result(status="RUNNING")
-        self._emit_runtime_context()
         self._update_status(f"手动调试：正在触发相机{cam_index}…")
         self.logAppended.emit(f"[运行] 手动触发相机{cam_index}")
 
@@ -682,12 +773,10 @@ class RuntimeController(QtCore.QObject):
             self.logAppended.emit(f"[运行] 触发异常：{exc}")
             self.triggerResultReady.emit("ERROR", str(exc))
             self._last_runtime_result = self._build_pending_runtime_result(status="PENDING")
-            self._emit_runtime_context()
             self._update_status(f"运行异常：{exc}")
             return
         finally:
             self._runner.precheck_callback = original_precheck
-            self._set_busy(False)
 
         if outcome is None:
             reason = (
@@ -703,13 +792,18 @@ class RuntimeController(QtCore.QObject):
             )
             self.triggerResultReady.emit("BLOCKED", reason or "当前状态不允许触发")
             self._last_runtime_result = self._build_pending_runtime_result(status="PENDING")
-            self._emit_runtime_context()
             self._update_status(reason or "当前状态不允许触发")
             return
 
         self._finalize_trigger_outcome(outcome, release_status_before)
 
     def trigger(self) -> None:
+        self._submit_trigger_task(
+            self._run_trigger,
+            description="foot trigger",
+        )
+
+    def _run_trigger(self) -> None:
         """执行脚踏触发检测流程。"""
         self._sync_camera_settings_store_path()
         self._reload_runtime_context()
@@ -728,12 +822,10 @@ class RuntimeController(QtCore.QObject):
             if self._permission_manager is not None
             else None
         )
-        self._set_busy(True)
         self._last_capture_paths = {}
         self._last_preview_frames = {}
         self._last_item_results_by_camera = {}
         self._last_runtime_result = self._build_pending_runtime_result(status="RUNNING")
-        self._emit_runtime_context()
         self._update_status("开始执行脚踏触发链路")
 
         try:
@@ -745,12 +837,8 @@ class RuntimeController(QtCore.QObject):
             self.logAppended.emit(f"[运行] 触发异常：{exc}")
             self.triggerResultReady.emit("ERROR", str(exc))
             self._last_runtime_result = self._build_pending_runtime_result(status="PENDING")
-            self._emit_runtime_context()
             self._update_status(f"运行异常：{exc}")
             return
-        finally:
-            self._set_busy(False)
-
         if outcome is None:
             reason = (
                 self._scheduler.can_accept_trigger().reason
@@ -765,7 +853,6 @@ class RuntimeController(QtCore.QObject):
             )
             self.triggerResultReady.emit("BLOCKED", reason or "当前状态不允许触发")
             self._last_runtime_result = self._build_pending_runtime_result(status="PENDING")
-            self._emit_runtime_context()
             self._update_status(reason or "当前状态不允许触发")
             return
 

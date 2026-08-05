@@ -22,6 +22,9 @@ DEFAULT_ADMIN_USERS = (
     "YQCXN7",
     "DE7TPA",
     "BJA3BS",
+    "X0OU72",
+    "TSBCTK",
+    "F3WMDT",
 )
 DEFAULT_ADMIN_PASSWORD = "123456"
 

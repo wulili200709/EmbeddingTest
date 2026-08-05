@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
@@ -18,6 +21,7 @@ from shape.like_matcher import (
     detector_from_dict,
     encode_png_base64,
 )
+from shape.core.services import ShapeLocateService
 
 
 class Line2DupModelSingleLevelRepairTest(unittest.TestCase):
@@ -92,6 +96,56 @@ class Line2DupModelSingleLevelRepairTest(unittest.TestCase):
                 for feature in level.features
             ],
         }
+
+
+class ShapeLocateServiceCacheTest(unittest.TestCase):
+    def test_unchanged_model_reuses_cached_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            model_path = Path(tmp) / "model.json"
+            model_path.write_text("first", encoding="utf-8")
+            detectors = [object()]
+
+            with patch("shape.core.services.load_detector_model", side_effect=detectors) as loader:
+                service = ShapeLocateService()
+                first = service.runner_for_model(str(model_path))
+                second = service.runner_for_model(str(model_path))
+
+            self.assertIs(first, second)
+            self.assertEqual(loader.call_count, 1)
+
+    def test_replaced_model_at_same_path_is_reloaded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            model_path = Path(tmp) / "model.json"
+            model_path.write_text("first", encoding="utf-8")
+            detectors = [object(), object()]
+
+            with patch("shape.core.services.load_detector_model", side_effect=detectors) as loader:
+                service = ShapeLocateService()
+                first = service.runner_for_model(str(model_path))
+                replacement_path = Path(tmp) / "replacement.json"
+                replacement_path.write_text("other", encoding="utf-8")
+                os.replace(replacement_path, model_path)
+                second = service.runner_for_model(str(model_path))
+
+            self.assertIsNot(first, second)
+            self.assertIs(first.detector, detectors[0])
+            self.assertIs(second.detector, detectors[1])
+            self.assertEqual(loader.call_count, 2)
+
+    def test_explicit_invalidation_forces_reload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            model_path = Path(tmp) / "model.json"
+            model_path.write_text("same", encoding="utf-8")
+            detectors = [object(), object()]
+
+            with patch("shape.core.services.load_detector_model", side_effect=detectors) as loader:
+                service = ShapeLocateService()
+                first = service.runner_for_model(str(model_path))
+                self.assertTrue(service.invalidate_model(str(model_path)))
+                second = service.runner_for_model(str(model_path))
+
+            self.assertIsNot(first, second)
+            self.assertEqual(loader.call_count, 2)
 
 
 if __name__ == "__main__":

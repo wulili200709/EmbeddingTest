@@ -20,9 +20,17 @@ DEFAULT_SUPER_ADMIN_USER = "admin"
 DEFAULT_SUPER_ADMIN_PASSWORD = "admin654321"
 DEFAULT_ADMIN_PASSWORD = "123456"
 DEFAULT_BOOTSTRAP_ADMIN_USERS = (
+    "XD8XSA",
+    "OA45EM",
+    "D3BIPY",
+    "SP763V",
+    "VYZQXO",
     "YQCXN7",
     "DE7TPA",
     "BJA3BS",
+    "X0OU72",
+    "TSBCTK",
+    "F3WMDT",
 )
 PASSWORD_ITERATIONS = 200_000
 
@@ -352,6 +360,32 @@ class AuditStore:
                         )
                         VALUES(?, ?, ?, 'admin', 1, 0, 0, ?)
                         ON CONFLICT(user_name) DO NOTHING
+                        """,
+                        (user_name, digest, salt, utcnow_text()),
+                    )
+                conn.execute(
+                    "INSERT INTO permission_migrations(migration_key) VALUES(?)",
+                    (migration_key,),
+                )
+
+            migration_key = "ensure_admin_users_20260805"
+            migration_applied = conn.execute(
+                "SELECT 1 FROM permission_migrations WHERE migration_key=?",
+                (migration_key,),
+            ).fetchone()
+            if migration_applied is None:
+                for user_name in DEFAULT_BOOTSTRAP_ADMIN_USERS:
+                    salt, digest = _hash_password(DEFAULT_ADMIN_PASSWORD)
+                    conn.execute(
+                        """
+                        INSERT INTO users(
+                            user_name, password_hash, password_salt, role_key,
+                            enabled, is_super_admin, must_change_password, created_at
+                        )
+                        VALUES(?, ?, ?, 'admin', 1, 0, 0, ?)
+                        ON CONFLICT(user_name) DO UPDATE SET
+                            role_key='admin',
+                            enabled=1
                         """,
                         (user_name, digest, salt, utcnow_text()),
                     )

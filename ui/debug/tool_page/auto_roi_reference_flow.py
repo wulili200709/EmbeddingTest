@@ -97,6 +97,7 @@ def _on_template_editor_dialog_destroyed(self, *_args) -> None:
 
 def _on_shape_model_saved(self, model_path: str, recipe_path: str) -> None:
     camera_role = self.current_camera_role()
+    shape_locator.invalidate_shape_model_cache(model_path)
     if hasattr(self, "_set_loc_method_for_role"):
         self._set_loc_method_for_role(camera_role, "shape")
     self._save_session()

@@ -44,6 +44,15 @@ _CAMERA_LAYOUT_OPTIONS: tuple[tuple[str, str], ...] = (
     ("one_top_two_bottom", "runtime.layout.one_top_two_bottom"),
     ("row", "runtime.layout.row"),
 )
+_TEMPLATE_MATCH_FAILURE_MARKERS = (
+    "match failure",
+    "match failed",
+    "matching failed",
+    "did not find any match",
+    "no match",
+    "匹配失败",
+    "未匹配",
+)
 
 
 def _runtime_record_row_result(row: dict[str, str]) -> str:
@@ -142,6 +151,9 @@ class _ElidedLabel(QtWidgets.QLabel):
 class _ItemIndicator(QtWidgets.QFrame):
     def __init__(self, index: int, name: str, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
+        self._status_kind = ""
+        self._status_text = ""
+        self._display_text = ""
         self.setStyleSheet(
             f"_ItemIndicator{{background:{_PANEL_BG};border-bottom:1px solid #404040;}}"
         )
@@ -174,6 +186,18 @@ class _ItemIndicator(QtWidgets.QFrame):
         layout.addWidget(self.lbl_result)
 
     def set_result(self, status_kind: str, status_text: str) -> None:
+        normalized_kind = str(status_kind or "pending").strip().lower() or "pending"
+        normalized_text = str(status_text or "")
+        display = tr_status_text(normalized_text.split("(")[0].strip()) if normalized_text else ""
+        if (
+            normalized_kind == self._status_kind
+            and normalized_text == self._status_text
+            and display == self._display_text
+        ):
+            return
+        self._status_kind = normalized_kind
+        self._status_text = normalized_text
+        self._display_text = display
         color_map = {
             "ok": _OK_GREEN,
             "ng": _NG_RED,
@@ -184,11 +208,10 @@ class _ItemIndicator(QtWidgets.QFrame):
             "disabled": "#444444",
             "inactive": "#444444",
         }
-        bg = color_map.get(status_kind, _PENDING_GRAY)
-        display = tr_status_text(status_text.split("(")[0].strip()) if status_text else ""
-        self.lbl_result.setFixedWidth(_status_badge_width(self.lbl_result, display, maximum=180 if status_kind == "measured" else 140))
+        bg = color_map.get(normalized_kind, _PENDING_GRAY)
+        self.lbl_result.setFixedWidth(_status_badge_width(self.lbl_result, display, maximum=180 if normalized_kind == "measured" else 140))
         self.lbl_result.setText(display)
-        self.lbl_result.setToolTip(str(status_text or display or ""))
+        self.lbl_result.setToolTip(str(normalized_text or display or ""))
         self.lbl_result.setStyleSheet(
             f"background:{bg};color:white;font-size:14px;font-weight:bold;border-radius:4px;"
         )
@@ -339,6 +362,8 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._active_role_set: set[str] = set()
         self._busy = False
         self._inspection_rows: list[dict] = []
+        self._inspection_structure_signature: tuple[tuple[str, str, str, str], ...] = ()
+        self._inspection_structure_initialized = False
         self._camera_preview_sources: dict[str, object | None] = {
             role: None for role in CAMERA_ROLES
         }
@@ -650,18 +675,21 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.lbl_cam1_timing.setWordWrap(True)
         self.lbl_cam1_timing.setMinimumWidth(0)
         total_layout.addWidget(self.lbl_cam1_timing)
+        self.lbl_cam1_timing.hide()
 
         self.lbl_cam2_timing = QtWidgets.QLabel("Cam2: -")
         self.lbl_cam2_timing.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
         self.lbl_cam2_timing.setWordWrap(True)
         self.lbl_cam2_timing.setMinimumWidth(0)
         total_layout.addWidget(self.lbl_cam2_timing)
+        self.lbl_cam2_timing.hide()
 
         self.lbl_cam3_timing = QtWidgets.QLabel("Cam3: -")
         self.lbl_cam3_timing.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
         self.lbl_cam3_timing.setWordWrap(True)
         self.lbl_cam3_timing.setMinimumWidth(0)
         total_layout.addWidget(self.lbl_cam3_timing)
+        self.lbl_cam3_timing.hide()
         self._refresh_camera_timing_visibility()
 
         self.lbl_final_result = QtWidgets.QLabel("-")
@@ -690,30 +718,34 @@ class RuntimeModePage(QtWidgets.QWidget):
         footer.setStyleSheet(
             f"background:{_HEADER_BG};border-top:1px solid #505050;"
         )
-        footer_layout = QtWidgets.QHBoxLayout(footer)
+        footer_layout = QtWidgets.QVBoxLayout(footer)
         footer_layout.setContentsMargins(12, 4, 12, 4)
-        footer_layout.setSpacing(12)
+        footer_layout.setSpacing(2)
+
+        footer_status_layout = QtWidgets.QHBoxLayout()
+        footer_status_layout.setContentsMargins(0, 0, 0, 0)
+        footer_status_layout.setSpacing(12)
 
         self.lbl_footer_time = QtWidgets.QLabel(self._format_timing_label(tr("runtime.process"), 0.0))
         self.lbl_footer_time.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
-        footer_layout.addWidget(self.lbl_footer_time)
+        footer_status_layout.addWidget(self.lbl_footer_time)
         self.lbl_footer_time.hide()
 
         self.lbl_footer_state = QtWidgets.QLabel(
             f"{tr('runtime.status')}: {tr_runtime_state('WaitingTrigger')}"
         )
         self.lbl_footer_state.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
-        footer_layout.addWidget(self.lbl_footer_state)
+        footer_status_layout.addWidget(self.lbl_footer_state)
 
         self.lbl_footer_connection = QtWidgets.QLabel(
             f"{tr('runtime.camera')}: {tr('runtime.not_connected')}"
         )
         self.lbl_footer_connection.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
-        footer_layout.addWidget(self.lbl_footer_connection)
+        footer_status_layout.addWidget(self.lbl_footer_connection)
 
         self.lbl_footer_permission = QtWidgets.QLabel("")
         self.lbl_footer_permission.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
-        footer_layout.addWidget(self.lbl_footer_permission)
+        footer_status_layout.addWidget(self.lbl_footer_permission)
 
         self.lbl_footer_record = _ElidedLabel("")
         self.lbl_footer_record.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
@@ -722,22 +754,46 @@ class RuntimeModePage(QtWidgets.QWidget):
             QtWidgets.QSizePolicy.Policy.Ignored,
             QtWidgets.QSizePolicy.Policy.Preferred,
         )
-        footer_layout.addWidget(self.lbl_footer_record, 1)
+        footer_status_layout.addWidget(self.lbl_footer_record, 1)
+        footer_layout.addLayout(footer_status_layout)
 
-        self.lbl_ng_summary = _ElidedLabel("")
-        self.lbl_ng_summary.setAlignment(QtCore.Qt.AlignCenter)
-        self.lbl_ng_summary.setMinimumSize(260, 22)
-        self.lbl_ng_summary.setMaximumWidth(720)
-        self.lbl_ng_summary.setSizePolicy(
+        self.ng_summary_bar = QtWidgets.QFrame()
+        self.ng_summary_bar.setObjectName("runtimeNgSummaryBar")
+        self.ng_summary_bar.setMinimumHeight(24)
+        self.ng_summary_bar.setStyleSheet(
+            "QFrame#runtimeNgSummaryBar{background:transparent;border:none;}"
+        )
+        ng_summary_layout = QtWidgets.QHBoxLayout(self.ng_summary_bar)
+        ng_summary_layout.setContentsMargins(0, 2, 0, 2)
+        ng_summary_layout.setSpacing(16)
+
+        self.lbl_ng_timing_summary = _ElidedLabel("")
+        self.lbl_ng_timing_summary.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+        self.lbl_ng_timing_summary.setMinimumWidth(0)
+        self.lbl_ng_timing_summary.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
             QtWidgets.QSizePolicy.Policy.Preferred,
-            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+        self.lbl_ng_timing_summary.setStyleSheet(
+            f"color:{_TEXT_DIM};font-size:11px;background:transparent;"
+        )
+        ng_summary_layout.addWidget(self.lbl_ng_timing_summary, 1)
+
+        self.lbl_ng_summary = QtWidgets.QLabel("")
+        self.lbl_ng_summary.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        self.lbl_ng_summary.setWordWrap(False)
+        self.lbl_ng_summary.setMinimumWidth(0)
+        self.lbl_ng_summary.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Minimum,
+            QtWidgets.QSizePolicy.Policy.Preferred,
         )
         self.lbl_ng_summary.setStyleSheet(
-            f"background:#5b1b1b;color:#ff7777;border:1px solid {_NG_RED};"
-            "border-radius:3px;padding:2px 10px;font-size:12px;font-weight:bold;"
+            f"color:{_NG_RED};font-size:12px;font-weight:bold;background:transparent;"
         )
-        footer_layout.addWidget(self.lbl_ng_summary)
-        self.lbl_ng_summary.hide()
+        ng_summary_layout.addWidget(self.lbl_ng_summary)
+
+        footer_layout.addWidget(self.ng_summary_bar)
+        self.ng_summary_bar.hide()
 
         root.addWidget(footer)
 
@@ -1134,6 +1190,48 @@ class RuntimeModePage(QtWidgets.QWidget):
 
     def set_inspection_items(self, rows: list[dict]) -> None:
         self._inspection_rows = list(rows or [])
+
+        grouped_rows: dict[str, list[dict]] = {role: [] for role in CAMERA_ROLES}
+        for row in self._inspection_rows:
+            camera_id = str(row.get("camera_id", "cam1")).strip() or "cam1"
+            if camera_id not in grouped_rows:
+                grouped_rows[camera_id] = []
+            grouped_rows[camera_id].append(row)
+        display_grouped_rows = {
+            camera_id: self._runtime_display_rows_for_camera(camera_rows)
+            for camera_id, camera_rows in grouped_rows.items()
+        }
+        display_entries = [
+            (camera_id, row)
+            for camera_id in CAMERA_ROLES
+            for row in display_grouped_rows.get(camera_id, [])
+        ]
+        structure_signature = tuple(
+            (
+                camera_id,
+                str(row.get("item_id", "") or "").strip(),
+                self._runtime_item_display_name(row),
+                str(row.get("algorithm_code", "") or "").strip(),
+            )
+            for camera_id, row in display_entries
+        )
+
+        if (
+            self._inspection_structure_initialized
+            and structure_signature == self._inspection_structure_signature
+            and len(display_entries) == len(self._item_indicators)
+        ):
+            for indicator, (_camera_id, row) in zip(self._item_indicators, display_entries):
+                indicator.set_result(
+                    str(row.get("status_kind", "pending")),
+                    str(row.get("status_text", "")),
+                )
+            self._refresh_ng_summary(display_grouped_rows)
+            self._refresh_trigger_buttons()
+            return
+
+        self._inspection_structure_signature = structure_signature
+        self._inspection_structure_initialized = True
         while self._items_vbox.count():
             item = self._items_vbox.takeAt(0)
             widget = item.widget()
@@ -1145,17 +1243,6 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._item_indicators.clear()
         self._item_indicators_by_item_id.clear()
         self._camera_section_headers.clear()
-
-        grouped_rows: dict[str, list[dict]] = {role: [] for role in CAMERA_ROLES}
-        for row in rows:
-            camera_id = str(row.get("camera_id", "cam1")).strip() or "cam1"
-            if camera_id not in grouped_rows:
-                grouped_rows[camera_id] = []
-            grouped_rows[camera_id].append(row)
-        display_grouped_rows = {
-            camera_id: self._runtime_display_rows_for_camera(camera_rows)
-            for camera_id, camera_rows in grouped_rows.items()
-        }
 
         insert_index = 0
         display_index = 1
@@ -1187,7 +1274,6 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._items_container.update()
         self._items_scroll.viewport().update()
         self._refresh_ng_summary(display_grouped_rows)
-        self._refresh_camera_previews()
         self._refresh_trigger_buttons()
 
     def _refresh_ng_summary(self, grouped_rows: dict[str, list[dict]]) -> None:
@@ -1206,14 +1292,30 @@ class RuntimeModePage(QtWidgets.QWidget):
                 continue
             camera_index = camera_index_for_role(camera_id)
             camera_name = f"Cam{camera_index}" if camera_index else camera_id
-            item_name = self._runtime_item_display_name(first_ng_row)
-            summaries.append(
-                tr("runtime.ng_summary_item", camera=camera_name, item=item_name)
-            )
+            if self._is_template_match_failure_row(first_ng_row):
+                summaries.append(
+                    tr("runtime.ng_summary_match_failed", camera=camera_name)
+                )
+            else:
+                item_name = self._runtime_item_display_name(first_ng_row)
+                summaries.append(
+                    tr("runtime.ng_summary_item", camera=camera_name, item=item_name)
+                )
 
         summary_text = "，".join(summaries)
         self.lbl_ng_summary.setText(summary_text)
+        self.lbl_ng_summary.setToolTip(summary_text)
         self.lbl_ng_summary.setVisible(bool(summary_text))
+        self._refresh_ng_timing_summary()
+        self._refresh_result_summary_bar_visibility()
+
+    @staticmethod
+    def _is_template_match_failure_row(row: dict) -> bool:
+        detail_text = " ".join(
+            str(row.get(key, "") or "")
+            for key in ("status_text", "detail", "error_message")
+        ).casefold()
+        return any(marker.casefold() in detail_text for marker in _TEMPLATE_MATCH_FAILURE_MARKERS)
 
     @staticmethod
     def _runtime_item_display_name(row: dict) -> str:
@@ -1338,6 +1440,7 @@ class RuntimeModePage(QtWidgets.QWidget):
             header.set_result(normalized.get(camera_id, ""))
 
     def _refresh_camera_previews(self) -> None:
+        """Re-render cached previews after a camera-layout change."""
         from ui.window_common import update_runtime_preview
 
         for role in CAMERA_ROLES:
@@ -1380,6 +1483,7 @@ class RuntimeModePage(QtWidgets.QWidget):
                 )
             )
         self._refresh_camera_timing_visibility()
+        self._refresh_ng_timing_summary()
 
     @staticmethod
     def _coerce_ms(value: object) -> float:
@@ -1408,6 +1512,41 @@ class RuntimeModePage(QtWidgets.QWidget):
             f"{tr('runtime.infer')} {infer_ms:.1f}  "
             f"{tr('runtime.total_flow')} {total_ms:.1f} ms"
         )
+
+    def _refresh_ng_timing_summary(self) -> None:
+        label = getattr(self, "lbl_ng_timing_summary", None)
+        if label is None:
+            return
+        parts: list[str] = []
+        timing_map = self._last_timing_map
+        for role in CAMERA_ROLES:
+            capture_ms = self._coerce_ms(timing_map.get(f"{role}_capture_ms"))
+            match_ms = self._coerce_ms(timing_map.get(f"{role}_match_ms"))
+            infer_ms = self._coerce_ms(timing_map.get(f"{role}_infer_ms"))
+            total_ms = self._coerce_ms(timing_map.get(f"{role}_total_ms"))
+            if capture_ms <= 0.0 and match_ms <= 0.0 and infer_ms <= 0.0 and total_ms <= 0.0:
+                continue
+            parts.append(
+                f"{role.upper()} "
+                f"{tr('runtime.capture')}{capture_ms:.1f} "
+                f"{tr('runtime.match')}{match_ms:.1f} "
+                f"{tr('runtime.infer')}{infer_ms:.1f} "
+                f"{tr('runtime.total_flow')}{total_ms:.1f}ms"
+            )
+        text = "  |  ".join(parts)
+        label.setText(text)
+        label.setVisible(bool(text))
+        self._refresh_result_summary_bar_visibility()
+
+    def _refresh_result_summary_bar_visibility(self) -> None:
+        bar = getattr(self, "ng_summary_bar", None)
+        timing_label = getattr(self, "lbl_ng_timing_summary", None)
+        summary_label = getattr(self, "lbl_ng_summary", None)
+        if bar is None or timing_label is None or summary_label is None:
+            return
+        has_timing = bool(str(getattr(timing_label, "_full_text", "") or "").strip())
+        has_ng_summary = bool(summary_label.text().strip())
+        bar.setVisible(has_timing or has_ng_summary)
 
     @staticmethod
     def _sanitize_runtime_status_text(status_text: str) -> str:
@@ -1452,11 +1591,10 @@ class RuntimeModePage(QtWidgets.QWidget):
         return text
 
     def _refresh_camera_timing_visibility(self) -> None:
-        display_roles = self._display_role_set()
         for role in CAMERA_ROLES:
             label = getattr(self, f"lbl_{role}_timing", None)
             if label is not None:
-                label.setVisible(role in display_roles)
+                label.hide()
 
     def _display_role_set(self) -> set[str]:
         return set(self._active_role_set or self._configured_role_set)

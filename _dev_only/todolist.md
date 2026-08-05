@@ -1497,7 +1497,15 @@ RuntimeController 负责：
 触发拍照
 调用算法执行检测
 更新运行状态、相机结果、总结果
+# 密码放行
 处理 NG 锁定和密码放行
+程序中的默认值位于 [ui/shell/main_window.py (line 105)](C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/ui/shell/main_window.py:105)。配置文件优先于代码默认值。修改后需要重启程序
+
+放行密码本身位于 [config/system_passwords.json (line 2)](C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/config/system_passwords.json:2) 的 run_password。
+
+[config/runtime_mode_settings.json (line 2)](C:/Users/goney/Desktop/MatchTemplate2/EmbeddingTest/config/runtime_mode_settings.json:2)
+
+
 驱动三色灯、相机光源、记录输出
 它自己不碰 QWidget，这点在文件头就写得很清楚。runtime_controller.py
 

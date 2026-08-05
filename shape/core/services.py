@@ -1,7 +1,10 @@
 ﻿from __future__ import annotations
 
+import os
+import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, Tuple
 
 import numpy as np
@@ -116,14 +119,56 @@ class ShapeLocateService:
 
     def __init__(self) -> None:
         self._runners: dict[str, ShapeRunner] = {}
+        self._model_fingerprints: dict[str, tuple[int, int, int]] = {}
+        self._cache_lock = threading.RLock()
+
+    @staticmethod
+    def _cache_key(model_path: str) -> str:
+        return os.path.normcase(os.path.abspath(os.fspath(model_path)))
+
+    @staticmethod
+    def _model_fingerprint(model_path: str) -> tuple[int, int, int]:
+        stat = Path(model_path).stat()
+        return int(stat.st_mtime_ns), int(stat.st_ctime_ns), int(stat.st_size)
 
     def runner_for_model(self, model_path: str) -> ShapeRunner:
-        key = str(model_path)
-        runner = self._runners.get(key)
-        if runner is None:
-            runner = ShapeRunner(key)
-            self._runners[key] = runner
-        return runner
+        key = self._cache_key(model_path)
+        fingerprint = self._model_fingerprint(key)
+        with self._cache_lock:
+            runner = self._runners.get(key)
+            if runner is not None and self._model_fingerprints.get(key) == fingerprint:
+                return runner
+
+        # Model files are saved atomically. Still verify the fingerprint around
+        # loading so an external replacement cannot associate an old detector
+        # with the new file's cache entry.
+        candidate: ShapeRunner | None = None
+        loaded_fingerprint = fingerprint
+        for _attempt in range(3):
+            fingerprint_before = self._model_fingerprint(key)
+            candidate = ShapeRunner(key)
+            fingerprint_after = self._model_fingerprint(key)
+            loaded_fingerprint = fingerprint_after
+            if fingerprint_before == fingerprint_after:
+                break
+        else:
+            raise RuntimeError(f"shape model changed repeatedly while loading: {key}")
+
+        assert candidate is not None
+        with self._cache_lock:
+            current = self._runners.get(key)
+            if current is not None and self._model_fingerprints.get(key) == loaded_fingerprint:
+                return current
+            self._runners[key] = candidate
+            self._model_fingerprints[key] = loaded_fingerprint
+            return candidate
+
+    def invalidate_model(self, model_path: str) -> bool:
+        key = self._cache_key(model_path)
+        with self._cache_lock:
+            removed = self._runners.pop(key, None) is not None
+            self._model_fingerprints.pop(key, None)
+        return removed
 
     def locate(
         self,
@@ -160,7 +205,9 @@ class ShapeLocateService:
         )
 
     def clear_cache(self) -> None:
-        self._runners.clear()
+        with self._cache_lock:
+            self._runners.clear()
+            self._model_fingerprints.clear()
 
 
 __all__ = [

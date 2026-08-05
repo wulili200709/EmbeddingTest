@@ -48,6 +48,14 @@ class RuntimeRoiAutogenRun:
 _LOCATE_SERVICE = ShapeLocateService()
 
 
+def invalidate_shape_model_cache(model_path: str | None = None) -> None:
+    """Discard cached shape detectors after a model file is replaced."""
+    if model_path:
+        _LOCATE_SERVICE.invalidate_model(model_path)
+        return
+    _LOCATE_SERVICE.clear_cache()
+
+
 def _delete_stale_shape_roi_shapes(tgt_img_path: str, recipe: ShapeRecipe) -> list[str]:
     jpath = labelme_io.labelme_json_of_image(tgt_img_path)
     if not os.path.exists(jpath):
@@ -226,6 +234,7 @@ __all__ = [
     "autogen_roi_json_from_shape",
     "autogen_roi_json_from_shape_timed",
     "autogen_runtime_roi_shapes_timed",
+    "invalidate_shape_model_cache",
     "load_recipe_for_product",
     "product_paths",
     "recipe_is_ready",

@@ -306,14 +306,16 @@ def _finalize_trigger_outcome(runtime, outcome, release_status_before) -> None:
 
     runtime.recordPathChanged.emit(runtime._last_record_path or "-")
     runtime.triggerResultReady.emit(outcome.final_result, detail_text)
+    runtime.logAppended.emit(f"[runtime] result={outcome.final_result} detail={detail_text}")
+    runtime._update_status(detail_text or f"result={outcome.final_result}")
+
+    # Publish the frame only after final item statuses have reached the UI. The
+    # preview renderer can then color the ROI overlays correctly in one pass.
     for role in current_roles:
         source = current_preview_frames.get(role)
         if source is None:
             source = ""
         runtime.previewUpdated.emit(role, source)
-    runtime.logAppended.emit(f"[runtime] result={outcome.final_result} detail={detail_text}")
-    runtime._emit_runtime_context()
-    runtime._update_status(detail_text or f"result={outcome.final_result}")
 
     should_export_captures = _should_export_captures(runtime, outcome.final_result)
     if should_export_captures:

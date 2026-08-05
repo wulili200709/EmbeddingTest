@@ -17,7 +17,7 @@ if root_str not in sys.path:
     sys.path.insert(0, root_str)
 
 
-from ui.runtime.runtime_mode_pyside6 import RuntimeModePage
+from ui.runtime.runtime_mode_pyside6 import RuntimeModePage, _NG_RED
 from ui.i18n import language_code, set_language, tr
 from ui.window_common import update_runtime_preview
 from application.runtime.preview_frame import build_runtime_preview_frame
@@ -253,6 +253,141 @@ class RuntimeModeTriggerButtonsTest(unittest.TestCase):
         self.assertIn("line_distance", page._item_indicators_by_item_id)
         self.assertNotIn("left", page._item_indicators_by_item_id)
         self.assertNotIn("right", page._item_indicators_by_item_id)
+
+    def test_ng_summary_shows_first_ng_item_for_each_available_camera(self) -> None:
+        previous = language_code()
+        try:
+            set_language("en_US", persist=False)
+            page = RuntimeModePage()
+            rows = [
+                {
+                    "item_id": "cam1-first",
+                    "display_name": "Cam1 First",
+                    "camera_id": "cam1",
+                    "enabled": True,
+                    "status_kind": "ng",
+                    "status_text": "NG",
+                },
+                {
+                    "item_id": "cam1-second",
+                    "display_name": "Cam1 Second",
+                    "camera_id": "cam1",
+                    "enabled": True,
+                    "status_kind": "ng",
+                    "status_text": "NG",
+                },
+                {
+                    "item_id": "cam2-first",
+                    "display_name": "Cam2 First",
+                    "camera_id": "cam2",
+                    "enabled": True,
+                    "status_kind": "ng",
+                    "status_text": "NG",
+                },
+                {
+                    "item_id": "cam3-first",
+                    "display_name": "Cam3 First",
+                    "camera_id": "cam3",
+                    "enabled": True,
+                    "status_kind": "ng",
+                    "status_text": "NG",
+                },
+            ]
+
+            page.set_inspection_items(rows)
+            summary = page.lbl_ng_summary.text()
+            self.assertIn("Cam1 Cam1 First NG", summary)
+            self.assertNotIn("Cam1 Second", summary)
+            self.assertIn("Cam2 Cam2 First NG", summary)
+            self.assertIn("Cam3 Cam3 First NG", summary)
+            self.assertFalse(page.lbl_ng_summary.wordWrap())
+            self.assertNotIn("border", page.lbl_ng_summary.styleSheet())
+            self.assertGreater(page.lbl_ng_summary.maximumWidth(), 720)
+            self.assertTrue(page.ng_summary_bar.isVisibleTo(page))
+            self.assertIn(_NG_RED, page.lbl_ng_summary.styleSheet())
+            self.assertNotIn(_NG_RED, page.ng_summary_bar.styleSheet())
+
+            page.set_inspection_items(rows[:1])
+            self.assertEqual(page.lbl_ng_summary.text(), "Cam1 Cam1 First NG")
+
+            page.set_inspection_items([rows[0], rows[2]])
+            summary = page.lbl_ng_summary.text()
+            self.assertIn("Cam1 Cam1 First NG", summary)
+            self.assertIn("Cam2 Cam2 First NG", summary)
+            self.assertNotIn("Cam3", summary)
+        finally:
+            set_language(previous, persist=False)
+
+    def test_ng_summary_bar_contains_camera_timing_and_hides_right_timing_rows(self) -> None:
+        page = RuntimeModePage()
+        page.set_timing_breakdown(
+            {
+                "cam1_capture_ms": 88.2,
+                "cam1_match_ms": 123.8,
+                "cam1_infer_ms": 531.8,
+                "cam1_total_ms": 743.8,
+                "cam2_capture_ms": 89.6,
+                "cam2_match_ms": 26.0,
+                "cam2_infer_ms": 130.5,
+                "cam2_total_ms": 246.1,
+            }
+        )
+        page.set_inspection_items(
+            [
+                {
+                    "item_id": "bu-p",
+                    "display_name": "BU-P",
+                    "camera_id": "cam1",
+                    "enabled": True,
+                    "status_kind": "ng",
+                    "status_text": "NG",
+                }
+            ]
+        )
+
+        timing_text = page.lbl_ng_timing_summary.toolTip()
+        self.assertIn("CAM1", timing_text)
+        self.assertIn("88.2", timing_text)
+        self.assertIn("743.8", timing_text)
+        self.assertIn("CAM2", timing_text)
+        self.assertNotIn("CAM3", timing_text)
+        summary_layout = page.ng_summary_bar.layout()
+        self.assertLess(
+            summary_layout.indexOf(page.lbl_ng_timing_summary),
+            summary_layout.indexOf(page.lbl_ng_summary),
+        )
+        self.assertIn(_NG_RED, page.lbl_ng_summary.styleSheet())
+        self.assertTrue(page.ng_summary_bar.isVisibleTo(page))
+        self.assertFalse(page.lbl_cam1_timing.isVisibleTo(page))
+        self.assertFalse(page.lbl_cam2_timing.isVisibleTo(page))
+        self.assertFalse(page.lbl_cam3_timing.isVisibleTo(page))
+
+    def test_ng_summary_reports_template_match_failure(self) -> None:
+        previous = language_code()
+        try:
+            set_language("zh_CN", persist=False)
+            page = RuntimeModePage()
+
+            for detail in ("cam3 match failure", "cam3 NCC did not find any match."):
+                with self.subTest(detail=detail):
+                    page.set_inspection_items(
+                        [
+                            {
+                                "item_id": "cam3-roi",
+                                "display_name": "ROI",
+                                "camera_id": "cam3",
+                                "enabled": True,
+                                "status_kind": "ng",
+                                "status_text": f"NG ({detail})",
+                            }
+                        ]
+                    )
+                    self.assertEqual(
+                        page.lbl_ng_summary.text(),
+                        tr("runtime.ng_summary_match_failed", camera="Cam3"),
+                    )
+        finally:
+            set_language(previous, persist=False)
 
 
 if __name__ == "__main__":
