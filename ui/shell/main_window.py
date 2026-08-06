@@ -7,7 +7,7 @@ from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from common.mvs_launcher import find_mvs_executable, mvs_launch_environment
+from common.mvs_launcher import find_mvs_executable
 from common.camera_roles import (
     CAMERA_ROLES,
     DEFAULT_CAMERA_ROLE,
@@ -804,12 +804,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 item_roles.append(role)
 
         normalized_item_roles = configured_camera_roles(item_roles)
+        if capture_mode_roles:
+            # In channel-mapped modes the enabled logical capture channels are
+            # authoritative.  A copied product may still contain stale
+            # runtime_camera_roles from its previous camera arrangement.
+            return configured_camera_roles(capture_mode_roles)
         if session_roles:
             return session_roles
         if normalized_item_roles:
             return normalized_item_roles
-        if capture_mode_roles:
-            return configured_camera_roles(capture_mode_roles)
 
         serial_roles = configured_camera_roles(
                 role
@@ -837,7 +840,20 @@ class MainWindow(QtWidgets.QMainWindow):
     def _runtime_physical_camera_bindings(self, bindings: Optional[dict[str, str]] = None) -> dict[str, str]:
         explicit_bindings = bindings is not None
         raw_bindings = dict(bindings or {})
-        physical_roles = set(self._runtime_physical_camera_roles())
+        physical_role_list = self._runtime_physical_camera_roles()
+        physical_roles = set(physical_role_list)
+        # In normal independent-camera mode, a stored serial number must not
+        # implicitly enable a camera which the product did not select.
+        # Channel-mapped mode is different: its physical role can intentionally
+        # differ from the selected logical roles.
+        channel_mapped_mode = False
+        try:
+            capture_config = CameraSettingsStore(self.session.camera_settings_path).load_capture_config()
+            channel_mapped_mode = uses_channel_capture_mapping(capture_config.get("capture_mode"))
+        except Exception:
+            pass
+        if not channel_mapped_mode:
+            physical_roles.intersection_update(self._configured_runtime_camera_roles())
         result: dict[str, str] = {}
         for role in CAMERA_ROLES:
             if role not in physical_roles:
@@ -956,9 +972,6 @@ class MainWindow(QtWidgets.QMainWindow):
     def _open_mvs(self) -> None:
         if not self._require_permission("camera.open_mvs", tr("action.open_mvs")):
             return
-        running_process = self._mvs_process
-        if running_process is not None and running_process.state() != QtCore.QProcess.ProcessState.NotRunning:
-            return
         executable = find_mvs_executable()
         if executable is None:
             QtWidgets.QMessageBox.warning(
@@ -967,27 +980,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 tr("dialog.open_mvs_not_found"),
             )
             return
-        process = QtCore.QProcess(self)
-        process.setWorkingDirectory(str(executable.parent))
-        process_environment = QtCore.QProcessEnvironment()
-        for name, value in mvs_launch_environment().items():
-            process_environment.insert(str(name), str(value))
-        process.setProcessEnvironment(process_environment)
-        # Match the installed desktop shortcut, including its executable-path
-        # argument. Some MVS builds use it while resolving client resources.
-        process.start(str(executable), [str(executable)])
-        if not process.waitForStarted(3000):
+        try:
+            # Match double-clicking the installed executable in Explorer.
+            os.startfile(str(executable), "open")
+        except OSError:
             QtWidgets.QMessageBox.warning(
                 self,
                 tr("dialog.open_mvs_title"),
                 tr("dialog.open_mvs_failed", path=executable),
             )
-            process.deleteLater()
             return
-        self._mvs_process = process
-        process.finished.connect(
-            lambda *_args, completed_process=process: self._clear_mvs_process(completed_process)
-        )
         self._audit_event(module="相机", action="打开 MVS", target=str(executable))
 
     def _clear_mvs_process(self, completed_process: QtCore.QProcess) -> None:
@@ -1124,7 +1126,12 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         physical_roles = self._runtime_physical_camera_roles()
         configured_roles = self._configured_runtime_camera_roles()
-        single_multi_light = set(physical_roles) != set(CAMERA_ROLES)
+        single_multi_light = False
+        try:
+            capture_config = CameraSettingsStore(self.session.camera_settings_path).load_capture_config()
+            single_multi_light = uses_channel_capture_mapping(capture_config.get("capture_mode"))
+        except Exception:
+            single_multi_light = set(physical_roles) != set(CAMERA_ROLES)
         result = prompt_connect_camera_bindings(
             self,
             cam1_serial=self.runtime_page.camera_serial("cam1"),
@@ -1136,14 +1143,18 @@ class MainWindow(QtWidgets.QMainWindow):
         if result is None:
             return
         serials, enabled_roles = result
-        product_roles = configured_roles if single_multi_light else enabled_roles
+        product_roles = (
+            configured_roles
+            if single_multi_light
+            else configured_camera_roles(enabled_roles)
+        )
         connect_roles = (
             physical_roles
             if single_multi_light
             else [
                 role
-                for role in physical_roles
-                if str(serials.get(role, "")).strip()
+                for role in product_roles
+                if role in physical_roles
             ]
         )
         selected_serials = {

@@ -113,16 +113,25 @@ def connect_runtime_dialogs(window: QtWidgets.QWidget, runtime_ctrl) -> None:
 
 
 def update_runtime_preview(runtime_page, role: str, source: object) -> None:
-    display_size = _runtime_preview_display_size(runtime_page, role)
+    role_text = normalize_camera_role(role)
+    if isinstance(source, RuntimePreviewFrame):
+        # The frame carries the authoritative acquisition role.  This keeps a
+        # Cam3 frame from being painted onto Cam1 if a stale signal argument is
+        # ever delivered.
+        role_text = normalize_camera_role(source.role) or role_text
+    if not role_text:
+        return
+
+    display_size = _runtime_preview_display_size(runtime_page, role_text)
     if hasattr(runtime_page, "set_camera_preview_source"):
-        runtime_page.set_camera_preview_source(role, source)
+        runtime_page.set_camera_preview_source(role_text, source)
     if isinstance(source, RuntimePreviewFrame):
         roi_statuses = {}
         if hasattr(runtime_page, "roi_statuses_for_camera"):
-            roi_statuses = dict(runtime_page.roi_statuses_for_camera(role) or {})
-        visible_roi_labels = _runtime_visible_roi_labels(runtime_page, role)
+            roi_statuses = dict(runtime_page.roi_statuses_for_camera(role_text) or {})
+        visible_roi_labels = _runtime_visible_roi_labels(runtime_page, role_text)
         runtime_page.set_camera_pixmap(
-            role,
+            role_text,
             _render_runtime_overlay_pixmap(
                 source,
                 roi_statuses=roi_statuses,
@@ -136,10 +145,10 @@ def update_runtime_preview(runtime_page, role: str, source: object) -> None:
     if path and Path(path).exists():
         roi_statuses = {}
         if hasattr(runtime_page, "roi_statuses_for_camera"):
-            roi_statuses = dict(runtime_page.roi_statuses_for_camera(role) or {})
-        visible_roi_labels = _runtime_visible_roi_labels(runtime_page, role)
+            roi_statuses = dict(runtime_page.roi_statuses_for_camera(role_text) or {})
+        visible_roi_labels = _runtime_visible_roi_labels(runtime_page, role_text)
         runtime_page.set_camera_pixmap(
-            role,
+            role_text,
             _render_runtime_overlay_pixmap(
                 path,
                 roi_statuses=roi_statuses,
@@ -149,9 +158,9 @@ def update_runtime_preview(runtime_page, role: str, source: object) -> None:
         )
         return
     runtime_page.set_camera_pixmap(
-        role,
+        role_text,
         None,
-        placeholder=tr("runtime.camera_placeholder", role=role.upper()),
+        placeholder=tr("runtime.camera_placeholder", role=role_text.upper()),
     )
 
 

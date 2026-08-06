@@ -749,10 +749,13 @@ class RuntimeController(QtCore.QObject):
         self._last_preview_frames = {}
         self._last_item_results_by_camera = {}
         self._last_runtime_result = self._build_pending_runtime_result(status="RUNNING")
+        role_text = f"cam{int(cam_index)}"
+        # Clear only the requested canvas so another camera's cached image
+        # cannot be mistaken for a fresh capture of this trigger.
+        self.previewUpdated.emit(role_text, "")
         self._update_status(f"手动调试：正在触发相机{cam_index}…")
         self.logAppended.emit(f"[运行] 手动触发相机{cam_index}")
 
-        role_text = f"cam{int(cam_index)}"
         original_precheck = getattr(self._runner, "precheck_callback", None)
         try:
             if is_single_multi_light_mode(self):

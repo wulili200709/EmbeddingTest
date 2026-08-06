@@ -750,6 +750,9 @@ def _inspect_frame(runtime, role: str, frame):
     )
     with runtime._frame_lock:
         runtime._last_preview_frames[role] = preview_frame
+    # Publish the acquired image immediately.  The finalized preview (with ROI
+    # shapes and measurements) is published again after inspection completes.
+    runtime.previewUpdated.emit(role, preview_frame)
     with runtime._inspect_lock:
         response = runtime._inspection_executor.execute(
             runtime_controller_module.InspectionExecutionRequest(

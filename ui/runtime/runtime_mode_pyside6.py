@@ -1388,11 +1388,15 @@ class RuntimeModePage(QtWidgets.QWidget):
 
     def set_camera_source_path(self, role: str, path: str) -> None:
         source = str(path or "").strip()
-        role_text = normalize_camera_role(role, default=DEFAULT_CAMERA_ROLE)
+        role_text = normalize_camera_role(role)
+        if not role_text:
+            return
         self._camera_preview_sources[role_text] = source if source else None
 
     def set_camera_preview_source(self, role: str, source: object) -> None:
-        role_text = normalize_camera_role(role, default=DEFAULT_CAMERA_ROLE)
+        role_text = normalize_camera_role(role)
+        if not role_text:
+            return
         self._camera_preview_sources[role_text] = source
 
     def roi_statuses_for_camera(self, camera_id: str) -> dict[str, str]:
