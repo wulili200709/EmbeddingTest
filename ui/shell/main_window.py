@@ -8,6 +8,11 @@ from typing import Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from common.mvs_launcher import find_mvs_executable
+from common.runtime_camera_logging import (
+    record_runtime_camera_message,
+    set_detailed_camera_diagnostics,
+    shutdown_runtime_camera_logging,
+)
 from common.camera_roles import (
     CAMERA_ROLES,
     DEFAULT_CAMERA_ROLE,
@@ -20,11 +25,9 @@ from application import (
     ProductRuntimeContext,
     RuntimeController,
 )
+from application.runtime.capture_plan import build_capture_plan
 from infrastructure.audit_store import AuditStore, PermissionService, RuntimeRecordStore
-from infrastructure.camera_settings_store import (
-    CameraSettingsStore,
-    uses_channel_capture_mapping,
-)
+from infrastructure.camera_settings_store import CameraSettingsStore
 from ui.shell.audit_dialogs import (
     AuditLogDialog,
     ChangePasswordDialog,
@@ -170,6 +173,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._allow_initial_tool_session_load = False
         self._initial_ui_ready_timer_started = False
         self._runtime_capture_policy = self._load_runtime_capture_policy_from_session()
+        self._detailed_camera_diagnostics_timer = QtCore.QTimer(self)
+        self._detailed_camera_diagnostics_timer.setSingleShot(True)
+        self._detailed_camera_diagnostics_timer.timeout.connect(
+            self._expire_detailed_camera_diagnostics
+        )
 
         # ── UI 组装 ────────────────────────────────────────────────────
         self._build_ui()
@@ -718,6 +726,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.runtime_ctrl.triggerResultReady.connect(self._update_sidebar_runtime_result)
         self.runtime_ctrl.triggerResultReady.connect(self._on_runtime_trigger_result)
         self.runtime_ctrl.ioStatusChanged.connect(self._on_runtime_io_status_changed)
+        self.runtime_ctrl.logAppended.connect(record_runtime_camera_message)
         self.runtime_page.cameraLayoutSettingsChanged.connect(
             self._on_runtime_camera_layout_settings_changed
         )
@@ -729,6 +738,29 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _build_status_bar(self) -> None:
         _build_shell_status_bar(self)
+
+    def _toggle_detailed_camera_diagnostics(self, checked: bool) -> None:
+        enabled = bool(checked)
+        set_detailed_camera_diagnostics(enabled, duration_seconds=30 * 60)
+        if enabled:
+            self._detailed_camera_diagnostics_timer.start(30 * 60 * 1000)
+            message = tr("diagnostics.camera_enabled_30m")
+        else:
+            self._detailed_camera_diagnostics_timer.stop()
+            message = tr("diagnostics.camera_disabled")
+        if hasattr(self, "_bottom_status_bar"):
+            self._bottom_status_bar.showMessage(message, 5000)
+
+    def _expire_detailed_camera_diagnostics(self) -> None:
+        set_detailed_camera_diagnostics(False)
+        action = getattr(self, "act_detailed_camera_diagnostics", None)
+        if action is not None:
+            action.setChecked(False)
+        if hasattr(self, "_bottom_status_bar"):
+            self._bottom_status_bar.showMessage(
+                tr("diagnostics.camera_expired"),
+                5000,
+            )
 
     def _switch_workspace(self, workspace: str) -> None:
         _switch_shell_workspace(self, workspace)
@@ -775,7 +807,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _configured_runtime_camera_roles(self) -> list[str]:
         session_roles: list[str] = []
-        capture_mode_roles: list[str] = []
         try:
             session_data = self.session.load_session()
             session_roles = configured_camera_roles(
@@ -784,17 +815,6 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             pass
 
-        try:
-            capture_config = CameraSettingsStore(self.session.camera_settings_path).load_capture_config()
-            if uses_channel_capture_mapping(capture_config.get("capture_mode")):
-                for channel in list(capture_config.get("capture_channels", []) or []):
-                    if not bool(channel.get("enabled", True)):
-                        continue
-                    role = normalize_camera_role(channel.get("role", ""))
-                    if role and role not in capture_mode_roles:
-                        capture_mode_roles.append(role)
-        except Exception:
-            pass
         item_roles: list[str] = []
         for item in list(getattr(self.tool_page, "inspection_items", []) or []):
             if not bool(getattr(item, "enabled", True)):
@@ -804,35 +824,41 @@ class MainWindow(QtWidgets.QMainWindow):
                 item_roles.append(role)
 
         normalized_item_roles = configured_camera_roles(item_roles)
-        if capture_mode_roles:
-            # In channel-mapped modes the enabled logical capture channels are
-            # authoritative.  A copied product may still contain stale
-            # runtime_camera_roles from its previous camera arrangement.
-            return configured_camera_roles(capture_mode_roles)
-        if session_roles:
-            return session_roles
-        if normalized_item_roles:
-            return normalized_item_roles
-
-        serial_roles = configured_camera_roles(
+        base_roles = session_roles or normalized_item_roles
+        if not base_roles:
+            serial_roles = configured_camera_roles(
                 role
                 for role in CAMERA_ROLES
                 if self.runtime_page.camera_serial(role)
-        )
-        return serial_roles or [DEFAULT_CAMERA_ROLE]
+            )
+            base_roles = serial_roles or [DEFAULT_CAMERA_ROLE]
+
+        try:
+            capture_config = CameraSettingsStore(self.session.camera_settings_path).load_capture_config()
+            plan = build_capture_plan(capture_config, configured_roles=base_roles)
+            if plan.uses_channel_mapping:
+                # Enabled logical channels are authoritative in mapped modes;
+                # copied session roles may describe the old camera arrangement.
+                return list(plan.logical_roles)
+            if plan.logical_roles:
+                return list(plan.logical_roles)
+        except Exception:
+            pass
+
+        if base_roles:
+            return base_roles
+
+        return [DEFAULT_CAMERA_ROLE]
 
     def _runtime_physical_camera_roles(self) -> list[str]:
         try:
             capture_config = CameraSettingsStore(self.session.camera_settings_path).load_capture_config()
-            if uses_channel_capture_mapping(capture_config.get("capture_mode")):
-                physical_roles: list[str] = []
-                for channel in list(capture_config.get("capture_channels", []) or []):
-                    if not bool(channel.get("enabled", True)):
-                        continue
-                    role = normalize_camera_role(channel.get("physical_role", ""))
-                    if role and role not in physical_roles:
-                        physical_roles.append(role)
-                return configured_camera_roles(physical_roles or [DEFAULT_CAMERA_ROLE])
+            plan = build_capture_plan(
+                capture_config,
+                configured_roles=self._configured_runtime_camera_roles(),
+            )
+            if plan.physical_roles:
+                return list(plan.physical_roles)
         except Exception:
             pass
         return list(CAMERA_ROLES)
@@ -840,30 +866,21 @@ class MainWindow(QtWidgets.QMainWindow):
     def _runtime_physical_camera_bindings(self, bindings: Optional[dict[str, str]] = None) -> dict[str, str]:
         explicit_bindings = bindings is not None
         raw_bindings = dict(bindings or {})
-        physical_role_list = self._runtime_physical_camera_roles()
-        physical_roles = set(physical_role_list)
-        # In normal independent-camera mode, a stored serial number must not
-        # implicitly enable a camera which the product did not select.
-        # Channel-mapped mode is different: its physical role can intentionally
-        # differ from the selected logical roles.
-        channel_mapped_mode = False
+        configured_roles = self._configured_runtime_camera_roles()
         try:
             capture_config = CameraSettingsStore(self.session.camera_settings_path).load_capture_config()
-            channel_mapped_mode = uses_channel_capture_mapping(capture_config.get("capture_mode"))
+            plan = build_capture_plan(capture_config, configured_roles=configured_roles)
         except Exception:
-            pass
-        if not channel_mapped_mode:
-            physical_roles.intersection_update(self._configured_runtime_camera_roles())
-        result: dict[str, str] = {}
-        for role in CAMERA_ROLES:
-            if role not in physical_roles:
-                continue
-            serial = str(raw_bindings.get(role, "")).strip()
-            if not explicit_bindings:
-                serial = serial or self.runtime_page.camera_serial(role)
-            if serial:
-                result[role] = serial
-        return result
+            plan = build_capture_plan({}, configured_roles=configured_roles)
+        serials = {
+            role: (
+                str(raw_bindings.get(role, "") or "").strip()
+                if explicit_bindings
+                else str(raw_bindings.get(role, "") or self.runtime_page.camera_serial(role)).strip()
+            )
+            for role in CAMERA_ROLES
+        }
+        return plan.physical_bindings(serials)
 
     def _persist_product_runtime_camera_roles(self, roles: list[str]) -> None:
         session_data = self.session.load_session()
@@ -1126,12 +1143,13 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         physical_roles = self._runtime_physical_camera_roles()
         configured_roles = self._configured_runtime_camera_roles()
-        single_multi_light = False
+        capture_config: dict[str, object] = {}
         try:
             capture_config = CameraSettingsStore(self.session.camera_settings_path).load_capture_config()
-            single_multi_light = uses_channel_capture_mapping(capture_config.get("capture_mode"))
+            capture_plan = build_capture_plan(capture_config, configured_roles=configured_roles)
         except Exception:
-            single_multi_light = set(physical_roles) != set(CAMERA_ROLES)
+            capture_plan = build_capture_plan({}, configured_roles=configured_roles)
+        single_multi_light = capture_plan.uses_channel_mapping
         result = prompt_connect_camera_bindings(
             self,
             cam1_serial=self.runtime_page.camera_serial("cam1"),
@@ -1139,6 +1157,7 @@ class MainWindow(QtWidgets.QMainWindow):
             cam3_serial=self.runtime_page.camera_serial("cam3"),
             enabled_roles=physical_roles if single_multi_light else configured_roles,
             visible_roles=physical_roles if single_multi_light else None,
+            physical_roles_only=single_multi_light,
         )
         if result is None:
             return
@@ -1148,30 +1167,22 @@ class MainWindow(QtWidgets.QMainWindow):
             if single_multi_light
             else configured_camera_roles(enabled_roles)
         )
-        connect_roles = (
-            physical_roles
-            if single_multi_light
-            else [
-                role
-                for role in product_roles
-                if role in physical_roles
-            ]
+        selected_plan = build_capture_plan(
+            capture_config,
+            configured_roles=product_roles,
         )
+        connect_roles = list(selected_plan.physical_roles)
         selected_serials = {
             role: str(serials.get(role, "")).strip()
             for role in connect_roles
             if str(serials.get(role, "")).strip()
         }
-        missing_roles = [
-            role
-            for role in product_roles
-            if not str(serials.get(role, "")).strip()
-        ]
-        if missing_roles:
+        binding_issues = selected_plan.validate_bindings(serials)
+        if binding_issues:
             QtWidgets.QMessageBox.warning(
                 self,
                 "连接相机",
-                "已启用的相机需要填写序列号：" + ", ".join(missing_roles),
+                "\n".join(binding_issues),
             )
             return
         for role in CAMERA_ROLES:
@@ -1326,6 +1337,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._engine_warmup_thread = None
         self.runtime_ctrl.disconnect(silent=True)
         self.runtime_ctrl.shutdown_persistence(wait=True)
+        shutdown_runtime_camera_logging()
         self._close_mvs()
         super().closeEvent(event)
 

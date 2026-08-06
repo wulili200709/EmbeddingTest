@@ -240,6 +240,14 @@ def build_menu_bar(window) -> None:
         shell_icon(SP.SP_FileDialogListView), tr("action.runtime_records_query")
     )
     window.act_runtime_records_query.triggered.connect(window._show_runtime_records_dialog)
+    window.act_detailed_camera_diagnostics = system_menu.addAction(
+        shell_icon(SP.SP_FileDialogInfoView),
+        tr("action.detailed_camera_diagnostics"),
+    )
+    window.act_detailed_camera_diagnostics.setCheckable(True)
+    window.act_detailed_camera_diagnostics.triggered.connect(
+        window._toggle_detailed_camera_diagnostics
+    )
     window.act_software_versions = system_menu.addAction(
         shell_icon(SP.SP_FileDialogInfoView), tr("action.software_versions")
     )
@@ -346,6 +354,7 @@ def build_menu_bar(window) -> None:
             "user_permissions": window.act_user_permissions,
             "audit_log": window.act_audit_log,
             "runtime_records_query": window.act_runtime_records_query,
+            "detailed_camera_diagnostics": window.act_detailed_camera_diagnostics,
             "software_versions": window.act_software_versions,
         },
         "buttons": {
@@ -527,6 +536,7 @@ def retranslate_shell_chrome(window) -> None:
         "user_permissions": "action.user_permissions",
         "audit_log": "action.audit_log",
         "runtime_records_query": "action.runtime_records_query",
+        "detailed_camera_diagnostics": "action.detailed_camera_diagnostics",
         "software_versions": "action.software_versions",
     }
     for name, key in action_keys.items():

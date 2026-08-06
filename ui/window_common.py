@@ -96,7 +96,10 @@ def connect_runtime_page(
     runtime_ctrl.durationChanged.connect(runtime_page.set_duration_ms)
     runtime_ctrl.timingBreakdownChanged.connect(runtime_page.set_timing_breakdown)
     runtime_ctrl.cameraViewsCleared.connect(runtime_page.clear_camera_views)
+    runtime_ctrl.previewCycleStarted.connect(runtime_page.begin_camera_preview_cycle)
     runtime_ctrl.activeCameraRolesChanged.connect(runtime_page.set_active_camera_roles)
+    runtime_ctrl.physicalCameraRolesChanged.connect(runtime_page.set_physical_camera_roles)
+    runtime_ctrl.physicalCameraBindingsChanged.connect(runtime_page.set_physical_camera_bindings)
     runtime_ctrl.inspectionItemsChanged.connect(runtime_page.set_inspection_items)
 
 
@@ -120,6 +123,9 @@ def update_runtime_preview(runtime_page, role: str, source: object) -> None:
         # ever delivered.
         role_text = normalize_camera_role(source.role) or role_text
     if not role_text:
+        return
+    accepts_preview = getattr(runtime_page, "accepts_camera_preview", None)
+    if callable(accepts_preview) and not bool(accepts_preview(role_text, source)):
         return
 
     display_size = _runtime_preview_display_size(runtime_page, role_text)

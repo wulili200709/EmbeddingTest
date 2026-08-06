@@ -368,6 +368,7 @@ def prompt_connect_camera_bindings(
     cam3_serial: str = "",
     enabled_roles: list[str] | None = None,
     visible_roles: list[str] | None = None,
+    physical_roles_only: bool = False,
 ) -> tuple[dict[str, str], list[str]] | None:
     dialog = QtWidgets.QDialog(parent)
     dialog.setWindowTitle("连接相机")
@@ -375,7 +376,11 @@ def prompt_connect_camera_bindings(
     _apply_dialog_theme(dialog)
     layout = QtWidgets.QGridLayout(dialog)
     layout.setColumnStretch(1, 1)
-    layout.addWidget(QtWidgets.QLabel("本产品参与检测"), 0, 0)
+    layout.addWidget(
+        QtWidgets.QLabel("物理相机" if physical_roles_only else "本产品参与检测"),
+        0,
+        0,
+    )
     layout.addWidget(QtWidgets.QLabel("相机序列号"), 0, 1)
 
     enabled = {str(role).strip() for role in (enabled_roles or []) if str(role).strip()}

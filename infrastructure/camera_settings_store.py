@@ -9,6 +9,7 @@ from common.safe_io import atomic_write_json, load_json_with_backup
 
 
 _CAMERA_SETTINGS_FILENAME = "camera_settings.json"
+CAMERA_SETTINGS_SCHEMA_VERSION = 2
 LIGHT_SOURCE_MODE_BOARD_IO = "board_io"
 LIGHT_SOURCE_MODE_CAMERA_LINE1_STROBE = "camera_line1_strobe"
 CAPTURE_MODE_INDEPENDENT = "independent"
@@ -293,11 +294,28 @@ class CameraSettingsStore:
         payload = self._load_all()
         mode = normalize_capture_mode(payload.get("capture_mode"))
         channels = normalize_capture_channels(payload.get("capture_channels"), mode=mode)
-        return {"capture_mode": mode, "capture_channels": channels}
+        try:
+            schema_version = int(payload.get("schema_version", 0) or 0)
+        except (TypeError, ValueError):
+            schema_version = 0
+        if payload and schema_version < CAMERA_SETTINGS_SCHEMA_VERSION:
+            # Migrate legacy/copied products in place while preserving camera
+            # settings and serial bindings outside the capture section.
+            payload["schema_version"] = CAMERA_SETTINGS_SCHEMA_VERSION
+            payload["capture_mode"] = mode
+            payload["capture_channels"] = channels
+            atomic_write_json(self._path, payload, ensure_ascii=False, indent=2)
+            schema_version = CAMERA_SETTINGS_SCHEMA_VERSION
+        return {
+            "schema_version": schema_version or CAMERA_SETTINGS_SCHEMA_VERSION,
+            "capture_mode": mode,
+            "capture_channels": channels,
+        }
 
     def save_capture_config(self, mode: object, channels: object) -> None:
         payload = self._load_all()
         normalized_mode = normalize_capture_mode(mode)
+        payload["schema_version"] = CAMERA_SETTINGS_SCHEMA_VERSION
         payload["capture_mode"] = normalized_mode
         payload["capture_channels"] = normalize_capture_channels(channels, mode=normalized_mode)
         atomic_write_json(self._path, payload, ensure_ascii=False, indent=2)

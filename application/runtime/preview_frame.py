@@ -22,6 +22,11 @@ class RuntimePreviewShape:
 class RuntimePreviewFrame:
     role: str
     image_bgr: np.ndarray
+    trigger_id: str = ""
+    physical_role: str = ""
+    camera_serial: str = ""
+    frame_number: int = 0
+    capture_timestamp: int = 0
     source_path: str = ""
     product_dir: str = ""
     camera_role: str = "cam1"
@@ -33,6 +38,11 @@ def build_runtime_preview_frame(
     *,
     role: str,
     image_bgr,
+    trigger_id: str = "",
+    physical_role: str = "",
+    camera_serial: str = "",
+    frame_number: int = 0,
+    capture_timestamp: int = 0,
     source_path: str = "",
     product_dir: str = "",
     camera_role: str = "cam1",
@@ -48,6 +58,11 @@ def build_runtime_preview_frame(
     return RuntimePreviewFrame(
         role=str(role or "").strip() or "cam1",
         image_bgr=copied,
+        trigger_id=str(trigger_id or "").strip(),
+        physical_role=str(physical_role or "").strip(),
+        camera_serial=str(camera_serial or "").strip(),
+        frame_number=int(frame_number or 0),
+        capture_timestamp=int(capture_timestamp or 0),
         source_path=str(source_path or "").strip(),
         product_dir=str(product_dir or "").strip(),
         camera_role=str(camera_role or "").strip() or "cam1",
@@ -138,6 +153,11 @@ def export_runtime_preview_frame(
     return build_runtime_preview_frame(
         role=frame.role,
         image_bgr=frame.image_bgr,
+        trigger_id=frame.trigger_id,
+        physical_role=frame.physical_role,
+        camera_serial=frame.camera_serial,
+        frame_number=frame.frame_number,
+        capture_timestamp=frame.capture_timestamp,
         source_path=str(image_path),
         product_dir=frame.product_dir,
         camera_role=frame.camera_role,
@@ -152,6 +172,14 @@ def _write_runtime_preview_json(image_path: Path, frame: RuntimePreviewFrame) ->
     payload = {
         "version": "5.5.0",
         "flags": {
+            "runtime_capture": {
+                "trigger_id": str(getattr(frame, "trigger_id", "") or ""),
+                "logical_role": str(getattr(frame, "role", "") or ""),
+                "physical_role": str(getattr(frame, "physical_role", "") or ""),
+                "camera_serial": str(getattr(frame, "camera_serial", "") or ""),
+                "frame_number": int(getattr(frame, "frame_number", 0) or 0),
+                "capture_timestamp": int(getattr(frame, "capture_timestamp", 0) or 0),
+            },
             "runtime_measurements": [
                 dict(item)
                 for item in tuple(getattr(frame, "measurements", ()) or ())

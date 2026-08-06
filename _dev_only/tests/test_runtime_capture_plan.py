@@ -1,0 +1,326 @@
+from __future__ import annotations
+
+import tempfile
+import threading
+import unittest
+from itertools import combinations
+from pathlib import Path
+from types import SimpleNamespace
+
+import numpy as np
+from PySide6 import QtWidgets
+
+from application.runtime.capture_plan import build_capture_plan
+from application.runtime import controller as controller_module
+from application.runtime import execution
+from application.runtime.preview_frame import RuntimePreviewFrame
+from common.runtime_camera_logging import RuntimeCameraLogService
+from infrastructure.camera_settings_store import (
+    CAMERA_SETTINGS_SCHEMA_VERSION,
+    CameraSettingsStore,
+)
+from ui.runtime.runtime_mode_pyside6 import RuntimeModePage
+from ui.window_common import update_runtime_preview
+
+
+def _flexible_config() -> dict:
+    return {
+        "capture_mode": "flexible",
+        "capture_channels": [
+            {
+                "enabled": True,
+                "role": "cam1",
+                "physical_role": "cam1",
+                "light_output": "DO_LIGHT_CAM1",
+            },
+            {
+                "enabled": True,
+                "role": "cam2",
+                "physical_role": "cam1",
+                "light_output": "DO_LIGHT_CAM2",
+            },
+            {
+                "enabled": True,
+                "role": "cam3",
+                "physical_role": "cam2",
+                "light_output": "DO_LIGHT_CAM3",
+            },
+        ],
+    }
+
+
+class CapturePlanTests(unittest.TestCase):
+    def test_runtime_camera_log_filters_and_writes_in_background(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "runtime_camera.log"
+            service = RuntimeCameraLogService(
+                path,
+                max_bytes=4096,
+                backup_count=2,
+            )
+            service.record("[capture] hidden while detail is disabled")
+            service.record("[trigger-summary] trigger=T1 result=OK")
+            service.record("[camera] capture failed: timeout")
+            service.set_detailed(True, duration_seconds=60)
+            service.record("[capture] visible while detail is enabled")
+            service.shutdown()
+
+            content = path.read_text(encoding="utf-8")
+            self.assertNotIn("hidden while detail is disabled", content)
+            self.assertIn("trigger=T1 result=OK", content)
+            self.assertIn("capture failed: timeout", content)
+            self.assertIn("visible while detail is enabled", content)
+
+    def test_trigger_summary_contains_frame_route_without_image_data(self) -> None:
+        frame = RuntimePreviewFrame(
+            role="cam3",
+            image_bgr=np.zeros((2, 2), dtype=np.uint8),
+            trigger_id="T7",
+            physical_role="cam2",
+            camera_serial="S2",
+            frame_number=88,
+        )
+        outcome = SimpleNamespace(
+            final_result="OK",
+            duration_ms=123,
+            error_message="",
+            camera_outcomes={
+                "cam3": controller_module.CameraInspectionOutcome(role="cam3", result="OK")
+            },
+        )
+        message = execution._trigger_summary_message(
+            trigger_id="T7",
+            outcome=outcome,
+            roles=["cam3"],
+            preview_frames={"cam3": frame},
+        )
+        self.assertIn("trigger=T7", message)
+        self.assertIn("cam3:OK/physical=cam2/serial=S2/frame=88", message)
+        self.assertNotIn("image_bgr", message)
+
+    def test_independent_mode_preserves_every_selected_role_combination(self) -> None:
+        all_roles = ("cam1", "cam2", "cam3")
+        for size in range(1, len(all_roles) + 1):
+            for roles in combinations(all_roles, size):
+                with self.subTest(roles=roles):
+                    plan = build_capture_plan({}, configured_roles=roles)
+                    self.assertEqual(plan.logical_roles, roles)
+                    self.assertEqual(plan.physical_roles, roles)
+
+    def test_independent_sparse_roles_only_bind_selected_cameras(self) -> None:
+        plan = build_capture_plan({}, configured_roles=["cam1", "cam3"])
+        self.assertEqual(plan.logical_roles, ("cam1", "cam3"))
+        self.assertEqual(plan.physical_roles, ("cam1", "cam3"))
+        self.assertEqual(
+            plan.physical_bindings({"cam1": "S1", "cam2": "S2", "cam3": "S3"}),
+            {"cam1": "S1", "cam3": "S3"},
+        )
+
+    def test_two_physical_cameras_can_feed_three_logical_channels(self) -> None:
+        plan = build_capture_plan(_flexible_config(), configured_roles=["cam1"])
+        self.assertTrue(plan.uses_channel_mapping)
+        self.assertEqual(plan.logical_roles, ("cam1", "cam2", "cam3"))
+        self.assertEqual(plan.physical_roles, ("cam1", "cam2"))
+        self.assertEqual(
+            [channel.physical_role for channel in plan.channels_for_roles()],
+            ["cam1", "cam1", "cam2"],
+        )
+        self.assertEqual(
+            plan.physical_bindings({"cam1": "S1", "cam2": "S2", "cam3": "STALE"}),
+            {"cam1": "S1", "cam2": "S2"},
+        )
+
+    def test_mapped_trigger_captures_three_channels_from_two_physical_cameras(self) -> None:
+        class Signal:
+            def emit(self, *_args) -> None:
+                pass
+
+        class Store:
+            @staticmethod
+            def load_capture_config() -> dict:
+                return _flexible_config()
+
+        class Scheduler:
+            @staticmethod
+            def begin_precheck():
+                return SimpleNamespace(allowed=True)
+
+            def __getattr__(self, _name):
+                return lambda *args, **kwargs: None
+
+        class Light:
+            @staticmethod
+            def requires_stable_delay(_index: int) -> bool:
+                return False
+
+            def __getattr__(self, _name):
+                return lambda *args, **kwargs: None
+
+        class Frames:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            @staticmethod
+            def roles() -> list[str]:
+                return ["cam1", "cam2"]
+
+            def capture_once(self, role: str, *, timeout_ms: int):
+                self.calls.append(role)
+                return SimpleNamespace(role=role, timeout_ms=timeout_ms)
+
+        frames = Frames()
+        inspected: list[tuple[str, str]] = []
+        runtime = SimpleNamespace(
+            _camera_settings_store=Store(),
+            _frame_grab_service=frames,
+            _scheduler=Scheduler(),
+            _tower_light_controller=Light(),
+            _light_controller=Light(),
+            logAppended=Signal(),
+        )
+
+        def inspect(role: str, _frame, *, physical_role: str = ""):
+            inspected.append((role, physical_role))
+            return controller_module.CameraInspectionOutcome(role=role, result="OK")
+
+        runtime._inspect_frame = inspect
+        original_precheck = execution._precheck_for_capture_channels
+        original_apply = execution._apply_capture_channel_camera_settings
+        execution._precheck_for_capture_channels = lambda _runtime, _channels: (True, "")
+        execution._apply_capture_channel_camera_settings = lambda _runtime, _channel: None
+        try:
+            outcome = execution._run_single_multi_light_trigger(runtime)
+        finally:
+            execution._precheck_for_capture_channels = original_precheck
+            execution._apply_capture_channel_camera_settings = original_apply
+
+        self.assertEqual(frames.calls, ["cam1", "cam1", "cam2"])
+        self.assertEqual(
+            inspected,
+            [("cam1", "cam1"), ("cam2", "cam1"), ("cam3", "cam2")],
+        )
+        self.assertEqual(outcome.final_result, "OK")
+
+    def test_duplicate_physical_serial_is_rejected(self) -> None:
+        plan = build_capture_plan(_flexible_config())
+        issues = plan.validate_bindings({"cam1": "SAME", "cam2": "SAME"})
+        self.assertTrue(any("同一序列号" in issue for issue in issues))
+
+    def test_stale_preview_trigger_is_not_accepted(self) -> None:
+        page = SimpleNamespace(_camera_preview_trigger_ids={"cam3": "new-trigger"})
+        old_frame = RuntimePreviewFrame(
+            role="cam3",
+            image_bgr=np.zeros((2, 2), dtype=np.uint8),
+            trigger_id="old-trigger",
+        )
+        new_frame = RuntimePreviewFrame(
+            role="cam3",
+            image_bgr=np.zeros((2, 2), dtype=np.uint8),
+            trigger_id="new-trigger",
+        )
+        accepts = RuntimeModePage.accepts_camera_preview
+        self.assertFalse(accepts(page, "cam3", old_frame))
+        self.assertTrue(accepts(page, "cam3", new_frame))
+
+    def test_legacy_capture_config_is_migrated(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "camera_settings.json"
+            path.write_text(
+                '{"capture_mode":"single_multi_light","capture_channels":[]}',
+                encoding="utf-8",
+            )
+            config = CameraSettingsStore(path).load_capture_config()
+            self.assertEqual(config["schema_version"], CAMERA_SETTINGS_SCHEMA_VERSION)
+            self.assertIn(f'"schema_version": {CAMERA_SETTINGS_SCHEMA_VERSION}', path.read_text(encoding="utf-8"))
+
+    def test_preview_frame_records_logical_and_physical_identity(self) -> None:
+        class Signal:
+            def __init__(self) -> None:
+                self.events: list[tuple] = []
+
+            def emit(self, *args) -> None:
+                self.events.append(args)
+
+        class Executor:
+            @staticmethod
+            def execute(_request):
+                return SimpleNamespace(
+                    item_results=[],
+                    roi_shapes=(),
+                    measurements=(),
+                    result="OK",
+                    detail="",
+                    match_ms=1.0,
+                    infer_ms=2.0,
+                )
+
+        preview_signal = Signal()
+        runtime = SimpleNamespace(
+            _session=SimpleNamespace(product_dir=""),
+            _last_runtime_result=SimpleNamespace(task_id="trigger-7"),
+            _frame_lock=threading.RLock(),
+            _inspect_lock=threading.RLock(),
+            _last_preview_frames={},
+            _last_item_results_by_camera={},
+            _inspection_executor=Executor(),
+            _runtime_context=SimpleNamespace(inspection_items=[]),
+            previewUpdated=preview_signal,
+            logAppended=Signal(),
+        )
+        frame = SimpleNamespace(
+            camera_serial="SERIAL-2",
+            frame_num=88,
+            host_timestamp=123456,
+        )
+        original_converter = controller_module.frame_to_bgr_image
+        controller_module.frame_to_bgr_image = lambda _frame: np.zeros((4, 6, 3), dtype=np.uint8)
+        try:
+            outcome = execution._inspect_frame(
+                runtime,
+                "cam3",
+                frame,
+                physical_role="cam2",
+            )
+        finally:
+            controller_module.frame_to_bgr_image = original_converter
+        self.assertEqual(outcome.result, "OK")
+        preview = preview_signal.events[0][1]
+        self.assertEqual(preview.trigger_id, "trigger-7")
+        self.assertEqual(preview.role, "cam3")
+        self.assertEqual(preview.physical_role, "cam2")
+        self.assertEqual(preview.camera_serial, "SERIAL-2")
+        self.assertEqual(preview.frame_number, 88)
+
+    def test_runtime_page_separates_physical_roles_and_rejects_old_frame(self) -> None:
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        page = RuntimeModePage()
+        page.set_configured_camera_roles(["cam1", "cam2", "cam3"])
+        page.set_active_camera_roles(["cam1", "cam2", "cam3"])
+        page.set_physical_camera_roles(["cam1", "cam2"])
+        page.set_physical_camera_bindings({"cam1": "S1", "cam2": "S2"})
+        self.assertIn("物理相机: cam1(S1), cam2(S2)", page.lbl_footer_connection.text())
+        self.assertIn("检测通道: cam1, cam2, cam3", page.lbl_footer_connection.text())
+
+        page.begin_camera_preview_cycle("cam3", "new-trigger")
+        old_frame = RuntimePreviewFrame(
+            role="cam3",
+            image_bgr=np.full((6, 8, 3), 50, dtype=np.uint8),
+            trigger_id="old-trigger",
+        )
+        update_runtime_preview(page, "cam3", old_frame)
+        self.assertIsNone(page.view_cam3._pixmap)
+
+        new_frame = RuntimePreviewFrame(
+            role="cam3",
+            image_bgr=np.full((6, 8, 3), 100, dtype=np.uint8),
+            trigger_id="new-trigger",
+        )
+        update_runtime_preview(page, "cam1", new_frame)
+        self.assertIsNotNone(page.view_cam3._pixmap)
+        self.assertIsNone(page.view_cam1._pixmap)
+        page.deleteLater()
+        app.processEvents()
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -20,6 +20,8 @@ from algorithms.measurement import (
     FIND_LINE_ALGORITHMS,
     LINE_DISTANCE_ALGORITHMS,
 )
+from application.runtime.preview_frame import RuntimePreviewFrame
+from common.runtime_camera_logging import record_runtime_camera_message
 from ui.i18n import tr, tr_runtime_state, tr_status_text
 from ui.roi_overlay_colors import is_roi_label, merge_roi_statuses
 
@@ -360,12 +362,17 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._release_pwd = ""
         self._configured_role_set: set[str] = set(CAMERA_ROLES)
         self._active_role_set: set[str] = set()
+        self._physical_role_set: set[str] = set()
+        self._physical_camera_bindings: dict[str, str] = {}
         self._busy = False
         self._inspection_rows: list[dict] = []
         self._inspection_structure_signature: tuple[tuple[str, str, str, str], ...] = ()
         self._inspection_structure_initialized = False
         self._camera_preview_sources: dict[str, object | None] = {
             role: None for role in CAMERA_ROLES
+        }
+        self._camera_preview_trigger_ids: dict[str, str] = {
+            role: "" for role in CAMERA_ROLES
         }
         self._current_product_name = ""
         self._current_record_path = ""
@@ -1113,7 +1120,7 @@ class RuntimeModePage(QtWidgets.QWidget):
 
     def set_connection_status(self, status_text: str) -> None:
         self._last_connection_status = str(status_text or "")
-        self.lbl_footer_connection.setText(f"{tr('runtime.camera')}: {tr_status_text(status_text)}")
+        self._refresh_connection_footer()
 
     def set_tower_light_status(self, status_text: str) -> None:
         pass
@@ -1176,15 +1183,59 @@ class RuntimeModePage(QtWidgets.QWidget):
                         else role.upper()
                     )
                     view.set_runtime_pixmap(None, placeholder=placeholder)
-        self.lbl_footer_connection.setText(
-            f"{tr('runtime.camera')}: "
-            + (", ".join(sorted(role_set)) if role_set else tr("runtime.not_connected"))
-        )
+        self._refresh_connection_footer()
         self._reset_camera_slot_order_for_reduced_roles()
         self._populate_camera_slot_combos()
         self._refresh_camera_role_layout()
         self._refresh_camera_timing_visibility()
         self._refresh_trigger_buttons()
+
+    def set_physical_camera_roles(self, roles: list[str]) -> None:
+        self._physical_role_set = {
+            str(role).strip() for role in roles if str(role).strip()
+        }
+        self._physical_camera_bindings = {
+            role: serial
+            for role, serial in self._physical_camera_bindings.items()
+            if role in self._physical_role_set
+        }
+        self._refresh_connection_footer()
+
+    def set_physical_camera_bindings(self, bindings: dict[str, str]) -> None:
+        self._physical_camera_bindings = {
+            str(role).strip(): str(serial or "").strip()
+            for role, serial in dict(bindings or {}).items()
+            if str(role).strip()
+        }
+        self._refresh_connection_footer()
+
+    def _refresh_connection_footer(self) -> None:
+        order = {role: index for index, role in enumerate(CAMERA_ROLES)}
+        logical = sorted(self._active_role_set, key=lambda role: order.get(role, 999))
+        physical = sorted(self._physical_role_set, key=lambda role: order.get(role, 999))
+        physical_labels = [
+            (
+                f"{role}({self._physical_camera_bindings[role]})"
+                if self._physical_camera_bindings.get(role)
+                else role
+            )
+            for role in physical
+        ]
+        if not physical:
+            detail = tr_status_text(self._last_connection_status).strip()
+            self.lbl_footer_connection.setText(
+                f"{tr('runtime.camera')}: {detail or tr('runtime.not_connected')}"
+            )
+            return
+        if logical and logical != physical:
+            self.lbl_footer_connection.setText(
+                f"{tr('runtime.physical_cameras')}: " + ", ".join(physical_labels)
+                + f" | {tr('runtime.logical_channels')}: " + ", ".join(logical)
+            )
+            return
+        self.lbl_footer_connection.setText(
+            f"{tr('runtime.camera')}: " + ", ".join(physical_labels)
+        )
 
     def set_inspection_items(self, rows: list[dict]) -> None:
         self._inspection_rows = list(rows or [])
@@ -1399,6 +1450,36 @@ class RuntimeModePage(QtWidgets.QWidget):
             return
         self._camera_preview_sources[role_text] = source
 
+    def begin_camera_preview_cycle(self, role: str, trigger_id: str) -> None:
+        role_text = normalize_camera_role(role)
+        if not role_text:
+            return
+        self._camera_preview_trigger_ids[role_text] = str(trigger_id or "").strip()
+        self._camera_preview_sources[role_text] = None
+        self.set_camera_pixmap(
+            role_text,
+            None,
+            placeholder=tr("runtime.camera_placeholder", role=role_text.upper()),
+        )
+
+    def accepts_camera_preview(self, role: str, source: object) -> bool:
+        role_text = normalize_camera_role(role)
+        if not role_text or not isinstance(source, RuntimePreviewFrame):
+            return bool(role_text)
+        expected = str(self._camera_preview_trigger_ids.get(role_text, "") or "").strip()
+        actual = str(getattr(source, "trigger_id", "") or "").strip()
+        accepted = not expected or actual == expected
+        if not accepted:
+            record_runtime_camera_message(
+                "[preview-rejected] "
+                f"logical={role_text} expected_trigger={expected or '-'} "
+                f"actual_trigger={actual or '-'} "
+                f"physical={str(getattr(source, 'physical_role', '') or '-')} "
+                f"serial={str(getattr(source, 'camera_serial', '') or '-')} "
+                f"frame={int(getattr(source, 'frame_number', 0) or 0)}"
+            )
+        return accepted
+
     def roi_statuses_for_camera(self, camera_id: str) -> dict[str, str]:
         rows = [row for row in self._inspection_rows if bool(row.get("enabled", True))]
         return merge_roi_statuses(rows, camera_id=camera_id)
@@ -1419,7 +1500,10 @@ class RuntimeModePage(QtWidgets.QWidget):
 
     def clear_camera_views(self) -> None:
         self._active_role_set = set()
+        self._physical_role_set = set()
+        self._physical_camera_bindings = {}
         self._camera_preview_sources = {role: None for role in CAMERA_ROLES}
+        self._camera_preview_trigger_ids = {role: "" for role in CAMERA_ROLES}
         for role in CAMERA_ROLES:
             view = self._camera_views_by_role.get(role)
             if view is not None:

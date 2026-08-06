@@ -8,7 +8,7 @@ from pathlib import Path
 _CONFIGURED = False
 
 
-def _default_log_dir() -> Path:
+def default_log_dir() -> Path:
     if getattr(sys, "frozen", False):
         root = Path(sys.executable).resolve().parent
     else:
@@ -20,7 +20,7 @@ def configure_app_logging() -> None:
     global _CONFIGURED
     if _CONFIGURED:
         return
-    log_dir = _default_log_dir()
+    log_dir = default_log_dir()
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
         handler: logging.Handler = logging.FileHandler(log_dir / "LC_System_app.log", encoding="utf-8")

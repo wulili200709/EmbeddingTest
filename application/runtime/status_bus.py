@@ -8,6 +8,7 @@ from domain import build_pending_result, recipe_name_from_path
 from .capture_channels import (
     active_runtime_roles,
     is_single_multi_light_mode,
+    physical_connected_bindings,
     physical_connected_roles,
     required_runtime_roles,
 )
@@ -153,6 +154,8 @@ def _emit_runtime_context(runtime) -> None:
         runtime._last_runtime_result = runtime._build_pending_runtime_result(status="PENDING")
     runtime.productNameChanged.emit(runtime._session.current_product)
     runtime.activeCameraRolesChanged.emit(runtime._connected_roles())
+    runtime.physicalCameraRolesChanged.emit(physical_connected_roles(runtime))
+    runtime.physicalCameraBindingsChanged.emit(physical_connected_bindings(runtime))
     runtime.inspectionItemsChanged.emit(runtime._last_runtime_result.item_rows())
     runtime.cameraResultsChanged.emit(runtime._last_runtime_result.camera_result_map())
     runtime.durationChanged.emit(int(getattr(runtime._last_runtime_result, "duration_ms", 0) or 0))

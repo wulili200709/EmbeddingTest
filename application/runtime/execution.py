@@ -288,6 +288,9 @@ def _finalize_trigger_outcome(
     *,
     active_roles=None,
 ) -> None:
+    trigger_id = str(
+        getattr(getattr(runtime, "_last_runtime_result", None), "task_id", "") or ""
+    )
     current_preview_frames = dict(runtime._last_preview_frames)
     current_roles = _capture_export_roles(outcome, current_preview_frames)
     result_roles = configured_camera_roles(active_roles or [])
@@ -315,6 +318,14 @@ def _finalize_trigger_outcome(
 
     runtime.recordPathChanged.emit(runtime._last_record_path or "-")
     runtime.triggerResultReady.emit(outcome.final_result, detail_text)
+    runtime.logAppended.emit(
+        _trigger_summary_message(
+            trigger_id=trigger_id,
+            outcome=outcome,
+            roles=result_roles,
+            preview_frames=current_preview_frames,
+        )
+    )
     runtime.logAppended.emit(f"[runtime] result={outcome.final_result} detail={detail_text}")
     runtime._update_status(detail_text or f"result={outcome.final_result}")
 
@@ -365,6 +376,35 @@ def _finalize_trigger_outcome(
             result="locked",
             message=outcome.error_message,
         )
+
+
+def _trigger_summary_message(
+    *,
+    trigger_id: str,
+    outcome,
+    roles,
+    preview_frames: dict[str, object],
+) -> str:
+    channel_parts: list[str] = []
+    camera_outcomes = dict(getattr(outcome, "camera_outcomes", {}) or {})
+    for role in configured_camera_roles(roles or []):
+        frame = preview_frames.get(role)
+        camera_outcome = camera_outcomes.get(role)
+        result = str(getattr(camera_outcome, "result", "") or "-").strip()
+        physical_role = str(getattr(frame, "physical_role", "") or role).strip()
+        serial = str(getattr(frame, "camera_serial", "") or "-").strip()
+        frame_number = int(getattr(frame, "frame_number", 0) or 0)
+        channel_parts.append(
+            f"{role}:{result}/physical={physical_role}/serial={serial}/frame={frame_number}"
+        )
+    error_text = str(getattr(outcome, "error_message", "") or "").strip()
+    error_part = f" error={error_text!r}" if error_text else ""
+    return (
+        f"[trigger-summary] trigger={str(trigger_id or '-').strip()} "
+        f"result={str(getattr(outcome, 'final_result', '') or '-').strip()} "
+        f"duration_ms={int(getattr(outcome, 'duration_ms', 0) or 0)} "
+        f"channels={','.join(channel_parts) or '-'}{error_part}"
+    )
 
 
 def _precheck(runtime):
@@ -617,7 +657,11 @@ def _run_single_multi_light_trigger(runtime, requested_roles=None):
                     if light_prepared:
                         runtime._light_controller.finish_capture(light_index)
                 capture_ms = (time.perf_counter() - capture_t0) * 1000.0
-                outcome = runtime._inspect_frame(virtual_role, frame)
+                outcome = runtime._inspect_frame(
+                    virtual_role,
+                    frame,
+                    physical_role=physical_role,
+                )
                 camera_outcomes[virtual_role] = replace(outcome, capture_ms=float(capture_ms))
                 try:
                     runtime.logAppended.emit(
@@ -734,16 +778,33 @@ def _save_frame(runtime, role: str, image) -> str:
     return exported_frame.source_path
 
 
-def _inspect_frame(runtime, role: str, frame):
+def _inspect_frame(runtime, role: str, frame, *, physical_role: str = ""):
     from . import controller as runtime_controller_module
 
     product_dir = str(getattr(runtime._session, "product_dir", "") or "")
+    trigger_id = str(
+        getattr(getattr(runtime, "_last_runtime_result", None), "task_id", "") or ""
+    )
+    physical_role_text = str(physical_role or role or "").strip()
+    camera_serial = str(getattr(frame, "camera_serial", "") or "").strip()
+    frame_number = int(getattr(frame, "frame_num", 0) or 0)
+    capture_timestamp = int(getattr(frame, "host_timestamp", 0) or 0)
     image = runtime_controller_module.frame_to_bgr_image(frame)
     if image.ndim == 3 and image.shape[2] > 3:
         image = image[:, :, :3]
+    runtime.logAppended.emit(
+        "[capture] "
+        f"trigger={trigger_id or '-'} logical={role} physical={physical_role_text} "
+        f"serial={camera_serial or '-'} frame={frame_number} timestamp={capture_timestamp}"
+    )
     preview_frame = build_runtime_preview_frame(
         role=role,
         image_bgr=image,
+        trigger_id=trigger_id,
+        physical_role=physical_role_text,
+        camera_serial=camera_serial,
+        frame_number=frame_number,
+        capture_timestamp=capture_timestamp,
         source_path="",
         product_dir=product_dir,
         camera_role=role,
@@ -768,6 +829,11 @@ def _inspect_frame(runtime, role: str, frame):
     preview_frame = build_runtime_preview_frame(
         role=role,
         image_bgr=image,
+        trigger_id=trigger_id,
+        physical_role=physical_role_text,
+        camera_serial=camera_serial,
+        frame_number=frame_number,
+        capture_timestamp=capture_timestamp,
         source_path="",
         product_dir=product_dir,
         camera_role=role,
@@ -779,6 +845,13 @@ def _inspect_frame(runtime, role: str, frame):
     message = f"{role} pred={response.result}"
     if response.detail:
         message += f" {response.detail}"
+    runtime.logAppended.emit(
+        "[inspect] "
+        f"trigger={trigger_id or '-'} logical={role} physical={physical_role_text} "
+        f"serial={camera_serial or '-'} result={response.result} "
+        f"match={float(response.match_ms or 0.0):.1f}ms "
+        f"infer={float(response.infer_ms or 0.0):.1f}ms"
+    )
     return runtime_controller_module.CameraInspectionOutcome(
         role=role,
         result=response.result,

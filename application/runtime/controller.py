@@ -185,8 +185,11 @@ class RuntimeController(QtCore.QObject):
     busyChanged       = QtCore.Signal(bool)        # → runtime_page.set_busy
     triggerResultReady = QtCore.Signal(str, str)   # (result, detail) → runtime_page.set_final_result
     previewUpdated    = QtCore.Signal(str, object)    # (role, preview source) → MainWindow 转发
+    previewCycleStarted = QtCore.Signal(str, str)     # (logical role, trigger id)
+    physicalCameraBindingsChanged = QtCore.Signal(dict) # physical role -> serial number
     cameraViewsCleared = QtCore.Signal()           # → runtime_page.clear_camera_views
     activeCameraRolesChanged = QtCore.Signal(list) # → runtime_page.set_active_camera_roles
+    physicalCameraRolesChanged = QtCore.Signal(list) # → runtime_page.set_physical_camera_roles
     inspectionItemsChanged = QtCore.Signal(list)   # → runtime_page.set_inspection_items
     cameraResultsChanged = QtCore.Signal(dict)     # → runtime_page.set_camera_results
     durationChanged = QtCore.Signal(int)           # → runtime_page.set_duration_ms
@@ -220,6 +223,9 @@ class RuntimeController(QtCore.QObject):
         self._inspect_lock = threading.RLock()
         self._trigger_lock = threading.RLock()
         self._persistence_lock = threading.RLock()
+        self._capture_config_lock = threading.RLock()
+        self._capture_config_cache_signature: tuple[str, int, int] | None = None
+        self._capture_config_cache: dict[str, object] | None = None
         self._trigger_executor: ThreadPoolExecutor | None = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="runtime-trigger",
@@ -750,6 +756,8 @@ class RuntimeController(QtCore.QObject):
         self._last_item_results_by_camera = {}
         self._last_runtime_result = self._build_pending_runtime_result(status="RUNNING")
         role_text = f"cam{int(cam_index)}"
+        trigger_id = str(getattr(self._last_runtime_result, "task_id", "") or "")
+        self.previewCycleStarted.emit(role_text, trigger_id)
         # Clear only the requested canvas so another camera's cached image
         # cannot be mistaken for a fresh capture of this trigger.
         self.previewUpdated.emit(role_text, "")
@@ -824,8 +832,11 @@ class RuntimeController(QtCore.QObject):
         self._last_preview_frames = {}
         self._last_item_results_by_camera = {}
         self._last_runtime_result = self._build_pending_runtime_result(status="RUNNING")
-        self._update_status("开始执行脚踏触发链路")
         required_roles = self._required_roles()
+        trigger_id = str(getattr(self._last_runtime_result, "task_id", "") or "")
+        for role in required_roles:
+            self.previewCycleStarted.emit(role, trigger_id)
+        self._update_status("开始执行脚踏触发链路")
 
         try:
             if is_single_multi_light_mode(self):

@@ -7,6 +7,9 @@ dist-build-lite/
 _dev_only/*
 !_dev_only/manual_capture/
 !_dev_only/manual_capture/capture_beginner_guide.py
+!_dev_only/tests/
+_dev_only/tests/*
+!_dev_only/tests/test_runtime_capture_plan.py
 __pycache__/
 *.pyc
 *.pyo
