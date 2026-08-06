@@ -150,9 +150,12 @@ class TestExecutionController:
                 display_name = str(item_result.display_name or item_result.item_id or "tool").strip()
                 roi_label = str(item_result.roi_label or "").strip()
                 algorithm = (
-                    self.owner.algo.current_learning_backbone()
+                    self.owner.algo.current_learning_backbone(item_result.camera_id)
                     if self.owner.algo.is_learning_tool(item_result.algorithm_code)
-                    else self.owner.algo.resolve_tool_algorithm(item_result.algorithm_code)
+                    else self.owner.algo.resolve_tool_algorithm(
+                        item_result.algorithm_code,
+                        item_result.camera_id,
+                    )
                 )
                 if row.get("pred") is not None and str(row.get("pred", "")).strip() != str(item_result.result or "").strip():
                     row.setdefault("raw_pred", row.get("pred"))

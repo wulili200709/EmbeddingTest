@@ -201,9 +201,9 @@ def _on_inspection_items_selection_changed(tool_page) -> None:
         tool_page._update_measurement_params_panel()
         return
     if tool_page.algo.is_learning_tool(item.algorithm_code):
-        algorithm = tool_page.algo.current_learning_backbone()
+        algorithm = tool_page.algo.current_learning_backbone(item.camera_id)
     else:
-        algorithm = tool_page.algo.resolve_tool_algorithm(item.algorithm_code)
+        algorithm = tool_page.algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
     display_algorithm = public_algorithm_code(algorithm)
     tool_page._updating_runtime_params = True
     try:
@@ -319,10 +319,12 @@ def _on_inspection_item_algorithm_changed(tool_page, row: int, algorithm_code: o
         tool_page.inspection_items[row].params = dict(spec.default_params or {})
     if row == _selected_inspection_item_row(tool_page):
         if tool_page.algo.is_learning_tool(normalized):
-            tool_page.algo.product_params.algorithm = tool_page.algo.current_learning_backbone()
+            camera_id = tool_page.inspection_items[row].camera_id
+            backbone = tool_page.algo.current_learning_backbone(camera_id)
+            tool_page.algo.product_params.algorithm = backbone
             tool_page._updating_runtime_params = True
             try:
-                tool_page._set_current_algorithm(tool_page.algo.current_learning_backbone())
+                tool_page._set_current_algorithm(backbone)
             finally:
                 tool_page._updating_runtime_params = False
         else:

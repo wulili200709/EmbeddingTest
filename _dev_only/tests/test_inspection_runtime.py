@@ -5,6 +5,7 @@ import threading
 import time
 import types
 import unittest
+from itertools import combinations
 from unittest import mock
 from pathlib import Path
 
@@ -27,6 +28,9 @@ camera_stub.frame_to_rgb_image = lambda frame: frame
 sys.modules.setdefault("services.camera", camera_stub)
 
 from services.inspection_runtime import CameraInspectionOutcome, InspectionRuntime
+from services.inspection_scheduler import InspectionScheduler
+from services.permission_manager import PermissionManager
+from services.run_state import RunStateMachine
 
 
 class _FakeScheduler:
@@ -72,6 +76,59 @@ class _FakeCameraStrobeLightController(_FakeLightController):
 
 
 class InspectionRuntimePipelineTest(unittest.TestCase):
+    def test_capture_pipeline_supports_all_camera_role_combinations(self) -> None:
+        class _CombinationFrameGrabService:
+            def __init__(self) -> None:
+                self.captured_roles: list[str] = []
+
+            def roles(self) -> list[str]:
+                return ["cam1", "cam2", "cam3"]
+
+            def capture_once(self, role: str, *, timeout_ms: int = 1000):
+                self.captured_roles.append(role)
+                return {"role": role, "timeout_ms": timeout_ms}
+
+        class _CombinationTowerLightController:
+            def enter_inspecting(self) -> None:
+                return None
+
+            def show_ok(self) -> None:
+                return None
+
+            def show_ng(self) -> None:
+                return None
+
+        all_roles = ("cam1", "cam2", "cam3")
+        for size in range(1, len(all_roles) + 1):
+            for requested_roles in combinations(all_roles, size):
+                with self.subTest(requested_roles=requested_roles):
+                    events: list[str] = []
+                    frame_service = _CombinationFrameGrabService()
+                    permission_manager = PermissionManager("1234")
+                    runtime = InspectionRuntime(
+                        scheduler=InspectionScheduler(
+                            RunStateMachine(),
+                            permission_manager,
+                            lock_on_ng=False,
+                        ),
+                        permission_manager=permission_manager,
+                        frame_grab_service=frame_service,
+                        light_controller=_FakeLightController(events),
+                        tower_light_controller=_CombinationTowerLightController(),
+                        inspect_callback=lambda role, frame: CameraInspectionOutcome(
+                            role=role,
+                            result="OK",
+                        ),
+                        precheck_callback=lambda: (True, ""),
+                    )
+
+                    outcome = runtime.on_roles_trigger(list(requested_roles))
+
+                    self.assertIsNotNone(outcome)
+                    self.assertEqual(outcome.final_result, "OK")
+                    self.assertEqual(list(outcome.camera_outcomes), list(requested_roles))
+                    self.assertEqual(frame_service.captured_roles, list(requested_roles))
+
     def test_capture_pipeline_orders_roles_and_submits_cam1_inspection_before_cam2_capture(self) -> None:
         events: list[str] = []
         cam1_inspect_started = threading.Event()

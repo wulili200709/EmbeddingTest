@@ -13,7 +13,6 @@ if str(PROJECT_DIR) not in sys.path:
 from algorithms.registry import (
     DEFAULT_LEARNING_BACKBONE,
     SHARED_BACKBONE_ALGORITHM_CODE,
-    algorithm_display_name,
     get_tool_algorithm_spec,
     is_learning_tool_algorithm,
     is_measurement_tool_algorithm,
@@ -23,6 +22,7 @@ from algorithms.registry import (
 )
 from application.algorithm_controller import AlgorithmController
 from infrastructure.product_params import ProductRuntimeParams
+from ui.algorithm_labels import algorithm_display_name
 from ui.i18n import language_code, set_language
 
 
@@ -85,6 +85,67 @@ class ToolAlgorithmRegistryTest(unittest.TestCase):
         fallback = ProductRuntimeParams.from_dict({})
         self.assertEqual(fallback.learning_backbone, "")
         self.assertEqual(DEFAULT_LEARNING_BACKBONE, "efficientnet_b0")
+
+    def test_product_params_round_trip_camera_learning_backbones(self) -> None:
+        params = ProductRuntimeParams.from_dict(
+            {
+                "learning_backbone": "b0",
+                "learning_backbones": {
+                    "cam1": "b0",
+                    "CAM2": "b1",
+                    "cam3": "b2",
+                    "unknown": "b1",
+                },
+            }
+        )
+
+        self.assertEqual(
+            params.learning_backbones,
+            {
+                "cam1": "efficientnet_b0",
+                "cam2": "mobilenet_v3_small",
+                "cam3": "mobilenet_v3_large",
+            },
+        )
+        self.assertEqual(
+            params.to_dict()["learning_backbones"],
+            {"cam1": "b0", "cam2": "b1", "cam3": "b2"},
+        )
+
+    def test_algorithm_controller_resolves_learning_backbone_per_camera(self) -> None:
+        controller = AlgorithmController()
+        controller.set_learning_backbone("b0", "cam1")
+        controller.set_learning_backbone("b1", "cam2")
+        controller.set_learning_backbone("b0", "cam3")
+
+        self.assertEqual(controller.current_learning_backbone("cam1"), "efficientnet_b0")
+        self.assertEqual(controller.current_learning_backbone("cam2"), "mobilenet_v3_small")
+        self.assertEqual(controller.current_learning_backbone("cam3"), "efficientnet_b0")
+        self.assertEqual(
+            controller.resolve_tool_algorithm(SHARED_BACKBONE_ALGORITHM_CODE, "cam2"),
+            "mobilenet_v3_small",
+        )
+        self.assertEqual(controller.product_params.learning_backbone, "efficientnet_b0")
+        self.assertEqual(
+            controller.product_params.to_dict()["learning_backbones"],
+            {"cam1": "b0", "cam2": "b1", "cam3": "b0"},
+        )
+
+    def test_algorithm_controller_migrates_legacy_backbone_to_all_cameras(self) -> None:
+        controller = AlgorithmController()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            params_path = Path(tmpdir) / "product_params.json"
+            params_path.write_text('{"learning_backbone": "b1"}', encoding="utf-8")
+            controller.load_params(str(params_path))
+
+        self.assertEqual(
+            controller.product_params.learning_backbones,
+            {
+                "cam1": "mobilenet_v3_small",
+                "cam2": "mobilenet_v3_small",
+                "cam3": "mobilenet_v3_small",
+            },
+        )
 
     def test_algorithm_controller_keeps_learning_tool_unselected_when_params_empty(self) -> None:
         controller = AlgorithmController()

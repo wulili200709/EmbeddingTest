@@ -44,6 +44,7 @@ _RUNTIME_CONTROLLER_BINDINGS = (
         (
             "_update_status",
             "_connected_roles",
+            "_required_roles",
             "_current_item_signature",
             "_result_item_signature",
             "_runtime_result_is_stale",

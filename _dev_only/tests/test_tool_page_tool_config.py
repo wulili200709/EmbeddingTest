@@ -30,7 +30,7 @@ class _DummyAlgo:
     def is_learning_tool(self, algorithm_code: str) -> bool:
         return algorithm_code == SHARED_BACKBONE_ALGORITHM_CODE
 
-    def current_learning_backbone(self) -> str:
+    def current_learning_backbone(self, camera_role=None) -> str:
         return "efficientnet_b0"
 
     def embedding_model_path(self, backbone: str, product_dir: str, model_key: str | None = None) -> str:
@@ -43,7 +43,7 @@ class _DummyAlgo:
     def algorithm_display_name(self, algorithm: str) -> str:
         return algorithm
 
-    def resolve_tool_algorithm(self, algorithm_code: str) -> str:
+    def resolve_tool_algorithm(self, algorithm_code: str, camera_role=None) -> str:
         return str(algorithm_code or "").strip()
 
     def is_measurement_tool(self, algorithm_code: str) -> bool:

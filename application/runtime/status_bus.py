@@ -5,7 +5,12 @@ from __future__ import annotations
 import json
 
 from domain import build_pending_result, recipe_name_from_path
-from .capture_channels import active_runtime_roles, is_single_multi_light_mode, physical_connected_roles
+from .capture_channels import (
+    active_runtime_roles,
+    is_single_multi_light_mode,
+    physical_connected_roles,
+    required_runtime_roles,
+)
 
 _RUN_STATE_ZH_FOR_STATUS = {
     "WaitingTrigger": "等待触发",
@@ -33,7 +38,7 @@ def _recipe_path_for_role(runtime, role: str) -> str:
 
 
 def _runtime_recipe_name(runtime) -> str:
-    for role in _connected_roles(runtime):
+    for role in _required_roles(runtime):
         path = _recipe_path_for_role(runtime, role)
         if path:
             return recipe_name_from_path(path)
@@ -94,6 +99,10 @@ def _connected_roles(runtime) -> list[str]:
     return physical_connected_roles(runtime)
 
 
+def _required_roles(runtime) -> list[str]:
+    return required_runtime_roles(runtime)
+
+
 def _current_item_signature(runtime) -> list[tuple[str, str, str, str, str, bool, str]]:
     return [
         (
@@ -131,7 +140,10 @@ def _runtime_result_is_stale(runtime) -> bool:
         return True
     if str(runtime._last_runtime_result.product_name or "") != str(runtime._session.current_product or ""):
         return True
-    if set(runtime._last_runtime_result.camera_results.keys()) != set(runtime._connected_roles()):
+    if (
+        not str(runtime._last_runtime_result.final_result or "").strip()
+        and set(runtime._last_runtime_result.camera_results.keys()) != set(runtime._required_roles())
+    ):
         return True
     return runtime._current_item_signature() != runtime._result_item_signature()
 
@@ -179,7 +191,7 @@ def _build_pending_runtime_result(runtime, *, status: str):
         product_name=runtime._session.current_product,
         recipe_name=_runtime_recipe_name(runtime),
         items=runtime._runtime_context.inspection_items,
-        active_roles=runtime._connected_roles(),
+        active_roles=runtime._required_roles(),
         status=status,
     )
 

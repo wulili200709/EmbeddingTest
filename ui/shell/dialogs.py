@@ -375,6 +375,8 @@ def prompt_connect_camera_bindings(
     _apply_dialog_theme(dialog)
     layout = QtWidgets.QGridLayout(dialog)
     layout.setColumnStretch(1, 1)
+    layout.addWidget(QtWidgets.QLabel("本产品参与检测"), 0, 0)
+    layout.addWidget(QtWidgets.QLabel("相机序列号"), 0, 1)
 
     enabled = {str(role).strip() for role in (enabled_roles or []) if str(role).strip()}
     if not enabled:
@@ -382,8 +384,7 @@ def prompt_connect_camera_bindings(
     visible = {str(role).strip() for role in (visible_roles or []) if str(role).strip()}
 
     chk_cam1 = QtWidgets.QCheckBox("Cam1")
-    chk_cam1.setChecked(True)
-    chk_cam1.setEnabled(False)
+    chk_cam1.setChecked("cam1" in enabled)
     edit_cam1 = QtWidgets.QLineEdit(cam1_serial)
     edit_cam1.setPlaceholderText("Cam1 序列号")
 
@@ -397,12 +398,12 @@ def prompt_connect_camera_bindings(
     edit_cam3.setPlaceholderText("Cam3 序列号（可选）")
     edit_cam2.setPlaceholderText("Cam2 序列号（可选）")
 
-    layout.addWidget(chk_cam1, 0, 0)
-    layout.addWidget(edit_cam1, 0, 1)
-    layout.addWidget(chk_cam2, 1, 0)
-    layout.addWidget(edit_cam2, 1, 1)
-    layout.addWidget(chk_cam3, 2, 0)
-    layout.addWidget(edit_cam3, 2, 1)
+    layout.addWidget(chk_cam1, 1, 0)
+    layout.addWidget(edit_cam1, 1, 1)
+    layout.addWidget(chk_cam2, 2, 0)
+    layout.addWidget(edit_cam2, 2, 1)
+    layout.addWidget(chk_cam3, 3, 0)
+    layout.addWidget(edit_cam3, 3, 1)
     if visible:
         for role, checkbox, editor in (
             ("cam1", chk_cam1, edit_cam1),
@@ -416,9 +417,21 @@ def prompt_connect_camera_bindings(
     button_box = QtWidgets.QDialogButtonBox(
         QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
     )
-    button_box.accepted.connect(dialog.accept)
+    role_checkboxes = (
+        ("cam1", chk_cam1),
+        ("cam2", chk_cam2),
+        ("cam3", chk_cam3),
+    )
+
+    def _accept_selected_roles() -> None:
+        if not any(checkbox.isChecked() for _role, checkbox in role_checkboxes):
+            QtWidgets.QMessageBox.warning(dialog, "连接相机", "请至少选择一台相机。")
+            return
+        dialog.accept()
+
+    button_box.accepted.connect(_accept_selected_roles)
     button_box.rejected.connect(dialog.reject)
-    layout.addWidget(button_box, 3, 0, 1, 2)
+    layout.addWidget(button_box, 4, 0, 1, 2)
 
     if dialog.exec() != QtWidgets.QDialog.Accepted:
         return None
@@ -427,11 +440,7 @@ def prompt_connect_camera_bindings(
         "cam2": edit_cam2.text().strip(),
         "cam3": edit_cam3.text().strip(),
     }
-    roles = ["cam1"]
-    if chk_cam2.isChecked():
-        roles.append("cam2")
-    if chk_cam3.isChecked():
-        roles.append("cam3")
+    roles = [role for role, checkbox in role_checkboxes if checkbox.isChecked()]
     return serials, roles
 
 

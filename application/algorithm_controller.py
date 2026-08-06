@@ -43,6 +43,12 @@ from common.algorithm_codes import (
     normalize_tool_algorithm_code,
     storage_code_backbone,
 )
+from common.camera_roles import (
+    CAMERA_ROLES,
+    DEFAULT_CAMERA_ROLE,
+    camera_role_from_text,
+    normalize_camera_role,
+)
 from algorithms.registry import (
     get_tool_algorithm_spec,
     is_learning_tool_algorithm,
@@ -158,7 +164,28 @@ class AlgorithmController:
                 learning_backbone = alg
             else:
                 learning_backbone = ""
-        self.product_params.learning_backbone = learning_backbone
+        learning_backbones = {
+            role: normalized
+            for camera_id, backbone in dict(
+                getattr(self.product_params, "learning_backbones", {}) or {}
+            ).items()
+            if (role := normalize_camera_role(camera_id))
+            and (normalized := storage_code_backbone(backbone)) in SUPPORTED_EMBEDDING_ALGORITHMS
+        }
+        if not learning_backbone and learning_backbones:
+            learning_backbone = (
+                learning_backbones.get(DEFAULT_CAMERA_ROLE)
+                or next(iter(learning_backbones.values()))
+            )
+        if learning_backbone:
+            for role in CAMERA_ROLES:
+                learning_backbones.setdefault(role, learning_backbone)
+        self.product_params.learning_backbones = learning_backbones
+        self.product_params.learning_backbone = (
+            learning_backbones.get(DEFAULT_CAMERA_ROLE, learning_backbone)
+            if learning_backbones
+            else learning_backbone
+        )
         if alg and alg not in SUPPORTED_ALGORITHMS:
             self.product_params.algorithm = ""
         elif not alg:
@@ -187,7 +214,13 @@ class AlgorithmController:
         normalized = str(algorithm or self.product_params.algorithm or "").strip()
         return is_measurement_algorithm(normalized)
 
-    def current_learning_backbone(self) -> str:
+    def current_learning_backbone(self, camera_role: object = None) -> str:
+        role = normalize_camera_role(camera_role, default=DEFAULT_CAMERA_ROLE)
+        backbone = storage_code_backbone(
+            dict(getattr(self.product_params, "learning_backbones", {}) or {}).get(role, "")
+        )
+        if backbone in SUPPORTED_EMBEDDING_ALGORITHMS:
+            return backbone
         backbone = storage_code_backbone(self.product_params.learning_backbone)
         if backbone in SUPPORTED_EMBEDDING_ALGORITHMS:
             return backbone
@@ -196,27 +229,40 @@ class AlgorithmController:
             return algorithm
         return ""
 
-    def set_learning_backbone(self, backbone: str) -> str:
+    def set_learning_backbone(self, backbone: str, camera_role: object = None) -> str:
         normalized = storage_code_backbone(backbone)
         if normalized not in SUPPORTED_EMBEDDING_ALGORITHMS:
             normalized = DEFAULT_LEARNING_BACKBONE
-        self.product_params.learning_backbone = normalized
+        role = normalize_camera_role(camera_role, default=DEFAULT_CAMERA_ROLE)
+        previous = self.current_learning_backbone(role)
+        fallback = previous or self.current_learning_backbone(DEFAULT_CAMERA_ROLE) or DEFAULT_LEARNING_BACKBONE
+        learning_backbones = dict(getattr(self.product_params, "learning_backbones", {}) or {})
+        for camera_id in CAMERA_ROLES:
+            learning_backbones.setdefault(camera_id, fallback)
+        learning_backbones[role] = normalized
+        self.product_params.learning_backbones = learning_backbones
+        self.product_params.learning_backbone = learning_backbones[DEFAULT_CAMERA_ROLE]
         if self.is_embedding_algorithm(self.product_params.algorithm):
-            self.product_params.algorithm = normalized
+            self.product_params.algorithm = learning_backbones[DEFAULT_CAMERA_ROLE]
         return normalized
 
-    def resolve_learning_algorithm(self, algorithm: object) -> str:
+    def resolve_learning_algorithm(self, algorithm: object, camera_role: object = None) -> str:
         normalized = storage_code_backbone(algorithm)
         if not normalized:
             return ""
+        if normalized in SUPPORTED_EMBEDDING_ALGORITHMS:
+            return normalized
         if normalize_tool_algorithm_code(normalized) == SHARED_BACKBONE_ALGORITHM_CODE:
-            return self.current_learning_backbone()
+            return self.current_learning_backbone(camera_role)
         return normalized
 
-    def resolve_tool_algorithm(self, algorithm_code: object) -> str:
+    def resolve_tool_algorithm(self, algorithm_code: object, camera_role: object = None) -> str:
+        backbone = storage_code_backbone(algorithm_code)
+        if backbone in SUPPORTED_EMBEDDING_ALGORITHMS:
+            return backbone
         normalized = normalize_tool_algorithm_code(algorithm_code)
         if is_learning_tool_algorithm(normalized):
-            return self.current_learning_backbone()
+            return self.current_learning_backbone(camera_role)
         return normalized
 
     def tool_algorithm_spec(self, algorithm_code: object):
@@ -613,12 +659,16 @@ class AlgorithmController:
             raise FileNotFoundError(path)
 
         override_text = str(algorithm_override or "").strip()
+        camera_role = camera_role_from_text(model_key_override)
         if override_text:
-            algorithm = self.resolve_tool_algorithm(override_text)
+            algorithm = self.resolve_tool_algorithm(override_text, camera_role)
             if algorithm not in SUPPORTED_ALGORITHMS:
                 raise RuntimeError(f"unsupported inspection algorithm: {override_text}")
         else:
-            algorithm = self.resolve_learning_algorithm(self.product_params.algorithm)
+            algorithm = self.resolve_learning_algorithm(
+                self.product_params.algorithm,
+                camera_role,
+            )
         model_key = self.tool_model_key(model_key_override)
         if not algorithm.strip():
             raise RuntimeError("请先选择工具")

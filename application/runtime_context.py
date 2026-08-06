@@ -160,7 +160,7 @@ def _predict_learning_items_batch_rows(
     rows_by_key: Dict[str, Dict[str, object]] = {}
     learning_groups: Dict[str, List[InspectionItem]] = {}
     for item in items:
-        algorithm = algo.resolve_tool_algorithm(item.algorithm_code)
+        algorithm = algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
         learning_groups.setdefault(algorithm, []).append(item)
 
     json_name = os.path.basename(labelme_io.labelme_json_of_image(path))
@@ -254,7 +254,7 @@ def _predict_learning_items_batch_rows_from_frame(
     learning_groups: Dict[str, List[InspectionItem]] = {}
     shape_by_label = _runtime_shape_by_label(roi_shapes)
     for item in items:
-        algorithm = algo.resolve_tool_algorithm(item.algorithm_code)
+        algorithm = algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
         learning_groups.setdefault(algorithm, []).append(item)
 
     for algorithm, group in learning_groups.items():
@@ -518,9 +518,12 @@ class ProductRuntimeContext:
             labels = self._loc_output_labels(camera_role)
         effective_algorithm = ""
         if str(algorithm_override or "").strip():
-            effective_algorithm = self.algo.resolve_tool_algorithm(algorithm_override)
+            effective_algorithm = self.algo.resolve_tool_algorithm(algorithm_override, camera_role)
         elif str(self.algo.product_params.algorithm or "").strip():
-            effective_algorithm = self.algo.resolve_learning_algorithm(self.algo.product_params.algorithm)
+            effective_algorithm = self.algo.resolve_learning_algorithm(
+                self.algo.product_params.algorithm,
+                camera_role,
+            )
         if effective_algorithm and self.algo.is_embedding_algorithm(effective_algorithm):
             if not self.algo._loaded_embedding_matches(
                 effective_algorithm,
@@ -533,7 +536,7 @@ class ProductRuntimeContext:
             labels=labels,
             feat_net=feat_net,
             match_ms=match_ms,
-            algorithm_override=algorithm_override,
+            algorithm_override=effective_algorithm,
             model_key_override=model_key_override,
             params_override=params_override,
         )
@@ -705,7 +708,7 @@ class ProductRuntimeContext:
         shape_by_label = _runtime_shape_by_label(roi_shapes)
         for item in traditional_items:
             item_infer_t0 = time.perf_counter()
-            algorithm = self.algo.resolve_tool_algorithm(item.algorithm_code)
+            algorithm = self.algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
             model_dict = self.algo.get_traditional_model_dict(algorithm, model_key=item.model_key)
             if not isinstance(model_dict, dict):
                 raise RuntimeError(f"traditional algorithm {algorithm} is not trained yet")
@@ -731,7 +734,7 @@ class ProductRuntimeContext:
         for item in measurement_items:
             item_infer_t0 = time.perf_counter()
             params = dict(item.params or {})
-            algorithm = self.algo.resolve_tool_algorithm(item.algorithm_code)
+            algorithm = self.algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
             measurement_payload_override = None
             if algorithm in FIND_LINE_ALGORITHMS:
                 measurement = measure_find_line_from_array(

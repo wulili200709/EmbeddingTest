@@ -7,6 +7,10 @@ from common.app_paths import packaged_embedding_test_root
 
 
 _MVS_EXECUTABLE_ENV = "HIK_MVS_EXECUTABLE"
+# MVS must not inherit SDK search paths injected later by services.camera.
+# This module is imported before the runtime camera service, so keep the
+# original desktop-like process environment for launching the external tool.
+_MVS_LAUNCH_ENVIRONMENT = dict(os.environ)
 
 
 def find_mvs_executable() -> Path | None:
@@ -33,4 +37,9 @@ def find_mvs_executable() -> Path | None:
     return None
 
 
-__all__ = ["find_mvs_executable"]
+def mvs_launch_environment() -> dict[str, str]:
+    """Return an isolated environment matching the one used at app startup."""
+    return dict(_MVS_LAUNCH_ENVIRONMENT)
+
+
+__all__ = ["find_mvs_executable", "mvs_launch_environment"]

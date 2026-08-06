@@ -91,7 +91,9 @@ def _update_measurement_params_panel(tool_page) -> None:
         return
 
     params = dict(getattr(item, "params", {}) or {})
-    algorithm = str(tool_page.algo.resolve_tool_algorithm(item.algorithm_code) or "").strip()
+    algorithm = str(
+        tool_page.algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id) or ""
+    ).strip()
     is_find_line = _is_find_line_algorithm(algorithm)
     is_line_distance = _is_line_distance_algorithm(algorithm)
     is_center_distance = _is_center_distance_algorithm(algorithm)
@@ -222,7 +224,9 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
     unit = str(tool_page.cmb_measurement_unit.currentText() or "px").strip().lower()
     if unit not in {"px", "mm"}:
         unit = "px"
-    algorithm = str(tool_page.algo.resolve_tool_algorithm(item.algorithm_code) or "").strip()
+    algorithm = str(
+        tool_page.algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id) or ""
+    ).strip()
     is_find_line = _is_find_line_algorithm(algorithm)
     is_line_distance = _is_line_distance_algorithm(algorithm)
     is_center_distance = _is_center_distance_algorithm(algorithm)

@@ -7,7 +7,7 @@ from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from common.mvs_launcher import find_mvs_executable
+from common.mvs_launcher import find_mvs_executable, mvs_launch_environment
 from common.camera_roles import (
     CAMERA_ROLES,
     DEFAULT_CAMERA_ROLE,
@@ -774,11 +774,13 @@ class MainWindow(QtWidgets.QMainWindow):
         _show_shell_about_dialog(self)
 
     def _configured_runtime_camera_roles(self) -> list[str]:
-        roles: list[str] = []
+        session_roles: list[str] = []
         capture_mode_roles: list[str] = []
         try:
             session_data = self.session.load_session()
-            roles.extend(getattr(session_data, "runtime_camera_roles", []) or [])
+            session_roles = configured_camera_roles(
+                getattr(session_data, "runtime_camera_roles", []) or []
+            )
         except Exception:
             pass
 
@@ -793,23 +795,28 @@ class MainWindow(QtWidgets.QMainWindow):
                         capture_mode_roles.append(role)
         except Exception:
             pass
-        if capture_mode_roles:
-            return configured_camera_roles(capture_mode_roles)
-
+        item_roles: list[str] = []
         for item in list(getattr(self.tool_page, "inspection_items", []) or []):
             if not bool(getattr(item, "enabled", True)):
                 continue
             role = normalize_camera_role(getattr(item, "camera_id", ""))
             if role:
-                roles.append(role)
+                item_roles.append(role)
 
-        if not roles:
-            roles.extend(
+        normalized_item_roles = configured_camera_roles(item_roles)
+        if session_roles:
+            return session_roles
+        if normalized_item_roles:
+            return normalized_item_roles
+        if capture_mode_roles:
+            return configured_camera_roles(capture_mode_roles)
+
+        serial_roles = configured_camera_roles(
                 role
                 for role in CAMERA_ROLES
                 if self.runtime_page.camera_serial(role)
-            )
-        return configured_camera_roles(roles or [DEFAULT_CAMERA_ROLE])
+        )
+        return serial_roles or [DEFAULT_CAMERA_ROLE]
 
     def _runtime_physical_camera_roles(self) -> list[str]:
         try:
@@ -828,20 +835,23 @@ class MainWindow(QtWidgets.QMainWindow):
         return list(CAMERA_ROLES)
 
     def _runtime_physical_camera_bindings(self, bindings: Optional[dict[str, str]] = None) -> dict[str, str]:
+        explicit_bindings = bindings is not None
         raw_bindings = dict(bindings or {})
         physical_roles = set(self._runtime_physical_camera_roles())
         result: dict[str, str] = {}
         for role in CAMERA_ROLES:
             if role not in physical_roles:
                 continue
-            serial = str(raw_bindings.get(role, "") or self.runtime_page.camera_serial(role)).strip()
+            serial = str(raw_bindings.get(role, "")).strip()
+            if not explicit_bindings:
+                serial = serial or self.runtime_page.camera_serial(role)
             if serial:
                 result[role] = serial
         return result
 
     def _persist_product_runtime_camera_roles(self, roles: list[str]) -> None:
         session_data = self.session.load_session()
-        session_data.runtime_camera_roles = configured_camera_roles(roles or [DEFAULT_CAMERA_ROLE])
+        session_data.runtime_camera_roles = configured_camera_roles(roles) or [DEFAULT_CAMERA_ROLE]
         self.session.save_session(session_data)
 
     def _sync_configured_camera_roles(self) -> None:
@@ -958,7 +968,14 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             return
         process = QtCore.QProcess(self)
-        process.start(str(executable))
+        process.setWorkingDirectory(str(executable.parent))
+        process_environment = QtCore.QProcessEnvironment()
+        for name, value in mvs_launch_environment().items():
+            process_environment.insert(str(name), str(value))
+        process.setProcessEnvironment(process_environment)
+        # Match the installed desktop shortcut, including its executable-path
+        # argument. Some MVS builds use it while resolving client resources.
+        process.start(str(executable), [str(executable)])
         if not process.waitForStarted(3000):
             QtWidgets.QMessageBox.warning(
                 self,
@@ -1119,10 +1136,24 @@ class MainWindow(QtWidgets.QMainWindow):
         if result is None:
             return
         serials, enabled_roles = result
-        connect_roles = physical_roles if single_multi_light else enabled_roles
+        product_roles = configured_roles if single_multi_light else enabled_roles
+        connect_roles = (
+            physical_roles
+            if single_multi_light
+            else [
+                role
+                for role in physical_roles
+                if str(serials.get(role, "")).strip()
+            ]
+        )
+        selected_serials = {
+            role: str(serials.get(role, "")).strip()
+            for role in connect_roles
+            if str(serials.get(role, "")).strip()
+        }
         missing_roles = [
             role
-            for role in connect_roles
+            for role in product_roles
             if not str(serials.get(role, "")).strip()
         ]
         if missing_roles:
@@ -1136,7 +1167,7 @@ class MainWindow(QtWidgets.QMainWindow):
             serial = str(serials.get(role, "")).strip()
             self.runtime_page.set_camera_serial(role, serial)
         self._persist_runtime_camera_bindings(serials)
-        self._persist_product_runtime_camera_roles(configured_roles if single_multi_light else enabled_roles)
+        self._persist_product_runtime_camera_roles(product_roles)
         self._sync_configured_camera_roles()
         self._audit_event(
             module="运行",
@@ -1146,7 +1177,7 @@ class MainWindow(QtWidgets.QMainWindow):
             ),
         )
         self.runtime_page.connectCamerasRequested.emit(
-            self._runtime_physical_camera_bindings(serials)
+            self._runtime_physical_camera_bindings(selected_serials)
         )
 
     def _show_release_dialog(self) -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from common.camera_roles import CAMERA_ROLES, normalize_camera_role
+from common.camera_roles import CAMERA_ROLES, configured_camera_roles, normalize_camera_role
 from infrastructure.camera_settings_store import (
     normalize_capture_light_output,
     uses_channel_capture_mapping,
@@ -80,6 +80,31 @@ def active_runtime_roles(runtime) -> list[str]:
         if role and role not in roles:
             roles.append(role)
     return roles
+
+
+def required_runtime_roles(runtime) -> list[str]:
+    """Return the logical camera roles required by the current product."""
+    session = getattr(runtime, "_session", None)
+    loader = getattr(session, "load_session", None)
+    if callable(loader):
+        try:
+            session_roles = configured_camera_roles(
+                getattr(loader(), "runtime_camera_roles", []) or []
+            )
+        except Exception:
+            session_roles = []
+        if session_roles:
+            return session_roles
+
+    item_roles = configured_camera_roles(
+        getattr(item, "camera_id", "")
+        for item in list(getattr(getattr(runtime, "_runtime_context", None), "inspection_items", []) or [])
+        if bool(getattr(item, "enabled", True))
+    )
+    if item_roles:
+        return item_roles
+
+    return active_runtime_roles(runtime)
 
 
 def channels_for_roles(runtime, requested_roles=None) -> list[dict[str, Any]]:

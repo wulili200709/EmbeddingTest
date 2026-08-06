@@ -29,7 +29,7 @@ def _inspection_item_status(tool_page, inspection_item):
         return tr("debug.status.disabled"), "Current tool is disabled and will not join training or runtime.", "#8a8a8a"
 
     if tool_page.algo.is_learning_tool(inspection_item.algorithm_code):
-        backbone = tool_page.algo.current_learning_backbone()
+        backbone = tool_page.algo.current_learning_backbone(inspection_item.camera_id)
         if not backbone:
             return tr("debug.status.not_selected"), "Select a subtype for the learning tool first.", "#d98c8c"
         model_path = tool_page.algo.embedding_model_path(
@@ -69,7 +69,10 @@ def _inspection_item_status(tool_page, inspection_item):
         return tr("debug.status.untrained"), tooltip, "#d98c8c"
 
     if getattr(tool_page.algo, "is_measurement_tool", lambda _code: False)(inspection_item.algorithm_code):
-        algorithm = tool_page.algo.resolve_tool_algorithm(inspection_item.algorithm_code)
+        algorithm = tool_page.algo.resolve_tool_algorithm(
+            inspection_item.algorithm_code,
+            inspection_item.camera_id,
+        )
         if is_line_distance_algorithm(algorithm):
             display_algorithm = "line_distance"
             params = dict(getattr(inspection_item, "params", {}) or {})
@@ -123,7 +126,10 @@ def _inspection_item_status(tool_page, inspection_item):
         )
         return "Ready", tooltip, "#79d279"
 
-    algorithm = tool_page.algo.resolve_tool_algorithm(inspection_item.algorithm_code)
+    algorithm = tool_page.algo.resolve_tool_algorithm(
+        inspection_item.algorithm_code,
+        inspection_item.camera_id,
+    )
     model_dict = tool_page.algo.get_traditional_model_dict(algorithm, model_key=inspection_item.model_key)
     if isinstance(model_dict, dict):
         storage_key = tool_page.algo.traditional_model_storage_key(algorithm, model_key=inspection_item.model_key)

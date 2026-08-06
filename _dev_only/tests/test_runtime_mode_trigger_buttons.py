@@ -106,6 +106,54 @@ class RuntimeModeTriggerButtonsTest(unittest.TestCase):
         self.assertTrue(page.view_cam2.isHidden())
         self.assertFalse(page.btn_trigger_cam2.isEnabled())
 
+    def test_cam2_cam3_product_hides_cam1_and_enables_order_trigger(self) -> None:
+        page = RuntimeModePage()
+        page.set_configured_camera_roles(["cam2", "cam3"])
+        page.set_active_camera_roles(["cam1", "cam2", "cam3"])
+        page.set_inspection_items(
+            [
+                {
+                    "item_id": "cam2-roi",
+                    "display_name": "CAM2 ROI",
+                    "camera_id": "cam2",
+                    "enabled": True,
+                    "status_kind": "pending",
+                    "status_text": "PENDING",
+                },
+                {
+                    "item_id": "cam3-roi",
+                    "display_name": "CAM3 ROI",
+                    "camera_id": "cam3",
+                    "enabled": True,
+                    "status_kind": "pending",
+                    "status_text": "PENDING",
+                },
+            ]
+        )
+
+        self.assertTrue(page.view_cam1.isHidden())
+        self.assertFalse(page.view_cam2.isHidden())
+        self.assertFalse(page.view_cam3.isHidden())
+        self.assertTrue(page.btn_simulate_foot.isEnabled())
+        self.assertTrue(page.btn_trigger_cam2.isEnabled())
+        self.assertTrue(page.btn_trigger_cam3.isEnabled())
+
+    def test_physical_camera_bindings_are_independent_from_product_roles(self) -> None:
+        page = RuntimeModePage()
+        page.set_configured_camera_roles(["cam2", "cam3"])
+        page.set_camera_serial("cam1", "SERIAL-1")
+        page.set_camera_serial("cam2", "SERIAL-2")
+        page.set_camera_serial("cam3", "SERIAL-3")
+
+        self.assertEqual(
+            page.camera_bindings(),
+            {
+                "cam1": "SERIAL-1",
+                "cam2": "SERIAL-2",
+                "cam3": "SERIAL-3",
+            },
+        )
+
     def test_runtime_item_list_hides_find_line_helpers_when_line_distance_exists(self) -> None:
         page = RuntimeModePage()
 

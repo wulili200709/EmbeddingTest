@@ -26,8 +26,11 @@ class TrainingTaskBuilder:
 
     def resolve_algorithm(self, inspection_item: InspectionItem) -> str:
         if self.owner.algo.is_learning_tool(inspection_item.algorithm_code):
-            return self.owner.algo.current_learning_backbone()
-        return self.owner.algo.resolve_tool_algorithm(inspection_item.algorithm_code)
+            return self.owner.algo.current_learning_backbone(inspection_item.camera_id)
+        return self.owner.algo.resolve_tool_algorithm(
+            inspection_item.algorithm_code,
+            inspection_item.camera_id,
+        )
 
     def train_sample_paths_for_role(self, camera_role: object = None) -> List[str]:
         role = normalize_camera_role(camera_role or self.owner.current_camera_role()) or "cam1"

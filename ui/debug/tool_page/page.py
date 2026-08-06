@@ -515,8 +515,6 @@ class ToolPage(QtWidgets.QWidget):
                 roles.append(normalized)
         if not roles:
             roles = [DEFAULT_CAMERA_ROLE]
-        if DEFAULT_CAMERA_ROLE not in roles:
-            roles.insert(0, DEFAULT_CAMERA_ROLE)
         return roles
 
     def set_configured_camera_roles(self, roles: List[str]) -> None:
@@ -527,8 +525,6 @@ class ToolPage(QtWidgets.QWidget):
                 normalized.append(role_text)
         if not normalized:
             normalized = [DEFAULT_CAMERA_ROLE]
-        if DEFAULT_CAMERA_ROLE not in normalized:
-            normalized.insert(0, DEFAULT_CAMERA_ROLE)
         self._configured_camera_roles = normalized
         self._apply_configured_camera_roles_to_ui()
 
@@ -1135,7 +1131,13 @@ class ToolPage(QtWidgets.QWidget):
         if not self._is_embedding_algorithm(algorithm):
             QtWidgets.QMessageBox.information(self, tr("common.info"), "请选择学习工具后再导出 ONNX。")
             return
-        backbone = self.algo.resolve_learning_algorithm(algorithm)
+        selected_item = self._selected_inspection_item()
+        camera_role = (
+            selected_item.camera_id
+            if selected_item is not None
+            else self.current_camera_role()
+        )
+        backbone = self.algo.resolve_learning_algorithm(algorithm, camera_role)
         display_name = self.algo.algorithm_display_name(backbone) or backbone
         button = getattr(self, "btn_export_onnx", None)
         if button is not None:
@@ -2235,7 +2237,16 @@ class ToolPage(QtWidgets.QWidget):
             "margin": self.algo.product_params.margin,
             "topk": self.algo.product_params.topk,
         }
-        self.algo.product_params.algorithm = self.current_algorithm()
+        current_algorithm = self.current_algorithm()
+        selected_item = self._selected_inspection_item()
+        camera_role = (
+            selected_item.camera_id
+            if selected_item is not None
+            else self.current_camera_role()
+        )
+        if current_algorithm in SUPPORTED_EMBEDDING_ALGORITHMS:
+            self.algo.set_learning_backbone(current_algorithm, camera_role)
+        self.algo.product_params.algorithm = current_algorithm
         self.algo.product_params.score_mode = self.cmb_mode.currentText()
         self.algo.product_params.margin = float(self.spin_margin.value())
         self.algo.product_params.topk = int(self.spin_topk.value())
@@ -2267,9 +2278,14 @@ class ToolPage(QtWidgets.QWidget):
             self._apply_runtime_params_to_ui()
             return
         selected_item = self._selected_inspection_item()
+        camera_role = (
+            selected_item.camera_id
+            if selected_item is not None
+            else self.current_camera_role()
+        )
         before = str(getattr(selected_item, "algorithm_code", "") if selected_item is not None else self.algo.product_params.algorithm)
         if algorithm in SUPPORTED_EMBEDDING_ALGORITHMS:
-            self.algo.set_learning_backbone(algorithm)
+            self.algo.set_learning_backbone(algorithm, camera_role)
         if not algorithm:
             self.algo.product_params.algorithm = ""
             self.algo.model = None
@@ -2480,9 +2496,12 @@ class ToolPage(QtWidgets.QWidget):
         inspection_item = self._selected_inspection_item()
         if inspection_item is not None and inspection_item.enabled:
             algorithm = (
-                self.algo.current_learning_backbone()
+                self.algo.current_learning_backbone(inspection_item.camera_id)
                 if self.algo.is_learning_tool(inspection_item.algorithm_code)
-                else self.algo.resolve_tool_algorithm(inspection_item.algorithm_code)
+                else self.algo.resolve_tool_algorithm(
+                    inspection_item.algorithm_code,
+                    inspection_item.camera_id,
+                )
             )
             labels_override = [str(inspection_item.roi_label or "").strip() or "roi"]
             algorithm_override = inspection_item.algorithm_code
@@ -2607,7 +2626,9 @@ class ToolPage(QtWidgets.QWidget):
             )
         )
         allowed_backbones = []
-        current_backbone = str(self.algo.current_learning_backbone() or "").strip()
+        current_backbone = str(
+            self.algo.current_learning_backbone(inspection_item.camera_id) or ""
+        ).strip()
         if current_backbone:
             allowed_backbones.append(current_backbone)
         try:

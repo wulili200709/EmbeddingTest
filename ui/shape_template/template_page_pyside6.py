@@ -16,7 +16,7 @@ from shape.core.locator import (
     resolved_model_path_for_product,
     resolved_recipe_path_for_product,
 )
-from shape.core.recipe import ShapeRecipe, load_recipe, save_recipe
+from shape.core.recipe import ShapeRecipe, load_recipe, normalize_follow_mode, save_recipe
 from shape.core.recipe_store import ShapeRecipeStore
 from shape.core.roi_follow import locate_and_follow
 from shape.core.template_core import (
@@ -958,6 +958,11 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         saved_reference_regions = reference_regions if (reference_regions or self._reference_regions_explicit) else None
         reference_shape_type = str((first_region or {}).get("shape_type", self._recipe_reference_shape_type))
         reference_points = list((first_region or {}).get("points", self._recipe_reference_points))
+        follow_mode = normalize_follow_mode(
+            follow_mode,
+            saved_reference_regions,
+            reference_points or None,
+        )
         reference_label = str((first_region or {}).get("reference_label", "roi") or "roi")
         output_label = str((first_region or {}).get("output_label", reference_label) or reference_label)
         return ShapeRecipe(

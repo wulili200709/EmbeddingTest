@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from common.algorithm_codes import learning_backbone_storage_code, storage_code_backbone
+from common.camera_roles import normalize_camera_role
 from common.safe_io import atomic_write_json, load_json_with_backup
 
 
@@ -32,6 +33,7 @@ def _json_safe(value: Any) -> Any:
 class ProductRuntimeParams:
     algorithm: str = ""
     learning_backbone: str = ""
+    learning_backbones: Dict[str, str] = field(default_factory=dict)
     score_mode: str = "proto"
     margin: float = 0.02
     topk: int = 3
@@ -42,9 +44,17 @@ class ProductRuntimeParams:
         traditional_models = data.get("traditional_models", {})
         if not isinstance(traditional_models, dict):
             traditional_models = {}
+        learning_backbones = data.get("learning_backbones", {})
+        if not isinstance(learning_backbones, dict):
+            learning_backbones = {}
         return cls(
             algorithm=storage_code_backbone(data.get("algorithm", "")),
             learning_backbone=storage_code_backbone(data.get("learning_backbone", "")),
+            learning_backbones={
+                role: storage_code_backbone(backbone)
+                for camera_id, backbone in learning_backbones.items()
+                if (role := normalize_camera_role(camera_id))
+            },
             score_mode=str(data.get("score_mode", "proto")),
             margin=float(data.get("margin", 0.02)),
             topk=int(data.get("topk", 3)),
@@ -59,6 +69,11 @@ class ProductRuntimeParams:
         return {
             "algorithm": learning_backbone_storage_code(self.algorithm),
             "learning_backbone": learning_backbone_storage_code(self.learning_backbone),
+            "learning_backbones": {
+                role: learning_backbone_storage_code(backbone)
+                for camera_id, backbone in self.learning_backbones.items()
+                if (role := normalize_camera_role(camera_id))
+            },
             "score_mode": str(self.score_mode or "proto"),
             "margin": float(self.margin),
             "topk": int(self.topk),

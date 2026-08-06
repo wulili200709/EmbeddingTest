@@ -12,13 +12,14 @@ from pathlib import Path
 
 from domain import aggregate_runtime_outcome, recipe_name_from_path
 from common.algorithm_codes import learning_backbone_storage_code
-from common.camera_roles import camera_index_for_role
+from common.camera_roles import configured_camera_roles, camera_index_for_role
 
 from .capture_policy import normalize_capture_retention_policy
 from .capture_channels import (
     channels_for_roles,
     light_output_index,
     physical_connected_roles,
+    required_runtime_roles,
 )
 from .preview_frame import RuntimePreviewFrame, build_runtime_preview_frame, export_runtime_preview_frame
 
@@ -280,10 +281,18 @@ def _export_runtime_captures_sync(
                 camera_result.image_path = exported_frame.source_path
 
 
-def _finalize_trigger_outcome(runtime, outcome, release_status_before) -> None:
+def _finalize_trigger_outcome(
+    runtime,
+    outcome,
+    release_status_before,
+    *,
+    active_roles=None,
+) -> None:
     current_preview_frames = dict(runtime._last_preview_frames)
     current_roles = _capture_export_roles(outcome, current_preview_frames)
-    active_roles = runtime._connected_roles()
+    result_roles = configured_camera_roles(active_roles or [])
+    if not result_roles:
+        result_roles = list(_outcome_roles(outcome)) or required_runtime_roles(runtime)
     item_results_by_camera = {
         str(role): list(rows or [])
         for role, rows in dict(runtime._last_item_results_by_camera).items()
@@ -292,9 +301,9 @@ def _finalize_trigger_outcome(runtime, outcome, release_status_before) -> None:
     runtime._last_capture_paths = {}
     runtime._last_runtime_result = aggregate_runtime_outcome(
         product_name=runtime._session.current_product,
-        recipe_name=_recipe_name_for_roles(runtime, active_roles),
+        recipe_name=_recipe_name_for_roles(runtime, result_roles),
         items=runtime._runtime_context.inspection_items,
-        active_roles=active_roles,
+        active_roles=result_roles,
         camera_outcomes=outcome.camera_outcomes,
         final_result=outcome.final_result,
         duration_ms=outcome.duration_ms,
@@ -359,7 +368,7 @@ def _finalize_trigger_outcome(runtime, outcome, release_status_before) -> None:
 
 
 def _precheck(runtime):
-    return _precheck_for_roles(runtime, runtime._connected_roles())
+    return _precheck_for_roles(runtime, required_runtime_roles(runtime))
 
 
 def _enabled_items_for_roles(runtime, active_roles: set[str]) -> list[object]:
@@ -399,19 +408,22 @@ def _warm_runtime_models(runtime, enabled_items: list[object]) -> None:
         if runtime._algo.is_learning_tool(item.algorithm_code)
     ]
     if learning_items:
-        algorithm = runtime._algo.current_learning_backbone()
-        if str(algorithm or "").strip():
+        learning_groups: dict[str, list[object]] = {}
+        for item in learning_items:
+            algorithm = runtime._algo.resolve_tool_algorithm(
+                item.algorithm_code,
+                item.camera_id,
+            )
+            if str(algorithm or "").strip():
+                learning_groups.setdefault(algorithm, []).append(item)
+        for algorithm, group in learning_groups.items():
             try:
-                for item in learning_items:
+                for item in group:
                     runtime._runtime_context.load_embedding_model(
                         algorithm,
                         model_key=item.model_key,
                     )
-                if runtime._algo.model is not None:
-                    runtime._algo.get_feat_net(
-                        runtime._algo.model.backbone,
-                        getattr(runtime._algo.model, "device", None),
-                    )
+                runtime._algo.get_feat_net(algorithm)
             except Exception:
                 pass
 
@@ -422,10 +434,24 @@ def _warm_runtime_models(runtime, enabled_items: list[object]) -> None:
     ]
     for item in traditional_items:
         try:
-            algorithm = runtime._algo.resolve_tool_algorithm(item.algorithm_code)
+            algorithm = runtime._algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
             runtime._algo.get_traditional_model_dict(algorithm, model_key=item.model_key)
         except Exception:
             pass
+
+
+def _unsupported_localization_roles(runtime, roles) -> list[str]:
+    method_getter = getattr(runtime._runtime_context, "loc_method_for_role", None)
+    unsupported_roles: list[str] = []
+    for role in configured_camera_roles(roles or []):
+        method = (
+            method_getter(role)
+            if callable(method_getter)
+            else getattr(runtime._runtime_context, "loc_method", "")
+        )
+        if str(method or "").strip().lower() not in {"shape", "ncc"}:
+            unsupported_roles.append(role)
+    return unsupported_roles
 
 
 def _precheck_for_capture_channels(runtime, channels: list[dict]) -> tuple[bool, str]:
@@ -433,9 +459,6 @@ def _precheck_for_capture_channels(runtime, channels: list[dict]) -> tuple[bool,
 
     if runtime._frame_grab_service is None or not runtime._frame_grab_service.roles():
         return False, "camera not connected"
-
-    if runtime._runtime_context.loc_method not in {"shape", "ncc"}:
-        return False, "runtime currently only supports shape/NCC localization"
 
     if not channels:
         return False, "capture channel is not enabled"
@@ -448,7 +471,34 @@ def _precheck_for_capture_channels(runtime, channels: list[dict]) -> tuple[bool,
     if not active_roles:
         return False, "capture channel is not enabled"
 
+    connected_physical_roles = set(physical_connected_roles(runtime))
+    missing_physical_roles = sorted(
+        {
+            str(channel.get("physical_role", "")).strip()
+            for channel in channels
+            if str(channel.get("physical_role", "")).strip() not in connected_physical_roles
+        }
+    )
+    if missing_physical_roles:
+        return False, "required cameras are not connected: " + ", ".join(missing_physical_roles)
+
     enabled_items = _enabled_items_for_roles(runtime, active_roles)
+    enabled_item_roles = {
+        str(item.camera_id or "").strip()
+        for item in enabled_items
+        if str(item.camera_id or "").strip()
+    }
+    roles_without_items = sorted(active_roles - enabled_item_roles)
+    if roles_without_items:
+        return False, "please enable at least one inspection tool for " + ", ".join(roles_without_items)
+
+    unsupported_roles = _unsupported_localization_roles(runtime, active_roles)
+    if unsupported_roles:
+        return (
+            False,
+            "runtime currently only supports shape/NCC localization for "
+            + ", ".join(unsupported_roles),
+        )
     _warm_runtime_models(runtime, enabled_items)
 
     if runtime_controller_module.frame_to_bgr_image is None:
@@ -629,25 +679,35 @@ def _precheck_for_roles(runtime, roles) -> tuple[bool, str]:
     if runtime._frame_grab_service is None or not runtime._frame_grab_service.roles():
         return False, "camera not connected"
 
-    if runtime._runtime_context.loc_method not in {"shape", "ncc"}:
-        return False, "runtime currently only supports shape/NCC localization"
+    requested_role_list = configured_camera_roles(roles or [])
+    if not requested_role_list:
+        return False, "please enable at least one inspection tool"
 
-    active_roles = {
-        str(role).strip()
-        for role in runtime._connected_roles()
-        if str(role).strip()
-    }
-    requested_roles = {
-        str(role).strip()
-        for role in roles
-        if str(role).strip()
-    }
-    if requested_roles:
-        active_roles &= requested_roles
-    if not active_roles:
-        return False, "requested camera is not connected"
+    connected_roles = set(runtime._connected_roles())
+    missing_roles = [role for role in requested_role_list if role not in connected_roles]
+    if missing_roles:
+        return False, "required cameras are not connected: " + ", ".join(missing_roles)
+
+    active_roles = set(requested_role_list)
 
     enabled_items = _enabled_items_for_roles(runtime, active_roles)
+    enabled_item_roles = {
+        str(item.camera_id or "").strip()
+        for item in enabled_items
+        if str(item.camera_id or "").strip()
+    }
+    roles_without_items = [role for role in requested_role_list if role not in enabled_item_roles]
+    if roles_without_items:
+        return False, "please enable at least one inspection tool for " + ", ".join(roles_without_items)
+
+    unsupported_roles = _unsupported_localization_roles(runtime, requested_role_list)
+    if unsupported_roles:
+        return (
+            False,
+            "runtime currently only supports shape/NCC localization for "
+            + ", ".join(unsupported_roles),
+        )
+
     _warm_runtime_models(runtime, enabled_items)
 
     if runtime_controller_module.frame_to_bgr_image is None:

@@ -11,7 +11,7 @@ import numpy as np
 from common import labelme_io
 
 from .bootstrap import ensure_repo_root_on_path
-from .recipe import ShapeRecipe
+from .recipe import ShapeRecipe, normalize_follow_mode
 from .template_core import (
     apply_affine_to_points,
     expanded_pose_affine,
@@ -326,7 +326,11 @@ def locate_and_follow(
     match = _best_match(det, scene_for_match, recipe, scene_mask=mask_for_match)
     if offset_x or offset_y:
         match = _translate_match_to_scene(det, match, offset_x, offset_y)
-    if recipe.follow_mode == "match_bbox":
+    if normalize_follow_mode(
+        recipe.follow_mode,
+        recipe.reference_regions,
+        recipe.reference_points,
+    ) == "match_bbox":
         label_name = str(recipe.output_label or "roi")
         if recipe.reference_regions:
             for region in recipe.reference_regions:

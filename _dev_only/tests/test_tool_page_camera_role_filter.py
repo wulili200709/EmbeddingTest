@@ -33,10 +33,10 @@ class _FakeAlgo:
     def is_learning_tool(self, code) -> bool:
         return str(code or "").strip() == "shared_backbone_register"
 
-    def current_learning_backbone(self) -> str:
+    def current_learning_backbone(self, camera_role=None) -> str:
         return "efficientnet_b0"
 
-    def resolve_tool_algorithm(self, code) -> str:
+    def resolve_tool_algorithm(self, code, camera_role=None) -> str:
         return str(code or "").strip()
 
     def train(

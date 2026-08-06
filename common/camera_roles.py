@@ -40,8 +40,6 @@ def configured_camera_roles(roles: Iterable[object]) -> list[str]:
         role_text = normalize_camera_role(role)
         if role_text and role_text not in normalized:
             normalized.append(role_text)
-    if DEFAULT_CAMERA_ROLE not in normalized:
-        normalized.insert(0, DEFAULT_CAMERA_ROLE)
     return normalized
 
 

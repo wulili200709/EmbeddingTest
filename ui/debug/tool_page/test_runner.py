@@ -30,15 +30,15 @@ def _predict_image(
         raise FileNotFoundError(path)
 
     total_t0 = time.perf_counter()
+    camera_role = tool_page.current_camera_role()
     override_text = str(algorithm_override or "").strip()
     algorithm = (
-        tool_page.algo.resolve_tool_algorithm(override_text)
+        tool_page.algo.resolve_tool_algorithm(override_text, camera_role)
         if override_text
         else tool_page.current_algorithm()
     )
 
     match_ms: Optional[float] = None
-    camera_role = tool_page.current_camera_role()
     method_getter = getattr(tool_page, "loc_method_for_role", None)
     method = method_getter(camera_role) if callable(method_getter) else tool_page.loc_method
     if method == "shape":
@@ -89,7 +89,7 @@ def _predict_image(
         feat_net=feat_net,
         roi=roi,
         match_ms=match_ms,
-        algorithm_override=algorithm_override,
+        algorithm_override=algorithm,
         model_key_override=model_key_override,
         params_override=params_override,
     )

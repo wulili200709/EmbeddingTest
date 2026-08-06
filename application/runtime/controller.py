@@ -541,10 +541,6 @@ class RuntimeController(QtCore.QObject):
             self.warningOccurred.emit("请先填写至少一个相机序列号")
             return
 
-        if any(role != "cam1" for role in bindings) and "cam1" not in bindings:
-            self.warningOccurred.emit("最小运行链路需要先配置 Cam1，再决定是否接入后续相机")
-            return
-
         if self._frame_grab_service is not None and self._frame_grab_service.roles():
             self.warningOccurred.emit("相机已经连接")
             self.logAppended.emit("[camera] connect skipped: camera already connected")
@@ -596,11 +592,6 @@ class RuntimeController(QtCore.QObject):
         }
 
         if not bindings:
-            return False
-
-        if any(role != "cam1" for role in bindings) and "cam1" not in bindings:
-            self.logAppended.emit("[camera] startup auto-connect skipped: follow-up cameras require Cam1")
-            self._update_status("startup auto-connect skipped: missing Cam1 binding")
             return False
 
         if self._frame_grab_service is not None and self._frame_grab_service.roles():
@@ -795,7 +786,11 @@ class RuntimeController(QtCore.QObject):
             self._update_status(reason or "当前状态不允许触发")
             return
 
-        self._finalize_trigger_outcome(outcome, release_status_before)
+        self._finalize_trigger_outcome(
+            outcome,
+            release_status_before,
+            active_roles=[role_text],
+        )
 
     def trigger(self) -> None:
         self._submit_trigger_task(
@@ -827,12 +822,13 @@ class RuntimeController(QtCore.QObject):
         self._last_item_results_by_camera = {}
         self._last_runtime_result = self._build_pending_runtime_result(status="RUNNING")
         self._update_status("开始执行脚踏触发链路")
+        required_roles = self._required_roles()
 
         try:
             if is_single_multi_light_mode(self):
-                outcome = self._run_single_multi_light_trigger()
+                outcome = self._run_single_multi_light_trigger(required_roles)
             else:
-                outcome = self._runner.on_foot_trigger()
+                outcome = self._runner.on_roles_trigger(required_roles)
         except Exception as exc:
             self.logAppended.emit(f"[运行] 触发异常：{exc}")
             self.triggerResultReady.emit("ERROR", str(exc))
@@ -856,7 +852,11 @@ class RuntimeController(QtCore.QObject):
             self._update_status(reason or "当前状态不允许触发")
             return
 
-        self._finalize_trigger_outcome(outcome, release_status_before)
+        self._finalize_trigger_outcome(
+            outcome,
+            release_status_before,
+            active_roles=required_roles,
+        )
 
     def release(self, password: str) -> None:
         """尝试放行 NG 锁定。"""

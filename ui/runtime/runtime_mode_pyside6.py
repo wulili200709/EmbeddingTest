@@ -1050,8 +1050,6 @@ class RuntimeModePage(QtWidgets.QWidget):
     def camera_bindings(self) -> dict[str, str]:
         bindings: dict[str, str] = {}
         for role in CAMERA_ROLES:
-            if role not in self._configured_role_set:
-                continue
             serial = self.camera_serial(role)
             if serial:
                 bindings[role] = serial
@@ -1597,7 +1595,7 @@ class RuntimeModePage(QtWidgets.QWidget):
                 label.hide()
 
     def _display_role_set(self) -> set[str]:
-        return set(self._active_role_set or self._configured_role_set)
+        return set(self._configured_role_set or self._active_role_set)
 
     def _refresh_camera_role_layout(self) -> None:
         display_roles = self._display_role_set()
@@ -1639,8 +1637,12 @@ class RuntimeModePage(QtWidgets.QWidget):
         return text
 
     def _refresh_trigger_buttons(self) -> None:
-        allow_full_trigger = (not self._busy) and any(
-            self._has_enabled_items(role) for role in self._active_role_set
+        required_roles = set(self._configured_role_set)
+        allow_full_trigger = (
+            (not self._busy)
+            and bool(required_roles)
+            and required_roles.issubset(self._active_role_set)
+            and all(self._has_enabled_items(role) for role in required_roles)
         )
         self.btn_simulate_foot.setEnabled(allow_full_trigger)
         for role in CAMERA_ROLES:

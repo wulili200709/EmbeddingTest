@@ -109,7 +109,13 @@ def _line_item_options(tool_page, selected_item) -> list[tuple[str, str]]:
         item_id = str(getattr(item, "item_id", "") or "").strip()
         if not item_id or item_id == current_id:
             continue
-        algorithm = str(tool_page.algo.resolve_tool_algorithm(getattr(item, "algorithm_code", "")) or "").strip()
+        algorithm = str(
+            tool_page.algo.resolve_tool_algorithm(
+                getattr(item, "algorithm_code", ""),
+                getattr(item, "camera_id", current_role),
+            )
+            or ""
+        ).strip()
         if not _is_find_line_algorithm(algorithm):
             continue
         display = str(getattr(item, "display_name", "") or getattr(item, "roi_label", "") or item_id).strip()
@@ -129,7 +135,13 @@ def _center_item_options(tool_page, selected_item) -> list[tuple[str, str]]:
         item_id = str(getattr(item, "item_id", "") or "").strip()
         if not item_id or item_id == current_id:
             continue
-        algorithm = str(tool_page.algo.resolve_tool_algorithm(getattr(item, "algorithm_code", "")) or "").strip()
+        algorithm = str(
+            tool_page.algo.resolve_tool_algorithm(
+                getattr(item, "algorithm_code", ""),
+                getattr(item, "camera_id", current_role),
+            )
+            or ""
+        ).strip()
         if not _is_bright_block_center_algorithm(algorithm):
             continue
         display = str(getattr(item, "display_name", "") or getattr(item, "roi_label", "") or item_id).strip()

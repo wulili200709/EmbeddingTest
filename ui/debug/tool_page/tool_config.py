@@ -115,7 +115,13 @@ def _add_line_distance_tool(tool_page) -> None:
     camera_role = _current_camera_role(tool_page)
     selected_item = _selected_inspection_item(tool_page)
     selected_algorithm = (
-        str(tool_page.algo.resolve_tool_algorithm(getattr(selected_item, "algorithm_code", "")) or "").strip()
+        str(
+            tool_page.algo.resolve_tool_algorithm(
+                getattr(selected_item, "algorithm_code", ""),
+                getattr(selected_item, "camera_id", camera_role),
+            )
+            or ""
+        ).strip()
         if selected_item is not None
         else ""
     )

@@ -381,7 +381,12 @@ def load_product_analysis(
     model = qr_core.load_register_model_npz(model_path)
     params_path = os.path.join(product_dir, "product_params.json")
     params = load_product_params(params_path)
-    if params.learning_backbone == entry.backbone or params.algorithm == entry.backbone:
+    configured_backbones = set(dict(params.learning_backbones or {}).values())
+    if (
+        params.learning_backbone == entry.backbone
+        or params.algorithm == entry.backbone
+        or entry.backbone in configured_backbones
+    ):
         model.score_mode = params.score_mode
         model.margin = float(params.margin)
         model.topk = int(params.topk)
