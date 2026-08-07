@@ -12,7 +12,11 @@ from PySide6 import QtCore
 
 from common.camera_roles import CAMERA_ROLES, camera_index_for_role
 from . import bindings
-from .capture_channels import is_single_multi_light_mode
+from .capture_channels import (
+    is_single_multi_light_mode,
+    physical_connected_bindings,
+    physical_connected_roles,
+)
 from .capture_policy import (
     DEFAULT_LIGHT_STABLE_MS,
     DEFAULT_RELEASE_PASSWORD,
@@ -547,11 +551,18 @@ class RuntimeController(QtCore.QObject):
             self.warningOccurred.emit("请先填写至少一个相机序列号")
             return
 
-        if self._frame_grab_service is not None and self._frame_grab_service.roles():
-            self.warningOccurred.emit("相机已经连接")
-            self.logAppended.emit("[camera] connect skipped: camera already connected")
-            self._update_status("相机已经连接")
-            return
+        existing_bindings = physical_connected_bindings(self)
+        if existing_bindings:
+            if existing_bindings == bindings:
+                self.warningOccurred.emit("相机已经连接")
+                self.logAppended.emit("[camera] connect skipped: requested physical bindings already connected")
+                self._update_status("相机已经连接")
+                return
+            self.logAppended.emit(
+                "[camera] reconnect physical bindings: "
+                f"old={existing_bindings} new={bindings}"
+            )
+            self.disconnect(silent=True, close_io=False)
 
         if not self._rebuild_runner():
             return
@@ -600,8 +611,15 @@ class RuntimeController(QtCore.QObject):
         if not bindings:
             return False
 
-        if self._frame_grab_service is not None and self._frame_grab_service.roles():
-            return True
+        existing_bindings = physical_connected_bindings(self)
+        if existing_bindings:
+            if existing_bindings == bindings:
+                return True
+            self.logAppended.emit(
+                "[camera] auto-reconnect physical bindings: "
+                f"old={existing_bindings} new={bindings}"
+            )
+            self.disconnect(silent=True, close_io=False)
 
         if not self._rebuild_runner():
             return False
@@ -932,6 +950,12 @@ class RuntimeController(QtCore.QObject):
 
     def connected_roles(self) -> list[str]:
         return self._connected_roles()
+
+    def connected_physical_roles(self) -> list[str]:
+        return physical_connected_roles(self)
+
+    def connected_physical_bindings(self) -> dict[str, str]:
+        return physical_connected_bindings(self)
 
     # ------------------------------------------------------------------
     # 内部：构建运行链路

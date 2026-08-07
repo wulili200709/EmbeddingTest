@@ -15,6 +15,7 @@ from infrastructure.camera_settings_store import (
     CAPTURE_LIGHT_OUTPUTS,
     CAPTURE_MODE_FLEXIBLE,
     CAPTURE_MODE_INDEPENDENT,
+    CAPTURE_MODE_SINGLE_MULTI_LIGHT,
     CameraSettingsStore,
     LIGHT_SOURCE_MODE_BOARD_IO,
     light_source_mode_from_mapping,
@@ -263,9 +264,24 @@ def _update_capture_channel_visibility(tool_page) -> None:
 
 
 def _sync_capture_camera_roles(tool_page) -> None:
+    if getattr(tool_page, "_capture_config_loading", False):
+        return
     sync_roles = getattr(tool_page.window(), "_sync_configured_camera_roles", None)
     if callable(sync_roles):
         sync_roles()
+    top_level = tool_page.window()
+    runtime_ctrl = getattr(top_level, "runtime_ctrl", None)
+    connected_physical_roles = getattr(runtime_ctrl, "connected_physical_roles", None)
+    desired_physical_roles = getattr(top_level, "_runtime_physical_camera_roles", None)
+    if not callable(connected_physical_roles) or not callable(desired_physical_roles):
+        return
+    current_roles = set(connected_physical_roles())
+    desired_roles = set(desired_physical_roles())
+    if current_roles and current_roles != desired_roles:
+        runtime_ctrl.disconnect(silent=True, close_io=False)
+        status_bar = getattr(top_level, "_bottom_status_bar", None)
+        if status_bar is not None:
+            status_bar.showMessage("相机采集方案已变化，请重新连接物理相机", 4000)
 
 
 def _capture_channels_from_ui(tool_page) -> list[dict[str, object]]:
@@ -368,7 +384,16 @@ def _load_capture_config_to_ui(tool_page) -> None:
     tool_page._capture_config_loading = True
     try:
         config = tool_page._camera_settings_store.load_capture_config()
-        mode = normalize_capture_mode(config.get("capture_mode"))
+        stored_mode = normalize_capture_mode(config.get("capture_mode"))
+        # The legacy single-camera mode hard-coded every logical channel to
+        # physical cam1.  It is now represented by the unified flexible
+        # mapping table, preserving the saved channel routes without exposing
+        # the misleading legacy mode in the UI.
+        mode = (
+            CAPTURE_MODE_FLEXIBLE
+            if stored_mode == CAPTURE_MODE_SINGLE_MULTI_LIGHT
+            else stored_mode
+        )
         combo = getattr(tool_page, "cmb_capture_mode", None)
         if combo is not None:
             index = combo.findData(mode)
@@ -423,6 +448,7 @@ def _on_capture_channel_item_changed(tool_page, _item=None) -> None:
 
 def _on_capture_channel_editor_changed(tool_page, *_args) -> None:
     _save_capture_config_from_ui(tool_page)
+    _sync_capture_camera_roles(tool_page)
     _apply_debug_role_binding_to_camera_combo(tool_page)
     _refresh_debug_role_status(tool_page)
 

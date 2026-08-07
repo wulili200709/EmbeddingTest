@@ -290,6 +290,7 @@ class MainWindow(QtWidgets.QMainWindow):
         actions = refs.get("actions", {})
         permission_by_action = {
             "camera_tool": "camera.edit_params",
+            "current_product_capture_plan": "camera.edit_params",
             "io_tool": "io.debug",
             "template_editor": "template.edit_roi",
             "auto_region": "template.edit_roi",
@@ -1157,10 +1158,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _show_connect_dialog(self) -> None:
         if not self._require_permission("runtime.connect_camera", "连接相机"):
-            return
-        if self.runtime_ctrl.connected_roles():
-            QtWidgets.QMessageBox.information(self, "连接相机", "相机已经连接。")
-            self.runtime_ctrl.refresh_all_status("相机已经连接")
             return
         physical_roles = self._runtime_physical_camera_roles()
         configured_roles = self._configured_runtime_camera_roles()

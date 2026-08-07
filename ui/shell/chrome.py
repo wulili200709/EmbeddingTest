@@ -131,6 +131,14 @@ def build_menu_bar(window) -> None:
         shell_icon(SP.SP_FileDialogListView), tr("action.baseline_debug")
     ).triggered.connect(window.tool_page.open_baseline_debug_tool)
 
+    act_current_product_capture_plan = tools_menu.addAction(
+        shell_icon(SP.SP_FileDialogDetailedView),
+        tr("action.current_product_capture_plan"),
+    )
+    act_current_product_capture_plan.triggered.connect(
+        window.tool_page.open_current_product_capture_plan_dialog
+    )
+
     runtime_menu = QtWidgets.QMenu(tr("menu.control"), window)
     runtime_menu.setStyleSheet(menu_style)
     act_refresh_cameras = runtime_menu.addAction(
@@ -240,14 +248,6 @@ def build_menu_bar(window) -> None:
         shell_icon(SP.SP_FileDialogListView), tr("action.runtime_records_query")
     )
     window.act_runtime_records_query.triggered.connect(window._show_runtime_records_dialog)
-    window.act_detailed_camera_diagnostics = system_menu.addAction(
-        shell_icon(SP.SP_FileDialogInfoView),
-        tr("action.detailed_camera_diagnostics"),
-    )
-    window.act_detailed_camera_diagnostics.setCheckable(True)
-    window.act_detailed_camera_diagnostics.triggered.connect(
-        window._toggle_detailed_camera_diagnostics
-    )
     window.act_software_versions = system_menu.addAction(
         shell_icon(SP.SP_FileDialogInfoView), tr("action.software_versions")
     )
@@ -267,6 +267,21 @@ def build_menu_bar(window) -> None:
     window.act_language_en.setChecked(language_code() == LANG_EN)
     window.act_language_zh.triggered.connect(lambda checked=False: window._change_language(LANG_ZH))
     window.act_language_en.triggered.connect(lambda checked=False: window._change_language(LANG_EN))
+
+    help_menu = QtWidgets.QMenu(tr("menu.help"), window)
+    help_menu.setStyleSheet(menu_style)
+    act_about_version = help_menu.addAction(
+        shell_icon(SP.SP_MessageBoxInformation), tr("software.version")
+    )
+    act_about_version.triggered.connect(window._show_about_dialog)
+    window.act_detailed_camera_diagnostics = help_menu.addAction(
+        shell_icon(SP.SP_FileDialogInfoView),
+        tr("action.detailed_camera_diagnostics"),
+    )
+    window.act_detailed_camera_diagnostics.setCheckable(True)
+    window.act_detailed_camera_diagnostics.triggered.connect(
+        window._toggle_detailed_camera_diagnostics
+    )
 
     top_layout.addWidget(
         _make_popup_button(tr("menu.file"), shell_icon(SP.SP_DirOpenIcon), file_menu),
@@ -304,7 +319,7 @@ def build_menu_bar(window) -> None:
     )
     window.btn_menu_language = top_layout.itemAt(top_layout.count() - 1).widget()
     top_layout.addWidget(
-        _make_action_button(tr("menu.help"), shell_icon(SP.SP_MessageBoxInformation), window._show_about_dialog),
+        _make_popup_button(tr("menu.help"), shell_icon(SP.SP_MessageBoxInformation), help_menu),
         0,
     )
     window.btn_menu_help = top_layout.itemAt(top_layout.count() - 1).widget()
@@ -322,6 +337,7 @@ def build_menu_bar(window) -> None:
             "path": path_menu,
             "system": system_menu,
             "language": language_menu,
+            "help": help_menu,
         },
         "actions": {
             "exit": act_exit,
@@ -333,6 +349,7 @@ def build_menu_bar(window) -> None:
             "margin_validation": algo_menu.actions()[0],
             "embedding_analysis": algo_menu.actions()[1],
             "baseline_debug": algo_menu.actions()[2],
+            "current_product_capture_plan": act_current_product_capture_plan,
             "refresh_cameras": runtime_menu.actions()[0],
             "open_mvs": runtime_menu.actions()[1],
             "connect_camera": runtime_menu.actions()[2],
@@ -354,6 +371,7 @@ def build_menu_bar(window) -> None:
             "user_permissions": window.act_user_permissions,
             "audit_log": window.act_audit_log,
             "runtime_records_query": window.act_runtime_records_query,
+            "about_version": act_about_version,
             "detailed_camera_diagnostics": window.act_detailed_camera_diagnostics,
             "software_versions": window.act_software_versions,
         },
@@ -484,6 +502,7 @@ def retranslate_shell_chrome(window) -> None:
         "path": "menu.path",
         "system": "menu.system",
         "language": "menu.language",
+        "help": "menu.help",
     }
     for name, key in menu_keys.items():
         menu = menus.get(name)
@@ -515,6 +534,7 @@ def retranslate_shell_chrome(window) -> None:
         "margin_validation": "action.margin_validation",
         "embedding_analysis": "action.embedding_analysis",
         "baseline_debug": "action.baseline_debug",
+        "current_product_capture_plan": "action.current_product_capture_plan",
         "refresh_cameras": "action.refresh_cameras",
         "open_mvs": "action.open_mvs",
         "connect_camera": "action.connect_camera",
@@ -536,6 +556,7 @@ def retranslate_shell_chrome(window) -> None:
         "user_permissions": "action.user_permissions",
         "audit_log": "action.audit_log",
         "runtime_records_query": "action.runtime_records_query",
+        "about_version": "software.version",
         "detailed_camera_diagnostics": "action.detailed_camera_diagnostics",
         "software_versions": "action.software_versions",
     }

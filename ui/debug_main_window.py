@@ -46,6 +46,11 @@ class DebugMainWindow(QtWidgets.QMainWindow):
         if not self.lite_mode:
             tools_menu.addAction(tr("action.embedding_analysis"), self.tool_page.open_embedding_analysis_tool)
         tools_menu.addAction(tr("action.baseline_debug"), self.tool_page.open_baseline_debug_tool)
+        if not self.lite_mode:
+            tools_menu.addAction(
+                tr("action.current_product_capture_plan"),
+                self.tool_page.open_current_product_capture_plan_dialog,
+            )
 
         path_menu = self.menuBar().addMenu(tr("menu.path"))
         path_menu.addAction(tr("action.open_product_dir"), self._open_current_product_dir)

@@ -6,6 +6,7 @@ import unittest
 from itertools import combinations
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 import numpy as np
 from PySide6 import QtWidgets
@@ -50,6 +51,50 @@ def _flexible_config() -> dict:
 
 
 class CapturePlanTests(unittest.TestCase):
+    def test_connect_releases_stale_physical_binding_before_rebuild(self) -> None:
+        class Signal:
+            def emit(self, *_args) -> None:
+                pass
+
+        runtime = SimpleNamespace(
+            _sync_camera_settings_store_path=mock.Mock(),
+            logAppended=Signal(),
+            disconnect=mock.Mock(),
+            _rebuild_runner=mock.Mock(return_value=False),
+        )
+        with mock.patch.object(
+            controller_module,
+            "physical_connected_bindings",
+            return_value={"cam1": "S1"},
+        ):
+            controller_module.RuntimeController.connect_cameras(runtime, {"cam3": "S3"})
+
+        runtime.disconnect.assert_called_once_with(silent=True, close_io=False)
+        runtime._rebuild_runner.assert_called_once_with()
+
+    def test_connect_keeps_identical_physical_binding_open(self) -> None:
+        class Signal:
+            def emit(self, *_args) -> None:
+                pass
+
+        runtime = SimpleNamespace(
+            _sync_camera_settings_store_path=mock.Mock(),
+            warningOccurred=Signal(),
+            logAppended=Signal(),
+            _update_status=mock.Mock(),
+            disconnect=mock.Mock(),
+            _rebuild_runner=mock.Mock(return_value=False),
+        )
+        with mock.patch.object(
+            controller_module,
+            "physical_connected_bindings",
+            return_value={"cam3": "S3"},
+        ):
+            controller_module.RuntimeController.connect_cameras(runtime, {"cam3": "S3"})
+
+        runtime.disconnect.assert_not_called()
+        runtime._rebuild_runner.assert_not_called()
+
     def test_preview_conversion_handles_single_channel_and_uint16_frames(self) -> None:
         app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
         images = (

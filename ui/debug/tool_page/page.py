@@ -357,7 +357,6 @@ class ToolPage(QtWidgets.QWidget):
             blocker = QtCore.QSignalBlocker(self.cmb_capture_mode)
             self.cmb_capture_mode.clear()
             self.cmb_capture_mode.addItem(tr("debug.capture_mode_independent"), "independent")
-            self.cmb_capture_mode.addItem(tr("debug.capture_mode_single_multi_light"), "single_multi_light")
             self.cmb_capture_mode.addItem(tr("debug.capture_mode_flexible"), "flexible")
             index = self.cmb_capture_mode.findData(current_data)
             self.cmb_capture_mode.setCurrentIndex(max(0, index))
@@ -491,10 +490,16 @@ class ToolPage(QtWidgets.QWidget):
     def _tool_dialog_title(self, key: str) -> str:
         title_keys = {
             "camera_debug": "action.camera_tool",
+            "capture_plan": "action.current_product_capture_plan",
             "io_debug": "action.io_tool",
             "template_match": "action.auto_region",
         }
-        return tr(title_keys.get(str(key), str(key)))
+        title = tr(title_keys.get(str(key), str(key)))
+        if key == "capture_plan":
+            product_name = str(getattr(self.session, "current_product", "") or "").strip()
+            if product_name:
+                return f"{title} - {product_name}"
+        return title
 
     def _retranslate_tool_dialogs(self) -> None:
         for key, dialog in getattr(self, "_tool_dialogs", {}).items():
@@ -912,6 +917,22 @@ class ToolPage(QtWidgets.QWidget):
         )
         self._refresh_debug_role_status()
         self._refresh_debug_camera_list()
+
+    def open_current_product_capture_plan_dialog(self) -> None:
+        require_permission = getattr(self.window(), "_require_permission", None)
+        if callable(require_permission) and not require_permission(
+            "camera.edit_params", tr("action.current_product_capture_plan")
+        ):
+            return
+        if self.lite_mode or not hasattr(self, "capture_plan_page"):
+            QtWidgets.QMessageBox.information(self, "LC System Lite", "轻量版未加载相机采集方案。")
+            return
+        self._load_capture_config_to_ui()
+        self._show_tool_dialog(
+            "capture_plan",
+            self.capture_plan_page,
+            size=(720, 350),
+        )
 
     def open_io_debug_dialog(self) -> None:
         require_permission = getattr(self.window(), "_require_permission", None)

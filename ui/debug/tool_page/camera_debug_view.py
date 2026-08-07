@@ -252,6 +252,12 @@ def build_camera_debug_page(
     cam_right_vbox.addWidget(cam_params)
     cam_right_vbox.addSpacing(8)
 
+    owner.capture_plan_page = QtWidgets.QWidget()
+    owner.capture_plan_page.setStyleSheet(f"background:{dark_bg};color:{text_light};")
+    capture_plan_page_layout = QtWidgets.QVBoxLayout(owner.capture_plan_page)
+    capture_plan_page_layout.setContentsMargins(12, 12, 12, 12)
+    capture_plan_page_layout.setSpacing(8)
+
     owner.capture_mode_frame = QtWidgets.QFrame()
     owner.capture_mode_frame.setStyleSheet(
         "QFrame{background:#333333;border-top:1px solid #505050;border-bottom:1px solid #505050;}"
@@ -266,7 +272,6 @@ def build_camera_debug_page(
 
     owner.cmb_capture_mode = QtWidgets.QComboBox()
     owner.cmb_capture_mode.addItem(tr("debug.capture_mode_independent"), "independent")
-    owner.cmb_capture_mode.addItem(tr("debug.capture_mode_single_multi_light"), "single_multi_light")
     owner.cmb_capture_mode.addItem(tr("debug.capture_mode_flexible"), "flexible")
     owner.cmb_capture_mode.setCurrentIndex(0)
     owner.cmb_capture_mode.setStyleSheet(input_style)
@@ -371,8 +376,8 @@ def build_camera_debug_page(
     owner.cmb_capture_mode.currentIndexChanged.connect(owner._on_capture_mode_changed)
     capture_mode_layout.addWidget(owner.capture_channel_table)
     owner._update_capture_channel_visibility()
-    cam_right_vbox.addWidget(owner.capture_mode_frame)
-    cam_right_vbox.addSpacing(8)
+    capture_plan_page_layout.addWidget(owner.capture_mode_frame)
+    capture_plan_page_layout.addStretch(1)
 
     cam_btns_w = QtWidgets.QWidget()
     cam_btns_layout = QtWidgets.QVBoxLayout(cam_btns_w)
