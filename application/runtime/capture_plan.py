@@ -131,7 +131,11 @@ def build_capture_plan(
             continue
         enabled = bool(item.get("enabled", True))
         if mode == CAPTURE_MODE_INDEPENDENT:
-            enabled = enabled and (not requested_set or role in requested_set)
+            # In independent mode the product/connection role selection is
+            # authoritative.  A product may retain disabled channel rows from
+            # an earlier mapped multi-light mode, but those hidden rows must
+            # not discard a camera that the user has just selected.
+            enabled = role in requested_set if requested_set else enabled
             physical_role = role
         else:
             physical_role = normalize_camera_role(item.get("physical_role"), default=role) or role

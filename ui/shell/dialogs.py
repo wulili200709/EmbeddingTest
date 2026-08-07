@@ -174,6 +174,7 @@ class RuntimeModeSettingsStore:
             "auto_show_release_dialog_on_ng": True,
             "camera_layout": "two_top_one_bottom",
             "camera_slots": list(CAMERA_ROLES),
+            "cpu_inference_chunk_size": 2,
         }
 
     def load(self) -> dict[str, object]:
@@ -207,6 +208,9 @@ class RuntimeModeSettingsStore:
             settings["camera_slots"] = self._normalize_camera_slots(
                 raw.get("camera_slots", settings["camera_slots"])
             )
+            settings["cpu_inference_chunk_size"] = self._normalize_cpu_inference_chunk_size(
+                raw.get("cpu_inference_chunk_size", settings["cpu_inference_chunk_size"])
+            )
 
         try:
             self.save(settings)
@@ -222,6 +226,9 @@ class RuntimeModeSettingsStore:
             ),
             "camera_layout": str(settings.get("camera_layout", "two_top_one_bottom") or "two_top_one_bottom").strip(),
             "camera_slots": self._normalize_camera_slots(settings.get("camera_slots", list(CAMERA_ROLES))),
+            "cpu_inference_chunk_size": self._normalize_cpu_inference_chunk_size(
+                settings.get("cpu_inference_chunk_size", 2)
+            ),
         }
         if payload["camera_layout"] not in {
             "row",
@@ -258,6 +265,14 @@ class RuntimeModeSettingsStore:
             if role not in normalized:
                 normalized.append(role)
         return normalized[: len(CAMERA_ROLES)]
+
+    @staticmethod
+    def _normalize_cpu_inference_chunk_size(value: object) -> int:
+        try:
+            chunk_size = int(value)
+        except (TypeError, ValueError):
+            chunk_size = 2
+        return max(1, min(256, chunk_size))
 
 
 def prompt_password_dialog(

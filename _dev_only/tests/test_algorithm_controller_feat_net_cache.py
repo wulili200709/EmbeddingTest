@@ -18,6 +18,84 @@ from application.algorithm_controller import AlgorithmController
 
 
 class AlgorithmControllerFeatNetCacheTest(unittest.TestCase):
+    def test_successful_embedding_training_clears_cached_models(self) -> None:
+        controller = AlgorithmController()
+        controller.product_params.algorithm = "efficientnet_b0"
+        controller.product_params.learning_backbone = "efficientnet_b0"
+        controller._embedding_model_cache["old-product-model"] = ((1, 1), object())
+        trained_model = SimpleNamespace(backbone="efficientnet_b0")
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            controller,
+            "get_feat_net",
+            return_value=object(),
+        ), mock.patch.dict(
+            algorithm_controller.qr_core.__dict__,
+            {
+                "get_device": mock.Mock(return_value="cpu"),
+                "train_register_model": mock.Mock(return_value=trained_model),
+                "save_register_model_npz": mock.Mock(),
+            },
+        ):
+            result = controller.train(
+                ["ok.png"],
+                ["ng.png"],
+                algorithm="efficientnet_b0",
+                product_dir=tmpdir,
+                label_names=["roi1"],
+                model_key="cam1__roi1",
+            )
+
+        self.assertIs(result.model, trained_model)
+        self.assertEqual(controller._embedding_model_cache, {})
+
+    def test_load_model_reuses_cached_npz_until_file_changes(self) -> None:
+        controller = AlgorithmController()
+        controller.product_params.algorithm = "efficientnet_b0"
+        loaded_models: list[object] = []
+
+        def _fake_load_model(_path: str):
+            model = SimpleNamespace(backbone="efficientnet_b0")
+            loaded_models.append(model)
+            return model
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_path = Path(tmpdir) / "cam1__roi1_register_model_b0.npz"
+            model_path.write_bytes(b"model-v1")
+            with mock.patch.dict(
+                algorithm_controller.qr_core.__dict__,
+                {"load_register_model_npz": mock.Mock(side_effect=_fake_load_model)},
+            ):
+                first, _message = controller.load_model_for_algorithm(
+                    "efficientnet_b0",
+                    tmpdir,
+                    model_key="cam1__roi1",
+                )
+                second, _message = controller.load_model_for_algorithm(
+                    "efficientnet_b0",
+                    tmpdir,
+                    model_key="cam1__roi1",
+                )
+                model_path.write_bytes(b"model-v2-with-new-size")
+                third, _message = controller.load_model_for_algorithm(
+                    "efficientnet_b0",
+                    tmpdir,
+                    model_key="cam1__roi1",
+                )
+                params_path = Path(tmpdir) / "product_params.json"
+                params_path.write_text("{}", encoding="utf-8")
+                controller.load_params(str(params_path))
+                fourth, _message = controller.load_model_for_algorithm(
+                    "efficientnet_b0",
+                    tmpdir,
+                    model_key="cam1__roi1",
+                )
+
+        self.assertIs(first, second)
+        self.assertIsNot(second, third)
+        self.assertIsNot(third, fourth)
+        self.assertEqual(len(loaded_models), 3)
+
     def test_get_feat_net_reuses_cached_backbone_for_same_device(self) -> None:
         controller = AlgorithmController()
         load_calls: list[tuple[str, str | None]] = []

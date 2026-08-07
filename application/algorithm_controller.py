@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -147,6 +148,8 @@ class AlgorithmController:
         self.product_params: ProductRuntimeParams = ProductRuntimeParams()
         self.model: Optional[Any] = None          # qr_core.RegisterModel | None
         self._feat_net_cache: Dict[Tuple[str, str, str], Any] = {}
+        self._embedding_model_cache: Dict[str, Tuple[Tuple[int, int], Any]] = {}
+        self._embedding_model_cache_lock = threading.RLock()
         self._active_product_dir: str = ""
         self._loaded_embedding_model_key: Tuple[str, str] = ("", "")
 
@@ -156,6 +159,9 @@ class AlgorithmController:
 
     def load_params(self, path: str) -> None:
         """从 product_params.json 加载；不存在则使用默认值。"""
+        # Loading a product/session is an explicit cache boundary. Paths
+        # already isolate products; clearing here also releases inactive ones.
+        self.clear_embedding_model_cache()
         self.product_params = load_product_params(path)
         alg = storage_code_backbone(self.product_params.algorithm)
         learning_backbone = storage_code_backbone(self.product_params.learning_backbone)
@@ -379,6 +385,7 @@ class AlgorithmController:
             for provider in tuple(raw_info.get("providers", ()) or ())
             if str(provider).strip()
         )
+        cpu_inference_chunk_size = int(raw_info.get("cpu_inference_chunk_size", 0) or 0)
         return {
             "backend": backend,
             "backend_label": backend.upper() if backend else "",
@@ -386,6 +393,7 @@ class AlgorithmController:
             "model_format_label": model_format.upper() if model_format else "",
             "model_path": model_path,
             "providers": providers,
+            "cpu_inference_chunk_size": cpu_inference_chunk_size,
         }
 
     @classmethod
@@ -394,9 +402,14 @@ class AlgorithmController:
         backend_label = str(info.get("backend_label", "") or "").strip() or "TORCH"
         model_path = str(info.get("model_path", "") or "").strip()
         model_hint = f"  model={os.path.basename(model_path)}" if model_path else ""
+        cpu_chunk_size = int(info.get("cpu_inference_chunk_size", 0) or 0)
+        chunk_hint = f"  cpu_chunk={cpu_chunk_size}" if cpu_chunk_size > 0 else ""
         if not callable(getattr(getattr(sys, "stdout", None), "write", None)):
             return
-        print(f"[EmbeddingTest] inference backbone={learning_backbone_storage_code(backbone)} backend={backend_label}{model_hint}")
+        print(
+            f"[EmbeddingTest] inference backbone={learning_backbone_storage_code(backbone)} "
+            f"backend={backend_label}{model_hint}{chunk_hint}"
+        )
 
     def get_feat_net(
         self,
@@ -426,6 +439,22 @@ class AlgorithmController:
 
     def clear_feat_net_cache(self) -> None:
         self._feat_net_cache.clear()
+
+    def clear_embedding_model_cache(self) -> None:
+        with self._embedding_model_cache_lock:
+            self._embedding_model_cache.clear()
+
+    def _load_register_model_cached(self, model_file: str) -> Any:
+        normalized_path = os.path.normcase(os.path.abspath(str(model_file)))
+        stat = os.stat(normalized_path)
+        signature = (int(stat.st_mtime_ns), int(stat.st_size))
+        with self._embedding_model_cache_lock:
+            cached = self._embedding_model_cache.get(normalized_path)
+            if cached is not None and cached[0] == signature:
+                return cached[1]
+            model = qr_core.load_register_model_npz(normalized_path)
+            self._embedding_model_cache[normalized_path] = (signature, model)
+            return model
 
     # ------------------------------------------------------------------
     # 模型加载
@@ -503,7 +532,7 @@ class AlgorithmController:
             self._loaded_embedding_model_key = ("", "")
             return None, f"状态：{display_name or algorithm} 未训练"
 
-        model = qr_core.load_register_model_npz(model_file)
+        model = self._load_register_model_cached(model_file)
         model.score_mode = self.product_params.score_mode
         model.margin = float(self.product_params.margin)
         model.topk = int(self.product_params.topk)
@@ -577,6 +606,9 @@ class AlgorithmController:
             )
             saved_path = self.embedding_model_path(algorithm, product_dir, model_key=normalized_model_key)
             qr_core.save_register_model_npz(model, saved_path)
+            # Training replaced model data on disk. Rebuild the runtime model
+            # snapshot on the next preparation instead of retaining old ROIs.
+            self.clear_embedding_model_cache()
             self.model = model
             self._loaded_embedding_model_key = (algorithm, normalized_model_key)
             return TrainResult(

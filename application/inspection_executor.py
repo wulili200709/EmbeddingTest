@@ -127,6 +127,7 @@ class InspectionExecutor:
         predicted_enabled_items = [item for item in enabled_items if not _is_post_distance_item(item)]
         distance_items = [item for item in enabled_items if _is_post_distance_item(item)]
         batch_rows: List[dict] | None = None
+        batch_timing_breakdown: dict[str, object] = {}
         roi_shapes: tuple[object, ...] = ()
         batch_predict_from_frame = getattr(self._predictor, "predict_items_batch_from_frame", None)
         batch_predict = getattr(self._predictor, "predict_items_batch", None)
@@ -139,6 +140,12 @@ class InspectionExecutor:
             if batch_prediction is not None:
                 batch_rows = [dict(row) for row in list(getattr(batch_prediction, "rows", []) or [])]
                 roi_shapes = tuple(getattr(batch_prediction, "roi_shapes", ()) or ())
+                batch_timing_breakdown = {
+                    str(key): value
+                    for key, value in dict(
+                        getattr(batch_prediction, "timing_breakdown", {}) or {}
+                    ).items()
+                }
         elif callable(batch_predict) and predicted_enabled_items:
             batch_rows = [dict(row) for row in batch_predict(request.image_path, items=predicted_enabled_items)]
         predicted_index = 0
@@ -317,6 +324,7 @@ class InspectionExecutor:
                 "match_ms": match_ms,
                 "infer_ms": infer_ms,
                 "total_ms": total_ms,
+                "timing_breakdown": batch_timing_breakdown,
             },
             match_ms=match_ms,
             infer_ms=infer_ms,

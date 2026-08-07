@@ -1,6 +1,6 @@
 ﻿from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Protocol
@@ -100,6 +100,7 @@ class RuntimeFrameBatchPrediction:
     rows: List[Dict[str, object]]
     match_ms: float = 0.0
     roi_shapes: tuple[RuntimePreviewShape, ...] = ()
+    timing_breakdown: Dict[str, object] = field(default_factory=dict)
 
 
 def _runtime_prediction_row(
@@ -245,6 +246,7 @@ def _predict_learning_items_batch_rows_from_frame(
     algo,
     load_embedding_model,
     feat_net=None,
+    timing_breakdown: Dict[str, object] | None = None,
 ) -> Dict[str, Dict[str, object]]:
     # Import the embedding helper on demand so startup does not pull torch/torchvision
     # before the main window is visible.
@@ -261,6 +263,7 @@ def _predict_learning_items_batch_rows_from_frame(
         if not str(algorithm or "").strip():
             raise RuntimeError("please choose a learning tool subtype first")
         group_infer_t0 = time.perf_counter()
+        model_load_t0 = time.perf_counter()
         models: List[Any] = []
         for item in group:
             load_embedding_model(algorithm, model_key=item.model_key)
@@ -274,14 +277,47 @@ def _predict_learning_items_batch_rows_from_frame(
                 models[0].backbone,
                 getattr(models[0], "device", None),
             )
+        if timing_breakdown is not None:
+            timing_breakdown["model_load_ms"] = (
+                float(timing_breakdown.get("model_load_ms", 0.0))
+                + float((time.perf_counter() - model_load_t0) * 1000.0)
+            )
         roi_labels = [str(item.roi_label or "").strip() or "roi" for item in group]
+        embedding_timing: Dict[str, object] = {}
         embeddings = embed_batch_from_array(
             image_bgr,
             group_feat_net,
             roi_labels,
             shape_by_label=shape_by_label,
             device=getattr(models[0], "device", None),
+            timing_breakdown=embedding_timing,
         )
+        if timing_breakdown is not None:
+            for key in ("roi_preprocess_ms", "backbone_ms"):
+                timing_breakdown[key] = (
+                    float(timing_breakdown.get(key, 0.0))
+                    + float(embedding_timing.get(key, 0.0))
+                )
+            for key in ("backbone_batch_size", "backbone_chunk_count"):
+                timing_breakdown[key] = (
+                    int(timing_breakdown.get(key, 0) or 0)
+                    + int(embedding_timing.get(key, 0) or 0)
+                )
+            incoming_chunk_size = int(embedding_timing.get("backbone_chunk_size", 0) or 0)
+            if incoming_chunk_size > 0:
+                existing_chunk_size = int(timing_breakdown.get("backbone_chunk_size", 0) or 0)
+                if existing_chunk_size <= 0:
+                    timing_breakdown["backbone_chunk_size"] = incoming_chunk_size
+                elif existing_chunk_size != incoming_chunk_size:
+                    timing_breakdown["backbone_chunk_size"] = 0
+            for key in ("backbone_backend", "backbone_provider"):
+                incoming_text = str(embedding_timing.get(key, "") or "").strip()
+                existing_text = str(timing_breakdown.get(key, "") or "").strip()
+                if incoming_text and incoming_text not in existing_text.split(","):
+                    timing_breakdown[key] = (
+                        f"{existing_text},{incoming_text}" if existing_text else incoming_text
+                    )
+        classify_t0 = time.perf_counter()
         for item, model, embedding in zip(group, models, embeddings):
             pred, diff, sim_ok, sim_ng = qr_core.predict_one_with_model(embedding, model)
             rows_by_key[item.model_key] = _runtime_prediction_row(
@@ -293,6 +329,11 @@ def _predict_learning_items_batch_rows_from_frame(
                 infer_ms=0.0,
                 total_ms=0.0,
                 roi_label=str(item.roi_label or "").strip(),
+            )
+        if timing_breakdown is not None:
+            timing_breakdown["classify_ms"] = (
+                float(timing_breakdown.get("classify_ms", 0.0))
+                + float((time.perf_counter() - classify_t0) * 1000.0)
             )
         group_infer_total_ms = float((time.perf_counter() - group_infer_t0) * 1000.0)
         per_item_infer_ms = group_infer_total_ms / float(len(group)) if group else 0.0
@@ -696,6 +737,7 @@ class ProductRuntimeContext:
                 for shape in tuple(run.roi_shapes or ())
             )
 
+        inference_timing: Dict[str, object] = {}
         rows_by_key = _predict_learning_items_batch_rows_from_frame(
             image_bgr=image,
             roi_shapes=roi_shapes,
@@ -704,6 +746,7 @@ class ProductRuntimeContext:
             algo=self.algo,
             load_embedding_model=self.load_embedding_model,
             feat_net=feat_net,
+            timing_breakdown=inference_timing,
         )
         shape_by_label = _runtime_shape_by_label(roi_shapes)
         for item in traditional_items:
@@ -869,6 +912,7 @@ class ProductRuntimeContext:
             rows=[dict(rows_by_key[item.model_key]) for item in enabled_items],
             match_ms=float(match_ms),
             roi_shapes=roi_shapes,
+            timing_breakdown=inference_timing,
         )
 
     def reload(self) -> None:

@@ -815,7 +815,10 @@ def _inspect_frame(runtime, role: str, frame, *, physical_role: str = ""):
     # Publish the acquired image immediately.  The finalized preview (with ROI
     # shapes and measurements) is published again after inspection completes.
     runtime.previewUpdated.emit(role, preview_frame)
+    lock_wait_t0 = time.perf_counter()
     with runtime._inspect_lock:
+        lock_wait_ms = float((time.perf_counter() - lock_wait_t0) * 1000.0)
+        execute_t0 = time.perf_counter()
         response = runtime._inspection_executor.execute(
             runtime_controller_module.InspectionExecutionRequest(
                 camera_id=role,
@@ -824,6 +827,7 @@ def _inspect_frame(runtime, role: str, frame, *, physical_role: str = ""):
                 items=[item for item in runtime._runtime_context.inspection_items if item.camera_id == role],
             )
         )
+        execute_ms = float((time.perf_counter() - execute_t0) * 1000.0)
         runtime._last_item_results_by_camera[role] = list(response.item_results)
     roi_shapes = tuple(getattr(response, "roi_shapes", ()) or ())
     measurements = tuple(getattr(response, "measurements", ()) or ())
@@ -852,6 +856,25 @@ def _inspect_frame(runtime, role: str, frame, *, physical_role: str = ""):
         f"serial={camera_serial or '-'} result={response.result} "
         f"match={float(response.match_ms or 0.0):.1f}ms "
         f"infer={float(response.infer_ms or 0.0):.1f}ms"
+    )
+    raw_row = dict(getattr(response, "raw_row", {}) or {})
+    stage_timing = dict(raw_row.get("timing_breakdown", {}) or {})
+    backbone_backend = str(stage_timing.get("backbone_backend", "") or "-").strip() or "-"
+    backbone_provider = str(stage_timing.get("backbone_provider", "") or "-").strip() or "-"
+    backbone_batch_size = int(stage_timing.get("backbone_batch_size", 0) or 0)
+    backbone_chunk_size = int(stage_timing.get("backbone_chunk_size", 0) or 0)
+    backbone_chunk_count = int(stage_timing.get("backbone_chunk_count", 0) or 0)
+    runtime.logAppended.emit(
+        "[inspect-stage] "
+        f"trigger={trigger_id or '-'} logical={role} "
+        f"lock_wait={lock_wait_ms:.1f}ms execute={execute_ms:.1f}ms "
+        f"model_load={float(stage_timing.get('model_load_ms', 0.0) or 0.0):.1f}ms "
+        f"roi_preprocess={float(stage_timing.get('roi_preprocess_ms', 0.0) or 0.0):.1f}ms "
+        f"backbone={float(stage_timing.get('backbone_ms', 0.0) or 0.0):.1f}ms "
+        f"classify={float(stage_timing.get('classify_ms', 0.0) or 0.0):.1f}ms "
+        f"backend={backbone_backend} provider={backbone_provider} "
+        f"batch={backbone_batch_size} chunk={backbone_chunk_size} "
+        f"calls={backbone_chunk_count}"
     )
     return runtime_controller_module.CameraInspectionOutcome(
         role=role,

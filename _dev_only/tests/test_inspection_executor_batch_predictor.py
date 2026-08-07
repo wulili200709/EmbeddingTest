@@ -73,6 +73,17 @@ class _FrameBatchPredictor(_BatchPredictor):
                     {"pred": "NG", "diff": 0.6, "match_ms": 8.0, "infer_ms": 7.0},
                 ],
                 "roi_shapes": (),
+                "timing_breakdown": {
+                    "model_load_ms": 1.5,
+                    "roi_preprocess_ms": 2.5,
+                    "backbone_ms": 6.5,
+                    "classify_ms": 0.5,
+                    "backbone_backend": "ort",
+                    "backbone_provider": "CPUExecutionProvider",
+                    "backbone_batch_size": 2,
+                    "backbone_chunk_size": 2,
+                    "backbone_chunk_count": 1,
+                },
             },
         )()
 
@@ -155,6 +166,20 @@ class InspectionExecutorBatchPredictorTest(unittest.TestCase):
         self.assertEqual(response.result, "NG")
         self.assertAlmostEqual(response.match_ms, 8.0)
         self.assertAlmostEqual(response.infer_ms, 12.0)
+        self.assertEqual(
+            response.raw_row["timing_breakdown"],
+            {
+                "model_load_ms": 1.5,
+                "roi_preprocess_ms": 2.5,
+                "backbone_ms": 6.5,
+                "classify_ms": 0.5,
+                "backbone_backend": "ort",
+                "backbone_provider": "CPUExecutionProvider",
+                "backbone_batch_size": 2,
+                "backbone_chunk_size": 2,
+                "backbone_chunk_count": 1,
+            },
+        )
 
 
 if __name__ == "__main__":

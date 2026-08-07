@@ -1,0 +1,89 @@
+2026-08-07 13:03:19 [camera-diagnostic] detailed=enabled duration_seconds=1800
+2026-08-07 13:03:21 [preview-route] signal_role=cam1 frame_role=- target=cam1 canvas=1 trigger=- shape=- dtype=- ui_thread=True
+2026-08-07 13:03:21 [运行] 手动触发相机1
+2026-08-07 13:03:21 [capture] trigger=pending_20260807_130321_464533 logical=cam1 physical=cam1 serial=DB1623276 frame=1 timestamp=1786079001657 shape=(2048, 1600, 3) dtype=uint8
+2026-08-07 13:03:21 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=pending_20260807_130321_464533 shape=(2048, 1600, 3) dtype=uint8 ui_thread=True
+2026-08-07 13:03:21 [preview-render] target=cam1 trigger=pending_20260807_130321_464533 pixmap=1600x2048 ui_thread=True view_visible=True view_size=651x464 slot_bound=True render_ms=9.7
+2026-08-07 13:03:23 [inspect] trigger=pending_20260807_130321_464533 logical=cam1 physical=cam1 serial=DB1623276 result=OK match=177.1ms infer=285.2ms
+2026-08-07 13:03:23 [inspect-stage] trigger=pending_20260807_130321_464533 logical=cam1 lock_wait=0.0ms execute=1445.2ms model_load=1.4ms roi_preprocess=63.0ms backbone=219.3ms classify=0.3ms backend=ort provider=CPUExecutionProvider batch=22 chunk=1 calls=22
+2026-08-07 13:03:23 [trigger-summary] trigger=pending_20260807_130321_464533 result=OK duration_ms=1582 channels=cam1:OK/physical=cam1/serial=DB1623276/frame=1
+2026-08-07 13:03:23 [runtime] result=OK detail=cam1=OK；capture 122.0 ms；match 177.1 ms；infer 285.2 ms；耗时 1582 ms
+2026-08-07 13:03:23 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=pending_20260807_130321_464533 shape=(2048, 1600, 3) dtype=uint8 ui_thread=True
+2026-08-07 13:03:23 [preview-render] target=cam1 trigger=pending_20260807_130321_464533 pixmap=1600x2048 ui_thread=True view_visible=True view_size=651x441 slot_bound=True render_ms=12.1
+2026-08-07 13:03:24 [preview-route] signal_role=cam1 frame_role=- target=cam1 canvas=1 trigger=- shape=- dtype=- ui_thread=True
+2026-08-07 13:03:24 [运行] 手动触发相机1
+2026-08-07 13:03:24 [capture] trigger=pending_20260807_130324_584792 logical=cam1 physical=cam1 serial=DB1623276 frame=2 timestamp=1786079004706 shape=(2048, 1600, 3) dtype=uint8
+2026-08-07 13:03:24 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=pending_20260807_130324_584792 shape=(2048, 1600, 3) dtype=uint8 ui_thread=True
+2026-08-07 13:03:24 [preview-render] target=cam1 trigger=pending_20260807_130324_584792 pixmap=1600x2048 ui_thread=True view_visible=True view_size=651x464 slot_bound=True render_ms=9.5
+2026-08-07 13:03:25 [inspect] trigger=pending_20260807_130324_584792 logical=cam1 physical=cam1 serial=DB1623276 result=OK match=129.4ms infer=278.9ms
+2026-08-07 13:03:25 [inspect-stage] trigger=pending_20260807_130324_584792 logical=cam1 lock_wait=0.0ms execute=415.6ms model_load=1.4ms roi_preprocess=59.1ms backbone=216.9ms classify=0.3ms backend=ort provider=CPUExecutionProvider batch=22 chunk=1 calls=22
+2026-08-07 13:03:25 [trigger-summary] trigger=pending_20260807_130324_584792 result=OK duration_ms=517 channels=cam1:OK/physical=cam1/serial=DB1623276/frame=2
+2026-08-07 13:03:25 [runtime] result=OK detail=cam1=OK；capture 88.8 ms；match 129.4 ms；infer 278.9 ms；耗时 517 ms
+2026-08-07 13:03:25 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=pending_20260807_130324_584792 shape=(2048, 1600, 3) dtype=uint8 ui_thread=True
+2026-08-07 13:03:25 [preview-render] target=cam1 trigger=pending_20260807_130324_584792 pixmap=1600x2048 ui_thread=True view_visible=True view_size=651x441 slot_bound=True render_ms=10.2
+2026-08-07 13:03:26 [preview-route] signal_role=cam1 frame_role=- target=cam1 canvas=1 trigger=- shape=- dtype=- ui_thread=True
+2026-08-07 13:03:26 [运行] 手动触发相机1
+2026-08-07 13:03:26 [capture] trigger=pending_20260807_130326_431056 logical=cam1 physical=cam1 serial=DB1623276 frame=3 timestamp=1786079006554 shape=(2048, 1600, 3) dtype=uint8
+2026-08-07 13:03:26 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=pending_20260807_130326_431056 shape=(2048, 1600, 3) dtype=uint8 ui_thread=True
+2026-08-07 13:03:26 [preview-render] target=cam1 trigger=pending_20260807_130326_431056 pixmap=1600x2048 ui_thread=True view_visible=True view_size=651x464 slot_bound=True render_ms=9.8
+2026-08-07 13:03:27 [inspect] trigger=pending_20260807_130326_431056 logical=cam1 physical=cam1 serial=DB1623276 result=OK match=131.1ms infer=282.1ms
+2026-08-07 13:03:27 [inspect-stage] trigger=pending_20260807_130326_431056 logical=cam1 lock_wait=0.0ms execute=420.7ms model_load=1.4ms roi_preprocess=57.6ms backbone=221.6ms classify=0.3ms backend=ort provider=CPUExecutionProvider batch=22 chunk=1 calls=22
+2026-08-07 13:03:27 [trigger-summary] trigger=pending_20260807_130326_431056 result=OK duration_ms=522 channels=cam1:OK/physical=cam1/serial=DB1623276/frame=3
+2026-08-07 13:03:27 [runtime] result=OK detail=cam1=OK；capture 88.2 ms；match 131.1 ms；infer 282.1 ms；耗时 522 ms
+2026-08-07 13:03:27 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=pending_20260807_130326_431056 shape=(2048, 1600, 3) dtype=uint8 ui_thread=True
+2026-08-07 13:03:27 [preview-render] target=cam1 trigger=pending_20260807_130326_431056 pixmap=1600x2048 ui_thread=True view_visible=True view_size=651x441 slot_bound=True render_ms=10.6
+2026-08-07 13:03:27 [preview-route] signal_role=cam1 frame_role=- target=cam1 canvas=1 trigger=- shape=- dtype=- ui_thread=True
+2026-08-07 13:03:27 [运行] 手动触发相机1
+2026-08-07 13:03:27 [capture] trigger=pending_20260807_130327_692750 logical=cam1 physical=cam1 serial=DB1623276 frame=4 timestamp=1786079007814 shape=(2048, 1600, 3) dtype=uint8
+2026-08-07 13:03:27 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=pending_20260807_130327_692750 shape=(2048, 1600, 3) dtype=uint8 ui_thread=True
+2026-08-07 13:03:27 [preview-render] target=cam1 trigger=pending_20260807_130327_692750 pixmap=1600x2048 ui_thread=True view_visible=True view_size=651x464 slot_bound=True render_ms=9.5
+2026-08-07 13:03:28 [inspect] trigger=pending_20260807_130327_692750 logical=cam1 physical=cam1 serial=DB1623276 result=OK match=128.8ms infer=280.7ms
+2026-08-07 13:03:28 [inspect-stage] trigger=pending_20260807_130327_692750 logical=cam1 lock_wait=0.0ms execute=416.9ms model_load=1.5ms roi_preprocess=57.3ms backbone=220.5ms classify=0.3ms backend=ort provider=CPUExecutionProvider batch=22 chunk=1 calls=22
+2026-08-07 13:03:28 [trigger-summary] trigger=pending_20260807_130327_692750 result=OK duration_ms=518 channels=cam1:OK/physical=cam1/serial=DB1623276/frame=4
+2026-08-07 13:03:28 [runtime] result=OK detail=cam1=OK；capture 88.1 ms；match 128.8 ms；infer 280.7 ms；耗时 518 ms
+2026-08-07 13:03:28 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=pending_20260807_130327_692750 shape=(2048, 1600, 3) dtype=uint8 ui_thread=True
+2026-08-07 13:03:28 [preview-render] target=cam1 trigger=pending_20260807_130327_692750 pixmap=1600x2048 ui_thread=True view_visible=True view_size=651x441 slot_bound=True render_ms=11.5
+2026-08-07 13:03:28 [preview-route] signal_role=cam1 frame_role=- target=cam1 canvas=1 trigger=- shape=- dtype=- ui_thread=True
+2026-08-07 13:03:28 [运行] 手动触发相机1
+2026-08-07 13:03:29 [capture] trigger=pending_20260807_130328_948418 logical=cam1 physical=cam1 serial=DB1623276 frame=5 timestamp=1786079009068 shape=(2048, 1600, 3) dtype=uint8
+2026-08-07 13:03:29 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=pending_20260807_130328_948418 shape=(2048, 1600, 3) dtype=uint8 ui_thread=True
+2026-08-07 13:03:29 [preview-render] target=cam1 trigger=pending_20260807_130328_948418 pixmap=1600x2048 ui_thread=True view_visible=True view_size=651x464 slot_bound=True render_ms=9.6
+2026-08-07 13:03:29 [inspect] trigger=pending_20260807_130328_948418 logical=cam1 physical=cam1 serial=DB1623276 result=OK match=132.6ms infer=285.6ms
+2026-08-07 13:03:29 [inspect-stage] trigger=pending_20260807_130328_948418 logical=cam1 lock_wait=0.0ms execute=425.6ms model_load=1.4ms roi_preprocess=60.0ms backbone=222.8ms classify=0.3ms backend=ort provider=CPUExecutionProvider batch=22 chunk=1 calls=22
+2026-08-07 13:03:29 [trigger-summary] trigger=pending_20260807_130328_948418 result=OK duration_ms=526 channels=cam1:OK/physical=cam1/serial=DB1623276/frame=5
+2026-08-07 13:03:29 [runtime] result=OK detail=cam1=OK；capture 87.8 ms；match 132.6 ms；infer 285.6 ms；耗时 526 ms
+2026-08-07 13:03:29 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=pending_20260807_130328_948418 shape=(2048, 1600, 3) dtype=uint8 ui_thread=True
+2026-08-07 13:03:29 [preview-render] target=cam1 trigger=pending_20260807_130328_948418 pixmap=1600x2048 ui_thread=True view_visible=True view_size=651x441 slot_bound=True render_ms=11.2
+2026-08-07 13:03:30 [preview-route] signal_role=cam1 frame_role=- target=cam1 canvas=1 trigger=- shape=- dtype=- ui_thread=True
+2026-08-07 13:03:30 [运行] 手动触发相机1
+2026-08-07 13:03:30 [capture] trigger=pending_20260807_130330_230738 logical=cam1 physical=cam1 serial=DB1623276 frame=6 timestamp=1786079010351 shape=(2048, 1600, 3) dtype=uint8
+2026-08-07 13:03:30 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=pending_20260807_130330_230738 shape=(2048, 1600, 3) dtype=uint8 ui_thread=True
+2026-08-07 13:03:30 [preview-render] target=cam1 trigger=pending_20260807_130330_230738 pixmap=1600x2048 ui_thread=True view_visible=True view_size=651x464 slot_bound=True render_ms=9.5
+2026-08-07 13:03:30 [inspect] trigger=pending_20260807_130330_230738 logical=cam1 physical=cam1 serial=DB1623276 result=OK match=132.1ms infer=279.3ms
+2026-08-07 13:03:30 [inspect-stage] trigger=pending_20260807_130330_230738 logical=cam1 lock_wait=0.0ms execute=418.8ms model_load=1.4ms roi_preprocess=56.8ms backbone=219.6ms classify=0.3ms backend=ort provider=CPUExecutionProvider batch=22 chunk=1 calls=22
+2026-08-07 13:03:30 [trigger-summary] trigger=pending_20260807_130330_230738 result=OK duration_ms=521 channels=cam1:OK/physical=cam1/serial=DB1623276/frame=6
+2026-08-07 13:03:30 [runtime] result=OK detail=cam1=OK；capture 87.7 ms；match 132.1 ms；infer 279.3 ms；耗时 521 ms
+2026-08-07 13:03:30 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=pending_20260807_130330_230738 shape=(2048, 1600, 3) dtype=uint8 ui_thread=True
+2026-08-07 13:03:30 [preview-render] target=cam1 trigger=pending_20260807_130330_230738 pixmap=1600x2048 ui_thread=True view_visible=True view_size=651x441 slot_bound=True render_ms=11.3
+2026-08-07 13:03:31 [preview-route] signal_role=cam1 frame_role=- target=cam1 canvas=1 trigger=- shape=- dtype=- ui_thread=True
+2026-08-07 13:03:31 [运行] 手动触发相机1
+2026-08-07 13:03:31 [capture] trigger=pending_20260807_130331_607174 logical=cam1 physical=cam1 serial=DB1623276 frame=7 timestamp=1786079011728 shape=(2048, 1600, 3) dtype=uint8
+2026-08-07 13:03:31 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=pending_20260807_130331_607174 shape=(2048, 1600, 3) dtype=uint8 ui_thread=True
+2026-08-07 13:03:31 [preview-render] target=cam1 trigger=pending_20260807_130331_607174 pixmap=1600x2048 ui_thread=True view_visible=True view_size=651x464 slot_bound=True render_ms=9.5
+2026-08-07 13:03:32 [inspect] trigger=pending_20260807_130331_607174 logical=cam1 physical=cam1 serial=DB1623276 result=OK match=132.3ms infer=277.0ms
+2026-08-07 13:03:32 [inspect-stage] trigger=pending_20260807_130331_607174 logical=cam1 lock_wait=0.0ms execute=416.6ms model_load=1.4ms roi_preprocess=57.3ms backbone=216.9ms classify=0.3ms backend=ort provider=CPUExecutionProvider batch=22 chunk=1 calls=22
+2026-08-07 13:03:32 [trigger-summary] trigger=pending_20260807_130331_607174 result=OK duration_ms=519 channels=cam1:OK/physical=cam1/serial=DB1623276/frame=7
+2026-08-07 13:03:32 [runtime] result=OK detail=cam1=OK；capture 88.1 ms；match 132.3 ms；infer 277.0 ms；耗时 519 ms
+2026-08-07 13:03:32 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=pending_20260807_130331_607174 shape=(2048, 1600, 3) dtype=uint8 ui_thread=True
+2026-08-07 13:03:32 [preview-render] target=cam1 trigger=pending_20260807_130331_607174 pixmap=1600x2048 ui_thread=True view_visible=True view_size=651x441 slot_bound=True render_ms=10.7
+2026-08-07 13:03:34 [preview-route] signal_role=cam1 frame_role=- target=cam1 canvas=1 trigger=- shape=- dtype=- ui_thread=True
+2026-08-07 13:03:34 [运行] 手动触发相机1
+2026-08-07 13:03:35 [capture] trigger=pending_20260807_130334_871098 logical=cam1 physical=cam1 serial=DB1623276 frame=8 timestamp=1786079014991 shape=(2048, 1600, 3) dtype=uint8
+2026-08-07 13:03:35 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=pending_20260807_130334_871098 shape=(2048, 1600, 3) dtype=uint8 ui_thread=True
+2026-08-07 13:03:35 [preview-render] target=cam1 trigger=pending_20260807_130334_871098 pixmap=1600x2048 ui_thread=True view_visible=True view_size=651x464 slot_bound=True render_ms=10.5
+2026-08-07 13:03:35 [inspect] trigger=pending_20260807_130334_871098 logical=cam1 physical=cam1 serial=DB1623276 result=OK match=129.0ms infer=284.0ms
+2026-08-07 13:03:35 [inspect-stage] trigger=pending_20260807_130334_871098 logical=cam1 lock_wait=0.0ms execute=421.3ms model_load=1.4ms roi_preprocess=57.1ms backbone=224.1ms classify=0.3ms backend=ort provider=CPUExecutionProvider batch=22 chunk=1 calls=22
+2026-08-07 13:03:35 [trigger-summary] trigger=pending_20260807_130334_871098 result=OK duration_ms=521 channels=cam1:OK/physical=cam1/serial=DB1623276/frame=8
+2026-08-07 13:03:35 [runtime] result=OK detail=cam1=OK；capture 87.7 ms；match 129.0 ms；infer 284.0 ms；耗时 521 ms
+2026-08-07 13:03:35 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=pending_20260807_130334_871098 shape=(2048, 1600, 3) dtype=uint8 ui_thread=True
+2026-08-07 13:03:35 [preview-render] target=cam1 trigger=pending_20260807_130334_871098 pixmap=1600x2048 ui_thread=True view_visible=True view_size=651x441 slot_bound=True render_ms=10.5

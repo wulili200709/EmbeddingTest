@@ -70,7 +70,8 @@ class _FakeInferenceSession:
             and getattr(sess_options, "_config", {}).get("session.save_model_format") == "ORT"
         ):
             Path(sess_options.optimized_model_filepath).write_bytes(b"ort")
-        self._inputs = [types.SimpleNamespace(name="input")]
+        self.batch_sizes: list[int] = []
+        self._inputs = [types.SimpleNamespace(name="input", shape=["batch_size", 3, 224, 224])]
         self._outputs = [types.SimpleNamespace(name="embedding")]
 
     def get_inputs(self):
@@ -81,6 +82,7 @@ class _FakeInferenceSession:
 
     def run(self, _output_names, inputs):
         batch = np.asarray(next(iter(inputs.values())), dtype=np.float32)
+        self.batch_sizes.append(int(len(batch)))
         return [np.zeros((len(batch), 4), dtype=np.float32)]
 
 
@@ -98,6 +100,11 @@ class _FakePilImageContext:
 
 
 def _fake_dependency_modules() -> dict[str, object]:
+    fake_embedding_core = types.ModuleType("algorithms.embedding_core")
+    fake_embedding_core.compute_prototypes = lambda *args, **kwargs: None
+    fake_embedding_core.predict_one = lambda *args, **kwargs: None
+    fake_embedding_core.score_topk = lambda *args, **kwargs: None
+
     fake_torch = types.ModuleType("torch")
     fake_torch.Tensor = _FakeTensor
     fake_torch.float32 = np.float32
@@ -163,6 +170,7 @@ def _fake_dependency_modules() -> dict[str, object]:
     fake_pil.Image = fake_pil_image
 
     return {
+        "algorithms.embedding_core": fake_embedding_core,
         "torch": fake_torch,
         "torch.nn": fake_torch_nn,
         "torch.nn.functional": fake_torch_f,
@@ -199,6 +207,35 @@ class EmbeddingOrtBackboneTest(unittest.TestCase):
                         self.assertEqual(getattr(runner, "model_format", ""), "ort")
                         self.assertTrue(str(getattr(runner, "model_path", "")).endswith(".ort"))
                         self.assertEqual(actual_out_ch, out_ch)
+            finally:
+                sys.modules.pop(module_name, None)
+
+    def test_cpu_dynamic_batch_uses_configured_chunks_and_reports_details(self) -> None:
+        module_name = "algorithms.embedding"
+        fake_modules = _fake_dependency_modules()
+        sys.modules.pop(module_name, None)
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(sys.modules, fake_modules, clear=False):
+            embedding = importlib.import_module(module_name)
+            try:
+                with mock.patch.object(
+                    embedding,
+                    "writable_embedding_test_root",
+                    return_value=Path(tmpdir),
+                ):
+                    runner, _out_ch = embedding.load_backbone("efficientnet_b0", device="cpu")
+                    timing: dict[str, object] = {}
+                    result = runner.run(
+                        np.zeros((5, 3, 224, 224), dtype=np.float32),
+                        timing_breakdown=timing,
+                    )
+
+                self.assertEqual(result.shape, (5, 4))
+                self.assertEqual(runner.session.batch_sizes, [2, 2, 1])
+                self.assertEqual(timing["backbone_backend"], "ort")
+                self.assertEqual(timing["backbone_provider"], "CPUExecutionProvider")
+                self.assertEqual(timing["backbone_batch_size"], 5)
+                self.assertEqual(timing["backbone_chunk_size"], 2)
+                self.assertEqual(timing["backbone_chunk_count"], 3)
             finally:
                 sys.modules.pop(module_name, None)
 

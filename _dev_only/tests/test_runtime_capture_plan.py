@@ -141,6 +141,34 @@ class CapturePlanTests(unittest.TestCase):
             {"cam1": "S1", "cam3": "S3"},
         )
 
+    def test_independent_selection_overrides_stale_multi_light_channel_flags(self) -> None:
+        stale_config = {
+            "capture_mode": "independent",
+            "capture_channels": [
+                {"enabled": True, "role": "cam1", "physical_role": "cam1"},
+                {"enabled": True, "role": "cam2", "physical_role": "cam1"},
+                {"enabled": False, "role": "cam3", "physical_role": "cam1"},
+            ],
+        }
+
+        plan = build_capture_plan(stale_config, configured_roles=["cam1", "cam3"])
+
+        self.assertEqual(plan.logical_roles, ("cam1", "cam3"))
+        self.assertEqual(plan.physical_roles, ("cam1", "cam3"))
+        self.assertEqual(
+            plan.physical_bindings({"cam1": "S1", "cam2": "S2", "cam3": "S3"}),
+            {"cam1": "S1", "cam3": "S3"},
+        )
+
+    def test_mapped_mode_still_obeys_channel_enabled_flags(self) -> None:
+        mapped_config = _flexible_config()
+        mapped_config["capture_channels"][2]["enabled"] = False
+
+        plan = build_capture_plan(mapped_config, configured_roles=["cam1", "cam3"])
+
+        self.assertEqual(plan.logical_roles, ("cam1", "cam2"))
+        self.assertEqual(plan.physical_roles, ("cam1",))
+
     def test_two_physical_cameras_can_feed_three_logical_channels(self) -> None:
         plan = build_capture_plan(_flexible_config(), configured_roles=["cam1"])
         self.assertTrue(plan.uses_channel_mapping)

@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
@@ -56,6 +57,33 @@ def _is_lite_runtime() -> bool:
 _ORT_EXPORT_VERSION = "opset12_v1" if _is_lite_runtime() else "v1"
 _ORT_EXPORT_LOCK = RLock()
 _EMBEDDING_CACHE_VERSION = "v1"
+_DEFAULT_CPU_INFERENCE_CHUNK_SIZE = 2
+_MAX_CPU_INFERENCE_CHUNK_SIZE = 256
+
+
+def _normalize_cpu_inference_chunk_size(value: object) -> int:
+    try:
+        chunk_size = int(value)
+    except (TypeError, ValueError):
+        chunk_size = _DEFAULT_CPU_INFERENCE_CHUNK_SIZE
+    return max(1, min(_MAX_CPU_INFERENCE_CHUNK_SIZE, chunk_size))
+
+
+def _configured_cpu_inference_chunk_size() -> int:
+    environment_value = str(os.environ.get("LC_CPU_INFERENCE_CHUNK_SIZE", "")).strip()
+    if environment_value:
+        return _normalize_cpu_inference_chunk_size(environment_value)
+    settings_path = writable_embedding_test_root(__file__) / "config" / "runtime_mode_settings.json"
+    try:
+        with open(settings_path, "r", encoding="utf-8") as handle:
+            settings = json.load(handle)
+        if isinstance(settings, dict):
+            return _normalize_cpu_inference_chunk_size(
+                settings.get("cpu_inference_chunk_size", _DEFAULT_CPU_INFERENCE_CHUNK_SIZE)
+            )
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        pass
+    return _DEFAULT_CPU_INFERENCE_CHUNK_SIZE
 
 
 def get_device() -> str:
@@ -85,21 +113,67 @@ class OrtBackboneRunner:
     model_path: str
     model_format: str = "ort"
     runtime_backend: str = "ort"
+    cpu_inference_chunk_size: int = _DEFAULT_CPU_INFERENCE_CHUNK_SIZE
 
-    def run(self, batch: object) -> np.ndarray:
+    def run(
+        self,
+        batch: object,
+        *,
+        timing_breakdown: Optional[dict[str, object]] = None,
+    ) -> np.ndarray:
         if isinstance(batch, torch.Tensor):
             batch_np = batch.detach().cpu().numpy()
         else:
             batch_np = np.asarray(batch, dtype=np.float32)
         batch_np = np.ascontiguousarray(batch_np.astype(np.float32, copy=False))
+        batch_size = int(batch_np.shape[0]) if batch_np.ndim >= 1 else 0
         fixed_batch = self._fixed_batch_size()
-        if fixed_batch == 1 and batch_np.ndim >= 1 and batch_np.shape[0] > 1:
+        chunk_size = max(1, batch_size)
+        chunk_count = 1 if batch_size else 0
+        if fixed_batch == 1 and batch_size > 1:
+            chunk_size = 1
+            chunk_count = batch_size
             outputs = [
                 self._run_session(batch_np[index : index + 1])
-                for index in range(int(batch_np.shape[0]))
+                for index in range(batch_size)
             ]
-            return np.concatenate(outputs, axis=0)
-        return self._run_session(batch_np)
+            result = np.concatenate(outputs, axis=0)
+        elif self._uses_cpu_execution_provider() and batch_size > 0:
+            configured_chunk_size = _normalize_cpu_inference_chunk_size(
+                self.cpu_inference_chunk_size
+            )
+            chunk_size = min(configured_chunk_size, batch_size)
+            chunk_count = (batch_size + chunk_size - 1) // chunk_size
+            if chunk_count > 1:
+                outputs = [
+                    self._run_session(batch_np[index : index + chunk_size])
+                    for index in range(0, batch_size, chunk_size)
+                ]
+                result = np.concatenate(outputs, axis=0)
+            else:
+                result = self._run_session(batch_np)
+        else:
+            result = self._run_session(batch_np)
+        if timing_breakdown is not None:
+            timing_breakdown.update(
+                {
+                    "backbone_backend": "ort",
+                    "backbone_provider": self._primary_provider(),
+                    "backbone_batch_size": batch_size,
+                    "backbone_chunk_size": chunk_size,
+                    "backbone_chunk_count": chunk_count,
+                }
+            )
+        return result
+
+    def _primary_provider(self) -> str:
+        return str(self.providers[0]).strip() if self.providers else ""
+
+    def _uses_cpu_execution_provider(self) -> bool:
+        return (
+            _device_kind(self.device) == "cpu"
+            and self._primary_provider() == "CPUExecutionProvider"
+        )
 
     def _fixed_batch_size(self) -> Optional[int]:
         if not self.input_shape:
@@ -317,6 +391,7 @@ def _load_ort_backbone(name: str, *, device: str) -> Optional[OrtBackboneRunner]
         device=device,
         model_path=str(model_path),
         model_format=model_path.suffix.lstrip(".") or "ort",
+        cpu_inference_chunk_size=_configured_cpu_inference_chunk_size(),
     )
 
 
@@ -336,6 +411,9 @@ def describe_backbone_runner(feat_net: object) -> dict[str, object]:
         "model_format": model_format,
         "model_path": model_path,
         "providers": providers,
+        "cpu_inference_chunk_size": int(
+            getattr(feat_net, "cpu_inference_chunk_size", 0) or 0
+        ),
     }
 
 
@@ -366,9 +444,26 @@ TF = transforms.Compose(
 )
 
 
-def _run_embedding_batch(feat_net, batch: torch.Tensor, *, device: Optional[str] = None) -> np.ndarray:
+def _run_embedding_batch(
+    feat_net,
+    batch: torch.Tensor,
+    *,
+    device: Optional[str] = None,
+    timing_breakdown: Optional[dict[str, object]] = None,
+) -> np.ndarray:
     if getattr(feat_net, "runtime_backend", "") == "ort":
-        return feat_net.run(batch)
+        return feat_net.run(batch, timing_breakdown=timing_breakdown)
+    if timing_breakdown is not None:
+        batch_size = int(batch.shape[0]) if batch.ndim >= 1 else 0
+        timing_breakdown.update(
+            {
+                "backbone_backend": "torch",
+                "backbone_provider": "CUDA" if _device_kind(device) == "cuda" else "CPU",
+                "backbone_batch_size": batch_size,
+                "backbone_chunk_size": batch_size,
+                "backbone_chunk_count": 1 if batch_size else 0,
+            }
+        )
     batch = batch.to(_normalized_device(device))
     feat = feat_net(batch)
     if isinstance(feat, torch.Tensor):
@@ -696,6 +791,7 @@ def embed_batch_from_array(
     shape_by_label: dict[str, dict],
     device: Optional[str] = None,
     roi_xywhs: Optional[Sequence[Optional[Tuple[int, int, int, int]]]] = None,
+    timing_breakdown: Optional[dict[str, object]] = None,
 ) -> np.ndarray:
     labels = [str(name or "roi").strip() or "roi" for name in label_names]
     if not labels:
@@ -703,6 +799,7 @@ def embed_batch_from_array(
     if roi_xywhs is not None and len(roi_xywhs) != len(labels):
         raise ValueError("roi_xywhs must have the same length as label_names")
 
+    preprocess_t0 = time.perf_counter()
     context = _build_array_roi_context(image_bgr, shape_by_label=shape_by_label)
     tensors = []
     for index, label_name in enumerate(labels):
@@ -715,7 +812,19 @@ def embed_batch_from_array(
         tensors.append(TF(roi_img))
 
     batch = torch.stack(tensors, dim=0)
-    return _run_embedding_batch(feat_net, batch, device=device)
+    preprocess_ms = float((time.perf_counter() - preprocess_t0) * 1000.0)
+    backbone_t0 = time.perf_counter()
+    embeddings = _run_embedding_batch(
+        feat_net,
+        batch,
+        device=device,
+        timing_breakdown=timing_breakdown,
+    )
+    backbone_ms = float((time.perf_counter() - backbone_t0) * 1000.0)
+    if timing_breakdown is not None:
+        timing_breakdown["roi_preprocess_ms"] = preprocess_ms
+        timing_breakdown["backbone_ms"] = backbone_ms
+    return embeddings
 
 
 @torch.no_grad()
