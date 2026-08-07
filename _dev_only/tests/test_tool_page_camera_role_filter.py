@@ -17,6 +17,7 @@ if root_str not in sys.path:
 
 from application.algorithm_controller import TrainResult
 from domain.inspection_items import InspectionItem
+from ui.debug.tool_page.debug_camera_flow import _temporary_debug_camera_light
 from ui.debug.tool_page.page import ToolPage, _SampleAnnotationPreviewDialog
 
 
@@ -66,6 +67,49 @@ class _FakeAlgo:
             dialog_message="done",
             result_rows=[],
         )
+
+
+class _FakeIoController:
+    def __init__(self, states: dict[str, bool]) -> None:
+        self.states = dict(states)
+
+    def read_output(self, name: str) -> bool:
+        return self.states[name]
+
+    def set_outputs(self, updates: dict[str, bool]) -> None:
+        self.states.update(updates)
+
+
+class DebugCameraLightRestoreTest(unittest.TestCase):
+    def test_capture_light_is_temporary_and_previous_states_are_restored(self) -> None:
+        original = {
+            "light_cam1": False,
+            "light_cam2": True,
+            "light_cam3": False,
+        }
+        io_controller = _FakeIoController(original)
+
+        with _temporary_debug_camera_light(io_controller, 1):
+            self.assertEqual(
+                io_controller.states,
+                {"light_cam1": True, "light_cam2": False, "light_cam3": False},
+            )
+
+        self.assertEqual(io_controller.states, original)
+
+    def test_previous_states_are_restored_when_capture_fails(self) -> None:
+        original = {
+            "light_cam1": False,
+            "light_cam2": True,
+            "light_cam3": True,
+        }
+        io_controller = _FakeIoController(original)
+
+        with self.assertRaisesRegex(RuntimeError, "capture failed"):
+            with _temporary_debug_camera_light(io_controller, 2):
+                raise RuntimeError("capture failed")
+
+        self.assertEqual(io_controller.states, original)
 
 
 class _RoleFilterHarness:

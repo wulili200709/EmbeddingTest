@@ -795,7 +795,8 @@ def _inspect_frame(runtime, role: str, frame, *, physical_role: str = ""):
     runtime.logAppended.emit(
         "[capture] "
         f"trigger={trigger_id or '-'} logical={role} physical={physical_role_text} "
-        f"serial={camera_serial or '-'} frame={frame_number} timestamp={capture_timestamp}"
+        f"serial={camera_serial or '-'} frame={frame_number} timestamp={capture_timestamp} "
+        f"shape={tuple(image.shape)} dtype={image.dtype}"
     )
     preview_frame = build_runtime_preview_frame(
         role=role,

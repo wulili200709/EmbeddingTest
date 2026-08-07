@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import time
+from contextlib import contextmanager, nullcontext
 from datetime import datetime
+from typing import Iterator
 
 import cv2
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -19,6 +21,28 @@ from ui.debug.tool_page.debug_camera_runtime import (
     qimage_from_hik_frame,
 )
 from ui.i18n import tr
+
+
+_DEBUG_CAMERA_LIGHT_OUTPUT_NAMES = tuple(f"light_cam{index}" for index in range(1, 4))
+
+
+@contextmanager
+def _temporary_debug_camera_light(io_controller, light_index: int) -> Iterator[None]:
+    """Select one capture light, then restore every camera light to its prior state."""
+    previous_states = {
+        name: bool(io_controller.read_output(name))
+        for name in _DEBUG_CAMERA_LIGHT_OUTPUT_NAMES
+    }
+    try:
+        io_controller.set_outputs(
+            {
+                name: index == int(light_index)
+                for index, name in enumerate(_DEBUG_CAMERA_LIGHT_OUTPUT_NAMES, start=1)
+            }
+        )
+        yield
+    finally:
+        io_controller.set_outputs(previous_states)
 
 
 def _require_debug_camera_param_permission(self) -> bool:
@@ -418,24 +442,22 @@ def _grab_debug_camera_once(self) -> None:
             self._set_debug_camera_status("Mapped light source requires an open DI/DO connection")
             return
         light_index = self._debug_capture_light_index(role)
+    capture_light_context = (
+        _temporary_debug_camera_light(io_controller, light_index)
+        if light_index is not None
+        else nullcontext()
+    )
     try:
-        if light_index is not None:
-            for index in range(1, 4):
-                io_controller.set_camera_light(index, index == light_index)
-            stable_delay_ms = max(0, int(float(channel.get("stable_delay_ms", 50) or 50)))
-            if stable_delay_ms:
-                time.sleep(stable_delay_ms / 1000.0)
-        frame = self._debug_frame_grab_service.capture_once("debug", timeout_ms=1000)
+        with capture_light_context:
+            if light_index is not None:
+                stable_delay_ms = max(0, int(float(channel.get("stable_delay_ms", 50) or 50)))
+                if stable_delay_ms:
+                    time.sleep(stable_delay_ms / 1000.0)
+            frame = self._debug_frame_grab_service.capture_once("debug", timeout_ms=1000)
     except Exception as exc:
         QtWidgets.QMessageBox.critical(self, "Camera Debug", f"Capture failed: {exc}")
         self._set_debug_camera_status(f"Capture failed: {exc}")
         return
-    finally:
-        if light_index is not None:
-            try:
-                io_controller.set_camera_light(light_index, False)
-            except Exception:
-                pass
     try:
         self._show_debug_preview_image(qimage_from_hik_frame(frame))
     except Exception:

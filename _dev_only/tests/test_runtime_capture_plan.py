@@ -20,7 +20,7 @@ from infrastructure.camera_settings_store import (
     CameraSettingsStore,
 )
 from ui.runtime.runtime_mode_pyside6 import RuntimeModePage
-from ui.window_common import update_runtime_preview
+from ui.window_common import _runtime_source_pixmap, update_runtime_preview
 
 
 def _flexible_config() -> dict:
@@ -50,6 +50,31 @@ def _flexible_config() -> dict:
 
 
 class CapturePlanTests(unittest.TestCase):
+    def test_preview_conversion_handles_single_channel_and_uint16_frames(self) -> None:
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        images = (
+            np.full((6, 8, 1), 127, dtype=np.uint8),
+            np.arange(48, dtype=np.uint16).reshape(6, 8) * 100,
+        )
+        for image in images:
+            with self.subTest(shape=image.shape, dtype=str(image.dtype)):
+                frame = RuntimePreviewFrame(role="cam3", image_bgr=image)
+                pixmap = _runtime_source_pixmap(frame)
+                self.assertFalse(pixmap.isNull())
+                self.assertEqual((pixmap.width(), pixmap.height()), (8, 6))
+        app.processEvents()
+
+    def test_bgr_preview_uses_qt_bgr_format_without_swapping_colors(self) -> None:
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        image = np.zeros((2, 2, 3), dtype=np.uint8)
+        image[:, :] = (0, 0, 255)  # red expressed as BGR
+        pixmap = _runtime_source_pixmap(RuntimePreviewFrame(role="cam3", image_bgr=image))
+        color = pixmap.toImage().pixelColor(0, 0)
+        self.assertGreater(color.red(), 240)
+        self.assertLess(color.green(), 15)
+        self.assertLess(color.blue(), 15)
+        app.processEvents()
+
     def test_runtime_camera_log_filters_and_writes_in_background(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "runtime_camera.log"
@@ -318,6 +343,35 @@ class CapturePlanTests(unittest.TestCase):
         update_runtime_preview(page, "cam1", new_frame)
         self.assertIsNotNone(page.view_cam3._pixmap)
         self.assertIsNone(page.view_cam1._pixmap)
+        page.deleteLater()
+        app.processEvents()
+
+    def test_sparse_cam1_cam3_layout_rebinds_cam3_view_to_canvas_two(self) -> None:
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        page = RuntimeModePage()
+        page.resize(1124, 700)
+        page.set_configured_camera_roles(["cam1", "cam3"])
+        page.set_active_camera_roles(["cam1", "cam3"])
+        page.show()
+        app.processEvents()
+
+        self.assertEqual(page._camera_slot_roles[:2], ["cam1", "cam3"])
+        self.assertIs(page._camera_slots[1]._view, page.view_cam3)
+        self.assertTrue(page.view_cam3.isVisible())
+        self.assertGreater(page.view_cam3.width(), 0)
+        self.assertGreater(page.view_cam3.height(), 0)
+
+        frame = RuntimePreviewFrame(
+            role="cam3",
+            image_bgr=np.full((60, 80, 3), 180, dtype=np.uint8),
+        )
+        update_runtime_preview(page, "cam3", frame)
+        app.processEvents()
+        pixmap = page.view_cam3.pixmap()
+        self.assertIsNotNone(pixmap)
+        self.assertFalse(pixmap.isNull())
+        self.assertEqual(page.view_cam3.text(), "")
+        page.close()
         page.deleteLater()
         app.processEvents()
 

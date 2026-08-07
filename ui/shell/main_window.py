@@ -7,7 +7,11 @@ from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from common.mvs_launcher import find_mvs_executable
+from common.mvs_launcher import (
+    find_mvs_executable,
+    isolated_mvs_dll_search,
+    mvs_launch_environment,
+)
 from common.runtime_camera_logging import (
     record_runtime_camera_message,
     set_detailed_camera_diagnostics,
@@ -720,7 +724,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tool_page.debugCameraConnectRequested.connect(self._prepare_runtime_for_debug_camera)
         self.tool_page.debugCameraConnected.connect(self._on_debug_camera_connected)
         self.tool_page.cameraSettingsApplied.connect(self._on_camera_settings_applied)
-        self.runtime_ctrl.previewUpdated.connect(self._on_runtime_preview_updated)
+        self.runtime_ctrl.previewUpdated.connect(
+            self._on_runtime_preview_updated,
+            QtCore.Qt.ConnectionType.QueuedConnection,
+        )
         self.runtime_ctrl.productNameChanged.connect(lambda *_: self._sync_shell_status())
         self.runtime_ctrl.activeCameraRolesChanged.connect(self._on_runtime_active_roles_changed)
         self.runtime_ctrl.triggerResultReady.connect(self._update_sidebar_runtime_result)
@@ -989,6 +996,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _open_mvs(self) -> None:
         if not self._require_permission("camera.open_mvs", tr("action.open_mvs")):
             return
+        running_process = self._mvs_process
+        if running_process is not None and running_process.state() != QtCore.QProcess.ProcessState.NotRunning:
+            return
         executable = find_mvs_executable()
         if executable is None:
             QtWidgets.QMessageBox.warning(
@@ -997,16 +1007,27 @@ class MainWindow(QtWidgets.QMainWindow):
                 tr("dialog.open_mvs_not_found"),
             )
             return
-        try:
-            # Match double-clicking the installed executable in Explorer.
-            os.startfile(str(executable), "open")
-        except OSError:
+        process = QtCore.QProcess(self)
+        process.setWorkingDirectory(str(executable.parent))
+        process_environment = QtCore.QProcessEnvironment()
+        for name, value in mvs_launch_environment().items():
+            process_environment.insert(str(name), str(value))
+        process.setProcessEnvironment(process_environment)
+        with isolated_mvs_dll_search():
+            process.start(str(executable), [])
+            started = process.waitForStarted(3000)
+        if not started:
             QtWidgets.QMessageBox.warning(
                 self,
                 tr("dialog.open_mvs_title"),
                 tr("dialog.open_mvs_failed", path=executable),
             )
+            process.deleteLater()
             return
+        self._mvs_process = process
+        process.finished.connect(
+            lambda *_args, completed_process=process: self._clear_mvs_process(completed_process)
+        )
         self._audit_event(module="相机", action="打开 MVS", target=str(executable))
 
     def _clear_mvs_process(self, completed_process: QtCore.QProcess) -> None:
@@ -1290,6 +1311,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # 预览图更新（RuntimeController Signal → RuntimeModePage）
     # ------------------------------------------------------------------
 
+    @QtCore.Slot(str, object)
     def _on_runtime_preview_updated(self, role: str, source: object) -> None:
         _on_runtime_preview_updated_impl(self, role, source)
 

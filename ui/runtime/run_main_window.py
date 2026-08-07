@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6 import QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from application import (
     DEFAULT_RELEASE_PASSWORD,
@@ -50,13 +50,17 @@ class RunMainWindow(QtWidgets.QMainWindow):
 
     def _connect_signals(self) -> None:
         connect_runtime_page(self.runtime_page, self.runtime_ctrl)
-        self.runtime_ctrl.previewUpdated.connect(self._on_runtime_preview_updated)
+        self.runtime_ctrl.previewUpdated.connect(
+            self._on_runtime_preview_updated,
+            QtCore.Qt.ConnectionType.QueuedConnection,
+        )
         self.runtime_page.cameraLayoutSettingsChanged.connect(
             self._on_runtime_camera_layout_settings_changed
         )
 
         connect_runtime_dialogs(self, self.runtime_ctrl)
 
+    @QtCore.Slot(str, object)
     def _on_runtime_preview_updated(self, role: str, source: object) -> None:
         update_runtime_preview(self.runtime_page, role, source)
 

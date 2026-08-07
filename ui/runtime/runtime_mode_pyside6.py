@@ -913,7 +913,15 @@ class RuntimeModePage(QtWidgets.QWidget):
         display_roles = [role for role in CAMERA_ROLES if role in self._display_role_set()]
         if len(display_roles) >= len(CAMERA_ROLES):
             return
-        self._camera_slot_roles = self._normalize_camera_slot_roles(display_roles)
+        normalized_roles = self._normalize_camera_slot_roles(display_roles)
+        if normalized_roles == self._camera_slot_roles:
+            return
+        self._camera_slot_roles = normalized_roles
+        # Role order changes must rebind the actual RuntimeImageView widgets,
+        # not only refresh the slot titles/visibility.  Otherwise a Cam1+Cam3
+        # product can show "Camera 3" above a slot that still contains the
+        # now-hidden Cam2 view, while the real Cam3 view is detached.
+        self._apply_camera_layout(refresh_previews=True)
 
     @staticmethod
     def _set_combo_current_data(combo: QtWidgets.QComboBox, value: str) -> None:

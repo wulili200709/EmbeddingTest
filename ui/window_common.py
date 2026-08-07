@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -9,6 +10,10 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from common import labelme_io
 from common.app_paths import packaged_embedding_test_root, writable_embedding_test_root
 from common.camera_roles import DEFAULT_CAMERA_ROLE, camera_role_from_text, normalize_camera_role
+from common.runtime_camera_logging import (
+    detailed_camera_diagnostics_enabled,
+    record_runtime_camera_message,
+)
 from application import AlgorithmController, ProductSession
 from application.runtime.preview_frame import RuntimePreviewFrame, RuntimePreviewShape
 from application.runtime.preview_frame import read_exported_runtime_preview_measurements
@@ -96,7 +101,10 @@ def connect_runtime_page(
     runtime_ctrl.durationChanged.connect(runtime_page.set_duration_ms)
     runtime_ctrl.timingBreakdownChanged.connect(runtime_page.set_timing_breakdown)
     runtime_ctrl.cameraViewsCleared.connect(runtime_page.clear_camera_views)
-    runtime_ctrl.previewCycleStarted.connect(runtime_page.begin_camera_preview_cycle)
+    runtime_ctrl.previewCycleStarted.connect(
+        runtime_page.begin_camera_preview_cycle,
+        QtCore.Qt.ConnectionType.QueuedConnection,
+    )
     runtime_ctrl.activeCameraRolesChanged.connect(runtime_page.set_active_camera_roles)
     runtime_ctrl.physicalCameraRolesChanged.connect(runtime_page.set_physical_camera_roles)
     runtime_ctrl.physicalCameraBindingsChanged.connect(runtime_page.set_physical_camera_bindings)
@@ -116,7 +124,8 @@ def connect_runtime_dialogs(window: QtWidgets.QWidget, runtime_ctrl) -> None:
 
 
 def update_runtime_preview(runtime_page, role: str, source: object) -> None:
-    role_text = normalize_camera_role(role)
+    signal_role = normalize_camera_role(role)
+    role_text = signal_role
     if isinstance(source, RuntimePreviewFrame):
         # The frame carries the authoritative acquisition role.  This keeps a
         # Cam3 frame from being painted onto Cam1 if a stale signal argument is
@@ -124,50 +133,96 @@ def update_runtime_preview(runtime_page, role: str, source: object) -> None:
         role_text = normalize_camera_role(source.role) or role_text
     if not role_text:
         return
+    is_ui_thread = QtCore.QThread.currentThread() == runtime_page.thread()
+    if detailed_camera_diagnostics_enabled():
+        image = np.asarray(source.image_bgr) if isinstance(source, RuntimePreviewFrame) else None
+        slot_roles = list(getattr(runtime_page, "_camera_slot_roles", []) or [])
+        slot_index = slot_roles.index(role_text) + 1 if role_text in slot_roles else 0
+        record_runtime_camera_message(
+            "[preview-route] "
+            f"signal_role={signal_role or '-'} frame_role="
+            f"{str(getattr(source, 'role', '') or '-')} target={role_text} "
+            f"canvas={slot_index or '-'} trigger="
+            f"{str(getattr(source, 'trigger_id', '') or '-')} "
+            f"shape={tuple(image.shape) if image is not None else '-'} "
+            f"dtype={str(image.dtype) if image is not None else '-'} "
+            f"ui_thread={is_ui_thread}"
+        )
     accepts_preview = getattr(runtime_page, "accepts_camera_preview", None)
     if callable(accepts_preview) and not bool(accepts_preview(role_text, source)):
         return
 
-    display_size = _runtime_preview_display_size(runtime_page, role_text)
-    if hasattr(runtime_page, "set_camera_preview_source"):
-        runtime_page.set_camera_preview_source(role_text, source)
-    if isinstance(source, RuntimePreviewFrame):
-        roi_statuses = {}
-        if hasattr(runtime_page, "roi_statuses_for_camera"):
-            roi_statuses = dict(runtime_page.roi_statuses_for_camera(role_text) or {})
-        visible_roi_labels = _runtime_visible_roi_labels(runtime_page, role_text)
-        runtime_page.set_camera_pixmap(
-            role_text,
-            _render_runtime_overlay_pixmap(
+    try:
+        display_size = _runtime_preview_display_size(runtime_page, role_text)
+        if hasattr(runtime_page, "set_camera_preview_source"):
+            runtime_page.set_camera_preview_source(role_text, source)
+        if isinstance(source, RuntimePreviewFrame):
+            render_started = time.perf_counter()
+            roi_statuses = {}
+            if hasattr(runtime_page, "roi_statuses_for_camera"):
+                roi_statuses = dict(runtime_page.roi_statuses_for_camera(role_text) or {})
+            visible_roi_labels = _runtime_visible_roi_labels(runtime_page, role_text)
+            pixmap = _render_runtime_overlay_pixmap(
                 source,
                 roi_statuses=roi_statuses,
                 visible_roi_labels=visible_roi_labels,
                 display_size=display_size,
-            ),
-        )
-        return
+            )
+            if pixmap.isNull():
+                raise RuntimeError("preview conversion returned a null pixmap")
+            runtime_page.set_camera_pixmap(role_text, pixmap)
+            render_ms = (time.perf_counter() - render_started) * 1000.0
+            if detailed_camera_diagnostics_enabled():
+                view = getattr(runtime_page, f"view_{role_text}", None)
+                slot_roles = list(getattr(runtime_page, "_camera_slot_roles", []) or [])
+                slot_index = slot_roles.index(role_text) if role_text in slot_roles else -1
+                slots = list(getattr(runtime_page, "_camera_slots", []) or [])
+                slot = slots[slot_index] if 0 <= slot_index < len(slots) else None
+                record_runtime_camera_message(
+                    "[preview-render] "
+                    f"target={role_text} trigger={source.trigger_id or '-'} "
+                    f"pixmap={pixmap.width()}x{pixmap.height()} ui_thread={is_ui_thread} "
+                    f"view_visible={bool(view is not None and view.isVisible())} "
+                    f"view_size="
+                    f"{view.width() if view is not None else 0}x"
+                    f"{view.height() if view is not None else 0} "
+                    f"slot_bound={bool(slot is not None and getattr(slot, '_view', None) is view)} "
+                    f"render_ms={render_ms:.1f}"
+                )
+            return
 
-    path = str(source or "").strip()
-    if path and Path(path).exists():
-        roi_statuses = {}
-        if hasattr(runtime_page, "roi_statuses_for_camera"):
-            roi_statuses = dict(runtime_page.roi_statuses_for_camera(role_text) or {})
-        visible_roi_labels = _runtime_visible_roi_labels(runtime_page, role_text)
-        runtime_page.set_camera_pixmap(
-            role_text,
-            _render_runtime_overlay_pixmap(
+        path = str(source or "").strip()
+        if path and Path(path).exists():
+            roi_statuses = {}
+            if hasattr(runtime_page, "roi_statuses_for_camera"):
+                roi_statuses = dict(runtime_page.roi_statuses_for_camera(role_text) or {})
+            visible_roi_labels = _runtime_visible_roi_labels(runtime_page, role_text)
+            pixmap = _render_runtime_overlay_pixmap(
                 path,
                 roi_statuses=roi_statuses,
                 visible_roi_labels=visible_roi_labels,
                 display_size=display_size,
-            ),
+            )
+            if pixmap.isNull():
+                raise RuntimeError("preview image path returned a null pixmap")
+            runtime_page.set_camera_pixmap(role_text, pixmap)
+            return
+        runtime_page.set_camera_pixmap(
+            role_text,
+            None,
+            placeholder=tr("runtime.camera_placeholder", role=role_text.upper()),
         )
-        return
-    runtime_page.set_camera_pixmap(
-        role_text,
-        None,
-        placeholder=tr("runtime.camera_placeholder", role=role_text.upper()),
-    )
+    except Exception as exc:
+        record_runtime_camera_message(
+            "[preview-render-error] "
+            f"target={role_text} trigger={str(getattr(source, 'trigger_id', '') or '-')} "
+            f"ui_thread={is_ui_thread} error={type(exc).__name__}: {exc}"
+        )
+        runtime_page.set_camera_pixmap(
+            role_text,
+            None,
+            placeholder=tr("runtime.camera_placeholder", role=role_text.upper()),
+        )
 
 
 def _runtime_preview_display_size(runtime_page, role: str) -> QtCore.QSize | None:
@@ -221,9 +276,9 @@ def _render_runtime_overlay_pixmap(
 
 def _runtime_source_pixmap(source: str | RuntimePreviewFrame) -> QtGui.QPixmap:
     if isinstance(source, RuntimePreviewFrame):
-        image = np.asarray(source.image_bgr)
-        if image.ndim == 2:
-            gray = np.ascontiguousarray(image)
+        image = _runtime_preview_uint8(source.image_bgr)
+        if image.ndim == 2 or (image.ndim == 3 and image.shape[2] == 1):
+            gray = np.ascontiguousarray(image.reshape(image.shape[0], image.shape[1]))
             qimage = QtGui.QImage(
                 gray.data,
                 int(gray.shape[1]),
@@ -231,17 +286,44 @@ def _runtime_source_pixmap(source: str | RuntimePreviewFrame) -> QtGui.QPixmap:
                 int(gray.strides[0]),
                 QtGui.QImage.Format_Grayscale8,
             )
-            return QtGui.QPixmap.fromImage(qimage.copy())
-        rgb = np.ascontiguousarray(image[:, :, :3][:, :, ::-1])
+            qimage = qimage.copy()
+            if qimage.isNull():
+                raise RuntimeError("failed to construct grayscale QImage")
+            return QtGui.QPixmap.fromImage(qimage)
+        if image.ndim != 3 or image.shape[2] < 3:
+            raise ValueError(f"unsupported preview image shape: {image.shape}")
+        # RuntimePreviewFrame stores BGR data.  Qt supports BGR888 directly;
+        # avoiding a full-frame BGR->RGB reverse/copy saves tens of
+        # milliseconds for typical 2448x1500 industrial-camera frames.
+        bgr = np.ascontiguousarray(image[:, :, :3])
         qimage = QtGui.QImage(
-            rgb.data,
-            int(rgb.shape[1]),
-            int(rgb.shape[0]),
-            int(rgb.strides[0]),
-            QtGui.QImage.Format_RGB888,
+            bgr.data,
+            int(bgr.shape[1]),
+            int(bgr.shape[0]),
+            int(bgr.strides[0]),
+            QtGui.QImage.Format_BGR888,
         )
-        return QtGui.QPixmap.fromImage(qimage.copy())
+        if qimage.isNull():
+            raise RuntimeError("failed to construct BGR QImage")
+        return QtGui.QPixmap.fromImage(qimage)
     return QtGui.QPixmap(str(source or ""))
+
+
+def _runtime_preview_uint8(image_source) -> np.ndarray:
+    image = np.asarray(image_source)
+    if image.size <= 0 or image.ndim not in {2, 3}:
+        raise ValueError(f"invalid preview image shape: {image.shape}")
+    if image.dtype == np.uint8:
+        return image
+    numeric = np.nan_to_num(image.astype(np.float32, copy=False))
+    minimum = float(numeric.min())
+    maximum = float(numeric.max())
+    if 0.0 <= minimum and maximum <= 255.0:
+        return np.clip(numeric, 0.0, 255.0).astype(np.uint8)
+    if maximum <= minimum:
+        return np.zeros(image.shape, dtype=np.uint8)
+    scaled = (numeric - minimum) * (255.0 / (maximum - minimum))
+    return np.clip(scaled, 0.0, 255.0).astype(np.uint8)
 
 
 def _draw_runtime_search_region(
