@@ -48,6 +48,40 @@ class RoiOverlayColorTests(unittest.TestCase):
         self.assertTrue(is_roi_label("roi1"))
         self.assertFalse(is_roi_label("anchor"))
 
+    def test_distance_ng_propagates_to_its_helper_rois(self) -> None:
+        rows = [
+            {
+                "item_id": "left_line",
+                "camera_id": "cam2",
+                "roi_label": "roi2",
+                "algorithm_code": "find_line",
+                "status_kind": "ok",
+            },
+            {
+                "item_id": "right_line",
+                "camera_id": "cam2",
+                "roi_label": "roi3",
+                "algorithm_code": "find_line",
+                "status_kind": "ok",
+            },
+            {
+                "item_id": "width",
+                "camera_id": "cam2",
+                "roi_label": "",
+                "algorithm_code": "line_distance",
+                "status_kind": "ng",
+                "params": {
+                    "line_a_item_id": "left_line",
+                    "line_b_item_id": "right_line",
+                },
+            },
+        ]
+
+        self.assertEqual(
+            merge_roi_statuses(rows, camera_id="cam2"),
+            {"roi2": "ng", "roi3": "ng"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

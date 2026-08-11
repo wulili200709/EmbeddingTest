@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from typing import Dict, List, Optional, Tuple
 
+from algorithms.registry import is_measurement_tool_algorithm
 from common import labelme_io
 from common.app_logging import get_app_logger
 from common.camera_roles import normalize_camera_role
@@ -133,12 +134,32 @@ class RoiAnnotationController:
             self.owner._sample_roi_annotations_by_path.pop(normalized_path, None)
         self.save()
 
+    def annotation_required_labels(self, camera_role: object = None) -> List[str]:
+        """ROI labels whose OK/NG sample status is required for model fitting."""
+        role = _normalize_camera_role(camera_role or self.owner.current_camera_role()) or "cam1"
+        labels: List[str] = []
+        seen: set[str] = set()
+        for item in list(getattr(self.owner, "inspection_items", []) or []):
+            item_role = _normalize_camera_role(getattr(item, "camera_id", "")) or "cam1"
+            label = str(getattr(item, "roi_label", "") or "").strip()
+            if (
+                item_role != role
+                or not bool(getattr(item, "enabled", True))
+                or is_measurement_tool_algorithm(getattr(item, "algorithm_code", ""))
+                or not label.lower().startswith("roi")
+                or label in seen
+            ):
+                continue
+            labels.append(label)
+            seen.add(label)
+        return labels
+
     def mark_all_status(self, path: str, status: object, camera_role: object = None) -> None:
         role = _normalize_camera_role(camera_role or self.owner.current_camera_role()) or "cam1"
         status_text = str(status or "").strip().upper()
         if status_text not in {"OK", "NG"}:
             return
-        for label in self.owner._inspection_label_names_for_role(role):
+        for label in self.annotation_required_labels(role):
             if self.has_geometry(path, label):
                 self.set_status_for_path(path, role, label, status_text)
 
@@ -179,7 +200,7 @@ class RoiAnnotationController:
         return ok_count, ng_count, unset_count
 
     def progress_for_path(self, path: str, camera_role: object = None) -> Tuple[int, int]:
-        labels = self.owner._inspection_label_names_for_role(camera_role)
+        labels = self.annotation_required_labels(camera_role)
         if not labels:
             return 0, 0
         role = _normalize_camera_role(camera_role or self.owner.current_camera_role()) or "cam1"
@@ -191,12 +212,14 @@ class RoiAnnotationController:
         return present_count, len(labels)
 
     def state_for_path(self, path: str, camera_role: object = None) -> str:
-        labels = self.owner._inspection_label_names_for_role(camera_role)
-        if not labels:
+        geometry_labels = self.owner._inspection_label_names_for_role(camera_role)
+        if not geometry_labels:
             return tr("sample.unset")
-        geometry_missing = sum(1 for label in labels if not self.has_geometry(path, label))
+        geometry_missing = sum(1 for label in geometry_labels if not self.has_geometry(path, label))
         if geometry_missing:
             return tr("sample.missing_roi")
+        if not self.annotation_required_labels(camera_role):
+            return tr("sample.complete")
         present_count, total_count = self.progress_for_path(path, camera_role)
         if total_count <= 0 or present_count <= 0:
             return tr("sample.unset")

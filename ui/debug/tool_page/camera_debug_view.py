@@ -1,11 +1,84 @@
 from __future__ import annotations
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from common.camera_roles import CAMERA_ROLES
 from infrastructure.camera_settings_store import CAPTURE_DEFAULT_EXPOSURE_US
 from ui.i18n import tr
 from ui.runtime import RuntimeImageView
+
+
+def _capture_plan_icon(
+    name: str,
+    *,
+    size: int = 18,
+    color: str = "#73b7ff",
+) -> QtGui.QIcon:
+    """Return a small theme-friendly line icon without external assets."""
+    pixmap = QtGui.QPixmap(size, size)
+    pixmap.fill(QtCore.Qt.GlobalColor.transparent)
+    painter = QtGui.QPainter(pixmap)
+    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+
+    scale = float(size) / 18.0
+    pen = QtGui.QPen(QtGui.QColor(color))
+    pen.setWidthF(max(1.4, 1.55 * scale))
+    pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+
+    def point(x: float, y: float) -> QtCore.QPointF:
+        return QtCore.QPointF(x * scale, y * scale)
+
+    def rect(x: float, y: float, width: float, height: float) -> QtCore.QRectF:
+        return QtCore.QRectF(x * scale, y * scale, width * scale, height * scale)
+
+    if name == "camera":
+        painter.drawRoundedRect(rect(2.0, 5.2, 14.0, 10.2), 2.0 * scale, 2.0 * scale)
+        painter.drawEllipse(rect(6.3, 7.5, 5.4, 5.4))
+        painter.drawLine(point(5.0, 5.2), point(6.6, 3.4))
+        painter.drawLine(point(6.6, 3.4), point(10.3, 3.4))
+        painter.drawLine(point(10.3, 3.4), point(11.8, 5.2))
+    elif name == "route":
+        painter.drawLine(point(4.3, 4.0), point(10.0, 4.0))
+        painter.drawLine(point(10.0, 4.0), point(10.0, 14.0))
+        painter.drawLine(point(10.0, 7.0), point(14.0, 7.0))
+        painter.drawLine(point(10.0, 14.0), point(14.0, 14.0))
+        for x, y in ((3.0, 4.0), (15.0, 7.0), (15.0, 14.0)):
+            painter.setBrush(QtGui.QColor(color))
+            painter.drawEllipse(point(x, y), 1.5 * scale, 1.5 * scale)
+            painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+    elif name == "sliders":
+        for y, knob_x in ((4.0, 6.0), (9.0, 12.0), (14.0, 8.0)):
+            painter.drawLine(point(2.5, y), point(15.5, y))
+            painter.setBrush(QtGui.QColor("#202833"))
+            painter.drawEllipse(point(knob_x, y), 2.0 * scale, 2.0 * scale)
+            painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+    elif name == "light":
+        painter.drawEllipse(rect(5.2, 2.0, 7.6, 8.0))
+        painter.drawLine(point(6.8, 11.0), point(11.2, 11.0))
+        painter.drawLine(point(7.4, 13.5), point(10.6, 13.5))
+        painter.drawLine(point(9.0, 0.5), point(9.0, 0.0))
+        painter.drawLine(point(3.4, 4.0), point(2.3, 3.2))
+        painter.drawLine(point(14.6, 4.0), point(15.7, 3.2))
+    elif name == "clock":
+        painter.drawEllipse(rect(2.3, 2.3, 13.4, 13.4))
+        painter.drawLine(point(9.0, 5.0), point(9.0, 9.0))
+        painter.drawLine(point(9.0, 9.0), point(12.2, 10.7))
+    elif name == "gain":
+        painter.drawRoundedRect(rect(2.5, 11.5, 2.6, 4.0), 0.7 * scale, 0.7 * scale)
+        painter.drawRoundedRect(rect(7.7, 7.5, 2.6, 8.0), 0.7 * scale, 0.7 * scale)
+        painter.drawRoundedRect(rect(12.9, 3.0, 2.6, 12.5), 0.7 * scale, 0.7 * scale)
+    elif name == "check":
+        painter.drawEllipse(rect(1.8, 1.8, 14.4, 14.4))
+        painter.drawLine(point(5.0, 9.0), point(7.7, 11.6))
+        painter.drawLine(point(7.7, 11.6), point(13.1, 6.2))
+    else:
+        painter.drawRoundedRect(rect(2.3, 2.3, 13.4, 13.4), 2.0 * scale, 2.0 * scale)
+
+    painter.end()
+    return QtGui.QIcon(pixmap)
 
 
 def build_camera_debug_page(
@@ -252,61 +325,179 @@ def build_camera_debug_page(
     cam_right_vbox.addWidget(cam_params)
     cam_right_vbox.addSpacing(8)
 
+    owner._capture_plan_icons = {
+        "mode": _capture_plan_icon("sliders", size=20),
+        "independent": _capture_plan_icon("camera", size=18),
+        "flexible": _capture_plan_icon("route", size=18),
+        "enabled": _capture_plan_icon("check", size=15, color="#8bd3a8"),
+        "channel": _capture_plan_icon("route", size=15),
+        "camera": _capture_plan_icon("camera", size=15),
+        "light": _capture_plan_icon("light", size=15, color="#f2c96d"),
+        "exposure": _capture_plan_icon("clock", size=15, color="#c5a7ff"),
+        "gain": _capture_plan_icon("gain", size=15, color="#78d3c5"),
+    }
+
     owner.capture_plan_page = QtWidgets.QWidget()
-    owner.capture_plan_page.setStyleSheet(f"background:{dark_bg};color:{text_light};")
+    owner.capture_plan_page.setObjectName("capturePlanPage")
+    owner.capture_plan_page.setStyleSheet(
+        f"QWidget#capturePlanPage{{background:{dark_bg};color:{text_light};}}"
+        "QFrame#captureModeCard,QFrame#captureChannelCard{"
+        f"background:{panel_bg};border:1px solid #505050;border-radius:8px;}}"
+        "QLabel#captureIconChip{background:#3b3b3b;border:1px solid #565656;border-radius:8px;}"
+        "QLabel#captureSectionTitle{color:#ededed;font-size:13px;font-weight:600;}"
+        "QLabel#captureSectionHelp{color:#9c9c9c;font-size:11px;}"
+        "QLabel#captureCountBadge{background:#404040;color:#c0c0c0;border:1px solid #5a5a5a;"
+        "border-radius:9px;padding:2px 9px;font-size:10px;}"
+        "QFrame#captureSaveBar{background:#303030;border-top:1px solid #484848;"
+        "border-bottom-left-radius:8px;border-bottom-right-radius:8px;}"
+        "QLabel#captureSaveText{color:#ffffff;font-size:10px;}"
+    )
     capture_plan_page_layout = QtWidgets.QVBoxLayout(owner.capture_plan_page)
-    capture_plan_page_layout.setContentsMargins(12, 12, 12, 12)
-    capture_plan_page_layout.setSpacing(8)
+    capture_plan_page_layout.setContentsMargins(16, 16, 16, 16)
+    capture_plan_page_layout.setSpacing(12)
 
     owner.capture_mode_frame = QtWidgets.QFrame()
+    owner.capture_mode_frame.setObjectName("capturePlanContent")
+    owner.capture_mode_frame.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
     owner.capture_mode_frame.setStyleSheet(
-        "QFrame{background:#333333;border-top:1px solid #505050;border-bottom:1px solid #505050;}"
+        "QFrame#capturePlanContent{background:transparent;border:0;}"
     )
-    capture_mode_layout = QtWidgets.QVBoxLayout(owner.capture_mode_frame)
-    capture_mode_layout.setContentsMargins(12, 10, 12, 10)
-    capture_mode_layout.setSpacing(8)
+    capture_plan_layout = QtWidgets.QVBoxLayout(owner.capture_mode_frame)
+    capture_plan_layout.setContentsMargins(0, 0, 0, 0)
+    capture_plan_layout.setSpacing(12)
 
+    owner.capture_mode_card = QtWidgets.QFrame()
+    owner.capture_mode_card.setObjectName("captureModeCard")
+    capture_mode_layout = QtWidgets.QHBoxLayout(owner.capture_mode_card)
+    capture_mode_layout.setContentsMargins(14, 12, 14, 12)
+    capture_mode_layout.setSpacing(12)
+
+    capture_mode_icon = QtWidgets.QLabel()
+    capture_mode_icon.setObjectName("captureIconChip")
+    capture_mode_icon.setFixedSize(40, 40)
+    capture_mode_icon.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+    capture_mode_icon.setPixmap(owner._capture_plan_icons["mode"].pixmap(20, 20))
+    capture_mode_layout.addWidget(capture_mode_icon)
+
+    capture_mode_text = QtWidgets.QVBoxLayout()
+    capture_mode_text.setSpacing(3)
     owner.lbl_capture_mode_title = QtWidgets.QLabel(tr("debug.capture_mode"))
-    owner.lbl_capture_mode_title.setStyleSheet(f"color:{text_light};font-size:12px;font-weight:bold;")
-    capture_mode_layout.addWidget(owner.lbl_capture_mode_title)
+    owner.lbl_capture_mode_title.setObjectName("captureSectionTitle")
+    capture_mode_text.addWidget(owner.lbl_capture_mode_title)
+    owner.lbl_capture_mode_help = QtWidgets.QLabel(tr("debug.capture_mode_help_independent"))
+    owner.lbl_capture_mode_help.setObjectName("captureSectionHelp")
+    capture_mode_text.addWidget(owner.lbl_capture_mode_help)
+    capture_mode_layout.addLayout(capture_mode_text, 1)
 
     owner.cmb_capture_mode = QtWidgets.QComboBox()
-    owner.cmb_capture_mode.addItem(tr("debug.capture_mode_independent"), "independent")
-    owner.cmb_capture_mode.addItem(tr("debug.capture_mode_flexible"), "flexible")
+    owner.cmb_capture_mode.addItem(
+        owner._capture_plan_icons["independent"],
+        tr("debug.capture_mode_independent"),
+        "independent",
+    )
+    owner.cmb_capture_mode.addItem(
+        owner._capture_plan_icons["flexible"],
+        tr("debug.capture_mode_flexible"),
+        "flexible",
+    )
     owner.cmb_capture_mode.setCurrentIndex(0)
-    owner.cmb_capture_mode.setStyleSheet(input_style)
+    owner.cmb_capture_mode.setMinimumWidth(245)
+    owner.cmb_capture_mode.setFixedHeight(36)
+    owner.cmb_capture_mode.setIconSize(QtCore.QSize(18, 18))
+    owner.cmb_capture_mode.setStyleSheet(
+        "QComboBox{background:#383838;color:#e8e8e8;border:1px solid #5a5a5a;"
+        "padding:5px 10px;border-radius:6px;font-size:12px;}"
+        "QComboBox:hover{border-color:#707070;background:#404040;}"
+        "QComboBox:focus{border-color:#6f9fca;}"
+        "QComboBox QAbstractItemView{background:#383838;color:#e8e8e8;border:1px solid #5a5a5a;"
+        "selection-background-color:#505050;selection-color:white;outline:0;}"
+    )
     capture_mode_layout.addWidget(owner.cmb_capture_mode)
+    capture_plan_layout.addWidget(owner.capture_mode_card)
 
+    owner.capture_channel_frame = QtWidgets.QFrame()
+    owner.capture_channel_frame.setObjectName("captureChannelCard")
+    capture_channel_layout = QtWidgets.QVBoxLayout(owner.capture_channel_frame)
+    capture_channel_layout.setContentsMargins(0, 0, 0, 0)
+    capture_channel_layout.setSpacing(0)
+
+    capture_channel_header = QtWidgets.QWidget()
+    capture_channel_header_layout = QtWidgets.QHBoxLayout(capture_channel_header)
+    capture_channel_header_layout.setContentsMargins(14, 10, 14, 10)
+    capture_channel_header_layout.setSpacing(10)
+    capture_channel_icon = QtWidgets.QLabel()
+    capture_channel_icon.setObjectName("captureIconChip")
+    capture_channel_icon.setFixedSize(34, 34)
+    capture_channel_icon.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+    capture_channel_icon.setPixmap(owner._capture_plan_icons["flexible"].pixmap(18, 18))
+    capture_channel_header_layout.addWidget(capture_channel_icon)
+
+    capture_channel_text = QtWidgets.QVBoxLayout()
+    capture_channel_text.setSpacing(2)
     owner.lbl_capture_channel_title = QtWidgets.QLabel(tr("debug.capture_channels"))
-    owner.lbl_capture_channel_title.setStyleSheet(f"color:{text_light};font-size:12px;font-weight:bold;")
-    capture_mode_layout.addWidget(owner.lbl_capture_channel_title)
+    owner.lbl_capture_channel_title.setObjectName("captureSectionTitle")
+    capture_channel_text.addWidget(owner.lbl_capture_channel_title)
+    owner.lbl_capture_channel_help = QtWidgets.QLabel(tr("debug.capture_channels_help"))
+    owner.lbl_capture_channel_help.setObjectName("captureSectionHelp")
+    capture_channel_text.addWidget(owner.lbl_capture_channel_help)
+    capture_channel_header_layout.addLayout(capture_channel_text, 1)
+    owner.lbl_capture_channel_count = QtWidgets.QLabel(
+        tr("debug.capture_channel_count", count=len(CAMERA_ROLES))
+    )
+    owner.lbl_capture_channel_count.setObjectName("captureCountBadge")
+    capture_channel_header_layout.addWidget(owner.lbl_capture_channel_count)
+    capture_channel_layout.addWidget(capture_channel_header)
 
     owner.capture_channel_table = QtWidgets.QTableWidget(3, 6)
-    owner.capture_channel_table.setHorizontalHeaderLabels([
-        tr("debug.capture_table.enabled"),
-        tr("debug.capture_table.channel"),
-        tr("debug.capture_table.camera"),
-        tr("debug.capture_table.light"),
-        tr("debug.capture_table.exposure"),
-        tr("debug.capture_table.gain"),
-    ])
+    capture_headers = [
+        ("enabled", tr("debug.capture_table.enabled")),
+        ("channel", tr("debug.capture_table.channel")),
+        ("camera", tr("debug.capture_table.camera")),
+        ("light", tr("debug.capture_table.light")),
+        ("exposure", tr("debug.capture_table.exposure")),
+        ("gain", tr("debug.capture_table.gain")),
+    ]
+    for column, (icon_name, label) in enumerate(capture_headers):
+        header_item = QtWidgets.QTableWidgetItem(owner._capture_plan_icons[icon_name], label)
+        header_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        owner.capture_channel_table.setHorizontalHeaderItem(column, header_item)
     owner.capture_channel_table.verticalHeader().setVisible(False)
     owner.capture_channel_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
     owner.capture_channel_table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
     owner.capture_channel_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
     owner.capture_channel_table.setAlternatingRowColors(True)
-    owner.capture_channel_table.setMinimumHeight(162)
-    owner.capture_channel_table.setMaximumHeight(178)
+    owner.capture_channel_table.setShowGrid(False)
+    owner.capture_channel_table.setIconSize(QtCore.QSize(15, 15))
+    owner.capture_channel_table.setFixedHeight(172)
+    owner.capture_channel_table.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
     owner.capture_channel_table.setStyleSheet(
-        "QTableWidget{background:#303030;color:#d0d0d0;gridline-color:#454545;border:1px solid #454545;font-size:12px;}"
-        "QTableWidget::item:selected{background:#5f9ed1;color:#101010;}"
-        "QHeaderView::section{background:#3a3a3a;color:#d0d0d0;border:1px solid #454545;padding:3px;font-size:12px;}"
+        "QTableWidget{background:#303030;alternate-background-color:#333333;color:#dddddd;"
+        "gridline-color:#454545;border:0;border-top:1px solid #484848;font-size:12px;outline:0;}"
+        "QTableWidget::item{border-bottom:1px solid #454545;padding:4px;}"
+        "QTableWidget::item:selected{background:#484848;color:#ffffff;}"
+        "QHeaderView::section{background:#343434;color:#c4c4c4;border:0;"
+        "border-right:1px solid #484848;border-bottom:1px solid #505050;padding:5px;font-size:11px;}"
     )
     capture_header = owner.capture_channel_table.horizontalHeader()
     capture_header.setStretchLastSection(False)
-    for column, width in ((0, 38), (1, 48), (2, 64), (3, 92), (4, 94), (5, 74)):
+    capture_header.setFixedHeight(38)
+    capture_header.setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+    for column, width in ((0, 66), (1, 82), (4, 112), (5, 92)):
         capture_header.setSectionResizeMode(column, QtWidgets.QHeaderView.ResizeMode.Fixed)
         owner.capture_channel_table.setColumnWidth(column, width)
+    capture_header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Stretch)
+    capture_header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Stretch)
+    capture_rows = owner.capture_channel_table.verticalHeader()
+    capture_rows.setDefaultSectionSize(44)
+
+    capture_editor_style = (
+        "QComboBox,QDoubleSpinBox{background:transparent;color:#e3e3e3;border:1px solid transparent;"
+        "padding:4px 6px;border-radius:5px;font-size:12px;}"
+        "QComboBox:hover,QDoubleSpinBox:hover{background:#414141;border-color:#5a5a5a;}"
+        "QComboBox:focus,QDoubleSpinBox:focus{background:#3d3d3d;border-color:#6f9fca;}"
+        "QComboBox QAbstractItemView{background:#383838;color:#e8e8e8;border:1px solid #5a5a5a;"
+        "selection-background-color:#505050;selection-color:white;outline:0;}"
+    )
 
     channel_rows = [
         ("cam1", "DO_LIGHT_CAM1", CAPTURE_DEFAULT_EXPOSURE_US, 0.0),
@@ -325,13 +516,17 @@ def build_camera_debug_page(
         owner.capture_channel_table.setItem(row, 0, enabled_item)
         channel_item = QtWidgets.QTableWidgetItem(channel)
         channel_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        channel_item.setForeground(QtGui.QColor("#d7e8f8"))
+        channel_font = QtGui.QFont(channel_item.font())
+        channel_font.setBold(True)
+        channel_item.setFont(channel_font)
         owner.capture_channel_table.setItem(row, 1, channel_item)
 
         physical_combo = QtWidgets.QComboBox()
         for role in CAMERA_ROLES:
             physical_combo.addItem(role, role)
         physical_combo.setCurrentIndex(row)
-        physical_combo.setStyleSheet(input_style)
+        physical_combo.setStyleSheet(capture_editor_style)
         physical_combo.currentIndexChanged.connect(owner._on_capture_channel_editor_changed)
         owner.capture_channel_table.setCellWidget(row, 2, physical_combo)
 
@@ -342,10 +537,7 @@ def build_camera_debug_page(
         light_combo.setCurrentIndex(row)
         light_combo.setMinimumWidth(88)
         light_combo.view().setMinimumWidth(110)
-        light_combo.setStyleSheet(
-            input_style
-            + "QComboBox{font-size:12px;padding-left:4px;padding-right:18px;}"
-        )
+        light_combo.setStyleSheet(capture_editor_style)
         light_combo.currentIndexChanged.connect(owner._on_capture_channel_editor_changed)
         owner.capture_channel_table.setCellWidget(row, 3, light_combo)
 
@@ -357,7 +549,7 @@ def build_camera_debug_page(
         exposure_spin.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
         exposure_spin.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         exposure_spin.setMinimumWidth(86)
-        exposure_spin.setStyleSheet(input_style)
+        exposure_spin.setStyleSheet(capture_editor_style)
         exposure_spin.valueChanged.connect(owner._on_capture_channel_editor_changed)
         owner.capture_channel_table.setCellWidget(row, 4, exposure_spin)
 
@@ -369,12 +561,25 @@ def build_camera_debug_page(
         gain_spin.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
         gain_spin.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         gain_spin.setMinimumWidth(68)
-        gain_spin.setStyleSheet(input_style)
+        gain_spin.setStyleSheet(capture_editor_style)
         gain_spin.valueChanged.connect(owner._on_capture_channel_editor_changed)
         owner.capture_channel_table.setCellWidget(row, 5, gain_spin)
     owner.capture_channel_table.itemChanged.connect(owner._on_capture_channel_item_changed)
     owner.cmb_capture_mode.currentIndexChanged.connect(owner._on_capture_mode_changed)
-    capture_mode_layout.addWidget(owner.capture_channel_table)
+    capture_channel_layout.addWidget(owner.capture_channel_table)
+
+    capture_save_bar = QtWidgets.QFrame()
+    capture_save_bar.setObjectName("captureSaveBar")
+    capture_save_layout = QtWidgets.QHBoxLayout(capture_save_bar)
+    capture_save_layout.setContentsMargins(14, 7, 14, 7)
+    capture_save_layout.setSpacing(6)
+    capture_save_layout.addStretch(1)
+    owner.lbl_capture_auto_save = QtWidgets.QLabel(tr("debug.capture_auto_save"))
+    owner.lbl_capture_auto_save.setObjectName("captureSaveText")
+    capture_save_layout.addWidget(owner.lbl_capture_auto_save)
+    capture_channel_layout.addWidget(capture_save_bar)
+
+    capture_plan_layout.addWidget(owner.capture_channel_frame)
     owner._update_capture_channel_visibility()
     capture_plan_page_layout.addWidget(owner.capture_mode_frame)
     capture_plan_page_layout.addStretch(1)

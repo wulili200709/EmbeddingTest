@@ -20,6 +20,7 @@ from infrastructure.camera_settings_store import (
     CAMERA_SETTINGS_SCHEMA_VERSION,
     CameraSettingsStore,
 )
+from ui.debug.tool_page import camera_debug
 from ui.runtime.runtime_mode_pyside6 import RuntimeModePage
 from ui.window_common import _runtime_source_pixmap, update_runtime_preview
 
@@ -51,6 +52,49 @@ def _flexible_config() -> dict:
 
 
 class CapturePlanTests(unittest.TestCase):
+    def test_unsaved_physical_camera_resets_stale_digital_shift_ui(self) -> None:
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        role_combo = QtWidgets.QComboBox()
+        role_combo.addItem("cam2", "cam2")
+        camera_store = mock.Mock()
+        camera_store.load_capture_config.return_value = {
+            "capture_mode": "independent",
+            "capture_channels": [],
+        }
+        camera_store.load_for_role.return_value = {}
+
+        digital_shift_enable = QtWidgets.QCheckBox()
+        digital_shift_enable.setChecked(True)
+        digital_shift = QtWidgets.QDoubleSpinBox()
+        digital_shift.setRange(0.0, 16.0)
+        digital_shift.setValue(5.5)
+        digital_shift.setEnabled(True)
+        light_mode = QtWidgets.QComboBox()
+        light_mode.addItem("Board IO", "board_io")
+        tool_page = SimpleNamespace(
+            cmb_debug_camera_role=role_combo,
+            _camera_settings_store=camera_store,
+            _debug_camera_block_spin_apply=False,
+            _selected_debug_camera_role=lambda: "cam2",
+            _debug_physical_camera_role=lambda _role: "cam2",
+            _debug_capture_channel_for_role=lambda _role: {},
+            spin_debug_exposure=QtWidgets.QDoubleSpinBox(),
+            spin_debug_gain=QtWidgets.QDoubleSpinBox(),
+            chk_debug_digital_shift_enable=digital_shift_enable,
+            spin_debug_digital_shift=digital_shift,
+            cmb_debug_trigger_mode=QtWidgets.QComboBox(),
+            cmb_debug_light_source_mode=light_mode,
+        )
+
+        loaded = camera_debug._load_saved_debug_camera_settings_to_ui(tool_page, "SERIAL-2")
+
+        self.assertFalse(loaded)
+        self.assertFalse(digital_shift_enable.isChecked())
+        self.assertFalse(digital_shift.isEnabled())
+        self.assertEqual(digital_shift.value(), 0.0)
+        camera_store.load_for_role.assert_called_once_with("cam2", serial="SERIAL-2")
+        app.processEvents()
+
     def test_connect_releases_stale_physical_binding_before_rebuild(self) -> None:
         class Signal:
             def emit(self, *_args) -> None:

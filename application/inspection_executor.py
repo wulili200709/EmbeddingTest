@@ -37,6 +37,25 @@ def _is_post_distance_item(item: InspectionItem) -> bool:
     return _is_line_distance_item(item) or _is_center_distance_item(item)
 
 
+def _distance_helper_item_ids(items: List[InspectionItem]) -> set[str]:
+    """Return item ids used only as inputs by enabled composite distance tools."""
+    helper_ids: set[str] = set()
+    for item in items:
+        if not item.enabled or not _is_post_distance_item(item):
+            continue
+        params = dict(item.params or {})
+        keys = (
+            ("center_a_item_id", "center_b_item_id")
+            if _is_center_distance_item(item)
+            else ("line_a_item_id", "line_b_item_id")
+        )
+        for key in keys:
+            item_id = str(params.get(key, "") or "").strip()
+            if item_id:
+                helper_ids.add(item_id)
+    return helper_ids
+
+
 def _normalized_result(value: object) -> str:
     return str(value or "").strip().upper()
 
@@ -263,15 +282,21 @@ class InspectionExecutor:
                 roi_shapes=roi_shapes,
             )
 
-        if post_distance_results:
-            decision_item_results = post_distance_results
-        else:
-            decision_item_results = [
-                item
-                for item in enabled_item_results
-                if str(item.result or "").strip().upper() in {"OK", "NG"}
-            ]
-            self._apply_decision_policy(request, decision_item_results)
+        helper_item_ids = _distance_helper_item_ids(enabled_items)
+        post_distance_item_ids = {
+            str(item.item_id or "").strip()
+            for item in post_distance_results
+        }
+        decision_item_results = [
+            item
+            for item in enabled_item_results
+            if (
+                str(item.item_id or "").strip() in post_distance_item_ids
+                or str(item.item_id or "").strip() not in helper_item_ids
+            )
+            and str(item.result or "").strip().upper() in {"OK", "NG", _PASS_RESULT}
+        ]
+        self._apply_decision_policy(request, decision_item_results)
         final_result = (
             "OK"
             if not decision_item_results or all(_is_passing_result(item.result) for item in decision_item_results)
@@ -283,13 +308,21 @@ class InspectionExecutor:
         )
         infer_ms = sum(self._extract_timing_fields(row)[1] for row in item_rows)
         total_ms = match_ms + infer_ms if (match_ms > 0.0 or infer_ms > 0.0) else 0.0
-        if post_distance_results:
+        decision_has_ng = any(_normalized_result(item.result) == "NG" for item in decision_item_results)
+        if post_distance_results and not decision_has_ng:
             distance_detail = "; ".join(
                 self._strip_timing_tokens(item.detail)
                 for item in post_distance_results
                 if self._strip_timing_tokens(item.detail)
             )
+            independent_count = sum(
+                1
+                for item in decision_item_results
+                if str(item.item_id or "").strip() not in post_distance_item_ids
+            )
             camera_detail_parts = [distance_detail] if distance_detail else ["Distance"]
+            if independent_count:
+                camera_detail_parts.append(f"{independent_count} other item(s) OK")
             if match_ms > 0:
                 camera_detail_parts.append(f"match={match_ms:.1f}ms")
             if infer_ms > 0:
@@ -297,7 +330,7 @@ class InspectionExecutor:
             camera_detail = " ".join(camera_detail_parts)
         else:
             camera_detail = self._build_camera_detail(
-                enabled_item_results,
+                decision_item_results,
                 match_ms=match_ms,
                 infer_ms=infer_ms,
             )

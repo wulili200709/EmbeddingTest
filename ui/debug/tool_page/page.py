@@ -356,8 +356,17 @@ class ToolPage(QtWidgets.QWidget):
             current_data = self.cmb_capture_mode.currentData()
             blocker = QtCore.QSignalBlocker(self.cmb_capture_mode)
             self.cmb_capture_mode.clear()
-            self.cmb_capture_mode.addItem(tr("debug.capture_mode_independent"), "independent")
-            self.cmb_capture_mode.addItem(tr("debug.capture_mode_flexible"), "flexible")
+            icons = getattr(self, "_capture_plan_icons", {})
+            self.cmb_capture_mode.addItem(
+                icons.get("independent", QtGui.QIcon()),
+                tr("debug.capture_mode_independent"),
+                "independent",
+            )
+            self.cmb_capture_mode.addItem(
+                icons.get("flexible", QtGui.QIcon()),
+                tr("debug.capture_mode_flexible"),
+                "flexible",
+            )
             index = self.cmb_capture_mode.findData(current_data)
             self.cmb_capture_mode.setCurrentIndex(max(0, index))
             del blocker
@@ -365,15 +374,26 @@ class ToolPage(QtWidgets.QWidget):
             self.lbl_capture_mode_title.setText(tr("debug.capture_mode"))
         if hasattr(self, "lbl_capture_channel_title"):
             self.lbl_capture_channel_title.setText(tr("debug.capture_channels"))
+        if hasattr(self, "lbl_capture_channel_help"):
+            self.lbl_capture_channel_help.setText(tr("debug.capture_channels_help"))
+        if hasattr(self, "lbl_capture_channel_count"):
+            count = self.capture_channel_table.rowCount() if hasattr(self, "capture_channel_table") else 0
+            self.lbl_capture_channel_count.setText(tr("debug.capture_channel_count", count=count))
+        if hasattr(self, "lbl_capture_auto_save"):
+            self.lbl_capture_auto_save.setText(tr("debug.capture_auto_save"))
         if hasattr(self, "capture_channel_table"):
-            self.capture_channel_table.setHorizontalHeaderLabels([
+            capture_header_labels = [
                 tr("debug.capture_table.enabled"),
                 tr("debug.capture_table.channel"),
                 tr("debug.capture_table.camera"),
                 tr("debug.capture_table.light"),
                 tr("debug.capture_table.exposure"),
                 tr("debug.capture_table.gain"),
-            ])
+            ]
+            for column, label in enumerate(capture_header_labels):
+                header_item = self.capture_channel_table.horizontalHeaderItem(column)
+                if header_item is not None:
+                    header_item.setText(label)
             light_options = [
                 (tr("debug.io_name.light_cam1"), "DO_LIGHT_CAM1"),
                 (tr("debug.io_name.light_cam2"), "DO_LIGHT_CAM2"),
@@ -931,7 +951,7 @@ class ToolPage(QtWidgets.QWidget):
         self._show_tool_dialog(
             "capture_plan",
             self.capture_plan_page,
-            size=(720, 350),
+            size=(780, 430),
         )
 
     def open_io_debug_dialog(self) -> None:
@@ -964,7 +984,10 @@ class ToolPage(QtWidgets.QWidget):
                 dialog.activateWindow()
                 return
 
-            from ui.debug import NccMatchWorkbenchDialog
+            # Import the concrete module so frozen builds can discover and
+            # package the NCC workbench without relying on ui.debug's lazy
+            # attribute export.
+            from ncc.ui import NccMatchWorkbenchDialog
 
             dialog = NccMatchWorkbenchDialog(
                 product_name=self.session.current_product,
@@ -1881,6 +1904,8 @@ class ToolPage(QtWidgets.QWidget):
         inspection_item = self._selected_inspection_item()
         if inspection_item is None:
             return tr("debug.current_tool_stats_select")
+        if self.algo.is_measurement_tool(getattr(inspection_item, "algorithm_code", "")):
+            return tr("debug.measurement.no_training")
         camera_role = _normalize_camera_role(getattr(inspection_item, "camera_id", "")) or self.current_camera_role()
         roi_label = str(getattr(inspection_item, "roi_label", "") or "").strip() or "roi"
         ok_count, ng_count, unset_count = self._sample_annotation_counts_for_roi(roi_label, camera_role)
@@ -1890,6 +1915,8 @@ class ToolPage(QtWidgets.QWidget):
         inspection_item = self._selected_inspection_item()
         if inspection_item is None:
             return tr("debug.training_validation_select")
+        if self.algo.is_measurement_tool(getattr(inspection_item, "algorithm_code", "")):
+            return tr("debug.measurement.no_training")
         camera_role = _normalize_camera_role(getattr(inspection_item, "camera_id", "")) or self.current_camera_role()
         roi_label = str(getattr(inspection_item, "roi_label", "") or "").strip() or "roi"
         ok_files, ng_files, candidate_paths = self._training_sample_groups_for_role(camera_role, roi_label=roi_label)
@@ -2201,9 +2228,10 @@ class ToolPage(QtWidgets.QWidget):
         topk_enabled = embedding and self.cmb_mode.currentText() == "topk"
         inspection_items = list(getattr(self, "inspection_items", []) or [])
         current_role = self.current_camera_role()
-        has_enabled_items = any(
+        has_trainable_items = any(
             getattr(item, "enabled", False)
             and _normalize_camera_role(getattr(item, "camera_id", "")) == current_role
+            and not self.algo.is_measurement_tool(getattr(item, "algorithm_code", ""))
             for item in inspection_items
         )
         selected_item_fn = getattr(self, "_selected_inspection_item", None)
@@ -2212,6 +2240,7 @@ class ToolPage(QtWidgets.QWidget):
             algorithm_selected
             and selected_item is not None
             and selected_item.enabled
+            and not self.algo.is_measurement_tool(getattr(selected_item, "algorithm_code", ""))
         )
         top_level = self.window()
         has_permission = getattr(top_level, "_has_permission", None)
@@ -2229,7 +2258,7 @@ class ToolPage(QtWidgets.QWidget):
             disabled_style = getattr(self, "_algo_param_label_disabled_style", enabled_style)
             topk_label.setEnabled(topk_enabled)
             topk_label.setStyleSheet(enabled_style if topk_enabled else disabled_style)
-        self.btn_train.setEnabled(has_enabled_items and can_train)
+        self.btn_train.setEnabled(has_trainable_items and can_train)
         train_current_button = getattr(self, "btn_train_current", None)
         if train_current_button is not None:
             train_current_button.setEnabled(selected_tool_enabled and can_train)

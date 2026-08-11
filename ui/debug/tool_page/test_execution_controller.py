@@ -12,7 +12,7 @@ from common.camera_roles import normalize_camera_role
 from domain import InspectionItem
 from ui.debug import OverlayShape
 from ui.i18n import tr
-from ui.roi_overlay_colors import is_roi_label, overlay_style_for_label
+from ui.roi_overlay_colors import is_roi_label, merge_roi_statuses, overlay_style_for_label
 
 
 def _normalize_camera_role(camera_id: object) -> str:
@@ -174,6 +174,12 @@ class TestExecutionController:
                     self.record_roi_result(p, roi_label, item_result.result)
                 rows.append(row)
                 log_names.append(os.path.basename(self.owner._append_test_log(row)))
+            derived_roi_statuses = merge_roi_statuses(
+                [item_result.to_runtime_row() for item_result in response.item_results],
+                camera_id=camera_id,
+            )
+            for roi_label, status in derived_roi_statuses.items():
+                self.record_roi_result(p, roi_label, status)
         else:
             row = dict(raw_rows[0]) if raw_rows else {}
             row.setdefault("pred", response.result)

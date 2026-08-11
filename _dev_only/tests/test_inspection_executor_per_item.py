@@ -331,6 +331,69 @@ class InspectionExecutorPerItemTest(unittest.TestCase):
         self.assertEqual(response.result, "NG")
         self.assertEqual(response.item_results[-1].result, "NG")
 
+    def test_independent_learning_tool_still_decides_with_line_distance(self) -> None:
+        class _MixedPredictor:
+            def predict_image(self, path: str, **kwargs) -> dict:
+                label = kwargs.get("labels_override", [""])[0]
+                if label == "roi1":
+                    return {"pred": "NG", "diff": -0.2}
+                x = 10.0 if label == "roi2" else 52.0
+                return {
+                    "pred": "OK",
+                    "measurement": {
+                        "roi_label": label,
+                        "line_segment": [[x, 0.0], [x, 100.0]],
+                        "edge_points": [[x, 0.0], [x, 50.0], [x, 100.0]],
+                    },
+                }
+
+        response = InspectionExecutor(_MixedPredictor()).execute(
+            InspectionExecutionRequest(
+                camera_id="cam2",
+                image_path="demo.png",
+                items=[
+                    InspectionItem(
+                        item_id="presence",
+                        display_name="Presence",
+                        camera_id="cam2",
+                        roi_label="roi1",
+                        algorithm_code="shared_backbone_register",
+                    ),
+                    InspectionItem(
+                        item_id="left_line",
+                        display_name="Left",
+                        camera_id="cam2",
+                        roi_label="roi2",
+                        algorithm_code="find_line",
+                    ),
+                    InspectionItem(
+                        item_id="right_line",
+                        display_name="Right",
+                        camera_id="cam2",
+                        roi_label="roi3",
+                        algorithm_code="find_line",
+                    ),
+                    InspectionItem(
+                        item_id="width",
+                        display_name="Width",
+                        camera_id="cam2",
+                        roi_label="",
+                        algorithm_code="line_distance",
+                        params={
+                            "line_a_item_id": "left_line",
+                            "line_b_item_id": "right_line",
+                            "lower_limit": 40.0,
+                            "upper_limit": 44.0,
+                        },
+                    ),
+                ],
+            )
+        )
+
+        self.assertEqual(response.item_results[-1].result, "OK")
+        self.assertEqual(response.result, "NG")
+        self.assertIn("Presence", response.detail)
+
     def test_reference_normal_line_distance_item_uses_paired_find_lines(self) -> None:
         class _FindLinePredictor:
             def predict_image(self, path: str, **kwargs) -> dict:

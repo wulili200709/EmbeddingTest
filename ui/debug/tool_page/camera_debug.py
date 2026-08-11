@@ -171,10 +171,19 @@ def _load_saved_debug_camera_settings_to_ui(tool_page, serial: str) -> bool:
             tool_page.spin_debug_exposure.setValue(float(payload["exposure_time_us"]))
         if payload.get("gain") is not None:
             tool_page.spin_debug_gain.setValue(float(payload["gain"]))
-        if payload.get("digital_shift_enable") is not None:
-            tool_page.chk_debug_digital_shift_enable.setChecked(bool(payload["digital_shift_enable"]))
-        if payload.get("digital_shift") is not None:
-            tool_page.spin_debug_digital_shift.setValue(float(payload["digital_shift"]))
+        # Digital shift belongs to the physical camera.  Always initialize
+        # these controls when the debug role changes; otherwise a physical
+        # camera without saved settings inherits the previous camera's UI
+        # state and appears to be linked to it.
+        digital_shift_enabled = bool(payload.get("digital_shift_enable", False))
+        digital_shift = (
+            float(payload["digital_shift"])
+            if payload.get("digital_shift") is not None
+            else 0.0
+        )
+        tool_page.chk_debug_digital_shift_enable.setChecked(digital_shift_enabled)
+        tool_page.spin_debug_digital_shift.setEnabled(digital_shift_enabled)
+        tool_page.spin_debug_digital_shift.setValue(digital_shift)
         trigger_mode = str(payload.get("trigger_mode") or "").strip()
         if trigger_mode:
             tool_page.cmb_debug_trigger_mode.setCurrentText(trigger_mode)
@@ -256,11 +265,21 @@ def _capture_physical_role(role: str, mode: str) -> str:
 
 
 def _update_capture_channel_visibility(tool_page) -> None:
-    visible = _capture_mode_from_ui(tool_page) != CAPTURE_MODE_INDEPENDENT
-    for attr in ("lbl_capture_channel_title", "capture_channel_table"):
+    mode = _capture_mode_from_ui(tool_page)
+    visible = mode != CAPTURE_MODE_INDEPENDENT
+    for attr in ("capture_channel_frame", "lbl_capture_channel_title", "capture_channel_table"):
         widget = getattr(tool_page, attr, None)
         if widget is not None:
             widget.setVisible(visible)
+    help_label = getattr(tool_page, "lbl_capture_mode_help", None)
+    if help_label is not None:
+        help_label.setText(
+            tr(
+                "debug.capture_mode_help_flexible"
+                if mode == CAPTURE_MODE_FLEXIBLE
+                else "debug.capture_mode_help_independent"
+            )
+        )
 
 
 def _sync_capture_camera_roles(tool_page) -> None:

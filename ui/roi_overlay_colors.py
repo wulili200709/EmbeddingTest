@@ -17,6 +17,12 @@ ANCHOR_COLOR = QtGui.QColor(0, 255, 255)
 ANCHOR_MASK_COLOR = QtGui.QColor(255, 0, 0)
 REFERENCE_ROI_COLOR = QtGui.QColor(255, 165, 0)
 
+_DISTANCE_HELPER_KEYS = {
+    "line_distance": ("line_a_item_id", "line_b_item_id"),
+    "line_distance_ref_normal": ("line_a_item_id", "line_b_item_id"),
+    "center_distance": ("center_a_item_id", "center_b_item_id"),
+}
+
 
 def is_roi_label(label: object) -> bool:
     return str(label or "").strip().lower().startswith("roi")
@@ -77,21 +83,53 @@ def merge_roi_statuses(
     camera_id: object = "",
 ) -> dict[str, str]:
     wanted_camera = str(camera_id or "").strip()
+    camera_rows = [
+        row
+        for row in rows
+        if not wanted_camera or str(row.get("camera_id", "") or "").strip() == wanted_camera
+    ]
     merged: dict[str, str] = {}
-    for row in rows:
+
+    def merge_status(label: str, status: str) -> None:
+        current = merged.get(label, "")
+        if current == "ng":
+            return
+        merged[label] = "ng" if status == "ng" else status
+
+    roi_label_by_item_id = {
+        str(row.get("item_id", "") or "").strip(): str(row.get("roi_label", "") or "").strip()
+        for row in camera_rows
+        if str(row.get("item_id", "") or "").strip()
+        and is_roi_label(row.get("roi_label", ""))
+    }
+    for row in camera_rows:
         label = str(row.get("roi_label", "") or "").strip()
         if not is_roi_label(label):
-            continue
-        row_camera = str(row.get("camera_id", "") or "").strip()
-        if wanted_camera and row_camera != wanted_camera:
             continue
         status = str(row.get("status_kind", "") or "").strip().lower()
         if not status:
             continue
-        current = merged.get(label, "")
-        if current == "ng":
+        merge_status(label, status)
+
+    # A distance result owns the visual status of the ROI tools that feed it.
+    # The helper line/center detection may succeed while the measured dimension
+    # is out of tolerance; in that case both related ROI boxes must be red.
+    for row in camera_rows:
+        algorithm = str(row.get("algorithm_code", "") or "").strip()
+        helper_keys = _DISTANCE_HELPER_KEYS.get(algorithm)
+        if not helper_keys:
             continue
-        merged[label] = "ng" if status == "ng" else status
+        status = str(row.get("status_kind", "") or "").strip().lower()
+        if not status:
+            continue
+        params = row.get("params", {})
+        if not isinstance(params, Mapping):
+            continue
+        for key in helper_keys:
+            helper_id = str(params.get(key, "") or "").strip()
+            label = roi_label_by_item_id.get(helper_id, "")
+            if label:
+                merge_status(label, status)
     return merged
 
 

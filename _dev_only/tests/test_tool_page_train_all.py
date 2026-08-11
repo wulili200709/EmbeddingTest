@@ -19,6 +19,7 @@ if root_str not in sys.path:
 from application.algorithm_controller import TrainResult
 from domain.inspection_items import InspectionItem
 from ui.debug.tool_page.page import ToolPage
+from ui.debug.tool_page.training_controller import TrainingController
 
 
 class _FakeAlgo:
@@ -190,6 +191,26 @@ class ToolPageTrainAllTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def test_measurement_tools_do_not_require_training(self) -> None:
+        for algorithm in ("find_line", "find_line_subpix", "line_distance", "center_distance"):
+            item = InspectionItem(
+                item_id=algorithm,
+                display_name=algorithm,
+                camera_id="cam2",
+                roi_label="" if "distance" in algorithm else "roi2",
+                algorithm_code=algorithm,
+            )
+            self.assertFalse(TrainingController.requires_training(item), algorithm)
+
+        learning_item = InspectionItem(
+            item_id="roi1",
+            display_name="roi1",
+            camera_id="cam2",
+            roi_label="roi1",
+            algorithm_code="shared_backbone_register",
+        )
+        self.assertTrue(TrainingController.requires_training(learning_item))
 
     def test_train_all_enabled_items_trains_each_tool_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

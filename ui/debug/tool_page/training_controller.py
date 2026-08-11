@@ -5,6 +5,7 @@ from typing import List
 
 from PySide6 import QtCore, QtWidgets
 
+from algorithms.registry import is_measurement_tool_algorithm
 from domain import InspectionItem
 from ui.debug.tool_page.camera_roles import normalize_camera_role
 from ui.debug.tool_page.training_roi_review import TrainingRoiReview
@@ -25,6 +26,11 @@ class TrainingController:
 
     def resolve_algorithm(self, inspection_item: InspectionItem) -> str:
         return self.task_builder.resolve_algorithm(inspection_item)
+
+    @staticmethod
+    def requires_training(inspection_item: InspectionItem) -> bool:
+        """Measurement tools run from configured parameters and never train."""
+        return not is_measurement_tool_algorithm(inspection_item.algorithm_code)
 
     def train_sample_paths_for_role(self, camera_role: object = None) -> List[str]:
         return self.task_builder.train_sample_paths_for_role(camera_role)
@@ -205,7 +211,7 @@ class TrainingController:
         QtWidgets.QMessageBox.information(
             self.owner,
             tr("debug.train_result_title"),
-            f"Finished training/calibrating {len(success_names)} enabled tool(s).",
+            f"Finished training/calibrating {len(success_names)} trainable tool(s).",
         )
 
     def train_inspection_item(self, inspection_item: InspectionItem):
@@ -226,19 +232,8 @@ class TrainingController:
         )
 
     def train_all_tools(self) -> None:
-        self.owner.algo.model = None
-        self.owner.table.setRowCount(0)
-        self.owner._current_result_rows = []
         if getattr(self.owner, "_training_in_progress", False):
             QtWidgets.QMessageBox.information(self.owner, tr("common.info"), "Training is already running.")
-            return
-        if self.owner._warn_mixed_training_camera_samples(self.owner.current_camera_role()):
-            return
-        if not self.owner._ensure_training_roi_reviewed(
-            self.owner.current_camera_role(),
-            action_name=tr("debug.train_all_tools"),
-            action_key="all",
-        ):
             return
 
         current_role = self.owner.current_camera_role()
@@ -250,12 +245,29 @@ class TrainingController:
         if not enabled_items:
             QtWidgets.QMessageBox.information(self.owner, tr("common.info"), tr("debug.enable_one_tool", role=current_role))
             return
+        trainable_items = [item for item in enabled_items if self.requires_training(item)]
+        if not trainable_items:
+            message = tr("debug.measurement.no_training")
+            self.owner.lbl_status.setText(message)
+            QtWidgets.QMessageBox.information(self.owner, tr("common.info"), message)
+            return
+        self.owner.algo.model = None
+        self.owner.table.setRowCount(0)
+        self.owner._current_result_rows = []
+        if self.owner._warn_mixed_training_camera_samples(current_role):
+            return
+        if not self.owner._ensure_training_roi_reviewed(
+            current_role,
+            action_name=tr("debug.train_all_tools"),
+            action_key="all",
+        ):
+            return
 
         selected_item = self.owner._selected_inspection_item()
         selected_item_id = str(selected_item.item_id or "") if selected_item is not None else ""
         tasks: List[dict] = []
         failure_messages: List[str] = []
-        for inspection_item in enabled_items:
+        for inspection_item in trainable_items:
             display_name = self.item_display_name(inspection_item)
             try:
                 tasks.append(self.build_task_for_item(inspection_item))
@@ -287,9 +299,6 @@ class TrainingController:
         self.start_worker(self.payload("all", tasks, selected_item_id=selected_item_id, failures=failure_messages))
 
     def train_current(self) -> None:
-        self.owner.algo.model = None
-        self.owner.table.setRowCount(0)
-        self.owner._current_result_rows = []
         if getattr(self.owner, "_training_in_progress", False):
             QtWidgets.QMessageBox.information(self.owner, tr("common.info"), "Training is already running.")
             return
@@ -297,6 +306,17 @@ class TrainingController:
         if inspection_item is None:
             QtWidgets.QMessageBox.information(self.owner, tr("common.info"), tr("debug.select_inspection_tool_in_table"))
             return
+        if not inspection_item.enabled:
+            QtWidgets.QMessageBox.information(self.owner, tr("common.info"), tr("debug.tool_disabled"))
+            return
+        if not self.requires_training(inspection_item):
+            message = tr("debug.measurement.no_training")
+            self.owner.lbl_status.setText(message)
+            QtWidgets.QMessageBox.information(self.owner, tr("common.info"), message)
+            return
+        self.owner.algo.model = None
+        self.owner.table.setRowCount(0)
+        self.owner._current_result_rows = []
         if self.owner._warn_mixed_training_camera_samples(inspection_item.camera_id):
             return
         if not self.owner._ensure_training_roi_reviewed(
@@ -304,9 +324,6 @@ class TrainingController:
             action_name=tr("debug.calibrate_current_tool"),
             action_key="current",
         ):
-            return
-        if not inspection_item.enabled:
-            QtWidgets.QMessageBox.information(self.owner, tr("common.info"), tr("debug.tool_disabled"))
             return
         try:
             task = self.build_task_for_item(inspection_item)
