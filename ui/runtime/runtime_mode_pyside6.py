@@ -1172,11 +1172,18 @@ class RuntimeModePage(QtWidgets.QWidget):
             self._reload_daily_result_counters()
 
     def set_configured_camera_roles(self, roles: list[str]) -> None:
-        self._configured_role_set = set(configured_camera_roles(roles))
+        configured_role_set = set(configured_camera_roles(roles))
+        roles_changed = configured_role_set != self._configured_role_set
+        self._configured_role_set = configured_role_set
         self._reset_camera_slot_order_for_reduced_roles()
         self._populate_camera_slot_combos()
         self._refresh_camera_role_layout()
         self._refresh_trigger_buttons()
+        if roles_changed and self._inspection_rows:
+            # Keep every inspection item in memory/persistence, but rebuild the
+            # runtime list so rows belonging to disabled logical channels are
+            # not shown as disconnected cameras.
+            self.set_inspection_items(self._inspection_rows)
 
     def set_active_camera_roles(self, roles: list[str]) -> None:
         role_set = {str(role).strip() for role in roles if str(role).strip()}
@@ -1251,6 +1258,8 @@ class RuntimeModePage(QtWidgets.QWidget):
         grouped_rows: dict[str, list[dict]] = {role: [] for role in CAMERA_ROLES}
         for row in self._inspection_rows:
             camera_id = str(row.get("camera_id", "cam1")).strip() or "cam1"
+            if camera_id not in self._configured_role_set:
+                continue
             if camera_id not in grouped_rows:
                 grouped_rows[camera_id] = []
             grouped_rows[camera_id].append(row)

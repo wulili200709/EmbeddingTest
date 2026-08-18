@@ -21,6 +21,15 @@ MVIMPORT_ROOT = APP_ROOT / "third_party" / "MvImport"
 NKIO_ROOT = APP_ROOT / "third_party" / "nkio"
 NKIO_DLL = NKIO_ROOT / "NKIOLIBx64.dll"
 ICON_PATH = RES_ROOT / "logo.ico"
+VERSION_SOURCE = Path(
+    os.environ.get("LC_SYSTEM_VERSION_FILE", str(APP_ROOT / "VERSION"))
+).resolve()
+VERSION_INFO_PATH = Path(
+    os.environ.get("LC_SYSTEM_VERSION_INFO", "")
+).resolve() if os.environ.get("LC_SYSTEM_VERSION_INFO") else None
+BUILD_MANIFEST_SOURCE = Path(
+    os.environ.get("LC_SYSTEM_BUILD_MANIFEST", "")
+).resolve() if os.environ.get("LC_SYSTEM_BUILD_MANIFEST") else None
 NKIO_BIN_ROOT = SDK_ROOT / "Bin"
 NKIO_SELECT_INI = NKIO_BIN_ROOT / "select.ini"
 MVS_RUNTIME_ENV_VALUE = str(os.environ.get("HIK_MVS_RUNTIME_DIR", "")).strip()
@@ -111,6 +120,10 @@ def _pair(src: Path, dest: str = "."):
 
 
 datas = []
+if VERSION_SOURCE.exists():
+    datas.append(_pair(VERSION_SOURCE, "EmbeddingTest"))
+if BUILD_MANIFEST_SOURCE is not None and BUILD_MANIFEST_SOURCE.exists():
+    datas.append(_pair(BUILD_MANIFEST_SOURCE, "EmbeddingTest"))
 for src, dest in (
     (RES_ROOT, "EmbeddingTest/res"),
     (SESSION_ROOT, "EmbeddingTest/.qr_session"),
@@ -269,6 +282,7 @@ exe = EXE(
     entitlements_file=None,
     contents_directory=".",
     icon=str(ICON_PATH) if ICON_PATH.exists() else None,
+    version=str(VERSION_INFO_PATH) if VERSION_INFO_PATH is not None and VERSION_INFO_PATH.exists() else None,
 )
 
 coll = COLLECT(

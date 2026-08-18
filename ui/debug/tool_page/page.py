@@ -377,8 +377,7 @@ class ToolPage(QtWidgets.QWidget):
         if hasattr(self, "lbl_capture_channel_help"):
             self.lbl_capture_channel_help.setText(tr("debug.capture_channels_help"))
         if hasattr(self, "lbl_capture_channel_count"):
-            count = self.capture_channel_table.rowCount() if hasattr(self, "capture_channel_table") else 0
-            self.lbl_capture_channel_count.setText(tr("debug.capture_channel_count", count=count))
+            self._update_capture_channel_count()
         if hasattr(self, "lbl_capture_auto_save"):
             self.lbl_capture_auto_save.setText(tr("debug.capture_auto_save"))
         if hasattr(self, "capture_channel_table"):

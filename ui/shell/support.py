@@ -29,6 +29,16 @@ def app_icon() -> QtGui.QIcon:
 
 
 def load_app_version() -> str:
+    version_path = embedding_test_root(__file__) / "VERSION"
+    try:
+        version = version_path.read_text(encoding="utf-8", errors="ignore").strip()
+    except Exception:
+        version = ""
+    if version:
+        return version
+
+    # Compatibility fallback for older source checkouts that stored the
+    # version in setup.py. Packaged releases always include VERSION.
     setup_path = embedding_test_root(__file__) / "setup.py"
     try:
         text = setup_path.read_text(encoding="utf-8", errors="ignore")

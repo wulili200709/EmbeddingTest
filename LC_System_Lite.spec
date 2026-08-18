@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -12,6 +13,15 @@ RES_ROOT = APP_ROOT / "res"
 CONFIG_ROOT = APP_ROOT / "config"
 ORT_BACKBONE_CACHE_ROOT = APP_ROOT / ".cache" / "ort_backbones"
 ICON_PATH = RES_ROOT / "logo.ico"
+VERSION_SOURCE = Path(
+    os.environ.get("LC_SYSTEM_VERSION_FILE", str(APP_ROOT / "VERSION"))
+).resolve()
+VERSION_INFO_PATH = Path(
+    os.environ.get("LC_SYSTEM_VERSION_INFO", "")
+).resolve() if os.environ.get("LC_SYSTEM_VERSION_INFO") else None
+BUILD_MANIFEST_SOURCE = Path(
+    os.environ.get("LC_SYSTEM_BUILD_MANIFEST", "")
+).resolve() if os.environ.get("LC_SYSTEM_BUILD_MANIFEST") else None
 PYD_TAG = f"cp{sys.version_info.major}{sys.version_info.minor}"
 
 
@@ -20,13 +30,17 @@ def _pair(src: Path, dest: str = "."):
 
 
 datas = []
+if VERSION_SOURCE.exists():
+    datas.append(_pair(VERSION_SOURCE, "EmbeddingTest"))
+if BUILD_MANIFEST_SOURCE is not None and BUILD_MANIFEST_SOURCE.exists():
+    datas.append(_pair(BUILD_MANIFEST_SOURCE, "EmbeddingTest"))
 for src, dest in (
     (RES_ROOT, "EmbeddingTest/res"),
 ):
     if src.exists():
         datas.append(_pair(src, dest))
 
-for pattern in ("*_opset12_v1.onnx", "*_opset12_v1.ort"):
+for pattern in ("*.onnx", "*.ort"):
     for path in ORT_BACKBONE_CACHE_ROOT.glob(pattern):
         if path.exists():
             datas.append(_pair(path, "EmbeddingTest/.cache/ort_backbones"))
@@ -97,6 +111,8 @@ hiddenimports = sorted(
             "ui.algorithm_labels",
             "ui.debug",
             "ui.debug_main_window",
+            "ui.debug.embedding_analysis",
+            "ui.debug.embedding_analysis_dialog",
             "ui.debug.roi_canvas_pyside6",
             "ui.debug.tool_page",
             "ui.debug.tool_page.action_panel_view",
@@ -164,8 +180,6 @@ a = Analysis(
         "application.runtime.hardware",
         "devices",
         "jinja2",
-        "matplotlib",
-        "matplotlib_inline",
         "pandas",
         "scipy",
         "services",
@@ -198,6 +212,7 @@ exe = EXE(
     entitlements_file=None,
     contents_directory=".",
     icon=str(ICON_PATH) if ICON_PATH.exists() else None,
+    version=str(VERSION_INFO_PATH) if VERSION_INFO_PATH is not None and VERSION_INFO_PATH.exists() else None,
 )
 
 coll = COLLECT(

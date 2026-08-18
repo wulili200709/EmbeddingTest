@@ -113,6 +113,7 @@ _TOOL_PAGE_BINDINGS = (
             "_load_saved_debug_camera_settings_to_ui",
             "_save_debug_camera_settings",
             "_update_capture_channel_visibility",
+            "_update_capture_channel_count",
             "_load_capture_config_to_ui",
             "_save_capture_config_from_ui",
             "_on_capture_mode_changed",

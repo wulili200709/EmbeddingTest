@@ -4,9 +4,10 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -18,15 +19,145 @@ if root_str not in sys.path:
 
 
 from ui.runtime.runtime_mode_pyside6 import RuntimeModePage, _NG_RED
+from ui.debug.tool_page import camera_debug
 from ui.i18n import language_code, set_language, tr
 from ui.window_common import update_runtime_preview
 from application.runtime.preview_frame import build_runtime_preview_frame
+
+
+class _CaptureStore:
+    def __init__(self) -> None:
+        self.saved: list[tuple[object, object]] = []
+
+    def save_capture_config(self, mode, channels) -> None:
+        self.saved.append((mode, channels))
+
+
+class _CaptureHarness(QtWidgets.QWidget):
+    def __init__(self) -> None:
+        super().__init__()
+        self._capture_config_loading = False
+        self._camera_settings_store = _CaptureStore()
+        self.inspection_items = []
+        self.lbl_capture_channel_count = QtWidgets.QLabel()
+        self.lbl_capture_mode_help = QtWidgets.QLabel()
+        self.capture_channel_frame = QtWidgets.QFrame()
+        self.cmb_capture_mode = QtWidgets.QComboBox()
+        self.cmb_capture_mode.addItem("Independent", "independent")
+        self.cmb_capture_mode.addItem("Flexible", "flexible")
+        self.cmb_capture_mode.setCurrentIndex(1)
+        self.capture_channel_table = QtWidgets.QTableWidget(3, 6)
+        for row, role in enumerate(("cam1", "cam2", "cam3")):
+            enabled = QtWidgets.QTableWidgetItem()
+            enabled.setCheckState(QtCore.Qt.CheckState.Checked)
+            self.capture_channel_table.setItem(row, 0, enabled)
+            self.capture_channel_table.setItem(row, 1, QtWidgets.QTableWidgetItem(role))
 
 
 class RuntimeModeTriggerButtonsTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def test_enabled_channel_badge_uses_checked_rows(self) -> None:
+        harness = _CaptureHarness()
+        harness.capture_channel_table.item(2, 0).setCheckState(QtCore.Qt.CheckState.Unchecked)
+
+        camera_debug._update_capture_channel_count(harness)
+
+        self.assertEqual(
+            harness.lbl_capture_channel_count.text(),
+            tr("debug.capture_channel_count", count=2),
+        )
+
+    def test_cancel_disable_restores_channel_and_does_not_save(self) -> None:
+        harness = _CaptureHarness()
+        harness.inspection_items = [
+            SimpleNamespace(
+                item_id="roi",
+                display_name="CAM3 ROI",
+                roi_label="roi",
+                camera_id="cam3",
+                enabled=False,
+            )
+        ]
+        item = harness.capture_channel_table.item(2, 0)
+        item.setCheckState(QtCore.Qt.CheckState.Unchecked)
+        original_question = QtWidgets.QMessageBox.question
+        QtWidgets.QMessageBox.question = staticmethod(
+            lambda *_args, **_kwargs: QtWidgets.QMessageBox.StandardButton.No
+        )
+        try:
+            camera_debug._on_capture_channel_item_changed(harness, item)
+        finally:
+            QtWidgets.QMessageBox.question = original_question
+
+        self.assertEqual(item.checkState(), QtCore.Qt.CheckState.Checked)
+        self.assertEqual(harness._camera_settings_store.saved, [])
+        self.assertEqual(
+            harness.lbl_capture_channel_count.text(),
+            tr("debug.capture_channel_count", count=3),
+        )
+
+    def test_confirm_disable_preserves_inspection_item_and_saves_two_channels(self) -> None:
+        harness = _CaptureHarness()
+        inspection_item = SimpleNamespace(
+            item_id="roi",
+            display_name="CAM3 ROI",
+            roi_label="roi",
+            camera_id="cam3",
+            enabled=True,
+        )
+        harness.inspection_items = [inspection_item]
+        item = harness.capture_channel_table.item(2, 0)
+        item.setCheckState(QtCore.Qt.CheckState.Unchecked)
+        original_question = QtWidgets.QMessageBox.question
+        QtWidgets.QMessageBox.question = staticmethod(
+            lambda *_args, **_kwargs: QtWidgets.QMessageBox.StandardButton.Yes
+        )
+        try:
+            camera_debug._on_capture_channel_item_changed(harness, item)
+        finally:
+            QtWidgets.QMessageBox.question = original_question
+
+        self.assertIs(harness.inspection_items[0], inspection_item)
+        self.assertEqual(item.checkState(), QtCore.Qt.CheckState.Unchecked)
+        self.assertEqual(len(harness._camera_settings_store.saved), 1)
+        _mode, channels = harness._camera_settings_store.saved[0]
+        self.assertEqual(
+            [channel["role"] for channel in channels if channel["enabled"]],
+            ["cam1", "cam2"],
+        )
+        self.assertEqual(
+            harness.lbl_capture_channel_count.text(),
+            tr("debug.capture_channel_count", count=2),
+        )
+
+    def test_switch_to_mapped_mode_warns_about_previously_unchecked_channel(self) -> None:
+        harness = _CaptureHarness()
+        harness.inspection_items = [
+            SimpleNamespace(
+                item_id="roi",
+                display_name="CAM3 ROI",
+                roi_label="roi",
+                camera_id="cam3",
+                enabled=True,
+            )
+        ]
+        harness.capture_channel_table.item(2, 0).setCheckState(QtCore.Qt.CheckState.Unchecked)
+        original_question = QtWidgets.QMessageBox.question
+        QtWidgets.QMessageBox.question = staticmethod(
+            lambda *_args, **_kwargs: QtWidgets.QMessageBox.StandardButton.No
+        )
+        try:
+            camera_debug._on_capture_mode_changed(harness)
+        finally:
+            QtWidgets.QMessageBox.question = original_question
+
+        self.assertEqual(
+            harness.capture_channel_table.item(2, 0).checkState(),
+            QtCore.Qt.CheckState.Checked,
+        )
 
     def test_trigger_buttons_follow_enabled_items_per_camera(self) -> None:
         page = RuntimeModePage()
@@ -137,6 +268,40 @@ class RuntimeModeTriggerButtonsTest(unittest.TestCase):
         self.assertTrue(page.btn_simulate_foot.isEnabled())
         self.assertTrue(page.btn_trigger_cam2.isEnabled())
         self.assertTrue(page.btn_trigger_cam3.isEnabled())
+
+    def test_runtime_item_list_hides_disabled_channel_rows_without_deleting_them(self) -> None:
+        page = RuntimeModePage()
+        rows = [
+            {
+                "item_id": "cam1-roi",
+                "display_name": "CAM1 ROI",
+                "camera_id": "cam1",
+                "enabled": True,
+                "status_kind": "pending",
+                "status_text": "PENDING",
+            },
+            {
+                "item_id": "cam3-roi",
+                "display_name": "CAM3 ROI",
+                "camera_id": "cam3",
+                "enabled": True,
+                "status_kind": "inactive",
+                "status_text": "相机未接入",
+            },
+        ]
+
+        page.set_configured_camera_roles(["cam1", "cam2"])
+        page.set_inspection_items(rows)
+
+        self.assertEqual(page._inspection_rows, rows)
+        self.assertIn("cam1-roi", page._item_indicators_by_item_id)
+        self.assertNotIn("cam3-roi", page._item_indicators_by_item_id)
+        self.assertNotIn("cam3", page._camera_section_headers)
+
+        page.set_configured_camera_roles(["cam1", "cam2", "cam3"])
+
+        self.assertIn("cam3-roi", page._item_indicators_by_item_id)
+        self.assertIn("cam3", page._camera_section_headers)
 
     def test_physical_camera_bindings_are_independent_from_product_roles(self) -> None:
         page = RuntimeModePage()

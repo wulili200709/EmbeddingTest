@@ -282,6 +282,107 @@ def _update_capture_channel_visibility(tool_page) -> None:
         )
 
 
+def _capture_channel_role(tool_page, row: int) -> str:
+    table = getattr(tool_page, "capture_channel_table", None)
+    if table is None or row < 0 or row >= table.rowCount():
+        return ""
+    role_item = table.item(row, 1)
+    return normalize_camera_role(
+        role_item.text() if role_item is not None else "",
+        default=CAMERA_ROLES[row] if row < len(CAMERA_ROLES) else "",
+    )
+
+
+def _update_capture_channel_count(tool_page) -> None:
+    table = getattr(tool_page, "capture_channel_table", None)
+    label = getattr(tool_page, "lbl_capture_channel_count", None)
+    if table is None or label is None:
+        return
+    enabled_count = sum(
+        1
+        for row in range(table.rowCount())
+        if table.item(row, 0) is not None
+        and table.item(row, 0).checkState() == QtCore.Qt.CheckState.Checked
+    )
+    label.setText(tr("debug.capture_channel_count", count=enabled_count))
+
+
+def _inspection_items_for_role(tool_page, role: object) -> list[object]:
+    role_text = normalize_camera_role(role, default="")
+    if not role_text:
+        return []
+    return [
+        item
+        for item in list(getattr(tool_page, "inspection_items", []) or [])
+        if normalize_camera_role(getattr(item, "camera_id", ""), default="") == role_text
+    ]
+
+
+def _confirm_capture_channel_disable(tool_page, role: object) -> bool:
+    role_text = normalize_camera_role(role, default="")
+    inspection_items = _inspection_items_for_role(tool_page, role_text)
+    if not inspection_items:
+        return True
+    names = [
+        str(
+            getattr(item, "display_name", "")
+            or getattr(item, "roi_label", "")
+            or getattr(item, "item_id", "")
+        ).strip()
+        for item in inspection_items
+    ]
+    visible_names = [name for name in names if name][:8]
+    item_summary = "\n".join(f"- {name}" for name in visible_names)
+    if len(names) > len(visible_names):
+        item_summary += "\n" + tr(
+            "debug.capture_disable_channel_more",
+            count=len(names) - len(visible_names),
+        )
+    answer = QtWidgets.QMessageBox.question(
+        tool_page,
+        tr("debug.capture_disable_channel_title"),
+        tr(
+            "debug.capture_disable_channel_message",
+            role=role_text,
+            count=len(inspection_items),
+            items=item_summary,
+        ),
+        QtWidgets.QMessageBox.StandardButton.Yes
+        | QtWidgets.QMessageBox.StandardButton.No,
+        QtWidgets.QMessageBox.StandardButton.No,
+    )
+    return answer == QtWidgets.QMessageBox.StandardButton.Yes
+
+
+def _set_capture_channel_checked(tool_page, row: int, checked: bool) -> None:
+    table = getattr(tool_page, "capture_channel_table", None)
+    if table is None:
+        return
+    enabled_item = table.item(row, 0)
+    if enabled_item is None:
+        return
+    blocker = QtCore.QSignalBlocker(table)
+    enabled_item.setCheckState(
+        QtCore.Qt.CheckState.Checked if checked else QtCore.Qt.CheckState.Unchecked
+    )
+    del blocker
+
+
+def _confirm_disabled_mapped_channels(tool_page) -> None:
+    if not uses_channel_capture_mapping(_capture_mode_from_ui(tool_page)):
+        return
+    table = getattr(tool_page, "capture_channel_table", None)
+    if table is None:
+        return
+    for row in range(table.rowCount()):
+        enabled_item = table.item(row, 0)
+        if enabled_item is None or enabled_item.checkState() == QtCore.Qt.CheckState.Checked:
+            continue
+        role = _capture_channel_role(tool_page, row)
+        if not _confirm_capture_channel_disable(tool_page, role):
+            _set_capture_channel_checked(tool_page, row, True)
+
+
 def _sync_capture_camera_roles(tool_page) -> None:
     if getattr(tool_page, "_capture_config_loading", False):
         return
@@ -423,6 +524,7 @@ def _load_capture_config_to_ui(tool_page) -> None:
     finally:
         tool_page._capture_config_loading = False
         _update_capture_channel_visibility(tool_page)
+        _update_capture_channel_count(tool_page)
 
 
 def _save_capture_config_from_ui(tool_page) -> None:
@@ -456,11 +558,27 @@ def _on_capture_mode_changed(tool_page, _index: int = 0) -> None:
             index = physical_combo.findData(target_role)
             if index >= 0:
                 physical_combo.setCurrentIndex(index)
+        _confirm_disabled_mapped_channels(tool_page)
+    _update_capture_channel_count(tool_page)
     _save_capture_config_from_ui(tool_page)
     _sync_capture_camera_roles(tool_page)
 
 
 def _on_capture_channel_item_changed(tool_page, _item=None) -> None:
+    _update_capture_channel_count(tool_page)
+    if getattr(tool_page, "_capture_config_loading", False):
+        return
+    if (
+        _item is not None
+        and _item.column() == 0
+        and _item.checkState() == QtCore.Qt.CheckState.Unchecked
+    ):
+        row = _item.row()
+        role = _capture_channel_role(tool_page, row)
+        if not _confirm_capture_channel_disable(tool_page, role):
+            _set_capture_channel_checked(tool_page, row, True)
+            _update_capture_channel_count(tool_page)
+            return
     _save_capture_config_from_ui(tool_page)
     _sync_capture_camera_roles(tool_page)
 
