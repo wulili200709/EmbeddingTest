@@ -128,7 +128,12 @@ def aggregate_runtime_outcome(
         else:
             camera_result = camera_results.get(item.camera_id)
             item_result = (camera_result.result if camera_result else "") or ("NG" if error_message else "PENDING")
-            detail = camera_result.detail if camera_result else ""
+            # A trigger-wide failure can arrive without a per-camera outcome
+            # (for example, a locator exception raised outside the camera
+            # worker).  Preserve that diagnostic on the fallback item rows so
+            # the runtime UI can distinguish template matching failure from a
+            # genuine first-ROI defect.
+            detail = (camera_result.detail if camera_result else "") or str(error_message or "")
         item_results.append(
             InspectionItemResult(
                 item_id=item.item_id,

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 from PySide6 import QtCore, QtWidgets
 
 from ui.i18n import tr
 from ui.debug.tool_page.camera_roles import camera_role_from_path
+from ui.debug.tool_page.training_assets import ensure_training_image_local
 
 
 def _split_files_by_camera_role(files: list[str]) -> tuple[list[str], list[str]]:
@@ -95,6 +97,72 @@ class SampleListController:
         self.owner._set_status_for_current_image(path)
         self.owner._update_sample_panel_widgets()
 
+    def _localize_training_files(
+        self,
+        files: list[str],
+    ) -> tuple[list[str], list[tuple[str, str]], list[tuple[str, Exception]]]:
+        product_dir = str(getattr(getattr(self.owner, "session", None), "product_dir", "") or "")
+        localized: list[str] = []
+        path_changes: list[tuple[str, str]] = []
+        failures: list[tuple[str, Exception]] = []
+        for path in files:
+            try:
+                local_path = ensure_training_image_local(path, product_dir=product_dir)
+            except Exception as exc:
+                failures.append((str(path), exc))
+                continue
+            localized.append(local_path)
+            if os.path.normcase(os.path.normpath(local_path)) != os.path.normcase(os.path.normpath(path)):
+                path_changes.append((str(path), local_path))
+        return localized, path_changes, failures
+
+    def _show_training_copy_failures(self, failures: list[tuple[str, Exception]]) -> None:
+        if not failures:
+            return
+        details = "\n".join(
+            f"- {QtCore.QFileInfo(path).fileName()}: {error}"
+            for path, error in failures[:10]
+        )
+        if len(failures) > 10:
+            details += f"\n... ({len(failures) - 10} more)"
+        QtWidgets.QMessageBox.warning(
+            self.owner,
+            tr("common.error"),
+            tr("debug.training_image_copy_failed", files=details),
+        )
+
+    def _transfer_annotation_path(self, old_path: str, new_path: str, *, remove_source: bool) -> bool:
+        annotations_by_path = getattr(self.owner, "_sample_roi_annotations_by_path", None)
+        if not isinstance(annotations_by_path, dict):
+            return False
+        old_key_normalized = os.path.normcase(os.path.normpath(str(old_path or "")))
+        source_key = next(
+            (
+                key
+                for key in list(annotations_by_path)
+                if os.path.normcase(os.path.normpath(str(key or ""))) == old_key_normalized
+            ),
+            None,
+        )
+        if source_key is None:
+            return False
+        moved_annotations = dict(annotations_by_path.get(source_key, {}) or {})
+        target_key = os.path.normpath(str(new_path or ""))
+        merged = dict(annotations_by_path.get(target_key, {}) or {})
+        merged.update(moved_annotations)
+        if merged:
+            annotations_by_path[target_key] = merged
+        if remove_source and source_key != target_key:
+            annotations_by_path.pop(source_key, None)
+        return True
+
+    def _save_annotations_if_changed(self, changed: bool) -> None:
+        if not changed:
+            return
+        save_annotations = getattr(self.owner, "_save_sample_roi_annotations", None)
+        if callable(save_annotations):
+            save_annotations()
+
     def move_selected_sample_to(self, target_kind: str) -> None:
         if not self._require_manage_permission("移动样本"):
             return
@@ -102,11 +170,25 @@ class SampleListController:
         if not path:
             return
         normalized_target = str(target_kind or "").strip().upper()
+        target_path = path
+        annotations_changed = False
+        if normalized_target == "TRAIN":
+            localized, path_changes, failures = self._localize_training_files([path])
+            if failures or not localized:
+                self._show_training_copy_failures(failures)
+                return
+            target_path = localized[0]
+            if path_changes:
+                annotations_changed = self._transfer_annotation_path(
+                    path,
+                    target_path,
+                    remove_source=True,
+                )
         for collection in (self.owner.train_files, self.owner.test_files, self.owner.ok_files, self.owner.ng_files):
             while path in collection:
                 collection.remove(path)
         if normalized_target == "TRAIN":
-            self.owner.train_files.append(path)
+            self.owner.train_files.append(target_path)
             self.owner.train_files = sorted(list(dict.fromkeys(self.owner.train_files)))
             self.owner.tabs.setCurrentIndex(0)
         else:
@@ -116,8 +198,14 @@ class SampleListController:
         self.owner._refresh_lists()
         self.owner._clear_training_roi_review_state()
         self.owner._save_session()
-        self._audit("移动样本", target=str(path), after_value=normalized_target)
-        self.select_path_in_current_tab(path)
+        self._save_annotations_if_changed(annotations_changed)
+        self._audit(
+            "移动样本",
+            target=str(target_path),
+            before_value=str(path) if target_path != path else "",
+            after_value=normalized_target,
+        )
+        self.select_path_in_current_tab(target_path)
 
     def add_images_to(self, kind: str) -> None:
         if not self._require_manage_permission("添加样本"):
@@ -145,8 +233,19 @@ class SampleListController:
             return
         normalized_kind = str(kind or "").strip().upper()
         if normalized_kind in {"TRAIN", "OK", "NG", "TRAIN_OK", "TRAIN_NG"}:
+            files, path_changes, failures = self._localize_training_files(files)
+            self._show_training_copy_failures(failures)
+            if not files:
+                return
+            annotations_changed = False
+            for old_path, new_path in path_changes:
+                annotations_changed = (
+                    self._transfer_annotation_path(old_path, new_path, remove_source=False)
+                    or annotations_changed
+                )
             self.owner.train_files.extend(files)
             self.owner.train_files = sorted(list(dict.fromkeys(self.owner.train_files)))
+            self._save_annotations_if_changed(annotations_changed)
         else:
             self.owner.test_files.extend(files)
             self.owner.test_files = sorted(list(dict.fromkeys(self.owner.test_files)))

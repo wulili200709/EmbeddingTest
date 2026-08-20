@@ -481,7 +481,7 @@ def show_about_dialog(window) -> None:
     QtWidgets.QMessageBox.information(
         window,
         tr("dialog.about_title"),
-        tr("dialog.about_body"),
+        tr("dialog.about_body", version=APP_VERSION),
     )
 
 

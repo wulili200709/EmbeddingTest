@@ -1,0 +1,23 @@
+{
+  "00E76555119": {
+    "exposure_time_us": 8000.0,
+    "gain": 0.0,
+    "trigger_mode": "software"
+  },
+  "DA9521010": {
+    "exposure_time_us": 5000.0,
+    "gain": 0.0,
+    "trigger_mode": "continuous"
+  },
+  "by_role": {
+    "cam1": {
+      "serial": "DB1938509"
+    },
+    "cam2": {
+      "serial": "DA9587415"
+    },
+    "cam3": {
+      "serial": "DA9587415"
+    }
+  }
+}

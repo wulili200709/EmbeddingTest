@@ -23,6 +23,8 @@ from ui.debug.tool_page import camera_debug
 from ui.i18n import language_code, set_language, tr
 from ui.window_common import update_runtime_preview
 from application.runtime.preview_frame import build_runtime_preview_frame
+from domain.inspection_items import InspectionItem
+from domain.result_aggregator import aggregate_runtime_outcome
 
 
 class _CaptureStore:
@@ -599,8 +601,71 @@ class RuntimeModeTriggerButtonsTest(unittest.TestCase):
                         page.lbl_ng_summary.text(),
                         tr("runtime.ng_summary_match_failed", camera="Cam3"),
                     )
+
+            page.set_inspection_items(
+                [
+                    {
+                        "item_id": "cam3-first-ng",
+                        "display_name": "First ROI",
+                        "camera_id": "cam3",
+                        "enabled": True,
+                        "status_kind": "ng",
+                        "status_text": "NG",
+                    },
+                    {
+                        "item_id": "cam3-match-failure",
+                        "display_name": "Second ROI",
+                        "camera_id": "cam3",
+                        "enabled": True,
+                        "status_kind": "ng",
+                        "status_text": "NG (cam3 match failure)",
+                    },
+                ]
+            )
+            self.assertEqual(
+                page.lbl_ng_summary.text(),
+                tr("runtime.ng_summary_match_failed", camera="Cam3"),
+            )
         finally:
             set_language(previous, persist=False)
+
+    def test_global_match_failure_is_propagated_to_rows_and_summary(self) -> None:
+        items = [
+            InspectionItem(
+                item_id="roi1",
+                display_name="First ROI",
+                camera_id="cam1",
+                roi_label="roi1",
+            ),
+            InspectionItem(
+                item_id="roi2",
+                display_name="Second ROI",
+                camera_id="cam1",
+                roi_label="roi2",
+            ),
+        ]
+        result = aggregate_runtime_outcome(
+            product_name="demo",
+            recipe_name="",
+            items=items,
+            active_roles=["cam1"],
+            camera_outcomes={},
+            final_result="NG",
+            duration_ms=1,
+            error_message="match failure",
+        )
+
+        self.assertEqual(
+            [item.detail for item in result.item_results],
+            ["match failure", "match failure"],
+        )
+        page = RuntimeModePage()
+        page.set_configured_camera_roles(["cam1"])
+        page.set_inspection_items(result.item_rows())
+        self.assertEqual(
+            page.lbl_ng_summary.text(),
+            tr("runtime.ng_summary_match_failed", camera="Cam1"),
+        )
 
 
 if __name__ == "__main__":

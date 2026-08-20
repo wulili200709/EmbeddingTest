@@ -2227,6 +2227,11 @@ class ToolPage(QtWidgets.QWidget):
         topk_enabled = embedding and self.cmb_mode.currentText() == "topk"
         inspection_items = list(getattr(self, "inspection_items", []) or [])
         current_role = self.current_camera_role()
+        has_testable_items = any(
+            getattr(item, "enabled", False)
+            and _normalize_camera_role(getattr(item, "camera_id", "")) == current_role
+            for item in inspection_items
+        )
         has_trainable_items = any(
             getattr(item, "enabled", False)
             and _normalize_camera_role(getattr(item, "camera_id", "")) == current_role
@@ -2261,7 +2266,7 @@ class ToolPage(QtWidgets.QWidget):
         train_current_button = getattr(self, "btn_train_current", None)
         if train_current_button is not None:
             train_current_button.setEnabled(selected_tool_enabled and can_train)
-        self.btn_test.setEnabled(algorithm_selected)
+        self.btn_test.setEnabled(has_testable_items)
         margin_button = getattr(self, "btn_validate_margin", None)
         if margin_button is not None:
             margin_button.setEnabled(embedding and can_edit_template_params)

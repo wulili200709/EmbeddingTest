@@ -26,7 +26,12 @@ class NkioBoard:
         self.raw = NkioRawLib(dll_path=dll_path)
         self._opened = False
         self._do_word_cache = 0
-        self._lock = threading.Lock()
+        # The vendor NKIO library is not safe to call concurrently.  Runtime
+        # DI polling happens on its own thread while camera/tower-light DO
+        # writes happen on trigger and timer threads, so every DLL call must
+        # share one board-wide lock.  An RLock is required because the public
+        # helpers call private read helpers while already holding the lock.
+        self._lock = threading.RLock()
 
     @property
     def is_open(self) -> bool:
@@ -37,57 +42,62 @@ class NkioBoard:
         return int(self._do_word_cache)
 
     def open(self) -> None:
-        if self._opened:
-            return
-        if not self.config_file.exists():
-            raise FileNotFoundError(self.config_file)
-        ret = self.raw.library_init(self.config_file)
-        raise_for_code(ret, "NKDIO_LibraryInit", detail=str(self.config_file))
-        self._opened = True
-        self._do_word_cache = self._safe_read_do_word()
+        with self._lock:
+            if self._opened:
+                return
+            if not self.config_file.exists():
+                raise FileNotFoundError(self.config_file)
+            ret = self.raw.library_init(self.config_file)
+            raise_for_code(ret, "NKDIO_LibraryInit", detail=str(self.config_file))
+            self._opened = True
+            self._do_word_cache = self._safe_read_do_word()
 
     def close(self) -> None:
-        if not self._opened:
-            return
-        self.raw.library_deinit()
-        self._opened = False
+        with self._lock:
+            if not self._opened:
+                return
+            self.raw.library_deinit()
+            self._opened = False
 
     def read_di_byte(self, index: int) -> int:
-        self._ensure_open()
-        ret, value = self.raw.read_di_byte(index)
-        raise_for_code(ret, "NKDIO_PollingReadDiByte", detail=f"index={index}")
-        return value
+        with self._lock:
+            self._ensure_open()
+            ret, value = self.raw.read_di_byte(index)
+            raise_for_code(ret, "NKDIO_PollingReadDiByte", detail=f"index={index}")
+            return value
 
     def read_di_word(self) -> int:
-        self._ensure_open()
-        ret, value = self.raw.read_di_word(0)
-        raise_for_code(ret, "NKDIO_PollingReadDiWord", detail="index=0")
-        return value
+        with self._lock:
+            self._ensure_open()
+            ret, value = self.raw.read_di_word(0)
+            raise_for_code(ret, "NKDIO_PollingReadDiWord", detail="index=0")
+            return value
 
     def read_do_byte(self, index: int) -> int:
-        self._ensure_open()
-        ret, value = self.raw.read_do_byte(index)
-        raise_for_code(ret, "NKDIO_PollingReadDoByte", detail=f"index={index}")
-        return value
+        with self._lock:
+            self._ensure_open()
+            ret, value = self.raw.read_do_byte(index)
+            raise_for_code(ret, "NKDIO_PollingReadDoByte", detail=f"index={index}")
+            return value
 
     def read_do_word(self) -> int:
-        self._ensure_open()
         with self._lock:
+            self._ensure_open()
             value = self._safe_read_do_word()
             self._do_word_cache = value
             return value
 
     def write_do_byte(self, index: int, value: int) -> None:
-        self._ensure_open()
         with self._lock:
+            self._ensure_open()
             ret = self.raw.write_do_byte(index, value)
             raise_for_code(ret, "NKDIO_PollingWriteDoByte", detail=f"index={index}, value=0x{value:02X}")
             self._do_word_cache = self._safe_read_do_word()
 
     def write_do_word(self, value: int) -> None:
-        self._ensure_open()
         value &= 0xFFFF
         with self._lock:
+            self._ensure_open()
             ret = self.raw.write_do_word(0, value)
             raise_for_code(ret, "NKDIO_PollingWriteDoWord", detail=f"index=0, value=0x{value:04X}")
             self._do_word_cache = value
@@ -103,9 +113,8 @@ class NkioBoard:
     def write_do_channel(self, channel: int, on: bool) -> None:
         self._validate_channel(channel)
         with self._lock:
-            current = self._do_word_cache if self._opened else 0
-            if self._opened:
-                current = self._safe_read_do_word()
+            self._ensure_open()
+            current = self._safe_read_do_word()
             updated = set_bit(current, channel, on)
             ret = self.raw.write_do_word(0, updated)
             raise_for_code(
@@ -116,10 +125,10 @@ class NkioBoard:
             self._do_word_cache = updated
 
     def set_do_channels(self, updates: dict[int, bool]) -> None:
-        self._ensure_open()
         for channel in updates:
             self._validate_channel(channel)
         with self._lock:
+            self._ensure_open()
             current = self._safe_read_do_word()
             updated = current
             for channel, on in updates.items():

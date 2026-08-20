@@ -3210,6 +3210,11 @@ py -3.12 -m PyInstaller --noconfirm --clean --distpath "C:\Users\goney\Desktop\M
 如果你当前目录是项目根目录 C:\Users\goney\Desktop\MatchTemplate2，直接执行：
 powershell -ExecutionPolicy Bypass -File .\EmbeddingTest\build_py312.ps1
 
+
+.\build_release.bat 3.0.2
+
+
+
 build_py312.ps1 只是调用 PyInstaller；而 LC_System.spec 里把 algorithms、application、devices、domain、services、ui 这些纯 Python 模块收进去，再在 LC_System.spec 到 LC_System.spec 打进 LC System.exe。
 所以结论是：
 

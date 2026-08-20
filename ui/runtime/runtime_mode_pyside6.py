@@ -95,8 +95,16 @@ class RuntimeImageView(QtWidgets.QLabel):
     def __init__(self, title: str) -> None:
         super().__init__(title)
         self._pixmap: QtGui.QPixmap | None = None
+        self._zoom = 1.0
+        self._zoom_min = 1.0
+        self._zoom_max = 8.0
+        self._pan_offset = QtCore.QPointF()
+        self._dragging = False
+        self._drag_last_pos = QtCore.QPointF()
         self.setAlignment(QtCore.Qt.AlignCenter)
         self.setMinimumSize(160, 120)
+        self.setMouseTracking(True)
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         self.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Expanding,
             QtWidgets.QSizePolicy.Policy.Expanding,
@@ -104,28 +112,167 @@ class RuntimeImageView(QtWidgets.QLabel):
         self.setStyleSheet(f"background:{_DARK_BG};color:{_TEXT_DIM};font-size:14px;")
 
     def set_runtime_pixmap(self, pixmap: QtGui.QPixmap | None, *, placeholder: str | None = None) -> None:
+        previous_size = self._pixmap.size() if self._pixmap is not None else QtCore.QSize()
         self._pixmap = pixmap
         if pixmap is None:
+            self._zoom = 1.0
+            self._pan_offset = QtCore.QPointF()
+            self._dragging = False
+            self.unsetCursor()
             self.setPixmap(QtGui.QPixmap())
             self.setText(placeholder or tr("runtime.waiting_image"))
             return
+        if previous_size.isEmpty() or previous_size != pixmap.size():
+            self._zoom = 1.0
+            self._pan_offset = QtCore.QPointF()
+        self._refresh_pixmap()
+
+    def zoom_factor(self) -> float:
+        return float(self._zoom)
+
+    def pan_offset(self) -> QtCore.QPointF:
+        return QtCore.QPointF(self._pan_offset)
+
+    def set_zoom(self, zoom: float, *, anchor: QtCore.QPointF | None = None) -> None:
+        if self._pixmap is None:
+            return
+        old_zoom = float(self._zoom)
+        new_zoom = max(self._zoom_min, min(self._zoom_max, float(zoom)))
+        if abs(new_zoom - old_zoom) < 1e-9:
+            return
+
+        if anchor is None:
+            anchor = QtCore.QPointF(self.width() / 2.0, self.height() / 2.0)
+        center = QtCore.QPointF(self.width() / 2.0, self.height() / 2.0)
+        anchor_from_center = QtCore.QPointF(anchor) - center
+        ratio = new_zoom / max(old_zoom, 1e-9)
+        self._pan_offset = anchor_from_center - (
+            anchor_from_center - self._pan_offset
+        ) * ratio
+        self._zoom = new_zoom
+        if self._zoom <= self._zoom_min:
+            self._pan_offset = QtCore.QPointF()
+        self._clamp_pan_offset()
+        self._refresh_cursor()
+        self._refresh_pixmap()
+
+    def reset_view(self) -> None:
+        self._zoom = 1.0
+        self._pan_offset = QtCore.QPointF()
+        self._dragging = False
+        self._refresh_cursor()
         self._refresh_pixmap()
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
         if self._pixmap is not None:
+            self._clamp_pan_offset()
             self._refresh_pixmap()
 
     def _refresh_pixmap(self) -> None:
-        if self._pixmap is None:
+        if self._pixmap is None or self._pixmap.isNull():
             return
-        scaled = self._pixmap.scaled(
-            self.size(),
-            QtCore.Qt.KeepAspectRatio,
-            QtCore.Qt.SmoothTransformation,
+        view_width = max(1, self.width())
+        view_height = max(1, self.height())
+        scaled_width, scaled_height = self._scaled_image_size()
+        left = (view_width - scaled_width) / 2.0 + self._pan_offset.x()
+        top = (view_height - scaled_height) / 2.0 + self._pan_offset.y()
+
+        canvas = QtGui.QPixmap(view_width, view_height)
+        canvas.fill(QtGui.QColor(_DARK_BG))
+        painter = QtGui.QPainter(canvas)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform, True)
+        painter.drawPixmap(
+            QtCore.QRectF(left, top, scaled_width, scaled_height),
+            self._pixmap,
+            QtCore.QRectF(self._pixmap.rect()),
         )
+        painter.end()
         self.setText("")
-        self.setPixmap(scaled)
+        self.setPixmap(canvas)
+
+    def _scaled_image_size(self) -> tuple[float, float]:
+        if self._pixmap is None or self._pixmap.isNull():
+            return 0.0, 0.0
+        image_width = max(1, self._pixmap.width())
+        image_height = max(1, self._pixmap.height())
+        fit_scale = min(
+            max(1, self.width()) / image_width,
+            max(1, self.height()) / image_height,
+        )
+        scale = fit_scale * float(self._zoom)
+        return image_width * scale, image_height * scale
+
+    def _clamp_pan_offset(self) -> None:
+        if self._pixmap is None or self._zoom <= self._zoom_min:
+            self._pan_offset = QtCore.QPointF()
+            return
+        scaled_width, scaled_height = self._scaled_image_size()
+        limit_x = max(0.0, (scaled_width - max(1, self.width())) / 2.0)
+        limit_y = max(0.0, (scaled_height - max(1, self.height())) / 2.0)
+        self._pan_offset = QtCore.QPointF(
+            max(-limit_x, min(limit_x, self._pan_offset.x())),
+            max(-limit_y, min(limit_y, self._pan_offset.y())),
+        )
+
+    def _refresh_cursor(self) -> None:
+        if self._dragging:
+            self.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
+        elif self._pixmap is not None and self._zoom > self._zoom_min:
+            self.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
+        else:
+            self.unsetCursor()
+
+    def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
+        if self._pixmap is None:
+            super().wheelEvent(event)
+            return
+        delta = event.angleDelta().y()
+        if delta == 0:
+            event.ignore()
+            return
+        factor = 1.2 ** (float(delta) / 120.0)
+        self.set_zoom(self._zoom * factor, anchor=event.position())
+        event.accept()
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        if (
+            event.button() == QtCore.Qt.MouseButton.LeftButton
+            and self._pixmap is not None
+            and self._zoom > self._zoom_min
+        ):
+            self._dragging = True
+            self._drag_last_pos = event.position()
+            self._refresh_cursor()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
+        if self._dragging and event.buttons() & QtCore.Qt.MouseButton.LeftButton:
+            current_pos = event.position()
+            self._pan_offset += current_pos - self._drag_last_pos
+            self._drag_last_pos = current_pos
+            self._clamp_pan_offset()
+            self._refresh_pixmap()
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
+        if event.button() == QtCore.Qt.MouseButton.LeftButton and self._dragging:
+            self._dragging = False
+            self._refresh_cursor()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QtGui.QMouseEvent) -> None:
+        if event.button() == QtCore.Qt.MouseButton.LeftButton and self._pixmap is not None:
+            self.reset_view()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
 
 class _ElidedLabel(QtWidgets.QLabel):
@@ -1345,24 +1492,22 @@ class RuntimeModePage(QtWidgets.QWidget):
     def _refresh_ng_summary(self, grouped_rows: dict[str, list[dict]]) -> None:
         summaries: list[str] = []
         for camera_id in CAMERA_ROLES:
-            first_ng_row = next(
-                (
-                    row
-                    for row in grouped_rows.get(camera_id, [])
-                    if str(row.get("status_kind", "")).strip().lower() == "ng"
-                    or str(row.get("result", "")).strip().upper() == "NG"
-                ),
-                None,
-            )
-            if first_ng_row is None:
+            ng_rows = [
+                row
+                for row in grouped_rows.get(camera_id, [])
+                if str(row.get("status_kind", "")).strip().lower() == "ng"
+                or str(row.get("result", "")).strip().upper() == "NG"
+            ]
+            if not ng_rows:
                 continue
             camera_index = camera_index_for_role(camera_id)
             camera_name = f"Cam{camera_index}" if camera_index else camera_id
-            if self._is_template_match_failure_row(first_ng_row):
+            if any(self._is_template_match_failure_row(row) for row in ng_rows):
                 summaries.append(
                     tr("runtime.ng_summary_match_failed", camera=camera_name)
                 )
             else:
+                first_ng_row = ng_rows[0]
                 item_name = self._runtime_item_display_name(first_ng_row)
                 summaries.append(
                     tr("runtime.ng_summary_item", camera=camera_name, item=item_name)

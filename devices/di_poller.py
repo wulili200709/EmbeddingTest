@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Callable, Iterable
 
 from .io_controller import IoController
+from .nkio_errors import NkioBusyError, NkioError
 
 
 @dataclass(frozen=True)
@@ -30,11 +31,15 @@ class DiPoller:
         input_names: Iterable[str] | None = None,
         poll_interval_ms: int = 20,
         debounce_ms: int = 50,
+        busy_retry_count: int = 3,
+        busy_retry_delay_ms: int = 5,
     ) -> None:
         self.io = io
         self.input_names = list(input_names) if input_names is not None else list(io.mapping.di_names())
         self.poll_interval_s = max(0.001, float(poll_interval_ms) / 1000.0)
         self.debounce_s = max(0.0, float(debounce_ms) / 1000.0)
+        self.busy_retry_count = max(0, int(busy_retry_count))
+        self.busy_retry_delay_s = max(0.0, float(busy_retry_delay_ms) / 1000.0)
 
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -57,8 +62,8 @@ class DiPoller:
             return
         if not self.io.is_open:
             raise RuntimeError("IoController must be open before starting DiPoller")
-        self._initialize_states()
         self._stop_event.clear()
+        self._initialize_states()
         self._thread = threading.Thread(target=self._run_loop, name="DiPoller", daemon=True)
         self._thread.start()
 
@@ -92,7 +97,7 @@ class DiPoller:
             self._candidate_state.clear()
             self._candidate_since.clear()
             for name in self.input_names:
-                state = bool(self.io.read_input(name))
+                state = self._read_input_with_busy_retry(name)
                 self._stable_state[name] = state
                 self._candidate_state[name] = state
                 self._candidate_since[name] = now
@@ -101,11 +106,17 @@ class DiPoller:
         while not self._stop_event.is_set():
             now = time.perf_counter()
             for name in self.input_names:
-                self._process_input(name, now)
+                try:
+                    self._process_input(name, now)
+                except NkioError:
+                    # A transient board error must not terminate the DI thread.
+                    # The next polling cycle retries naturally; stable/candidate
+                    # state is intentionally left untouched for debounce safety.
+                    continue
             self._stop_event.wait(self.poll_interval_s)
 
     def _process_input(self, name: str, now: float) -> None:
-        raw_state = bool(self.io.read_input(name))
+        raw_state = self._read_input_with_busy_retry(name)
         event: DiEvent | None = None
 
         with self._lock:
@@ -136,6 +147,17 @@ class DiPoller:
 
         if event is not None:
             self._emit_event(event)
+
+    def _read_input_with_busy_retry(self, name: str) -> bool:
+        for retry_index in range(self.busy_retry_count + 1):
+            try:
+                return bool(self.io.read_input(name))
+            except NkioBusyError:
+                if retry_index >= self.busy_retry_count:
+                    raise
+                if self._stop_event.wait(self.busy_retry_delay_s):
+                    raise
+        raise RuntimeError("unreachable DI busy-retry state")
 
     def _emit_event(self, event: DiEvent) -> None:
         for callback in list(self._on_change):

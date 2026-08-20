@@ -4,6 +4,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from PySide6 import QtWidgets
 
@@ -33,9 +34,15 @@ class _ToolPageRuntimeWidgetsHarness:
         self._algo_param_label_style = "color:#9a9a9a;"
         self._algo_param_label_disabled_style = "color:#6a6a6a;"
         self.inspection_items = []
+        self.algo = SimpleNamespace(
+            is_measurement_tool=lambda algorithm: algorithm == "line_distance",
+        )
 
     def current_camera_role(self) -> str:
         return "cam1"
+
+    def window(self):
+        return self
 
     def _selected_inspection_item(self):
         return None
@@ -72,6 +79,28 @@ class ToolPageRuntimeWidgetsTest(unittest.TestCase):
         self.assertTrue(harness.spin_topk.isEnabled())
         self.assertTrue(harness.lbl_topk.isEnabled())
         self.assertEqual(harness.lbl_topk.styleSheet(), harness._algo_param_label_style)
+
+    def test_measurement_only_item_keeps_test_button_enabled(self) -> None:
+        harness = _ToolPageRuntimeWidgetsHarness()
+        harness.inspection_items = [
+            SimpleNamespace(enabled=True, camera_id="cam1", algorithm_code="line_distance"),
+        ]
+
+        harness._update_runtime_widgets()
+
+        self.assertTrue(harness.btn_test.isEnabled())
+        self.assertFalse(harness.btn_train.isEnabled())
+
+    def test_test_button_requires_enabled_item_for_current_camera(self) -> None:
+        harness = _ToolPageRuntimeWidgetsHarness()
+        harness.inspection_items = [
+            SimpleNamespace(enabled=False, camera_id="cam1", algorithm_code="line_distance"),
+            SimpleNamespace(enabled=True, camera_id="cam2", algorithm_code="line_distance"),
+        ]
+
+        harness._update_runtime_widgets()
+
+        self.assertFalse(harness.btn_test.isEnabled())
 
 
 if __name__ == "__main__":

@@ -1,0 +1,252 @@
+[
+  {
+    "item_id": "roi1",
+    "display_name": "绿1",
+    "camera_id": "cam1",
+    "roi_label": "roi1",
+    "algorithm_code": "shared_backbone_register",
+    "enabled": true,
+    "params": {},
+    "algorithm_type": "shared_backbone_register"
+  },
+  {
+    "item_id": "roi2",
+    "display_name": "绿2",
+    "camera_id": "cam1",
+    "roi_label": "roi2",
+    "algorithm_code": "shared_backbone_register",
+    "enabled": true,
+    "params": {},
+    "algorithm_type": "shared_backbone_register"
+  },
+  {
+    "item_id": "roi3",
+    "display_name": "绿3",
+    "camera_id": "cam1",
+    "roi_label": "roi3",
+    "algorithm_code": "shared_backbone_register",
+    "enabled": true,
+    "params": {},
+    "algorithm_type": "shared_backbone_register"
+  },
+  {
+    "item_id": "roi4",
+    "display_name": "绿4",
+    "camera_id": "cam1",
+    "roi_label": "roi4",
+    "algorithm_code": "shared_backbone_register",
+    "enabled": true,
+    "params": {},
+    "algorithm_type": "shared_backbone_register"
+  },
+  {
+    "item_id": "roi5",
+    "display_name": "绿5",
+    "camera_id": "cam1",
+    "roi_label": "roi5",
+    "algorithm_code": "shared_backbone_register",
+    "enabled": true,
+    "params": {},
+    "algorithm_type": "shared_backbone_register"
+  },
+  {
+    "item_id": "roi6",
+    "display_name": "pusher1",
+    "camera_id": "cam1",
+    "roi_label": "roi6",
+    "algorithm_code": "shared_backbone_register",
+    "enabled": true,
+    "params": {},
+    "algorithm_type": "shared_backbone_register"
+  },
+  {
+    "item_id": "roi7",
+    "display_name": "pusher2",
+    "camera_id": "cam1",
+    "roi_label": "roi7",
+    "algorithm_code": "shared_backbone_register",
+    "enabled": true,
+    "params": {},
+    "algorithm_type": "shared_backbone_register"
+  },
+  {
+    "item_id": "roi8",
+    "display_name": "pusher3",
+    "camera_id": "cam1",
+    "roi_label": "roi8",
+    "algorithm_code": "shared_backbone_register",
+    "enabled": true,
+    "params": {},
+    "algorithm_type": "shared_backbone_register"
+  },
+  {
+    "item_id": "roi9",
+    "display_name": "pusher4",
+    "camera_id": "cam1",
+    "roi_label": "roi9",
+    "algorithm_code": "shared_backbone_register",
+    "enabled": true,
+    "params": {},
+    "algorithm_type": "shared_backbone_register"
+  },
+  {
+    "item_id": "roi10",
+    "display_name": "pusher5",
+    "camera_id": "cam1",
+    "roi_label": "roi10",
+    "algorithm_code": "shared_backbone_register",
+    "enabled": true,
+    "params": {},
+    "algorithm_type": "shared_backbone_register"
+  },
+  {
+    "item_id": "roi11",
+    "display_name": "roi11",
+    "camera_id": "cam1",
+    "roi_label": "roi11",
+    "algorithm_code": "shared_backbone_register",
+    "enabled": true,
+    "params": {},
+    "algorithm_type": "shared_backbone_register"
+  },
+  {
+    "item_id": "roi12",
+    "display_name": "roi12",
+    "camera_id": "cam1",
+    "roi_label": "roi12",
+    "algorithm_code": "shared_backbone_register",
+    "enabled": true,
+    "params": {},
+    "algorithm_type": "shared_backbone_register"
+  },
+  {
+    "item_id": "roi13",
+    "display_name": "roi13",
+    "camera_id": "cam1",
+    "roi_label": "roi13",
+    "algorithm_code": "shared_backbone_register",
+    "enabled": true,
+    "params": {},
+    "algorithm_type": "shared_backbone_register"
+  },
+  {
+    "item_id": "roi14",
+    "display_name": "roi14",
+    "camera_id": "cam1",
+    "roi_label": "roi14",
+    "algorithm_code": "shared_backbone_register",
+    "enabled": true,
+    "params": {},
+    "algorithm_type": "shared_backbone_register"
+  },
+  {
+    "item_id": "roi15",
+    "display_name": "roi15",
+    "camera_id": "cam1",
+    "roi_label": "roi15",
+    "algorithm_code": "shared_backbone_register",
+    "enabled": true,
+    "params": {},
+    "algorithm_type": "shared_backbone_register"
+  },
+  {
+    "item_id": "roi3",
+    "display_name": "pin1",
+    "camera_id": "cam2",
+    "roi_label": "roi3",
+    "algorithm_code": "shared_backbone_register",
+    "enabled": true,
+    "params": {},
+    "algorithm_type": "shared_backbone_register"
+  },
+  {
+    "item_id": "roi4",
+    "display_name": "pin2",
+    "camera_id": "cam2",
+    "roi_label": "roi4",
+    "algorithm_code": "shared_backbone_register",
+    "enabled": true,
+    "params": {},
+    "algorithm_type": "shared_backbone_register"
+  },
+  {
+    "item_id": "roi5",
+    "display_name": "pin3",
+    "camera_id": "cam2",
+    "roi_label": "roi5",
+    "algorithm_code": "shared_backbone_register",
+    "enabled": true,
+    "params": {},
+    "algorithm_type": "shared_backbone_register"
+  },
+  {
+    "item_id": "roi6",
+    "display_name": "pin4",
+    "camera_id": "cam2",
+    "roi_label": "roi6",
+    "algorithm_code": "shared_backbone_register",
+    "enabled": true,
+    "params": {},
+    "algorithm_type": "shared_backbone_register"
+  },
+  {
+    "item_id": "roi7",
+    "display_name": "pin5",
+    "camera_id": "cam2",
+    "roi_label": "roi7",
+    "algorithm_code": "shared_backbone_register",
+    "enabled": true,
+    "params": {},
+    "algorithm_type": "shared_backbone_register"
+  },
+  {
+    "item_id": "roi1",
+    "display_name": "roi1",
+    "camera_id": "cam2",
+    "roi_label": "roi1",
+    "algorithm_code": "find_line",
+    "enabled": true,
+    "params": {
+      "line": {
+        "direction": "right_left",
+        "edge_detector": "canny",
+        "polarity": "any",
+        "edge_threshold": 10.0,
+        "scan_step": 2,
+        "min_points": 10
+      }
+    },
+    "algorithm_type": "find_line"
+  },
+  {
+    "item_id": "roi2",
+    "display_name": "roi2",
+    "camera_id": "cam2",
+    "roi_label": "roi2",
+    "algorithm_code": "find_line",
+    "enabled": true,
+    "params": {
+      "line": {
+        "direction": "left_right",
+        "edge_detector": "canny"
+      }
+    },
+    "algorithm_type": "find_line"
+  },
+  {
+    "item_id": "line_distance",
+    "display_name": "Line Distance",
+    "camera_id": "cam2",
+    "roi_label": "",
+    "algorithm_code": "line_distance",
+    "enabled": true,
+    "params": {
+      "line_a_item_id": "roi1",
+      "line_b_item_id": "roi2",
+      "limit_unit": "px",
+      "lower_limit": 660.0,
+      "upper_limit": 685.0
+    },
+    "algorithm_type": "line_distance"
+  }
+]

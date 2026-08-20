@@ -16,6 +16,16 @@ from ui.debug.tool_page.measurement_algorithms import (
 from ui.i18n import tr
 
 
+class _InspectionComboBox(QtWidgets.QComboBox):
+    """Prevent a closed table editor from consuming accidental wheel input."""
+
+    def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
+        if self.view().isVisible():
+            super().wheelEvent(event)
+            return
+        event.ignore()
+
+
 def _require_tool_permission(tool_page, permission_key: str, action_name: str) -> bool:
     top_level = tool_page.window()
     require_permission = getattr(top_level, "_require_permission", None)
@@ -83,7 +93,7 @@ def _refresh_inspection_items_table(tool_page) -> None:
             )
             table.setItem(row, 1, name_item)
 
-            camera_combo = QtWidgets.QComboBox(table)
+            camera_combo = _InspectionComboBox(table)
             camera_combo.setStyleSheet(_inspection_combo_style(False))
             for camera_id in SUPPORTED_CAMERA_IDS:
                 camera_combo.addItem(camera_id, camera_id)
@@ -94,7 +104,7 @@ def _refresh_inspection_items_table(tool_page) -> None:
             )
             table.setCellWidget(row, 2, camera_combo)
 
-            algorithm_combo = QtWidgets.QComboBox(table)
+            algorithm_combo = _InspectionComboBox(table)
             algorithm_combo.setStyleSheet(_inspection_combo_style(False))
             for spec in algorithm_specs:
                 algorithm_name = tool_page.algo.algorithm_display_name(spec.code) or spec.display_name or spec.code

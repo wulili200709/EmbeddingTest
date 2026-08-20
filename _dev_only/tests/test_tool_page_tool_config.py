@@ -20,6 +20,20 @@ from algorithms.registry import SHARED_BACKBONE_ALGORITHM_CODE
 from domain.inspection_items import InspectionItem, load_inspection_items
 from ui.i18n import language_code, set_language, tr
 from ui.debug.tool_page import roi_ops, tool_config
+from ui.debug.tool_page.inspection_items_table import _InspectionComboBox
+
+
+def _wheel_down_event() -> QtGui.QWheelEvent:
+    return QtGui.QWheelEvent(
+        QtCore.QPointF(5, 5),
+        QtCore.QPointF(5, 5),
+        QtCore.QPoint(0, 0),
+        QtCore.QPoint(0, -120),
+        QtCore.Qt.MouseButton.NoButton,
+        QtCore.Qt.KeyboardModifier.NoModifier,
+        QtCore.Qt.ScrollPhase.ScrollUpdate,
+        False,
+    )
 
 
 class _DummyAlgo:
@@ -209,6 +223,29 @@ class ToolPageToolConfigTest(unittest.TestCase):
             self.assertEqual(harness.lbl_tool_config_hint.text(), "")
         finally:
             harness.cleanup()
+
+    def test_closed_camera_and_algorithm_combos_ignore_wheel(self) -> None:
+        for items in (
+            ["cam1", "cam2", "cam3"],
+            ["学习工具", "灰度工具", "标准差工具"],
+        ):
+            combo = _InspectionComboBox()
+            combo.addItems(items)
+            combo.setCurrentIndex(0)
+            event = _wheel_down_event()
+
+            QtWidgets.QApplication.sendEvent(combo, event)
+
+            self.assertEqual(combo.currentIndex(), 0)
+            self.assertFalse(event.isAccepted())
+
+    def test_inspection_combo_normal_selection_still_works(self) -> None:
+        combo = _InspectionComboBox()
+        combo.addItems(["学习工具", "灰度工具"])
+
+        combo.setCurrentIndex(1)
+
+        self.assertEqual(combo.currentText(), "灰度工具")
 
     def test_table_only_shows_items_for_current_camera_role(self) -> None:
         harness = _ToolConfigHarness()

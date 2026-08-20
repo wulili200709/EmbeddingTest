@@ -31,6 +31,7 @@ DEFAULT_BOOTSTRAP_ADMIN_USERS = (
     "X0OU72",
     "TSBCTK",
     "F3WMDT",
+    "GZD6UP",
 )
 PASSWORD_ITERATIONS = 200_000
 
@@ -389,6 +390,31 @@ class AuditStore:
                         """,
                         (user_name, digest, salt, utcnow_text()),
                     )
+                conn.execute(
+                    "INSERT INTO permission_migrations(migration_key) VALUES(?)",
+                    (migration_key,),
+                )
+
+            migration_key = "ensure_admin_user_gzd6up_20260820"
+            migration_applied = conn.execute(
+                "SELECT 1 FROM permission_migrations WHERE migration_key=?",
+                (migration_key,),
+            ).fetchone()
+            if migration_applied is None:
+                salt, digest = _hash_password(DEFAULT_ADMIN_PASSWORD)
+                conn.execute(
+                    """
+                    INSERT INTO users(
+                        user_name, password_hash, password_salt, role_key,
+                        enabled, is_super_admin, must_change_password, created_at
+                    )
+                    VALUES('GZD6UP', ?, ?, 'admin', 1, 0, 0, ?)
+                    ON CONFLICT(user_name) DO UPDATE SET
+                        role_key='admin',
+                        enabled=1
+                    """,
+                    (digest, salt, utcnow_text()),
+                )
                 conn.execute(
                     "INSERT INTO permission_migrations(migration_key) VALUES(?)",
                     (migration_key,),
