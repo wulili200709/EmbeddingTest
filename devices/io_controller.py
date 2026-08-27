@@ -56,6 +56,9 @@ class IoController:
         level = self.board.read_di_channel(cfg.channel)
         return level_to_business(level, cfg.active_high)
 
+    def has_output(self, name: str) -> bool:
+        return self.mapping.has_output(name)
+
     def read_output(self, name: str) -> bool:
         cfg = self.mapping.get_output(name)
         level = self.board.read_do_channel(cfg.channel)
@@ -108,6 +111,8 @@ class IoController:
 
     def set_camera_light(self, camera_index: int, on: bool) -> None:
         output_name = f"light_cam{int(camera_index)}"
+        if not self.has_output(output_name):
+            return
         self.set_output(output_name, on)
 
     def read_foot_switch(self) -> bool:

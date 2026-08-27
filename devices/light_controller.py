@@ -34,7 +34,10 @@ class LightController:
 
     def requires_stable_delay(self, camera_index: int) -> bool:
         camera_index = self._validate_camera_index(camera_index)
-        return self._camera_light_modes.get(camera_index, "board_io") == "board_io"
+        return (
+            self._camera_light_modes.get(camera_index, "board_io") == "board_io"
+            and self.io.has_output(f"light_cam{camera_index}")
+        )
 
     def turn_on(self, camera_index: int) -> None:
         camera_index = self._validate_camera_index(camera_index)
@@ -65,6 +68,7 @@ class LightController:
                     other_index == camera_index
                     and mode == "board_io"
                     and self._camera_light_modes.get(camera_index, "board_io") == "board_io"
+                    and self.io.has_output(f"light_cam{other_index}")
                 )
                 self._set_camera_light(other_index, should_enable)
 

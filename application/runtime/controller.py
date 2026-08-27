@@ -182,6 +182,7 @@ class RuntimeController(QtCore.QObject):
     statusMessageChanged    = QtCore.Signal(str)   # → runtime_page.set_runtime_status
     recordPathChanged       = QtCore.Signal(str)   # → runtime_page.set_record_path
     ioStatusChanged         = QtCore.Signal(bool, str, object)  # (ready, detail, io_controller)
+    conveyorStateChanged    = QtCore.Signal(dict)
 
     # ── 动作类 Signal ─────────────────────────────────────────────────────
     camerasEnumerated = QtCore.Signal(list)        # → runtime_page.set_available_cameras
@@ -204,6 +205,10 @@ class RuntimeController(QtCore.QObject):
     errorOccurred   = QtCore.Signal(str)           # → QMessageBox.critical
     infoOccurred    = QtCore.Signal(str)           # → QMessageBox.information
     _triggerTaskFinished = QtCore.Signal(object, str)
+    _conveyorDiEvent = QtCore.Signal(str, bool)
+    _conveyorIoError = QtCore.Signal(str, str)
+    _conveyorCaptureTaskFinished = QtCore.Signal(int, int, object)
+    _conveyorInspectionTaskFinished = QtCore.Signal(int, int, object)
 
     def __init__(
         self,
@@ -238,6 +243,10 @@ class RuntimeController(QtCore.QObject):
         self._trigger_description = ""
         self._accept_trigger_jobs = True
         self._triggerTaskFinished.connect(self._on_trigger_task_finished)
+        self._conveyorDiEvent.connect(self._handle_conveyor_di_event)
+        self._conveyorIoError.connect(self._handle_conveyor_io_error)
+        self._conveyorCaptureTaskFinished.connect(self._on_conveyor_capture_task_finished)
+        self._conveyorInspectionTaskFinished.connect(self._on_conveyor_inspection_task_finished)
         self._persistence_executor: ThreadPoolExecutor | None = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="runtime-persist",
@@ -268,6 +277,18 @@ class RuntimeController(QtCore.QObject):
         self._io_ready = False
         self._io_status_detail = "IO not initialized"
         self._di_poller = None
+        self._conveyor_controller = None
+        self._conveyor_config_path: Path | None = None
+        self._conveyor_required_roles: list[str] = []
+        self._last_conveyor_snapshot: dict[str, object] = {}
+        self._conveyor_inspection_futures: set[Future] = set()
+        self._conveyor_infer_executor: ThreadPoolExecutor | None = ThreadPoolExecutor(
+            max_workers=2,
+            thread_name_prefix="conveyor-infer",
+        )
+        self._conveyor_timer = QtCore.QTimer(self)
+        self._conveyor_timer.setInterval(10)
+        self._conveyor_timer.timeout.connect(self._tick_conveyor)
         self._inspection_executor = InspectionExecutor(self._runtime_context)
         self._last_item_results_by_camera: Dict[str, list] = {}
         self._light_controller: _UiOnlyLightController = _UiOnlyLightController()
@@ -353,6 +374,7 @@ class RuntimeController(QtCore.QObject):
                 not self._accept_trigger_jobs
                 or executor is None
                 or (active is not None and not active.done())
+                or bool(self._conveyor_inspection_futures)
                 or self._busy
             ):
                 self.logAppended.emit(f"[runtime] ignored {description}: inspection already running")
@@ -407,12 +429,17 @@ class RuntimeController(QtCore.QObject):
         self._complete_trigger_task(future, description)
 
     def shutdown_trigger_worker(self, *, wait: bool = True) -> None:
+        self._wait_for_conveyor_inspections()
         with self._trigger_lock:
             self._accept_trigger_jobs = False
             executor = self._trigger_executor
             self._trigger_executor = None
+            infer_executor = self._conveyor_infer_executor
+            self._conveyor_infer_executor = None
         if executor is not None:
             executor.shutdown(wait=wait)
+        if infer_executor is not None:
+            infer_executor.shutdown(wait=wait)
 
     def initialize_startup_io(self, *, force: bool = False) -> bool:
         return self._initialize_startup_io(force=force)
@@ -659,7 +686,9 @@ class RuntimeController(QtCore.QObject):
 
     def disconnect(self, *, silent: bool = False, close_io: bool = True) -> None:
         """断开所有相机并释放运行链路资源。"""
+        self._shutdown_conveyor_controller()
         self.wait_for_trigger_task()
+        self._wait_for_conveyor_inspections()
         self._stop_di_poller()
         if close_io:
             self._close_io_controller()

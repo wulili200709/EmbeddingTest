@@ -1,0 +1,20 @@
+{
+  "poll_interval_ms": 10,
+  "debounce_ms": 20,
+  "capture_commit_guard_ms": 250,
+  "controlled_stop_timeout_ms": 1500,
+  "reject_delay_ms": 0,
+  "reject_duration_ms": 300,
+  "fifo_max_items": 128,
+  "item_to_reject_timeout_s": 10.0,
+  "end_sensor_enabled": true,
+  "upper_door_sensor_enabled": false,
+  "end_sensor_jam_s": 3.0,
+  "good_outlet_jam_s": 3.0,
+  "waste_outlet_jam_s": 3.0,
+  "purge_air_lead_ms": 200,
+  "purge_min_run_s": 10.0,
+  "purge_tail_run_s": 5.0,
+  "purge_quiet_s": 2.0,
+  "purge_max_run_s": 30.0
+}

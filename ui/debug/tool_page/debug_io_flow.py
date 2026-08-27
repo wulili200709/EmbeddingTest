@@ -7,19 +7,26 @@ from PySide6 import QtWidgets
 from ui.i18n import tr
 
 _DEBUG_IO_NAME_LABELS = {
-    "foot_switch": ("debug.io_name.foot_switch", "DI_FOOT_SWITCH"),
-    "reject_signal": ("debug.io_name.reject_signal", "DI_REJECT_SIGNAL"),
-    "reserved_in_1": ("debug.io_name.reserved_in_1", "DI_RESERVED_1"),
-    "reserved_in_2": ("debug.io_name.reserved_in_2", "DI_RESERVED_2"),
+    "camera_trigger_sensor": ("debug.io_name.camera_trigger_sensor", "DI0_CAMERA_TRIGGER"),
+    "reject_position_sensor": ("debug.io_name.reject_position_sensor", "DI1_REJECT_POSITION"),
+    "start_button": ("debug.io_name.start_button", "DI2_START"),
+    "stop_button": ("debug.io_name.stop_button", "DI3_STOP"),
+    "reserved_in_4": ("debug.io_name.reserved_in_4", "DI4_RESERVED"),
+    "safety_ok": ("debug.io_name.safety_ok", "DI5_SAFETY_OK"),
+    "end_test_sensor": ("debug.io_name.end_test_sensor", "DI6_END_TEST"),
+    "good_outlet_sensor": ("debug.io_name.good_outlet_sensor", "DI7_GOOD_OUTLET"),
+    "waste_outlet_sensor": ("debug.io_name.waste_outlet_sensor", "DI8_WASTE_OUTLET"),
+    "door_closed": ("debug.io_name.door_closed", "DI9_DOOR_CLOSED"),
+    "door_upper_closed": ("debug.io_name.door_upper_closed", "DI10_UPPER_DOOR_CLOSED"),
     "tower_red": ("debug.io_name.tower_red", "DO_TOWER_RED"),
     "tower_green": ("debug.io_name.tower_green", "DO_TOWER_GREEN"),
     "tower_blue": ("debug.io_name.tower_blue", "DO_TOWER_BLUE"),
-    "light_cam1": ("debug.io_name.light_cam1", "DO_LIGHT_CAM1"),
-    "light_cam2": ("debug.io_name.light_cam2", "DO_LIGHT_CAM2"),
-    "light_cam3": ("debug.io_name.light_cam3", "DO_LIGHT_CAM3"),
+    "waste_removal": ("debug.io_name.waste_removal", "DO3_WASTE_REMOVAL"),
+    "conveyor_run": ("debug.io_name.conveyor_run", "DO4_CONVEYOR_RUN"),
+    "button_green": ("debug.io_name.button_green", "DO5_BUTTON_GREEN"),
+    "button_blue": ("debug.io_name.button_blue", "DO7_BUTTON_BLUE"),
     "buzzer": ("debug.io_name.buzzer", "DO_BUZZER"),
-    "reserved_out_1": ("debug.io_name.reserved_out_1", "DO_RESERVED_1"),
-    "reserved_out_2": ("debug.io_name.reserved_out_2", "DO_RESERVED_2"),
+    "button_red": ("debug.io_name.button_red", "DO9_BUTTON_RED"),
 }
 
 
@@ -29,7 +36,10 @@ def _debug_io_display_name(name: str, channel: int | None = None) -> str:
     if entry is None:
         return str(name)
     key, code = entry
-    return f"{tr(key)}\n{code}"
+    label = tr(key)
+    if label == key:
+        label = str(name)
+    return f"{label}\n{code}"
 
 
 def _debug_io_channel_maps(io_controller):

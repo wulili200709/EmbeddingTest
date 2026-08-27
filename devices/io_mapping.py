@@ -138,6 +138,12 @@ class IoMapping:
     def do_names(self) -> list[str]:
         return list(self._do.keys())
 
+    def has_input(self, name: str) -> bool:
+        return str(name) in self._di
+
+    def has_output(self, name: str) -> bool:
+        return str(name) in self._do
+
     def get_input(self, name: str) -> IoChannelConfig:
         try:
             return self._di[name]

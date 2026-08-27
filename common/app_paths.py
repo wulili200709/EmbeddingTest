@@ -7,6 +7,15 @@ from pathlib import Path
 def _source_embedding_test_root(anchor: str | Path | None = None) -> Path:
     current = Path(anchor if anchor is not None else __file__).resolve()
     for parent in [current.parent, *current.parents]:
+        # Worktrees and developer checkouts are not required to keep the exact
+        # directory name "EmbeddingTest". Prefer structural project markers.
+        if (
+            (parent / "Main.py").is_file()
+            and (parent / "application").is_dir()
+            and (parent / "config").is_dir()
+            and (parent / "devices").is_dir()
+        ):
+            return parent
         if parent.name == "EmbeddingTest":
             return parent
     return current.parent

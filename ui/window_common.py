@@ -85,6 +85,11 @@ def connect_runtime_page(
     runtime_page.triggerRequested.connect(trigger_handler or runtime_ctrl.trigger)
     runtime_page.triggerCameraRequested.connect(trigger_camera_handler or runtime_ctrl.trigger_camera)
     runtime_page.releaseRequested.connect(release_handler or runtime_ctrl.release)
+    runtime_page.conveyorStartRequested.connect(runtime_ctrl.start_conveyor)
+    runtime_page.conveyorStopRequested.connect(runtime_ctrl.stop_conveyor)
+    runtime_page.conveyorPurgeRequested.connect(runtime_ctrl.start_conveyor_purge)
+    runtime_page.conveyorPurgeContinueRequested.connect(runtime_ctrl.continue_conveyor_purge)
+    runtime_page.conveyorAlarmAcknowledgeRequested.connect(runtime_ctrl.acknowledge_conveyor_alarm)
 
     runtime_ctrl.runtimeStateChanged.connect(runtime_page.set_runtime_state)
     runtime_ctrl.productNameChanged.connect(runtime_page.set_current_product)
@@ -109,6 +114,7 @@ def connect_runtime_page(
     runtime_ctrl.physicalCameraRolesChanged.connect(runtime_page.set_physical_camera_roles)
     runtime_ctrl.physicalCameraBindingsChanged.connect(runtime_page.set_physical_camera_bindings)
     runtime_ctrl.inspectionItemsChanged.connect(runtime_page.set_inspection_items)
+    runtime_ctrl.conveyorStateChanged.connect(runtime_page.set_conveyor_state)
 
 
 def connect_runtime_dialogs(window: QtWidgets.QWidget, runtime_ctrl) -> None:

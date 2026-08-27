@@ -2,20 +2,48 @@
   "nkio_config_path": "",
   "nkio_dll_path": "",
   "di": {
-    "foot_switch": {
+    "camera_trigger_sensor": {
       "channel": 0,
-      "active_high": true
+      "active_high": false
     },
-    "reject_signal": {
+    "reject_position_sensor": {
       "channel": 1,
-      "active_high": true
+      "active_high": false
     },
-    "reserved_in_1": {
+    "start_button": {
       "channel": 2,
       "active_high": true
     },
-    "reserved_in_2": {
+    "stop_button": {
       "channel": 3,
+      "active_high": false
+    },
+    "reserved_in_4": {
+      "channel": 4,
+      "active_high": true
+    },
+    "safety_ok": {
+      "channel": 5,
+      "active_high": true
+    },
+    "end_test_sensor": {
+      "channel": 6,
+      "active_high": true
+    },
+    "good_outlet_sensor": {
+      "channel": 7,
+      "active_high": true
+    },
+    "waste_outlet_sensor": {
+      "channel": 8,
+      "active_high": true
+    },
+    "door_closed": {
+      "channel": 9,
+      "active_high": true
+    },
+    "door_upper_closed": {
+      "channel": 10,
       "active_high": true
     }
   },
@@ -32,24 +60,52 @@
       "channel": 2,
       "active_high": false
     },
-    "light_cam1": {
+    "waste_removal": {
       "channel": 3,
       "active_high": false
     },
-    "light_cam2": {
+    "conveyor_run": {
       "channel": 4,
       "active_high": false
     },
-    "light_cam3": {
-      "channel": 6,
-      "active_high": false
-    },
-    "buzzer": {
+    "button_green": {
       "channel": 5,
       "active_high": false
     },
-    "reserved_out_1": {
+    "button_blue": {
       "channel": 7,
+      "active_high": false
+    },
+    "buzzer": {
+      "channel": 8,
+      "active_high": false
+    },
+    "button_red": {
+      "channel": 9,
+      "active_high": false
+    },
+    "reserved_out_10": {
+      "channel": 10,
+      "active_high": false
+    },
+    "reserved_out_11": {
+      "channel": 11,
+      "active_high": false
+    },
+    "reserved_out_12": {
+      "channel": 12,
+      "active_high": false
+    },
+    "reserved_out_13": {
+      "channel": 13,
+      "active_high": false
+    },
+    "reserved_out_14": {
+      "channel": 14,
+      "active_high": false
+    },
+    "reserved_out_15": {
+      "channel": 15,
       "active_high": false
     }
   }

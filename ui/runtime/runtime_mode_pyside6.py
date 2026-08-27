@@ -105,9 +105,14 @@ class RuntimeImageView(QtWidgets.QLabel):
         self.setMinimumSize(160, 120)
         self.setMouseTracking(True)
         self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+        # QLabel derives its size hint from the assigned pixmap.  Runtime
+        # frames can therefore make the page taller than a 768px screen and
+        # push the footer/status bars below the visible window.  Keep the
+        # explicit 160x120 minimum, but let the surrounding layout own the
+        # actual preview size independently of the camera resolution.
         self.setSizePolicy(
-            QtWidgets.QSizePolicy.Policy.Expanding,
-            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Ignored,
         )
         self.setStyleSheet(f"background:{_DARK_BG};color:{_TEXT_DIM};font-size:14px;")
 
@@ -498,6 +503,11 @@ class RuntimeModePage(QtWidgets.QWidget):
     triggerRequested = QtCore.Signal()
     triggerCameraRequested = QtCore.Signal(int)
     releaseRequested = QtCore.Signal(str)
+    conveyorStartRequested = QtCore.Signal()
+    conveyorStopRequested = QtCore.Signal()
+    conveyorPurgeRequested = QtCore.Signal()
+    conveyorPurgeContinueRequested = QtCore.Signal()
+    conveyorAlarmAcknowledgeRequested = QtCore.Signal()
     cameraLayoutSettingsChanged = QtCore.Signal(dict)
 
 
@@ -512,6 +522,9 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._physical_role_set: set[str] = set()
         self._physical_camera_bindings: dict[str, str] = {}
         self._busy = False
+        self._last_conveyor_snapshot: dict[str, object] = {}
+        self._fifo_indicator_signature: tuple[tuple[int, str], ...] = ()
+        self._fifo_indicator_labels: list[QtWidgets.QLabel] = []
         self._inspection_rows: list[dict] = []
         self._inspection_structure_signature: tuple[tuple[str, str, str, str], ...] = ()
         self._inspection_structure_initialized = False
@@ -651,6 +664,57 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.btn_trigger_cam3.setEnabled(False)
         self.btn_trigger_cam3.clicked.connect(lambda: self.triggerCameraRequested.emit(3))
         header_layout.addWidget(self.btn_trigger_cam3)
+
+        self.lbl_conveyor_state = QtWidgets.QLabel("皮带: 未连接 | FIFO: 0")
+        self.lbl_conveyor_state.setStyleSheet(
+            f"color:{_TEXT_DIM};font-size:12px;border-left:1px solid #555;padding-left:8px;"
+        )
+        header_layout.addWidget(self.lbl_conveyor_state)
+
+        self.fifo_indicator_panel = QtWidgets.QFrame()
+        self.fifo_indicator_panel.setFixedHeight(28)
+        self.fifo_indicator_panel.setMinimumWidth(80)
+        self.fifo_indicator_panel.setMaximumWidth(250)
+        self.fifo_indicator_panel.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+        self.fifo_indicator_panel.setToolTip("FIFO：黄色=检测中，绿色=OK，红色=NG")
+        self._fifo_indicator_layout = QtWidgets.QHBoxLayout(self.fifo_indicator_panel)
+        self._fifo_indicator_layout.setContentsMargins(4, 3, 4, 3)
+        self._fifo_indicator_layout.setSpacing(4)
+        header_layout.addWidget(self.fifo_indicator_panel)
+
+        self.btn_conveyor_start = QtWidgets.QPushButton("启动")
+        self.btn_conveyor_stop = QtWidgets.QPushButton("停止")
+        self.btn_conveyor_purge = QtWidgets.QPushButton("一键清线")
+        self.btn_conveyor_continue = QtWidgets.QPushButton("继续清线")
+        self.btn_conveyor_ack = QtWidgets.QPushButton("报警复位")
+        for button in (
+            self.btn_conveyor_start,
+            self.btn_conveyor_stop,
+            self.btn_conveyor_purge,
+            self.btn_conveyor_continue,
+            self.btn_conveyor_ack,
+        ):
+            button.setStyleSheet(_trigger_btn_css)
+            button.setFocusPolicy(QtCore.Qt.NoFocus)
+            button.setEnabled(False)
+            header_layout.addWidget(button)
+        self.btn_conveyor_start.clicked.connect(self.conveyorStartRequested.emit)
+        self.btn_conveyor_stop.clicked.connect(self.conveyorStopRequested.emit)
+        self.btn_conveyor_purge.clicked.connect(self._on_conveyor_purge_button_clicked)
+        self.btn_conveyor_continue.clicked.connect(self.conveyorPurgeContinueRequested.emit)
+        self.btn_conveyor_ack.clicked.connect(self.conveyorAlarmAcknowledgeRequested.emit)
+        # Production start/stop are operated by the physical DI2/DI3 buttons.
+        # Keep these widgets for signal/API compatibility, but do not duplicate
+        # them in the operator UI.  Purge continuation reuses the purge button.
+        self.btn_conveyor_start.hide()
+        self.btn_conveyor_stop.hide()
+        self.btn_conveyor_continue.hide()
+        self.btn_conveyor_ack.setToolTip(
+            "仅在产线故障、IO正常、DI5有效且门关闭时可用；复位后不会自动启动"
+        )
 
         header_layout.addStretch(1)
 
@@ -1702,6 +1766,101 @@ class RuntimeModePage(QtWidgets.QWidget):
     def set_busy(self, busy: bool) -> None:
         self._busy = bool(busy)
         self._refresh_trigger_buttons()
+
+    def set_conveyor_state(self, snapshot: dict[str, object]) -> None:
+        payload = dict(snapshot or {})
+        self._last_conveyor_snapshot = payload
+        state = str(payload.get("state", "-") or "-")
+        fifo_count = int(payload.get("fifo_count", 0) or 0)
+        fault_code = str(payload.get("fault_code", "") or "")
+        permitted = bool(payload.get("run_permitted", False))
+        hardware_permitted = (
+            bool(payload.get("io_ready", False))
+            and bool(payload.get("safety_ok", False))
+            and bool(payload.get("door_closed", False))
+        )
+        self.lbl_conveyor_state.setText(
+            f"皮带: {state} | FIFO: {fifo_count}" + (f" | {fault_code}" if fault_code else "")
+        )
+        color = _NG_RED if fault_code or state in {"SAFETY_LOCKED", "DOOR_OPEN_STOPPED"} else _OK_GREEN
+        self.lbl_conveyor_state.setStyleSheet(
+            f"color:{color};font-size:12px;border-left:1px solid #555;padding-left:8px;"
+        )
+        self._refresh_fifo_indicators(payload.get("fifo", []))
+        self.btn_conveyor_start.setEnabled(
+            permitted and state in {"STOPPED", "SAFETY_PAUSED", "DOOR_PAUSED"}
+        )
+        self.btn_conveyor_stop.setEnabled(
+            state in {"RUNNING", "CONTROLLED_STOPPING", "PURGING"}
+        )
+        if state == "PURGING":
+            self.btn_conveyor_purge.setText("清线中…")
+            self.btn_conveyor_purge.setEnabled(False)
+        elif state == "PURGE_PAUSED":
+            self.btn_conveyor_purge.setText("继续清线")
+            self.btn_conveyor_purge.setEnabled(hardware_permitted)
+        else:
+            self.btn_conveyor_purge.setText("一键清线")
+            self.btn_conveyor_purge.setEnabled(
+                hardware_permitted and state in {"STOPPED", "FAULT"}
+            )
+        self.btn_conveyor_continue.setEnabled(hardware_permitted and state == "PURGE_PAUSED")
+        self.btn_conveyor_ack.setEnabled(hardware_permitted and state == "FAULT")
+
+    def _on_conveyor_purge_button_clicked(self) -> None:
+        state = str(self._last_conveyor_snapshot.get("state", "") or "")
+        if state == "PURGE_PAUSED":
+            self.conveyorPurgeContinueRequested.emit()
+        else:
+            self.conveyorPurgeRequested.emit()
+
+    def _refresh_fifo_indicators(self, fifo_payload: object) -> None:
+        rows = [dict(row) for row in fifo_payload if isinstance(row, dict)] if isinstance(fifo_payload, (list, tuple)) else []
+        signature = tuple(
+            (
+                int(row.get("sequence_id", 0) or 0),
+                str(row.get("inspection_status", "PENDING") or "PENDING").upper(),
+            )
+            for row in rows
+        )
+        if signature == self._fifo_indicator_signature:
+            return
+        self._fifo_indicator_signature = signature
+
+        while self._fifo_indicator_layout.count():
+            item = self._fifo_indicator_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._fifo_indicator_labels.clear()
+
+        color_by_status = {
+            "PENDING": _RUNNING_YELLOW,
+            "GOOD": _OK_GREEN,
+            "OK": _OK_GREEN,
+            "NG": _NG_RED,
+            "ERROR": _NG_RED,
+        }
+        max_visible = 10
+        for sequence_id, status in signature[:max_visible]:
+            light = QtWidgets.QLabel()
+            light.setFixedSize(18, 18)
+            light.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            light.setProperty("fifoStatus", status)
+            light.setStyleSheet(
+                f"background:{color_by_status.get(status, _PENDING_GRAY)};"
+                "border:1px solid #d0d0d0;border-radius:9px;"
+            )
+            light.setToolTip(f"FIFO #{sequence_id}: {status}")
+            self._fifo_indicator_layout.addWidget(light)
+            self._fifo_indicator_labels.append(light)
+
+        if len(signature) > max_visible:
+            remaining = QtWidgets.QLabel(f"+{len(signature) - max_visible}")
+            remaining.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
+            remaining.setToolTip(f"还有 {len(signature) - max_visible} 件未显示")
+            self._fifo_indicator_layout.addWidget(remaining)
+        self._fifo_indicator_layout.addStretch(1)
 
     def set_duration_ms(self, ms: int) -> None:
         self._set_total_duration_labels(float(ms or 0.0))

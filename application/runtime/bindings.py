@@ -2,9 +2,33 @@
 
 from __future__ import annotations
 
-from . import execution, hardware, status_bus
+from . import conveyor, execution, hardware, status_bus
 
 _RUNTIME_CONTROLLER_BINDINGS = (
+    (
+        conveyor,
+        (
+            "_load_conveyor_config",
+            "_initialize_conveyor_controller",
+            "_shutdown_conveyor_controller",
+            "_wait_for_conveyor_inspections",
+            "_publish_conveyor_state",
+            "_tick_conveyor",
+            "_handle_conveyor_di_event",
+            "_handle_conveyor_io_error",
+            "_enqueue_conveyor_inspection",
+            "_prepare_conveyor_start",
+            "_run_conveyor_capture",
+            "_on_conveyor_capture_task_finished",
+            "_run_conveyor_inspection",
+            "_on_conveyor_inspection_task_finished",
+            "start_conveyor",
+            "stop_conveyor",
+            "start_conveyor_purge",
+            "continue_conveyor_purge",
+            "acknowledge_conveyor_alarm",
+        ),
+    ),
     (
         hardware,
         (
@@ -16,6 +40,8 @@ _RUNTIME_CONTROLLER_BINDINGS = (
             "_start_di_poller_if_available",
             "_stop_di_poller",
             "_on_foot_switch_rising",
+            "_on_conveyor_di_change",
+            "_on_conveyor_io_error",
             "_trigger_from_di",
             "_find_nkio_config_path",
             "_matching_runtime_roles_by_serial",

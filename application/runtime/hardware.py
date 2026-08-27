@@ -146,6 +146,18 @@ def _try_create_io_controller(runtime):
             dll_path=dll_path,
         )
         controller.open()
+        # Establish a safe software command immediately after the board opens;
+        # camera connection and model warm-up happen later.
+        controller.set_outputs(
+            {
+                "conveyor_run": False,
+                "waste_removal": False,
+                "button_green": False,
+                "button_red": True,
+                "button_blue": True,
+                "buzzer": False,
+            }
+        )
     except Exception as exc:
         runtime.logAppended.emit(f"[IO] failed to initialize real IO: {exc}")
         runtime._emit_io_status(False, f"failed to initialize real IO: {exc}")
@@ -162,14 +174,19 @@ def _initialize_startup_io(runtime, force: bool = False) -> bool:
         return False
     if runtime._io_controller is not None and getattr(runtime._io_controller, "is_open", False) and not force:
         runtime._emit_io_status(True, runtime._io_status_detail or "real IO ready", runtime._io_controller)
+        runtime._start_di_poller_if_available()
         return True
     if runtime._io_controller is not None:
         runtime._close_io_controller()
     runtime._io_controller = runtime._try_create_io_controller()
-    return runtime._io_controller is not None
+    ready = runtime._io_controller is not None
+    if ready:
+        runtime._start_di_poller_if_available()
+    return ready
 
 
 def _close_io_controller(runtime) -> None:
+    runtime._shutdown_conveyor_controller()
     if hasattr(runtime._tower_light_controller, "close"):
         try:
             runtime._tower_light_controller.close()
@@ -200,19 +217,22 @@ def _start_di_poller_if_available(runtime) -> None:
     if runtime._io_controller is None or runtime_controller_module.DiMonitor is None:
         return
     try:
+        config = runtime._load_conveyor_config()
         poller = runtime_controller_module.DiMonitor(
             runtime._io_controller,
-            input_names=["foot_switch"],
-            poll_interval_ms=20,
-            debounce_ms=50,
+            input_names=runtime._io_controller.mapping.di_names(),
+            poll_interval_ms=int(config.poll_interval_ms),
+            debounce_ms=int(config.debounce_ms),
         )
-        poller.add_rising_callback(runtime._on_foot_switch_rising)
+        poller.add_change_callback(runtime._on_conveyor_di_change)
+        poller.add_error_callback(runtime._on_conveyor_io_error)
         poller.start()
+        runtime._initialize_conveyor_controller(poller.snapshot())
     except Exception as exc:
         runtime.logAppended.emit(f"[IO] failed to start foot-switch DI monitor: {exc}")
         return
     runtime._di_poller = poller
-    runtime.logAppended.emit("[IO] foot-switch DI monitor started")
+    runtime.logAppended.emit("[IO] conveyor DI monitor started")
 
 
 def _stop_di_poller(runtime) -> None:
@@ -228,6 +248,15 @@ def _stop_di_poller(runtime) -> None:
 def _on_foot_switch_rising(runtime, event) -> None:
     runtime.logAppended.emit(f"[foot-switch] rising edge detected: {event.name}")
     QtCore.QMetaObject.invokeMethod(runtime, "_trigger_from_di", QtCore.Qt.QueuedConnection)
+
+
+def _on_conveyor_di_change(runtime, event) -> None:
+    """Forward debounced business-state changes to the Qt control thread."""
+    runtime._conveyorDiEvent.emit(str(event.name), bool(event.state))
+
+
+def _on_conveyor_io_error(runtime, name: str, error: Exception) -> None:
+    runtime._conveyorIoError.emit(str(name), str(error))
 
 
 @QtCore.Slot()

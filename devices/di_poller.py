@@ -19,6 +19,7 @@ class DiEvent:
 
 
 DiCallback = Callable[[DiEvent], None]
+DiErrorCallback = Callable[[str, Exception], None]
 
 
 class DiPoller:
@@ -48,6 +49,7 @@ class DiPoller:
         self._on_change: list[DiCallback] = []
         self._on_rising: list[DiCallback] = []
         self._on_falling: list[DiCallback] = []
+        self._on_error: list[DiErrorCallback] = []
 
         self._stable_state: dict[str, bool] = {}
         self._candidate_state: dict[str, bool] = {}
@@ -86,6 +88,9 @@ class DiPoller:
     def add_falling_callback(self, callback: DiCallback) -> None:
         self._on_falling.append(callback)
 
+    def add_error_callback(self, callback: DiErrorCallback) -> None:
+        self._on_error.append(callback)
+
     def snapshot(self) -> dict[str, bool]:
         with self._lock:
             return dict(self._stable_state)
@@ -108,10 +113,12 @@ class DiPoller:
             for name in self.input_names:
                 try:
                     self._process_input(name, now)
-                except NkioError:
+                except NkioError as exc:
                     # A transient board error must not terminate the DI thread.
                     # The next polling cycle retries naturally; stable/candidate
                     # state is intentionally left untouched for debounce safety.
+                    for callback in list(self._on_error):
+                        callback(name, exc)
                     continue
             self._stop_event.wait(self.poll_interval_s)
 
