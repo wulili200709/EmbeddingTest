@@ -41,11 +41,27 @@ def _initialize_conveyor_controller(runtime, input_snapshot=None) -> bool:
         controller = runtime._io_controller
         if controller is None or not getattr(controller, "is_open", False):
             raise RuntimeError("IO controller is not open")
-        controller.set_output(name, bool(on))
+        arbiter = runtime._output_arbiter
+        if arbiter is not None:
+            arbiter.set_line_output(name, bool(on))
+        else:
+            controller.set_output(name, bool(on))
+
+    def _write_outputs(updates) -> None:
+        controller = runtime._io_controller
+        if controller is None or not getattr(controller, "is_open", False):
+            raise RuntimeError("IO controller is not open")
+        normalized = {str(name): bool(on) for name, on in dict(updates).items()}
+        arbiter = runtime._output_arbiter
+        if arbiter is not None:
+            arbiter.set_line_outputs(normalized)
+        else:
+            controller.set_outputs(normalized)
 
     runtime._conveyor_controller = ConveyorLineController(
         config=config,
         output_writer=_write_output,
+        output_batch_writer=_write_outputs,
         inspection_requester=runtime._enqueue_conveyor_inspection,
         state_listener=runtime._publish_conveyor_state,
         log_writer=lambda message: runtime.logAppended.emit(f"[conveyor] {message}"),

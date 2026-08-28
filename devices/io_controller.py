@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .io_mapping import IoMapping, business_to_level, level_to_business
-from .nkio_board import NkioBoard
+from .nkio_board import NkioBoard, get_bit
 
 
 class IoController:
@@ -80,8 +80,16 @@ class IoController:
         target_names = list(names) if names is not None else self.mapping.do_names()
         self.set_outputs({name: False for name in target_names})
 
-    def snapshot_inputs(self) -> dict[str, bool]:
-        return {name: self.read_input(name) for name in self.mapping.di_names()}
+    def snapshot_inputs(self, names: Iterable[str] | None = None) -> dict[str, bool]:
+        target_names = list(names) if names is not None else self.mapping.di_names()
+        raw_word = self.board.read_di_word()
+        return {
+            name: level_to_business(
+                get_bit(raw_word, self.mapping.get_input(name).channel),
+                self.mapping.get_input(name).active_high,
+            )
+            for name in target_names
+        }
 
     def snapshot_outputs(self) -> dict[str, bool]:
         return {name: self.read_output(name) for name in self.mapping.do_names()}

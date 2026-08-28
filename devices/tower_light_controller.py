@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 
 from .io_controller import IoController
+from .output_arbiter import OutputArbiter
 
 
 class TowerLightController:
@@ -16,12 +17,14 @@ class TowerLightController:
         ng_flash_ms: int = 200,
         ng_buzzer_ms: int = 500,
         idle_blue_delay_s: float = 30.0,
+        output_arbiter: OutputArbiter | None = None,
     ) -> None:
         self.io = io
         self.ok_flash_s = max(0.01, float(ok_flash_ms) / 1000.0)
         self.ng_flash_s = max(0.01, float(ng_flash_ms) / 1000.0)
         self.ng_buzzer_s = max(0.0, float(ng_buzzer_ms) / 1000.0)
         self.idle_blue_delay_s = max(0.0, float(idle_blue_delay_s))
+        self.output_arbiter = output_arbiter
         self._lock = threading.Lock()
         self._flash_timer: threading.Timer | None = None
         self._idle_timer: threading.Timer | None = None
@@ -132,7 +135,10 @@ class TowerLightController:
 
     def _set_buzzer_safely(self, on: bool) -> None:
         try:
-            self.io.set_buzzer(bool(on))
+            if self.output_arbiter is not None:
+                self.output_arbiter.set_result_buzzer(bool(on))
+            else:
+                self.io.set_buzzer(bool(on))
         except Exception:
             pass
 

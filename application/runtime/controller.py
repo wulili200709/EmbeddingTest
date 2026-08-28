@@ -94,11 +94,12 @@ except Exception:
     frame_to_bgr_image = None       # type: ignore[assignment,misc]
 
 try:
-    from devices import DiMonitor, IoManager, LightController, TowerLightController
+    from devices import DiMonitor, IoManager, LightController, OutputArbiter, TowerLightController
 except Exception:
     DiMonitor = None               # type: ignore[assignment,misc]
     IoManager = None               # type: ignore[assignment,misc]
     LightController = None          # type: ignore[assignment,misc]
+    OutputArbiter = None            # type: ignore[assignment,misc]
     TowerLightController = None     # type: ignore[assignment,misc]
 
 
@@ -274,6 +275,7 @@ class RuntimeController(QtCore.QObject):
         self._release_log_service = None
         self._runner = None
         self._io_controller = None
+        self._output_arbiter = None
         self._io_ready = False
         self._io_status_detail = "IO not initialized"
         self._di_poller = None
@@ -367,6 +369,11 @@ class RuntimeController(QtCore.QObject):
         *args,
         description: str,
     ) -> bool:
+        conveyor = self._conveyor_controller
+        if conveyor is not None and not conveyor.manual_operations_permitted:
+            self.logAppended.emit(f"[runtime] ignored {description}: conveyor operation is active")
+            self.statusMessageChanged.emit("皮带流程运行或仍有在途物料，禁止手动触发")
+            return False
         with self._trigger_lock:
             executor = self._trigger_executor
             active = self._trigger_future
@@ -566,6 +573,11 @@ class RuntimeController(QtCore.QObject):
 
     def connect_cameras(self, bindings_obj) -> None:
         """解析绑定关系并连接相机。"""
+        conveyor = self._conveyor_controller
+        if conveyor is not None and not conveyor.configuration_operations_permitted:
+            self.warningOccurred.emit("皮带流程运行或仍有在途物料，不能重连相机。")
+            self.logAppended.emit("[camera] reconnect blocked by active conveyor operation")
+            return
         self._sync_camera_settings_store_path()
         raw_bindings = dict(bindings_obj or {})
         bindings = {
@@ -627,6 +639,10 @@ class RuntimeController(QtCore.QObject):
         self._update_status("相机已连接，可开始触发")
 
     def try_connect_cameras(self, bindings_obj) -> bool:
+        conveyor = self._conveyor_controller
+        if conveyor is not None and not conveyor.configuration_operations_permitted:
+            self.logAppended.emit("[camera] auto-connect blocked by active conveyor operation")
+            return False
         self._sync_camera_settings_store_path()
         raw_bindings = dict(bindings_obj or {})
         bindings = {
@@ -729,6 +745,11 @@ class RuntimeController(QtCore.QObject):
         self._update_status("相机已断开")
 
     def apply_camera_settings_for_serial(self, serial: str, settings_payload) -> None:
+        conveyor = self._conveyor_controller
+        if conveyor is not None and not conveyor.configuration_operations_permitted:
+            self.logAppended.emit("[camera] settings sync blocked by active conveyor operation")
+            self.statusMessageChanged.emit("皮带流程运行或仍有在途物料，禁止修改相机设置")
+            return
         self._sync_camera_settings_store_path()
         serial_text = str(serial).strip()
         if not serial_text or HikCameraSettings is None:

@@ -7,6 +7,7 @@ from .light_controller import LightController
 from .nkio_board import NkioBoard
 from .nkio_errors import NkioError
 from .nkio_raw import NkioRawLib
+from .output_arbiter import OutputArbiter
 from .tower_light_controller import TowerLightController
 
 __all__ = [
@@ -21,5 +22,6 @@ __all__ = [
     "NkioBoard",
     "NkioError",
     "NkioRawLib",
+    "OutputArbiter",
     "TowerLightController",
 ]

@@ -3,33 +3,41 @@ from __future__ import annotations
 import json
 import threading
 import time
-from collections import deque
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Deque, Mapping
+from typing import Callable, Mapping
+
+from .conveyor_components import (
+    AutoPurgeController,
+    InspectionStatus,
+    JamMonitor,
+    RejectBlowController,
+    WorkpieceRecord,
+    WorkpieceTracker,
+)
 
 
 class ConveyorState(str, Enum):
-    STARTING = "STARTING"
+    BOOTING = "BOOTING"
     SAFETY_LOCKED = "SAFETY_LOCKED"
     DOOR_OPEN_STOPPED = "DOOR_OPEN_STOPPED"
-    STOPPED = "STOPPED"
+    READY_STOPPED = "READY_STOPPED"
     RUNNING = "RUNNING"
     CONTROLLED_STOPPING = "CONTROLLED_STOPPING"
     SAFETY_PAUSED = "SAFETY_PAUSED"
     DOOR_PAUSED = "DOOR_PAUSED"
-    PURGING = "PURGING"
+    READY_TO_RESUME = "READY_TO_RESUME"
+    PURGE_PREPARING = "PURGE_PREPARING"
+    PURGE_RUNNING = "PURGE_RUNNING"
     PURGE_PAUSED = "PURGE_PAUSED"
-    FAULT = "FAULT"
+    FAULT_STOPPED = "FAULT_STOPPED"
 
 
-class InspectionStatus(str, Enum):
-    PENDING = "PENDING"
-    GOOD = "GOOD"
-    NG = "NG"
-    ERROR = "ERROR"
-    PURGED = "PURGED"
+class FaultRecovery(str, Enum):
+    ACKNOWLEDGE = "ACKNOWLEDGE"
+    PURGE_REQUIRED = "PURGE_REQUIRED"
+    RECONNECT_IO = "RECONNECT_IO"
 
 
 @dataclass(frozen=True)
@@ -38,15 +46,15 @@ class ConveyorConfig:
     debounce_ms: int = 20
     capture_commit_guard_ms: int = 250
     controlled_stop_timeout_ms: int = 1500
-    reject_delay_ms: int = 0
-    reject_duration_ms: int = 300
-    fifo_max_items: int = 128
-    item_to_reject_timeout_s: float = 10.0
-    end_sensor_enabled: bool = True
+    reject_blow_delay_ms: int = 0
+    reject_blow_duration_ms: int = 300
+    max_inflight_items: int = 128
+    front_to_reject_max_run_ms: int = 10000
+    end_test_sensor_enabled: bool = True
     upper_door_sensor_enabled: bool = False
-    end_sensor_jam_s: float = 3.0
-    good_outlet_jam_s: float = 3.0
-    waste_outlet_jam_s: float = 3.0
+    end_test_jam_timeout_s: float = 3.0
+    good_jam_timeout_s: float = 3.0
+    waste_jam_timeout_s: float = 3.0
     purge_air_lead_ms: int = 200
     purge_min_run_s: float = 10.0
     purge_tail_run_s: float = 5.0
@@ -56,6 +64,22 @@ class ConveyorConfig:
     @classmethod
     def from_mapping(cls, payload: Mapping[str, object] | None) -> "ConveyorConfig":
         values = dict(payload or {})
+        aliases = {
+            "reject_delay_ms": "reject_blow_delay_ms",
+            "reject_duration_ms": "reject_blow_duration_ms",
+            "fifo_max_items": "max_inflight_items",
+            "end_sensor_enabled": "end_test_sensor_enabled",
+            "end_sensor_jam_s": "end_test_jam_timeout_s",
+            "good_outlet_jam_s": "good_jam_timeout_s",
+            "waste_outlet_jam_s": "waste_jam_timeout_s",
+        }
+        for old_name, canonical_name in aliases.items():
+            if canonical_name not in values and old_name in values:
+                values[canonical_name] = values[old_name]
+        if "front_to_reject_max_run_ms" not in values and "item_to_reject_timeout_s" in values:
+            values["front_to_reject_max_run_ms"] = int(
+                float(values["item_to_reject_timeout_s"]) * 1000.0
+            )
         known = cls.__dataclass_fields__
         return cls(**{key: values[key] for key in known if key in values})
 
@@ -66,39 +90,43 @@ class ConveyorConfig:
             raise ValueError("conveyor control config must be a JSON object")
         return cls.from_mapping(payload)
 
+    # Read-only aliases keep integrations using the previous attribute names
+    # working while configuration files and implementation use the design names.
+    @property
+    def reject_delay_ms(self) -> int:
+        return self.reject_blow_delay_ms
 
-@dataclass
-class WorkpieceRecord:
-    sequence_id: int
-    epoch: int
-    created_at: float
-    created_motion_s: float
-    inspection_status: InspectionStatus = InspectionStatus.PENDING
-    inspection_detail: str = ""
-    result_at: float | None = None
+    @property
+    def reject_duration_ms(self) -> int:
+        return self.reject_blow_duration_ms
 
-    def to_dict(self) -> dict[str, object]:
-        payload = asdict(self)
-        payload["inspection_status"] = self.inspection_status.value
-        return payload
+    @property
+    def fifo_max_items(self) -> int:
+        return self.max_inflight_items
 
+    @property
+    def item_to_reject_timeout_s(self) -> float:
+        return self.front_to_reject_max_run_ms / 1000.0
 
-@dataclass
-class _RejectWindow:
-    sequence_id: int
-    start_motion_s: float
-    end_motion_s: float
+    @property
+    def end_sensor_enabled(self) -> bool:
+        return self.end_test_sensor_enabled
 
+    @property
+    def end_sensor_jam_s(self) -> float:
+        return self.end_test_jam_timeout_s
 
-@dataclass
-class _PurgeContext:
-    requested_at: float
-    conveyor_started_at: float | None = None
-    last_activity_at: float | None = None
-    waste_clear_since: float | None = None
+    @property
+    def good_outlet_jam_s(self) -> float:
+        return self.good_jam_timeout_s
+
+    @property
+    def waste_outlet_jam_s(self) -> float:
+        return self.waste_jam_timeout_s
 
 
 OutputWriter = Callable[[str, bool], None]
+OutputBatchWriter = Callable[[Mapping[str, bool]], None]
 InspectionRequester = Callable[[int, int], None]
 StateListener = Callable[[dict[str, object]], None]
 LogWriter = Callable[[str], None]
@@ -145,6 +173,7 @@ class ConveyorLineController:
         config: ConveyorConfig | None = None,
         output_writer: OutputWriter,
         inspection_requester: InspectionRequester,
+        output_batch_writer: OutputBatchWriter | None = None,
         state_listener: StateListener | None = None,
         log_writer: LogWriter | None = None,
         start_authorizer: StartAuthorizer | None = None,
@@ -153,6 +182,7 @@ class ConveyorLineController:
     ) -> None:
         self.config = config or ConveyorConfig()
         self._write_output_callback = output_writer
+        self._write_outputs_callback = output_batch_writer
         self._request_inspection_callback = inspection_requester
         self._state_listener = state_listener
         self._log_writer = log_writer
@@ -161,34 +191,32 @@ class ConveyorLineController:
         self._clock = clock
         self._lock = threading.RLock()
 
-        self.state = ConveyorState.STARTING
+        self.state = ConveyorState.BOOTING
         self.inputs: dict[str, bool] = {}
         # Start unknown so initialization actively writes every safety-related
         # OFF/indicator state instead of assuming the board already matches.
         self.outputs: dict[str, bool] = {}
-        self.fifo: Deque[WorkpieceRecord] = deque()
-        self._records_by_id: dict[int, WorkpieceRecord] = {}
-        self._reject_windows: list[_RejectWindow] = []
+        self._tracker = WorkpieceTracker()
+        self.fifo = self._tracker.fifo
+        self._reject = RejectBlowController()
         self._active_captures: set[tuple[int, int]] = set()
-        self._sequence = 0
-        self._epoch = 1
         self._io_ready = False
         self._fault_code = ""
         self._fault_detail = ""
+        self._fault_recovery = FaultRecovery.ACKNOWLEDGE
+        self._fault_input = ""
         self._controlled_stop_started_at: float | None = None
         self._last_capture_edge_at: float | None = None
-        self._purge: _PurgeContext | None = None
+        self._purge = AutoPurgeController()
         self._resume_purge_after_interlock = False
         self._motion_elapsed_s = 0.0
         self._last_tick_at = self._clock()
-        self._jam_active_motion_since: dict[str, float | None] = {
-            name: None for name in self.JAM_INPUTS
-        }
+        self._jam_monitor = JamMonitor(self.JAM_INPUTS)
         self._apply_indicator_outputs()
 
     @property
     def epoch(self) -> int:
-        return self._epoch
+        return self._tracker.epoch
 
     @property
     def run_permitted(self) -> bool:
@@ -197,6 +225,33 @@ class ConveyorLineController:
             and self.inputs.get("safety_ok", False)
             and self._doors_closed()
             and not self._fault_code
+        )
+
+    @property
+    def manual_operations_permitted(self) -> bool:
+        return (
+            self.state == ConveyorState.READY_STOPPED
+            and not self.fifo
+            and not self._active_captures
+            and not self._purge.active
+            and not self._fault_code
+        )
+
+    @property
+    def configuration_operations_permitted(self) -> bool:
+        return (
+            self.state
+            in {
+                ConveyorState.SAFETY_LOCKED,
+                ConveyorState.DOOR_OPEN_STOPPED,
+                ConveyorState.READY_STOPPED,
+                ConveyorState.FAULT_STOPPED,
+            }
+            and not self.fifo
+            and not self._active_captures
+            and not self._purge.active
+            and not self.outputs.get("conveyor_run", False)
+            and not self.outputs.get("waste_removal", False)
         )
 
     def initialize_inputs(
@@ -213,29 +268,54 @@ class ConveyorLineController:
             self._io_ready = bool(io_ready)
             self._fault_code = ""
             self._fault_detail = ""
+            self._fault_recovery = FaultRecovery.ACKNOWLEDGE
+            self._fault_input = ""
             self._force_motion_off()
             self._select_nonrunning_interlock_state()
             self._publish()
 
     def set_io_ready(self, ready: bool, *, detail: str = "", now: float | None = None) -> None:
         with self._lock:
-            self.tick(now)
+            current = self._now(now)
+            if not ready:
+                self._advance_motion_clock(current)
+            else:
+                self.tick(current)
             self._io_ready = bool(ready)
             if not ready:
-                self._trip_fault("IO_NOT_READY", detail or "IO controller is not ready")
+                self._trip_fault(
+                    "IO_NOT_READY",
+                    detail or "IO controller is not ready",
+                    recovery=FaultRecovery.RECONNECT_IO,
+                )
             elif self._fault_code == "IO_NOT_READY":
                 self._fault_code = ""
                 self._fault_detail = ""
+                self._fault_recovery = FaultRecovery.ACKNOWLEDGE
+                self._fault_input = ""
                 self._select_nonrunning_interlock_state()
             self._publish()
 
     def handle_input_change(self, name: str, state: bool, *, now: float | None = None) -> None:
         with self._lock:
             current = self._now(now)
-            self.tick(current)
             input_name = str(name)
             previous = self.inputs.get(input_name)
             business_state = bool(state)
+
+            # Safety events must never run normal timers/actions using the old
+            # interlock state. Only account for elapsed belt motion, then apply
+            # the new safety state and force safe outputs first.
+            if input_name == "safety_ok" or input_name in self.DOOR_INPUTS:
+                self._advance_motion_clock(current)
+                self.inputs[input_name] = business_state
+                if previous is not business_state:
+                    self._handle_interlock_change(current)
+                self._apply_indicator_outputs()
+                self._publish()
+                return
+
+            self.tick(current)
             self.inputs[input_name] = business_state
             if previous is business_state:
                 return
@@ -243,15 +323,14 @@ class ConveyorLineController:
             if input_name in self.MATERIAL_INPUTS:
                 self._record_material_activity(current)
             if input_name in self.JAM_INPUTS:
-                self._jam_active_motion_since[input_name] = (
-                    self._motion_elapsed_s
-                    if business_state and self.outputs.get("conveyor_run", False)
-                    else None
+                self._jam_monitor.observe_input(
+                    input_name,
+                    active=business_state,
+                    motion_s=self._motion_elapsed_s,
+                    conveyor_running=self.outputs.get("conveyor_run", False),
                 )
 
-            if input_name == "safety_ok" or input_name in self.DOOR_INPUTS:
-                self._handle_interlock_change(current)
-            elif business_state and input_name == "start_button":
+            if business_state and input_name == "start_button":
                 self.request_start(now=current)
             elif business_state and input_name == "stop_button":
                 self.request_controlled_stop(now=current)
@@ -276,12 +355,11 @@ class ConveyorLineController:
                     self._log(f"start rejected: {reason or 'inspection precheck failed'}")
                     self._publish()
                     return False
-            if self.state == ConveyorState.PURGE_PAUSED and self._purge is not None:
+            if self.state == ConveyorState.PURGE_PAUSED and self._purge.active:
                 return self.continue_purge(now=now)
             if self.state not in {
-                ConveyorState.STOPPED,
-                ConveyorState.SAFETY_PAUSED,
-                ConveyorState.DOOR_PAUSED,
+                ConveyorState.READY_STOPPED,
+                ConveyorState.READY_TO_RESUME,
             }:
                 return self.state == ConveyorState.RUNNING
             self.state = ConveyorState.RUNNING
@@ -296,7 +374,7 @@ class ConveyorLineController:
         with self._lock:
             current = self._now(now)
             self.tick(current)
-            if self.state == ConveyorState.PURGING:
+            if self.state in {ConveyorState.PURGE_PREPARING, ConveyorState.PURGE_RUNNING}:
                 self._pause_purge("operator stop")
                 self._publish()
                 return True
@@ -325,27 +403,29 @@ class ConveyorLineController:
             ):
                 self._log("purge rejected: safety/door/IO permission is not satisfied")
                 return False
-            if self.state in {ConveyorState.RUNNING, ConveyorState.CONTROLLED_STOPPING}:
-                self._log("purge rejected: stop production first")
+            allowed_states = {ConveyorState.READY_STOPPED, ConveyorState.READY_TO_RESUME}
+            if self.state == ConveyorState.FAULT_STOPPED:
+                if self._fault_recovery != FaultRecovery.PURGE_REQUIRED:
+                    self._log("purge rejected: acknowledge or reconnect is required for this fault")
+                    return False
+            elif self.state not in allowed_states:
+                self._log("purge rejected: line must be stopped first")
                 return False
 
             self._fault_code = ""
             self._fault_detail = ""
-            self._epoch += 1
-            for record in self.fifo:
-                record.inspection_status = InspectionStatus.PURGED
-            self.fifo.clear()
-            self._records_by_id.clear()
-            self._reject_windows.clear()
+            self._fault_recovery = FaultRecovery.ACKNOWLEDGE
+            self._fault_input = ""
+            self._tracker.invalidate_for_purge()
+            self._reject.clear()
             self._active_captures.clear()
             self._controlled_stop_started_at = None
-            self._purge = _PurgeContext(
-                requested_at=current,
-                last_activity_at=current,
-                waste_clear_since=current if not self.inputs.get("waste_outlet_sensor", False) else None,
+            self._purge.begin(
+                now=current,
+                waste_active=self.inputs.get("waste_outlet_sensor", False),
             )
             self._resume_purge_after_interlock = False
-            self.state = ConveyorState.PURGING
+            self.state = ConveyorState.PURGE_PREPARING
             self._set_output("conveyor_run", False)
             self._set_output("waste_removal", True)
             self._apply_indicator_outputs()
@@ -357,13 +437,12 @@ class ConveyorLineController:
         with self._lock:
             current = self._now(now)
             self.tick(current)
-            if self.state != ConveyorState.PURGE_PAUSED or self._purge is None:
+            if self.state != ConveyorState.PURGE_PAUSED or not self._purge.active:
                 return False
             if not self.run_permitted:
                 return False
-            self.state = ConveyorState.PURGING
-            self._purge.requested_at = current
-            self._purge.conveyor_started_at = None
+            self.state = ConveyorState.PURGE_PREPARING
+            self._purge.restart_lead(now=current)
             self._set_output("waste_removal", True)
             self._set_output("conveyor_run", False)
             self._resume_purge_after_interlock = False
@@ -375,7 +454,9 @@ class ConveyorLineController:
     def acknowledge_alarm(self, *, now: float | None = None) -> bool:
         with self._lock:
             self.tick(now)
-            if self.state != ConveyorState.FAULT:
+            if self.state != ConveyorState.FAULT_STOPPED:
+                return False
+            if self._fault_recovery != FaultRecovery.ACKNOWLEDGE:
                 return False
             if not (
                 self._io_ready
@@ -383,8 +464,12 @@ class ConveyorLineController:
                 and self._doors_closed()
             ):
                 return False
+            if self._fault_input and self.inputs.get(self._fault_input, False):
+                return False
             self._fault_code = ""
             self._fault_detail = ""
+            self._fault_recovery = FaultRecovery.ACKNOWLEDGE
+            self._fault_input = ""
             self._select_nonrunning_interlock_state()
             self._apply_indicator_outputs()
             self._log("alarm acknowledged")
@@ -403,10 +488,10 @@ class ConveyorLineController:
         with self._lock:
             current = self._now(now)
             self.tick(current)
-            if int(epoch) != self._epoch:
+            if int(epoch) != self.epoch:
                 self._log(f"ignored stale inspection result: item={sequence_id}, epoch={epoch}")
                 return False
-            record = self._records_by_id.get(int(sequence_id))
+            record = self._tracker.get(int(sequence_id))
             if record is None:
                 self._log(f"ignored result for unknown/purged item: {sequence_id}")
                 return False
@@ -437,17 +522,14 @@ class ConveyorLineController:
     def tick(self, now: float | None = None) -> None:
         with self._lock:
             current = self._now(now)
-            delta = max(0.0, current - self._last_tick_at)
-            self._last_tick_at = current
-            if self.outputs.get("conveyor_run", False):
-                self._motion_elapsed_s += delta
+            self._advance_motion_clock(current)
 
             self._update_reject_output()
             self._monitor_jams()
             self._monitor_fifo_timeout()
             if self.state == ConveyorState.CONTROLLED_STOPPING:
                 self._evaluate_controlled_stop(current)
-            elif self.state == ConveyorState.PURGING:
+            elif self.state in {ConveyorState.PURGE_PREPARING, ConveyorState.PURGE_RUNNING}:
                 self._update_purge(current)
             self._apply_indicator_outputs()
             self._publish()
@@ -464,14 +546,21 @@ class ConveyorLineController:
                 "door_upper_closed": self.inputs.get("door_upper_closed", False),
                 "fault_code": self._fault_code,
                 "fault_detail": self._fault_detail,
+                "fault_recovery": self._fault_recovery.value,
+                "fault_input": self._fault_input,
+                "manual_operations_permitted": self.manual_operations_permitted,
+                "configuration_operations_permitted": self.configuration_operations_permitted,
                 "fifo_count": len(self.fifo),
                 "capture_pending_count": len(self._active_captures),
                 "fifo": [record.to_dict() for record in self.fifo],
-                "epoch": self._epoch,
+                "epoch": self.epoch,
                 "motion_elapsed_s": self._motion_elapsed_s,
                 "outputs": dict(self.outputs),
                 "inputs": dict(self.inputs),
-                "purge_active": self.state == ConveyorState.PURGING,
+                "purge_active": self.state in {
+                    ConveyorState.PURGE_PREPARING,
+                    ConveyorState.PURGE_RUNNING,
+                },
                 "purge_paused": self.state == ConveyorState.PURGE_PAUSED,
             }
 
@@ -479,24 +568,19 @@ class ConveyorLineController:
         with self._lock:
             self._force_motion_off()
             self._set_output("buzzer", False)
-            self.state = ConveyorState.STOPPED
+            self.state = ConveyorState.READY_STOPPED
             self._publish()
 
     def _on_camera_sensor(self, now: float) -> None:
         if self.state not in {ConveyorState.RUNNING, ConveyorState.CONTROLLED_STOPPING}:
             return
-        if len(self.fifo) >= max(1, int(self.config.fifo_max_items)):
+        if len(self.fifo) >= max(1, int(self.config.max_inflight_items)):
             self._trip_fault("FIFO_OVERFLOW", "in-flight workpiece queue is full")
             return
-        self._sequence += 1
-        record = WorkpieceRecord(
-            sequence_id=self._sequence,
-            epoch=self._epoch,
-            created_at=now,
-            created_motion_s=self._motion_elapsed_s,
+        record = self._tracker.create(
+            now=now,
+            motion_s=self._motion_elapsed_s,
         )
-        self.fifo.append(record)
-        self._records_by_id[record.sequence_id] = record
         self._active_captures.add((record.sequence_id, record.epoch))
         self._last_capture_edge_at = now
         self._log(f"camera sensor created item={record.sequence_id}, fifo={len(self.fifo)}")
@@ -516,7 +600,10 @@ class ConveyorLineController:
         if not self.fifo:
             self._trip_fault("FIFO_UNDERFLOW", "DI1 triggered while FIFO is empty")
             return
-        record = self.fifo[0]
+        record = self._tracker.head()
+        if record is None:
+            self._trip_fault("FIFO_UNDERFLOW", "DI1 triggered while FIFO is empty")
+            return
         if record.inspection_status == InspectionStatus.PENDING:
             self._trip_fault(
                 "RESULT_NOT_READY",
@@ -530,13 +617,24 @@ class ConveyorLineController:
             )
             return
 
-        self.fifo.popleft()
-        self._records_by_id.pop(record.sequence_id, None)
+        if (
+            record.inspection_status == InspectionStatus.GOOD
+            and self.outputs.get("waste_removal", False)
+        ):
+            self._trip_fault(
+                "BLOW_WINDOW_CONFLICT",
+                f"GOOD item {record.sequence_id} reached DI1 while waste_removal was active",
+                recovery=FaultRecovery.PURGE_REQUIRED,
+            )
+            return
+
+        self._tracker.pop_head()
         if record.inspection_status == InspectionStatus.NG:
-            start = self._motion_elapsed_s + max(0.0, self.config.reject_delay_ms / 1000.0)
-            duration = max(0.001, self.config.reject_duration_ms / 1000.0)
-            self._reject_windows.append(
-                _RejectWindow(record.sequence_id, start, start + duration)
+            self._reject.schedule(
+                sequence_id=record.sequence_id,
+                motion_s=self._motion_elapsed_s,
+                delay_s=self.config.reject_blow_delay_ms / 1000.0,
+                duration_s=self.config.reject_blow_duration_ms / 1000.0,
             )
             self._log(f"NG item={record.sequence_id} scheduled for blow-off")
         else:
@@ -545,17 +643,21 @@ class ConveyorLineController:
 
     def _update_reject_output(self) -> None:
         motion = self._motion_elapsed_s
-        self._reject_windows = [window for window in self._reject_windows if window.end_motion_s > motion]
+        self._reject.prune(motion)
         should_blow = (
             self.state in {ConveyorState.RUNNING, ConveyorState.CONTROLLED_STOPPING}
             and self.outputs.get("conveyor_run", False)
-            and any(window.start_motion_s <= motion < window.end_motion_s for window in self._reject_windows)
+            and self._reject.is_active(motion)
         )
-        if self.state != ConveyorState.PURGING:
+        if self.state not in {ConveyorState.PURGE_PREPARING, ConveyorState.PURGE_RUNNING}:
             self._set_output("waste_removal", should_blow)
 
     def _evaluate_controlled_stop(self, now: float) -> None:
-        started = self._controlled_stop_started_at or now
+        started = (
+            self._controlled_stop_started_at
+            if self._controlled_stop_started_at is not None
+            else now
+        )
         timeout_s = max(0.0, self.config.controlled_stop_timeout_ms / 1000.0)
         if timeout_s and now - started >= timeout_s:
             self._trip_fault(
@@ -571,11 +673,11 @@ class ConveyorLineController:
                 and now < self._last_capture_edge_at + capture_guard_s
             )
         )
-        reject_committed = bool(self._reject_windows)
+        reject_committed = self._reject.has_pending
         if capture_committed or reject_committed:
             return
         self._force_motion_off()
-        self.state = ConveyorState.STOPPED
+        self.state = ConveyorState.READY_STOPPED
         self._controlled_stop_started_at = None
         self._log("controlled stop completed")
 
@@ -583,13 +685,27 @@ class ConveyorLineController:
         safety_ok = self.inputs.get("safety_ok", False)
         door_closed = self._doors_closed()
         if not safety_ok or not door_closed:
-            was_purging = self.state in {ConveyorState.PURGING, ConveyorState.PURGE_PAUSED}
+            was_purging = self.state in {
+                ConveyorState.PURGE_PREPARING,
+                ConveyorState.PURGE_RUNNING,
+                ConveyorState.PURGE_PAUSED,
+            }
             was_moving = self.state in {
                 ConveyorState.RUNNING,
                 ConveyorState.CONTROLLED_STOPPING,
-                ConveyorState.PURGING,
+                ConveyorState.PURGE_PREPARING,
+                ConveyorState.PURGE_RUNNING,
             }
-            self._resume_purge_after_interlock = was_purging and self._purge is not None
+            self._resume_purge_after_interlock = was_purging and self._purge.active
+            if (
+                self.state in {ConveyorState.RUNNING, ConveyorState.CONTROLLED_STOPPING}
+                and self.outputs.get("waste_removal", False)
+            ):
+                self._fault_code = "BLOW_INTERRUPTED"
+                self._fault_detail = "normal NG blow-off was interrupted by a safety interlock"
+                self._fault_recovery = FaultRecovery.PURGE_REQUIRED
+                self._fault_input = ""
+                self._reject.clear()
             self._force_motion_off()
             if not safety_ok:
                 self.state = ConveyorState.SAFETY_PAUSED if was_moving else ConveyorState.SAFETY_LOCKED
@@ -598,17 +714,20 @@ class ConveyorLineController:
             self._log("motion stopped immediately by safety interlock")
             return
 
-        if self._resume_purge_after_interlock and self._purge is not None:
+        if self._resume_purge_after_interlock and self._purge.active:
             self.state = ConveyorState.PURGE_PAUSED
         elif self._fault_code:
-            self.state = ConveyorState.FAULT
+            self.state = ConveyorState.FAULT_STOPPED
         elif self.state in {
-            ConveyorState.SAFETY_LOCKED,
             ConveyorState.SAFETY_PAUSED,
-            ConveyorState.DOOR_OPEN_STOPPED,
             ConveyorState.DOOR_PAUSED,
         }:
-            self.state = ConveyorState.STOPPED
+            self.state = ConveyorState.READY_TO_RESUME
+        elif self.state in {
+            ConveyorState.SAFETY_LOCKED,
+            ConveyorState.DOOR_OPEN_STOPPED,
+        }:
+            self.state = ConveyorState.READY_STOPPED
         self._log("safety permission restored; manual restart is required")
 
     def _select_nonrunning_interlock_state(self) -> None:
@@ -617,9 +736,9 @@ class ConveyorLineController:
         elif not self._doors_closed():
             self.state = ConveyorState.DOOR_OPEN_STOPPED
         elif self._fault_code:
-            self.state = ConveyorState.FAULT
+            self.state = ConveyorState.FAULT_STOPPED
         else:
-            self.state = ConveyorState.STOPPED
+            self.state = ConveyorState.READY_STOPPED
         self._apply_indicator_outputs()
 
     def _doors_closed(self) -> bool:
@@ -630,14 +749,13 @@ class ConveyorLineController:
         return self.inputs.get("door_upper_closed", False)
 
     def _record_material_activity(self, now: float) -> None:
-        if self._purge is None:
-            return
-        self._purge.last_activity_at = now
-        if self.inputs.get("waste_outlet_sensor", False):
-            self._purge.waste_clear_since = None
+        self._purge.record_activity(
+            now=now,
+            waste_active=self.inputs.get("waste_outlet_sensor", False),
+        )
 
     def _update_purge(self, now: float) -> None:
-        purge = self._purge
+        purge = self._purge.context
         if purge is None:
             self._trip_fault("PURGE_STATE_ERROR", "purge context is missing")
             return
@@ -647,30 +765,41 @@ class ConveyorLineController:
         lead_s = max(0.0, self.config.purge_air_lead_ms / 1000.0)
         if purge.conveyor_started_at is None and now - purge.requested_at >= lead_s:
             purge.conveyor_started_at = now
+            self.state = ConveyorState.PURGE_RUNNING
             self._set_output("conveyor_run", True)
             self._log("purge air lead complete; conveyor started")
         if purge.conveyor_started_at is None:
             return
 
-        waste_active = self.inputs.get("waste_outlet_sensor", False)
-        if waste_active:
-            purge.waste_clear_since = None
-        elif purge.waste_clear_since is None:
-            purge.waste_clear_since = now
+        self._purge.update_waste_state(
+            now=now,
+            waste_active=self.inputs.get("waste_outlet_sensor", False),
+        )
 
         run_s = now - purge.conveyor_started_at
-        last_activity = purge.last_activity_at or purge.conveyor_started_at
+        last_activity = (
+            purge.last_activity_at
+            if purge.last_activity_at is not None
+            else purge.conveyor_started_at
+        )
         all_clear = not any(self.inputs.get(name, False) for name in self.MATERIAL_INPUTS)
-        quiet_since = purge.waste_clear_since or now
+        quiet_since = (
+            purge.waste_clear_since
+            if purge.waste_clear_since is not None
+            else now
+        )
         if (
             run_s >= max(0.0, self.config.purge_min_run_s)
             and all_clear
             and now - last_activity >= max(0.0, self.config.purge_tail_run_s)
             and now - quiet_since >= max(0.0, self.config.purge_quiet_s)
         ):
-            self._force_motion_off()
-            self._purge = None
-            self.state = ConveyorState.STOPPED
+            # Normal purge completion is intentionally ordered: stop the belt
+            # first, then stop the purge air.
+            self._set_output("conveyor_run", False)
+            self._set_output("waste_removal", False)
+            self._purge.clear()
+            self.state = ConveyorState.READY_STOPPED
             self._log("one-click purge completed")
 
     def _pause_purge(self, reason: str) -> None:
@@ -681,79 +810,172 @@ class ConveyorLineController:
 
     def _monitor_jams(self) -> None:
         if not self.outputs.get("conveyor_run", False):
-            for name in self.JAM_INPUTS:
-                self._jam_active_motion_since[name] = None
+            self._jam_monitor.reset()
             return
         thresholds = {
-            "end_test_sensor": self.config.end_sensor_jam_s,
-            "good_outlet_sensor": self.config.good_outlet_jam_s,
-            "waste_outlet_sensor": self.config.waste_outlet_jam_s,
+            "end_test_sensor": self.config.end_test_jam_timeout_s,
+            "good_outlet_sensor": self.config.good_jam_timeout_s,
+            "waste_outlet_sensor": self.config.waste_jam_timeout_s,
         }
-        for name, threshold in thresholds.items():
-            if name == "end_test_sensor" and not self.config.end_sensor_enabled:
-                self._jam_active_motion_since[name] = None
-                continue
-            if not self.inputs.get(name, False):
-                self._jam_active_motion_since[name] = None
-                continue
-            since = self._jam_active_motion_since.get(name)
-            if since is None:
-                self._jam_active_motion_since[name] = self._motion_elapsed_s
-                continue
-            if self._motion_elapsed_s - since >= max(0.001, float(threshold)):
-                self._trip_fault("JAM_DETECTED", f"{name} remained active for {threshold} s")
-                return
+        timed_out = self._jam_monitor.first_timeout(
+            inputs=self.inputs,
+            motion_s=self._motion_elapsed_s,
+            thresholds=thresholds,
+            disabled_inputs=(
+                () if self.config.end_test_sensor_enabled else ("end_test_sensor",)
+            ),
+        )
+        if timed_out is not None:
+            name, threshold = timed_out
+            self._trip_fault(
+                "JAM_DETECTED",
+                f"{name} remained active for {threshold} s",
+                recovery=FaultRecovery.ACKNOWLEDGE,
+                source_input=name,
+            )
 
     def _monitor_fifo_timeout(self) -> None:
         if self.state not in {ConveyorState.RUNNING, ConveyorState.CONTROLLED_STOPPING} or not self.fifo:
             return
-        head = self.fifo[0]
-        if self._motion_elapsed_s - head.created_motion_s >= max(0.1, self.config.item_to_reject_timeout_s):
+        head = self._tracker.head()
+        if head is None:
+            return
+        timeout_s = max(0.1, self.config.front_to_reject_max_run_ms / 1000.0)
+        if self._motion_elapsed_s - head.created_motion_s >= timeout_s:
             self._trip_fault(
                 "ITEM_ARRIVAL_TIMEOUT",
                 f"item {head.sequence_id} did not reach DI1 in time",
             )
 
-    def _trip_fault(self, code: str, detail: str) -> None:
+    def _trip_fault(
+        self,
+        code: str,
+        detail: str,
+        *,
+        recovery: FaultRecovery | None = None,
+        source_input: str = "",
+    ) -> None:
         self._fault_code = str(code)
         self._fault_detail = str(detail)
-        self._reject_windows.clear()
+        self._fault_recovery = recovery or self._default_fault_recovery(code)
+        self._fault_input = str(source_input or "")
+        self._reject.clear()
         self._force_motion_off()
-        self.state = ConveyorState.FAULT
+        self.state = ConveyorState.FAULT_STOPPED
         self._set_output("buzzer", True)
         self._apply_indicator_outputs()
         self._log(f"fault {self._fault_code}: {self._fault_detail}")
 
     def _force_motion_off(self) -> None:
-        self._set_output("conveyor_run", False)
-        self._set_output("waste_removal", False)
+        self._set_outputs(
+            {"conveyor_run": False, "waste_removal": False},
+            force=True,
+        )
 
     def _apply_indicator_outputs(self) -> None:
         safety_ok = self.inputs.get("safety_ok", False)
-        running = self.state in {ConveyorState.RUNNING, ConveyorState.PURGING}
+        running = self.state in {
+            ConveyorState.RUNNING,
+            ConveyorState.PURGE_PREPARING,
+            ConveyorState.PURGE_RUNNING,
+        }
         self._set_output("button_green", running)
         self._set_output("button_red", not running)
         self._set_output("button_blue", not safety_ok)
-        self._set_output("buzzer", self.state == ConveyorState.FAULT)
+        self._set_output("buzzer", self.state == ConveyorState.FAULT_STOPPED)
 
     def _set_output(self, name: str, on: bool) -> None:
         value = bool(on)
-        if self.outputs.get(name) == value:
+        previous = self.outputs.get(name)
+        if previous == value:
             return
         self.outputs[name] = value
+        if name == "conveyor_run":
+            self._sync_jam_monitor_for_belt_transition(bool(previous), value)
         try:
             self._write_output_callback(name, value)
         except Exception as exc:
-            self._fault_code = "OUTPUT_WRITE_FAILED"
-            self._fault_detail = f"{name}: {exc}"
-            self.state = ConveyorState.FAULT
-            for safe_name in ("conveyor_run", "waste_removal"):
-                self.outputs[safe_name] = False
-                try:
-                    self._write_output_callback(safe_name, False)
-                except Exception:
-                    pass
+            self._handle_output_write_failure(name, exc)
             raise RuntimeError(self._fault_detail) from exc
+
+    def _set_outputs(self, updates: Mapping[str, bool], *, force: bool = False) -> None:
+        normalized = {str(name): bool(on) for name, on in updates.items()}
+        previous_conveyor_run = bool(self.outputs.get("conveyor_run", False))
+        changed = {
+            name: value
+            for name, value in normalized.items()
+            if force or self.outputs.get(name) != value
+        }
+        if not changed:
+            return
+        self.outputs.update(changed)
+        if "conveyor_run" in changed:
+            self._sync_jam_monitor_for_belt_transition(
+                previous_conveyor_run,
+                changed["conveyor_run"],
+            )
+        try:
+            if self._write_outputs_callback is not None:
+                self._write_outputs_callback(changed)
+            else:
+                for name, value in changed.items():
+                    self._write_output_callback(name, value)
+        except Exception as exc:
+            self._handle_output_write_failure(",".join(changed), exc)
+            raise RuntimeError(self._fault_detail) from exc
+
+    def _handle_output_write_failure(self, name: str, exc: Exception) -> None:
+        self._fault_code = "OUTPUT_WRITE_FAILED"
+        self._fault_detail = f"{name}: {exc}"
+        self._fault_recovery = FaultRecovery.RECONNECT_IO
+        self._fault_input = ""
+        self.state = ConveyorState.FAULT_STOPPED
+        for safe_name in ("conveyor_run", "waste_removal"):
+            self.outputs[safe_name] = False
+            try:
+                self._write_output_callback(safe_name, False)
+            except Exception:
+                pass
+
+    def _advance_motion_clock(self, now: float) -> None:
+        delta = max(0.0, float(now) - self._last_tick_at)
+        self._last_tick_at = float(now)
+        if self.outputs.get("conveyor_run", False):
+            self._motion_elapsed_s += delta
+
+    def _sync_jam_monitor_for_belt_transition(
+        self,
+        was_running: bool,
+        is_running: bool,
+    ) -> None:
+        if bool(was_running) == bool(is_running):
+            return
+        if not is_running:
+            self._jam_monitor.reset()
+            return
+        for name in self.JAM_INPUTS:
+            self._jam_monitor.observe_input(
+                name,
+                active=self.inputs.get(name, False),
+                motion_s=self._motion_elapsed_s,
+                conveyor_running=True,
+            )
+
+    @staticmethod
+    def _default_fault_recovery(code: str) -> FaultRecovery:
+        normalized = str(code or "").strip().upper()
+        if normalized in {"IO_NOT_READY", "OUTPUT_WRITE_FAILED"}:
+            return FaultRecovery.RECONNECT_IO
+        if normalized in {
+            "FIFO_OVERFLOW",
+            "FIFO_UNDERFLOW",
+            "RESULT_NOT_READY",
+            "ITEM_ARRIVAL_TIMEOUT",
+            "BLOW_INTERRUPTED",
+            "BLOW_WINDOW_CONFLICT",
+        }:
+            return FaultRecovery.PURGE_REQUIRED
+        return FaultRecovery.ACKNOWLEDGE
 
     def _notify_inspection_result(self, record: WorkpieceRecord) -> None:
         callback = self._inspection_result_listener
@@ -785,6 +1007,7 @@ __all__ = [
     "ConveyorConfig",
     "ConveyorLineController",
     "ConveyorState",
+    "FaultRecovery",
     "InspectionStatus",
     "WorkpieceRecord",
 ]

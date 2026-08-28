@@ -97,12 +97,13 @@ class DiPoller:
 
     def _initialize_states(self) -> None:
         now = time.perf_counter()
+        snapshot = self._read_inputs_with_busy_retry()
         with self._lock:
             self._stable_state.clear()
             self._candidate_state.clear()
             self._candidate_since.clear()
             for name in self.input_names:
-                state = self._read_input_with_busy_retry(name)
+                state = bool(snapshot[name])
                 self._stable_state[name] = state
                 self._candidate_state[name] = state
                 self._candidate_since[name] = now
@@ -110,20 +111,22 @@ class DiPoller:
     def _run_loop(self) -> None:
         while not self._stop_event.is_set():
             now = time.perf_counter()
-            for name in self.input_names:
-                try:
-                    self._process_input(name, now)
-                except NkioError as exc:
-                    # A transient board error must not terminate the DI thread.
-                    # The next polling cycle retries naturally; stable/candidate
-                    # state is intentionally left untouched for debounce safety.
-                    for callback in list(self._on_error):
-                        callback(name, exc)
-                    continue
+            try:
+                self._scan_once(now)
+            except NkioError as exc:
+                # A transient board error must not terminate the DI thread.
+                # The next polling cycle retries naturally; stable/candidate
+                # state is intentionally left untouched for debounce safety.
+                for callback in list(self._on_error):
+                    callback("DI_WORD", exc)
             self._stop_event.wait(self.poll_interval_s)
 
-    def _process_input(self, name: str, now: float) -> None:
-        raw_state = self._read_input_with_busy_retry(name)
+    def _scan_once(self, now: float) -> None:
+        snapshot = self._read_inputs_with_busy_retry()
+        for name in self.input_names:
+            self._process_input(name, now, bool(snapshot[name]))
+
+    def _process_input(self, name: str, now: float, raw_state: bool) -> None:
         event: DiEvent | None = None
 
         with self._lock:
@@ -155,10 +158,10 @@ class DiPoller:
         if event is not None:
             self._emit_event(event)
 
-    def _read_input_with_busy_retry(self, name: str) -> bool:
+    def _read_inputs_with_busy_retry(self) -> dict[str, bool]:
         for retry_index in range(self.busy_retry_count + 1):
             try:
-                return bool(self.io.read_input(name))
+                return self.io.snapshot_inputs(self.input_names)
             except NkioBusyError:
                 if retry_index >= self.busy_retry_count:
                     raise

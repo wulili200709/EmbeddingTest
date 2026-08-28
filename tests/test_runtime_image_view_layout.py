@@ -55,7 +55,7 @@ class RuntimeImageViewLayoutTests(unittest.TestCase):
             ],
         }
 
-        page.set_conveyor_state({**base, "state": "STOPPED"})
+        page.set_conveyor_state({**base, "state": "READY_STOPPED"})
         self.assertEqual(page.btn_conveyor_purge.text(), "一键清线")
         page.btn_conveyor_purge.click()
         self.assertEqual(purge_events, ["start"])
@@ -64,7 +64,11 @@ class RuntimeImageViewLayoutTests(unittest.TestCase):
             ["PENDING", "GOOD", "NG"],
         )
 
-        page.set_conveyor_state({**base, "state": "PURGING"})
+        page.set_conveyor_state({**base, "state": "PURGE_PREPARING"})
+        self.assertEqual(page.btn_conveyor_purge.text(), "清线中…")
+        self.assertFalse(page.btn_conveyor_purge.isEnabled())
+
+        page.set_conveyor_state({**base, "state": "PURGE_RUNNING"})
         self.assertEqual(page.btn_conveyor_purge.text(), "清线中…")
         self.assertFalse(page.btn_conveyor_purge.isEnabled())
 
@@ -73,10 +77,78 @@ class RuntimeImageViewLayoutTests(unittest.TestCase):
         page.btn_conveyor_purge.click()
         self.assertEqual(purge_events, ["start", "continue"])
 
-        page.set_conveyor_state({**base, "state": "FAULT", "fault_code": "JAM_DETECTED"})
+        page.set_conveyor_state(
+            {
+                **base,
+                "state": "FAULT_STOPPED",
+                "fault_code": "JAM_DETECTED",
+                "fault_recovery": "ACKNOWLEDGE",
+            }
+        )
         self.assertTrue(page.btn_conveyor_ack.isEnabled())
-        page.set_conveyor_state({**base, "state": "FAULT", "safety_ok": False})
+        page.set_conveyor_state(
+            {
+                **base,
+                "state": "FAULT_STOPPED",
+                "safety_ok": False,
+                "fault_recovery": "ACKNOWLEDGE",
+            }
+        )
         self.assertFalse(page.btn_conveyor_ack.isEnabled())
+
+    def test_conveyor_faults_are_shown_as_operator_friendly_chinese(self) -> None:
+        page = RuntimeModePage()
+        base = {
+            "state": "FAULT_STOPPED",
+            "io_ready": True,
+            "safety_ok": True,
+            "door_closed": True,
+            "run_permitted": False,
+            "fifo_count": 0,
+            "fifo": [],
+            "fault_code": "JAM_DETECTED",
+        }
+        jam_cases = (
+            ("end_test_sensor remained active for 3.0 s", "DI6末端检测位置堵料"),
+            ("good_outlet_sensor remained active for 3.0 s", "DI7 GOOD出口堵料"),
+            ("waste_outlet_sensor remained active for 3.0 s", "DI8废料出口堵料"),
+        )
+        for detail, expected in jam_cases:
+            page.set_conveyor_state({**base, "fault_detail": detail})
+            self.assertIn("皮带: 故障停机", page.lbl_conveyor_state.text())
+            self.assertIn(expected, page.lbl_conveyor_state.text())
+            self.assertIn("JAM_DETECTED", page.lbl_conveyor_state.toolTip())
+            self.assertIn(detail, page.lbl_conveyor_state.toolTip())
+
+        page.set_conveyor_state(
+            {
+                **base,
+                "fault_code": "ITEM_ARRIVAL_TIMEOUT",
+                "fault_detail": "item 1 did not reach DI1 in time",
+            }
+        )
+        self.assertIn("物料未在规定时间到达DI1", page.lbl_conveyor_state.text())
+
+    def test_camera_trigger_buttons_follow_physical_connections(self) -> None:
+        page = RuntimeModePage()
+        self.assertTrue(page.btn_trigger_cam1.isHidden())
+        self.assertTrue(page.btn_trigger_cam2.isHidden())
+        self.assertTrue(page.btn_trigger_cam3.isHidden())
+
+        page.set_physical_camera_roles(["cam1"])
+        self.assertFalse(page.btn_trigger_cam1.isHidden())
+        self.assertTrue(page.btn_trigger_cam2.isHidden())
+        self.assertTrue(page.btn_trigger_cam3.isHidden())
+
+        page.set_physical_camera_roles(["cam1", "cam3"])
+        self.assertFalse(page.btn_trigger_cam1.isHidden())
+        self.assertTrue(page.btn_trigger_cam2.isHidden())
+        self.assertFalse(page.btn_trigger_cam3.isHidden())
+
+        page.set_physical_camera_roles([])
+        self.assertTrue(page.btn_trigger_cam1.isHidden())
+        self.assertTrue(page.btn_trigger_cam2.isHidden())
+        self.assertTrue(page.btn_trigger_cam3.isHidden())
 
 
 if __name__ == "__main__":

@@ -72,6 +72,7 @@ def _rebuild_runner(runtime) -> bool:
             ng_flash_ms=int(tower_settings.get("ng_flash_ms", 200) or 200),
             ng_buzzer_ms=int(tower_settings.get("ng_buzzer_ms", 500) or 0),
             idle_blue_delay_s=float(int(tower_settings.get("idle_blue_delay_ms", 30000) or 30000)) / 1000.0,
+            output_arbiter=runtime._output_arbiter,
         )
     runtime._camera_manager = runtime_controller_module.HikCameraManager()
     runtime._frame_grab_service = runtime_controller_module.FrameGrabService(runtime._camera_manager)
@@ -146,19 +147,24 @@ def _try_create_io_controller(runtime):
             dll_path=dll_path,
         )
         controller.open()
+        arbiter_type = runtime_controller_module.OutputArbiter
+        runtime._output_arbiter = arbiter_type(controller) if arbiter_type is not None else None
         # Establish a safe software command immediately after the board opens;
         # camera connection and model warm-up happen later.
-        controller.set_outputs(
-            {
-                "conveyor_run": False,
-                "waste_removal": False,
-                "button_green": False,
-                "button_red": True,
-                "button_blue": True,
-                "buzzer": False,
-            }
-        )
+        safe_outputs = {
+            "conveyor_run": False,
+            "waste_removal": False,
+            "button_green": False,
+            "button_red": True,
+            "button_blue": True,
+            "buzzer": False,
+        }
+        if runtime._output_arbiter is not None:
+            runtime._output_arbiter.set_line_outputs(safe_outputs)
+        else:
+            controller.set_outputs(safe_outputs)
     except Exception as exc:
+        runtime._output_arbiter = None
         runtime.logAppended.emit(f"[IO] failed to initialize real IO: {exc}")
         runtime._emit_io_status(False, f"failed to initialize real IO: {exc}")
         return None
@@ -207,6 +213,7 @@ def _close_io_controller(runtime) -> None:
             runtime._io_controller.close()
         except Exception:
             pass
+    runtime._output_arbiter = None
     runtime._emit_io_status(False, runtime._io_status_detail or "IO closed")
 
 
@@ -251,11 +258,32 @@ def _on_foot_switch_rising(runtime, event) -> None:
 
 
 def _on_conveyor_di_change(runtime, event) -> None:
-    """Forward debounced business-state changes to the Qt control thread."""
-    runtime._conveyorDiEvent.emit(str(event.name), bool(event.state))
+    """Handle safety edges immediately; serialize ordinary events through Qt."""
+    name = str(event.name)
+    state = bool(event.state)
+    if name in {"safety_ok", "door_closed", "door_upper_closed"}:
+        controller = runtime._conveyor_controller
+        if controller is not None:
+            try:
+                controller.handle_input_change(name, state)
+            except Exception as exc:
+                runtime._conveyorIoError.emit(name, str(exc))
+        return
+    runtime._conveyorDiEvent.emit(name, state)
 
 
 def _on_conveyor_io_error(runtime, name: str, error: Exception) -> None:
+    # A failed DI snapshot invalidates the safety picture. Do not wait behind
+    # GUI work before commanding the two motion outputs OFF.
+    controller = runtime._conveyor_controller
+    detail = f"DI read failed ({name}): {error}"
+    if controller is not None:
+        try:
+            controller.set_io_ready(False, detail=detail)
+            runtime.logAppended.emit(f"[conveyor] {detail}")
+            return
+        except Exception:
+            pass
     runtime._conveyorIoError.emit(str(name), str(error))
 
 

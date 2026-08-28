@@ -38,6 +38,43 @@ _PENDING_GRAY = "#666666"
 _RUNNING_YELLOW = "#eab308"
 _RUNTIME_ROI_RECORD_COLUMN_RE = re.compile(r"^cam\d+\..+$", re.IGNORECASE)
 
+_CONVEYOR_STATE_OPERATOR_TEXT = {
+    "BOOTING": "初始化中",
+    "SAFETY_LOCKED": "急停或安全回路未复位",
+    "DOOR_OPEN_STOPPED": "安全门打开",
+    "READY_STOPPED": "已停止",
+    "RUNNING": "运行中",
+    "CONTROLLED_STOPPING": "正在停止",
+    "SAFETY_PAUSED": "急停暂停",
+    "DOOR_PAUSED": "开门暂停",
+    "READY_TO_RESUME": "等待重新启动",
+    "PURGE_PREPARING": "清线准备中",
+    "PURGE_RUNNING": "清线中",
+    "PURGE_PAUSED": "清线已暂停",
+    "FAULT_STOPPED": "故障停机",
+}
+
+_CONVEYOR_FAULT_OPERATOR_TEXT = {
+    "IO_NOT_READY": "IO通信异常",
+    "FIFO_OVERFLOW": "在途物料队列已满",
+    "FIFO_UNDERFLOW": "DI1触发但没有对应物料",
+    "RESULT_NOT_READY": "物料到达DI1时检测尚未完成",
+    "INSPECTION_ERROR": "视觉检测异常",
+    "CONTROLLED_STOP_TIMEOUT": "停止过程超时",
+    "PURGE_STATE_ERROR": "清线状态异常",
+    "PURGE_TIMEOUT": "一键清线运行超时",
+    "ITEM_ARRIVAL_TIMEOUT": "物料未在规定时间到达DI1",
+    "OUTPUT_WRITE_FAILED": "输出控制异常",
+    "BLOW_INTERRUPTED": "NG吹气被安全联锁中断，必须清线",
+    "BLOW_WINDOW_CONFLICT": "GOOD到位时吹气仍开启，必须清线",
+}
+
+_CONVEYOR_JAM_OPERATOR_TEXT = (
+    ("end_test_sensor", "DI6末端检测位置堵料"),
+    ("good_outlet_sensor", "DI7 GOOD出口堵料"),
+    ("waste_outlet_sensor", "DI8废料出口堵料"),
+)
+
 _DEFAULT_CAMERA_LAYOUT = "two_top_one_bottom"
 _CAMERA_LAYOUT_OPTIONS: tuple[tuple[str, str], ...] = (
     ("two_top_one_bottom", "runtime.layout.two_top_one_bottom"),
@@ -84,6 +121,24 @@ def _camera_title(camera_id: str) -> str:
         return tr("runtime.camera3")
     index = camera_index_for_role(role)
     return f"Cam{index}" if index else str(camera_id or DEFAULT_CAMERA_ROLE)
+
+
+def _conveyor_operator_fault_text(
+    fault_code: str,
+    fault_detail: str,
+    inputs: object = None,
+) -> str:
+    code = str(fault_code or "").strip().upper()
+    if not code:
+        return ""
+    detail = str(fault_detail or "").strip().casefold()
+    if code == "JAM_DETECTED":
+        input_states = dict(inputs or {}) if isinstance(inputs, dict) else {}
+        for sensor_name, operator_text in _CONVEYOR_JAM_OPERATOR_TEXT:
+            if sensor_name.casefold() in detail or bool(input_states.get(sensor_name, False)):
+                return operator_text
+        return "检测到堵料"
+    return _CONVEYOR_FAULT_OPERATOR_TEXT.get(code, f"设备故障（{code}）")
 
 
 def _status_badge_width(label: QtWidgets.QLabel, text: str, *, minimum: int = 56, maximum: int = 160) -> int:
@@ -644,6 +699,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.btn_trigger_cam1.setDefault(False)
         self.btn_trigger_cam1.setFocusPolicy(QtCore.Qt.NoFocus)
         self.btn_trigger_cam1.setEnabled(False)
+        self.btn_trigger_cam1.hide()
         self.btn_trigger_cam1.clicked.connect(lambda: self.triggerCameraRequested.emit(1))
         header_layout.addWidget(self.btn_trigger_cam1)
 
@@ -653,6 +709,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.btn_trigger_cam2.setDefault(False)
         self.btn_trigger_cam2.setFocusPolicy(QtCore.Qt.NoFocus)
         self.btn_trigger_cam2.setEnabled(False)
+        self.btn_trigger_cam2.hide()
         self.btn_trigger_cam2.clicked.connect(lambda: self.triggerCameraRequested.emit(2))
         header_layout.addWidget(self.btn_trigger_cam2)
 
@@ -662,6 +719,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.btn_trigger_cam3.setDefault(False)
         self.btn_trigger_cam3.setFocusPolicy(QtCore.Qt.NoFocus)
         self.btn_trigger_cam3.setEnabled(False)
+        self.btn_trigger_cam3.hide()
         self.btn_trigger_cam3.clicked.connect(lambda: self.triggerCameraRequested.emit(3))
         header_layout.addWidget(self.btn_trigger_cam3)
 
@@ -1426,6 +1484,7 @@ class RuntimeModePage(QtWidgets.QWidget):
             if role in self._physical_role_set
         }
         self._refresh_connection_footer()
+        self._refresh_trigger_buttons()
 
     def set_physical_camera_bindings(self, bindings: dict[str, str]) -> None:
         self._physical_camera_bindings = {
@@ -1773,27 +1832,42 @@ class RuntimeModePage(QtWidgets.QWidget):
         state = str(payload.get("state", "-") or "-")
         fifo_count = int(payload.get("fifo_count", 0) or 0)
         fault_code = str(payload.get("fault_code", "") or "")
+        fault_detail = str(payload.get("fault_detail", "") or "")
+        fault_recovery = str(payload.get("fault_recovery", "") or "")
         permitted = bool(payload.get("run_permitted", False))
         hardware_permitted = (
             bool(payload.get("io_ready", False))
             and bool(payload.get("safety_ok", False))
             and bool(payload.get("door_closed", False))
         )
-        self.lbl_conveyor_state.setText(
-            f"皮带: {state} | FIFO: {fifo_count}" + (f" | {fault_code}" if fault_code else "")
+        state_text = _CONVEYOR_STATE_OPERATOR_TEXT.get(state, state)
+        fault_text = _conveyor_operator_fault_text(
+            fault_code,
+            fault_detail,
+            payload.get("inputs"),
         )
+        self.lbl_conveyor_state.setText(
+            f"皮带: {state_text} | FIFO: {fifo_count}" + (f" | {fault_text}" if fault_text else "")
+        )
+        if fault_code:
+            engineering_detail = f"故障代码：{fault_code}"
+            if fault_detail:
+                engineering_detail += f"\n详细信息：{fault_detail}"
+            self.lbl_conveyor_state.setToolTip(engineering_detail)
+        else:
+            self.lbl_conveyor_state.setToolTip("")
         color = _NG_RED if fault_code or state in {"SAFETY_LOCKED", "DOOR_OPEN_STOPPED"} else _OK_GREEN
         self.lbl_conveyor_state.setStyleSheet(
             f"color:{color};font-size:12px;border-left:1px solid #555;padding-left:8px;"
         )
         self._refresh_fifo_indicators(payload.get("fifo", []))
         self.btn_conveyor_start.setEnabled(
-            permitted and state in {"STOPPED", "SAFETY_PAUSED", "DOOR_PAUSED"}
+            permitted and state in {"READY_STOPPED", "READY_TO_RESUME"}
         )
         self.btn_conveyor_stop.setEnabled(
-            state in {"RUNNING", "CONTROLLED_STOPPING", "PURGING"}
+            state in {"RUNNING", "CONTROLLED_STOPPING", "PURGE_PREPARING", "PURGE_RUNNING"}
         )
-        if state == "PURGING":
+        if state in {"PURGE_PREPARING", "PURGE_RUNNING"}:
             self.btn_conveyor_purge.setText("清线中…")
             self.btn_conveyor_purge.setEnabled(False)
         elif state == "PURGE_PAUSED":
@@ -1802,10 +1876,19 @@ class RuntimeModePage(QtWidgets.QWidget):
         else:
             self.btn_conveyor_purge.setText("一键清线")
             self.btn_conveyor_purge.setEnabled(
-                hardware_permitted and state in {"STOPPED", "FAULT"}
+                hardware_permitted
+                and (
+                    state in {"READY_STOPPED", "READY_TO_RESUME"}
+                    or (state == "FAULT_STOPPED" and fault_recovery == "PURGE_REQUIRED")
+                )
             )
         self.btn_conveyor_continue.setEnabled(hardware_permitted and state == "PURGE_PAUSED")
-        self.btn_conveyor_ack.setEnabled(hardware_permitted and state == "FAULT")
+        self.btn_conveyor_ack.setEnabled(
+            hardware_permitted
+            and state == "FAULT_STOPPED"
+            and fault_recovery == "ACKNOWLEDGE"
+        )
+        self._refresh_trigger_buttons()
 
     def _on_conveyor_purge_button_clicked(self) -> None:
         state = str(self._last_conveyor_snapshot.get("state", "") or "")
@@ -2047,8 +2130,12 @@ class RuntimeModePage(QtWidgets.QWidget):
 
     def _refresh_trigger_buttons(self) -> None:
         required_roles = set(self._configured_role_set)
+        manual_permitted = bool(
+            self._last_conveyor_snapshot.get("manual_operations_permitted", True)
+        )
         allow_full_trigger = (
             (not self._busy)
+            and manual_permitted
             and bool(required_roles)
             and required_roles.issubset(self._active_role_set)
             and all(self._has_enabled_items(role) for role in required_roles)
@@ -2058,8 +2145,12 @@ class RuntimeModePage(QtWidgets.QWidget):
             button = getattr(self, f"btn_trigger_{role}", None)
             if button is None:
                 continue
+            connected = role in self._physical_role_set
+            button.setVisible(connected)
             button.setEnabled(
-                (not self._busy)
+                connected
+                and (not self._busy)
+                and manual_permitted
                 and (role in self._configured_role_set)
                 and (role in self._active_role_set)
                 and self._has_enabled_items(role)
