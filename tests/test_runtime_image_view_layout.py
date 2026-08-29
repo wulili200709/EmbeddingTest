@@ -109,13 +109,13 @@ class RuntimeImageViewLayoutTests(unittest.TestCase):
             "fault_code": "JAM_DETECTED",
         }
         jam_cases = (
-            ("end_test_sensor remained active for 3.0 s", "DI6末端检测位置堵料"),
+            ("end_test_sensor remained active for 3.0 s", "DI6专用堵料传感器检测到堵料"),
             ("good_outlet_sensor remained active for 3.0 s", "DI7 GOOD出口堵料"),
             ("waste_outlet_sensor remained active for 3.0 s", "DI8废料出口堵料"),
         )
         for detail, expected in jam_cases:
             page.set_conveyor_state({**base, "fault_detail": detail})
-            self.assertIn("皮带: 故障停机", page.lbl_conveyor_state.text())
+            self.assertIn("皮带：故障停机", page.lbl_conveyor_state.text())
             self.assertIn(expected, page.lbl_conveyor_state.text())
             self.assertIn("JAM_DETECTED", page.lbl_conveyor_state.toolTip())
             self.assertIn(detail, page.lbl_conveyor_state.toolTip())

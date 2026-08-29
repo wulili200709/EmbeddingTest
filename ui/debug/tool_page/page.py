@@ -523,7 +523,15 @@ class ToolPage(QtWidgets.QWidget):
     def _retranslate_tool_dialogs(self) -> None:
         for key, dialog in getattr(self, "_tool_dialogs", {}).items():
             if dialog is not None:
+                retranslate = getattr(dialog, "retranslate_ui", None)
+                if callable(retranslate):
+                    retranslate()
                 dialog.setWindowTitle(self._tool_dialog_title(key))
+        ncc_dialog = getattr(self, "_ncc_workbench_dialog", None)
+        if ncc_dialog is not None:
+            retranslate = getattr(ncc_dialog, "retranslate_ui", None)
+            if callable(retranslate):
+                retranslate()
 
     def current_algorithm(self) -> str:
         value = self.cmb_algorithm.currentData() if hasattr(self, "cmb_algorithm") else None
@@ -927,7 +935,9 @@ class ToolPage(QtWidgets.QWidget):
         if callable(require_permission) and not require_permission("camera.edit_params", "相机工具"):
             return
         if self.lite_mode or not hasattr(self, "camera_debug_page"):
-            QtWidgets.QMessageBox.information(self, "LC System Lite", "轻量版未加载相机调试模块。")
+            QtWidgets.QMessageBox.information(
+                self, tr("debug.lite_title"), tr("debug.lite_no_camera")
+            )
             return
         self._show_tool_dialog(
             "camera_debug",
@@ -944,7 +954,9 @@ class ToolPage(QtWidgets.QWidget):
         ):
             return
         if self.lite_mode or not hasattr(self, "capture_plan_page"):
-            QtWidgets.QMessageBox.information(self, "LC System Lite", "轻量版未加载相机采集方案。")
+            QtWidgets.QMessageBox.information(
+                self, tr("debug.lite_title"), tr("debug.lite_no_capture_plan")
+            )
             return
         self._load_capture_config_to_ui()
         self._show_tool_dialog(
@@ -958,7 +970,9 @@ class ToolPage(QtWidgets.QWidget):
         if callable(require_permission) and not require_permission("io.debug", "IO调试"):
             return
         if self.lite_mode or not hasattr(self, "io_debug_page"):
-            QtWidgets.QMessageBox.information(self, "LC System Lite", "轻量版未加载 DI/DO 调试模块。")
+            QtWidgets.QMessageBox.information(
+                self, tr("debug.lite_title"), tr("debug.lite_no_io")
+            )
             return
         self._show_tool_dialog(
             "io_debug",
@@ -1172,7 +1186,9 @@ class ToolPage(QtWidgets.QWidget):
             return
         algorithm = self.current_algorithm()
         if not self._is_embedding_algorithm(algorithm):
-            QtWidgets.QMessageBox.information(self, tr("common.info"), "请选择学习工具后再导出 ONNX。")
+            QtWidgets.QMessageBox.information(
+                self, tr("common.info"), tr("debug.export_onnx_select_learning")
+            )
             return
         selected_item = self._selected_inspection_item()
         camera_role = (
@@ -1185,12 +1201,18 @@ class ToolPage(QtWidgets.QWidget):
         button = getattr(self, "btn_export_onnx", None)
         if button is not None:
             button.setEnabled(False)
-        self.lbl_training_validation.setText(f"Status: exporting ONNX {display_name}...")
+        self.lbl_training_validation.setText(
+            tr("debug.export_onnx_exporting", name=display_name)
+        )
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
         try:
             info = dict(qr_core.export_backbone_onnx(backbone, device="cpu") or {})
         except Exception as exc:
-            QtWidgets.QMessageBox.critical(self, "导出ONNX失败", f"{exc}\n\n{traceback.format_exc()}")
+            QtWidgets.QMessageBox.critical(
+                self,
+                tr("debug.export_onnx_failed"),
+                f"{exc}\n\n{traceback.format_exc()}",
+            )
             return
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
@@ -1205,10 +1227,17 @@ class ToolPage(QtWidgets.QWidget):
         input_text = "x".join(str(value) for value in input_shape) if input_shape else "-"
         onnx_path = str(info.get("onnx_path", "") or "")
         runtime_path = str(info.get("runtime_path", "") or "")
-        self.lbl_training_validation.setText(f"Status: ONNX exported {display_name} opset={opsets} input={input_text}")
+        self.lbl_training_validation.setText(
+            tr(
+                "debug.export_onnx_status_done",
+                name=display_name,
+                opsets=opsets,
+                input=input_text,
+            )
+        )
         QtWidgets.QMessageBox.information(
             self,
-            "导出ONNX完成",
+            tr("debug.export_onnx_done"),
             f"ONNX: {onnx_path}\n"
             f"ORT: {runtime_path}\n"
             f"opset: {opsets}\n"

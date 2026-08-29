@@ -394,6 +394,11 @@ static py::dict refine_match_py(
 
 PYBIND11_MODULE(LINE2DUP_PYMODULE_NAME, module) {
     module.doc() = "OpenCV-backed native wrapper around line2Dup-compatible detectors";
+#ifdef LINE2DUP_FUSIONV2_FORCE_GRAYSCALE
+    module.attr("input_mode") = "grayscale";
+#else
+    module.attr("input_mode") = "native";
+#endif
 
     auto native_detector = py::class_<NativeDetector>(module, "NativeDetector", py::module_local())
         .def(

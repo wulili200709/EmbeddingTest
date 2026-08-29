@@ -93,7 +93,7 @@ def _on_debug_camera_trigger_activated(self, _index: int) -> None:
 def _save_debug_camera_image(self) -> None:
     pixmap = self.view_debug_camera._pixmap
     if pixmap is None or pixmap.isNull():
-        self.lbl_debug_camera_status.setText("Camera status: no image to save")
+        self.lbl_debug_camera_status.setText(tr("debug.camera_dialog.status_no_image"))
         return
     path, _ = QtWidgets.QFileDialog.getSaveFileName(
         self,
@@ -103,9 +103,11 @@ def _save_debug_camera_image(self) -> None:
     )
     if path:
         if pixmap.save(path):
-            self.lbl_debug_camera_status.setText(f"Camera status: image saved to {path}")
+            self.lbl_debug_camera_status.setText(
+                tr("debug.camera_dialog.status_saved", path=path)
+            )
         else:
-            self.lbl_debug_camera_status.setText("Camera status: failed to save image")
+            self.lbl_debug_camera_status.setText(tr("debug.camera_dialog.status_save_failed"))
 
 
 def _toggle_debug_camera_preview(self, checked: bool) -> None:
@@ -118,7 +120,9 @@ def _toggle_debug_camera_preview(self, checked: bool) -> None:
 def _start_debug_camera_preview(self) -> None:
     if self._debug_frame_grab_service is None or "debug" not in self._debug_frame_grab_service.roles():
         self._set_debug_preview_running(False)
-        QtWidgets.QMessageBox.information(self, "Camera Debug", "Connect the debug camera first")
+        QtWidgets.QMessageBox.information(
+            self, tr("debug.camera_dialog.title"), tr("debug.camera_dialog.connect_first")
+        )
         return
     self._stop_debug_camera_preview()
     worker = DebugCameraPreviewThread(self._debug_frame_grab_service, self)
@@ -127,9 +131,9 @@ def _start_debug_camera_preview(self) -> None:
     worker.finished.connect(self._on_debug_preview_finished)
     self._debug_preview_thread = worker
     self._set_debug_preview_running(True)
-    self._set_debug_preview_placeholder("Starting live preview...")
+    self._set_debug_preview_placeholder(tr("debug.camera_dialog.preview_starting"))
     worker.start()
-    self._set_debug_camera_status("Live preview running")
+    self._set_debug_camera_status(tr("debug.camera_dialog.preview_running"))
 
 
 def _stop_debug_camera_preview(self, *, clear_view: bool = True) -> None:
@@ -155,7 +159,9 @@ def _on_debug_preview_frame_ready(self, image: QtGui.QImage) -> None:
 
 @QtCore.Slot(str)
 def _on_debug_preview_error(self, message: str) -> None:
-    self._set_debug_camera_status(f"Live preview error: {message}")
+    self._set_debug_camera_status(
+        tr("debug.camera_dialog.preview_error", error=message)
+    )
 
 
 @QtCore.Slot()
@@ -166,13 +172,17 @@ def _on_debug_preview_finished(self) -> None:
 
 
 def _set_debug_camera_status(self, message: str) -> None:
-    self.lbl_debug_camera_status.setText(f"Camera status: {message}")
+    self.lbl_debug_camera_status.setText(
+        tr("debug.camera_dialog.status", message=message)
+    )
 
 
 def _ensure_debug_camera_services(self) -> bool:
     if FrameGrabService is None or HikCameraManager is None or HikCameraSettings is None:
-        QtWidgets.QMessageBox.warning(self, "Camera Debug", "Hik camera debug service is unavailable in the current environment")
-        self._set_debug_camera_status("Service unavailable")
+        QtWidgets.QMessageBox.warning(
+            self, tr("debug.camera_dialog.title"), tr("debug.camera_dialog.unavailable")
+        )
+        self._set_debug_camera_status(tr("debug.camera_dialog.service_unavailable"))
         return False
     if self._debug_camera_manager is None:
         self._debug_camera_manager = HikCameraManager()
@@ -190,8 +200,14 @@ def _refresh_debug_camera_list(self) -> None:
     try:
         infos = self._debug_camera_manager.enumerate_cameras()
     except Exception as exc:
-        QtWidgets.QMessageBox.warning(self, "Camera Debug", f"Failed to scan cameras: {exc}")
-        self._set_debug_camera_status(f"Scan failed: {exc}")
+        QtWidgets.QMessageBox.warning(
+            self,
+            tr("debug.camera_dialog.title"),
+            tr("debug.camera_dialog.scan_failed", error=exc),
+        )
+        self._set_debug_camera_status(
+            tr("debug.camera_dialog.scan_failed_status", error=exc)
+        )
         return
     self._debug_camera_infos = list(infos)
     self.cmb_debug_camera.blockSignals(True)
@@ -209,7 +225,9 @@ def _refresh_debug_camera_list(self) -> None:
         self.cmb_debug_camera.blockSignals(False)
     self._refresh_debug_camera_info()
     self._load_saved_debug_camera_settings_to_ui(self._selected_debug_camera_serial())
-    self._set_debug_camera_status(f"Scanned {len(infos)} camera(s)")
+    self._set_debug_camera_status(
+        tr("debug.camera_dialog.scanned", count=len(infos))
+    )
 
 
 def _on_debug_camera_role_changed(self) -> None:
@@ -222,7 +240,12 @@ def _on_debug_camera_role_changed(self) -> None:
     selected_serial = self._selected_debug_camera_serial()
     if connected_serial and connected_serial != selected_serial:
         self._disconnect_debug_camera()
-        self._set_debug_camera_status(f"Switched to {self._selected_debug_camera_role()}, reconnect required")
+        self._set_debug_camera_status(
+            tr(
+                "debug.camera_dialog.switched_reconnect",
+                role=self._selected_debug_camera_role(),
+            )
+        )
 
 
 def _on_debug_camera_selected(self) -> None:
@@ -258,7 +281,9 @@ def _connect_debug_camera(self) -> None:
         return
     serial = self._selected_debug_camera_serial()
     if not serial:
-        QtWidgets.QMessageBox.information(self, "Camera Debug", "Scan and select a camera first")
+        QtWidgets.QMessageBox.information(
+            self, tr("debug.camera_dialog.title"), tr("debug.camera_dialog.scan_first")
+        )
         return
     role = self._selected_debug_camera_role()
     physical_role = self._debug_physical_camera_role(role)
@@ -282,14 +307,25 @@ def _connect_debug_camera(self) -> None:
         }
         self._debug_frame_grab_service.open_bound_cameras({"debug": serial}, settings_by_role=settings)
     except Exception as exc:
-        QtWidgets.QMessageBox.critical(self, "Camera Debug", f"Failed to connect debug camera: {exc}")
-        self._set_debug_camera_status(f"Connection failed: {exc}")
+        QtWidgets.QMessageBox.critical(
+            self,
+            tr("debug.camera_dialog.title"),
+            tr("debug.camera_dialog.connect_failed", error=exc),
+        )
+        self._set_debug_camera_status(
+            tr("debug.camera_dialog.connection_failed", error=exc)
+        )
         return
     self._save_debug_role_binding(role, serial)
     self._refresh_debug_camera_settings()
-    self._set_debug_preview_placeholder("Debug camera connected; live preview is available")
+    self._set_debug_preview_placeholder(tr("debug.camera_dialog.connected_preview"))
     self._set_debug_camera_status(
-        f"Connected {role} (physical {physical_role}) debug camera: {serial}"
+        tr(
+            "debug.camera_dialog.connected",
+            role=role,
+            physical=physical_role,
+            serial=serial,
+        )
     )
     self.debugCameraConnected.emit(physical_role, serial)
 
@@ -316,8 +352,8 @@ def _disconnect_debug_camera(self) -> None:
     self._debug_camera_manager = None
     self._debug_frame_grab_service = None
     self.lbl_debug_camera_info.setText(f"{tr('debug.camera_info')} -")
-    self._set_debug_preview_placeholder("Debug camera disconnected")
-    self._set_debug_camera_status("Disconnected")
+    self._set_debug_preview_placeholder(tr("debug.camera_dialog.disconnected_preview"))
+    self._set_debug_camera_status(tr("debug.camera_dialog.disconnected"))
     self._refresh_debug_role_status()
 
 
@@ -383,7 +419,9 @@ def _apply_debug_camera_settings(self, *, quiet: bool = False) -> bool:
     device = self._debug_camera_device()
     if device is None:
         if not quiet:
-            QtWidgets.QMessageBox.information(self, "Camera Debug", "Connect the debug camera first")
+            QtWidgets.QMessageBox.information(
+                self, tr("debug.camera_dialog.title"), tr("debug.camera_dialog.connect_first")
+            )
         return False
     try:
         device.apply_settings(
@@ -396,7 +434,11 @@ def _apply_debug_camera_settings(self, *, quiet: bool = False) -> bool:
             )
         )
     except Exception as exc:
-        QtWidgets.QMessageBox.critical(self, "Camera Debug", f"Failed to apply camera parameters: {exc}")
+        QtWidgets.QMessageBox.critical(
+            self,
+            tr("debug.camera_dialog.title"),
+            tr("debug.camera_dialog.apply_failed", error=exc),
+        )
         return False
     serial = str(getattr(device, "serial_number", self._selected_debug_camera_serial()) or "").strip()
     payload = dict(self._debug_camera_settings_payload_from_ui())
@@ -405,13 +447,19 @@ def _apply_debug_camera_settings(self, *, quiet: bool = False) -> bool:
     if not quiet:
         self.cameraSettingsApplied.emit(serial, payload)
     self._refresh_debug_camera_settings()
-    self._set_debug_camera_status("Parameters written to camera" if quiet else "Camera parameters applied")
+    self._set_debug_camera_status(
+        tr("debug.camera_dialog.params_written")
+        if quiet
+        else tr("debug.camera_dialog.params_applied")
+    )
     return True
 
 
 def _grab_debug_camera_once(self) -> None:
     if self._debug_frame_grab_service is None or "debug" not in self._debug_frame_grab_service.roles():
-        QtWidgets.QMessageBox.information(self, "Camera Debug", "Connect the debug camera first")
+        QtWidgets.QMessageBox.information(
+            self, tr("debug.camera_dialog.title"), tr("debug.camera_dialog.connect_first")
+        )
         return
     role = self._selected_debug_camera_role()
     physical_role = self._debug_physical_camera_role(role)
@@ -422,10 +470,16 @@ def _grab_debug_camera_once(self) -> None:
     if expected_serial and connected_serial and connected_serial != expected_serial:
         QtWidgets.QMessageBox.information(
             self,
-            "Camera Debug",
-            f"{role} is mapped to physical {physical_role}; reconnect the mapped camera first",
+            tr("debug.camera_dialog.title"),
+            tr(
+                "debug.camera_dialog.mapped_camera_first",
+                role=role,
+                physical=physical_role,
+            ),
         )
-        self._set_debug_camera_status("Mapped physical camera changed; reconnect required")
+        self._set_debug_camera_status(
+            tr("debug.camera_dialog.mapped_camera_changed")
+        )
         return
     if channel and not self._apply_debug_camera_settings(quiet=True):
         return
@@ -436,10 +490,12 @@ def _grab_debug_camera_once(self) -> None:
         if io_controller is None or not bool(getattr(io_controller, "is_open", False)):
             QtWidgets.QMessageBox.information(
                 self,
-                "Camera Debug",
-                "Open the DI/DO debug connection first to capture with the mapped light source",
+                tr("debug.camera_dialog.title"),
+                tr("debug.camera_dialog.mapped_light_first"),
             )
-            self._set_debug_camera_status("Mapped light source requires an open DI/DO connection")
+            self._set_debug_camera_status(
+                tr("debug.camera_dialog.mapped_light_requires_io")
+            )
             return
         light_index = self._debug_capture_light_index(role)
     capture_light_context = (
@@ -455,8 +511,14 @@ def _grab_debug_camera_once(self) -> None:
                     time.sleep(stable_delay_ms / 1000.0)
             frame = self._debug_frame_grab_service.capture_once("debug", timeout_ms=1000)
     except Exception as exc:
-        QtWidgets.QMessageBox.critical(self, "Camera Debug", f"Capture failed: {exc}")
-        self._set_debug_camera_status(f"Capture failed: {exc}")
+        QtWidgets.QMessageBox.critical(
+            self,
+            tr("debug.camera_dialog.title"),
+            tr("debug.camera_dialog.capture_failed", error=exc),
+        )
+        self._set_debug_camera_status(
+            tr("debug.camera_dialog.capture_failed", error=exc)
+        )
         return
     try:
         self._show_debug_preview_image(qimage_from_hik_frame(frame))
@@ -468,13 +530,21 @@ def _grab_debug_camera_once(self) -> None:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     image_path = os.path.join(capture_dir, f"{role}_debug_cam_{stamp}.png")
     if frame_to_bgr_image is None:
-        QtWidgets.QMessageBox.critical(self, "Camera Debug", "Camera image conversion service is unavailable")
+        QtWidgets.QMessageBox.critical(
+            self,
+            tr("debug.camera_dialog.title"),
+            tr("debug.camera_dialog.convert_unavailable"),
+        )
         return
     image = frame_to_bgr_image(frame)
     if image.ndim == 3 and image.shape[2] > 3:
         image = image[:, :, :3]
     if not cv2.imwrite(image_path, image):
-        QtWidgets.QMessageBox.critical(self, "Camera Debug", f"Failed to save captured image: {image_path}")
+        QtWidgets.QMessageBox.critical(
+            self,
+            tr("debug.camera_dialog.title"),
+            tr("debug.camera_dialog.save_failed", path=image_path),
+        )
         return
     if image_path not in self.test_files:
         self.test_files.append(image_path)
@@ -483,6 +553,17 @@ def _grab_debug_camera_once(self) -> None:
     self.tabs.setCurrentIndex(1)
     self._load_canvas_image(image_path)
     self._set_debug_camera_status(
-        f"{role} captured by physical {physical_role}: {os.path.basename(image_path)}"
+        tr(
+            "debug.camera_dialog.captured",
+            role=role,
+            physical=physical_role,
+            image=os.path.basename(image_path),
+        )
     )
-    self.lbl_status.setText(f"Status: {role} debug capture saved to test samples -> {os.path.basename(image_path)}")
+    self.lbl_status.setText(
+        tr(
+            "debug.camera_dialog.saved_to_samples",
+            role=role,
+            image=os.path.basename(image_path),
+        )
+    )

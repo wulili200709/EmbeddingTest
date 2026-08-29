@@ -39,6 +39,7 @@ from ncc.model import (
 )
 from ncc.runtime_service import NccCompiledModel, NccMatchResponse
 from ui.debug.roi_canvas_pyside6 import OverlayShape, RoiCanvas
+from ui.i18n import tr
 
 
 _DIALOG_STYLESHEET = """
@@ -384,14 +385,17 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         root.addWidget(header_box)
 
         self.tabs = QtWidgets.QTabWidget()
-        self.tabs.addTab(self._build_create_tab(), "Create")
+        self._create_tab_page = self._build_create_tab()
+        self.tabs.addTab(self._create_tab_page, tr("ncc.tab_create"))
         self._mask_tab_page = self._build_mask_tab()
-        self._mask_tab_index = self.tabs.addTab(self._mask_tab_page, "Template Mask")
-        self.tabs.addTab(self._build_reference_tab(), "Reference ROI")
-        self.tabs.addTab(self._build_find_tab(), "Find")
+        self._mask_tab_index = self.tabs.addTab(self._mask_tab_page, tr("ncc.tab_mask"))
+        self._reference_tab_page = self._build_reference_tab()
+        self.tabs.addTab(self._reference_tab_page, tr("ncc.tab_reference"))
+        self._find_tab_page = self._build_find_tab()
+        self.tabs.addTab(self._find_tab_page, tr("ncc.tab_find"))
         root.addWidget(self.tabs, 1)
 
-        self.lbl_status = QtWidgets.QLabel("状态：先加载参考图并设置 template ROI。")
+        self.lbl_status = QtWidgets.QLabel(tr("ncc.status_initial"))
         self.lbl_status.setWordWrap(True)
         root.addWidget(self.lbl_status)
 
@@ -433,7 +437,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         form.addRow("预览", self.edt_preview_path)
         select_layout.addLayout(form)
         self.chk_enable_template_mask = QtWidgets.QCheckBox("启用 Template Mask")
-        self.chk_enable_template_mask.setToolTip("打开后显示 Template Mask 页签，并在保存模板和匹配时启用 mask。")
+        self.chk_enable_template_mask.setToolTip(tr("ncc.mask_enable_tip"))
         select_layout.addWidget(self.chk_enable_template_mask)
 
         roi_row = QtWidgets.QHBoxLayout()
@@ -590,9 +594,9 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         info_box = QtWidgets.QGroupBox("选中 ROI 属性")
         info_form = QtWidgets.QFormLayout(info_box)
         self.edit_output_label = QtWidgets.QLineEdit()
-        self.edit_output_label.setPlaceholderText("先在列表中选择一个 ROI")
+        self.edit_output_label.setPlaceholderText(tr("ncc.select_roi_placeholder"))
         self.edit_display_name = QtWidgets.QLineEdit()
-        self.edit_display_name.setPlaceholderText("先在列表中选择一个 ROI")
+        self.edit_display_name.setPlaceholderText(tr("ncc.select_roi_placeholder"))
         shape_row = QtWidgets.QHBoxLayout()
         self.btn_apply_region_name = QtWidgets.QPushButton("应用名称")
         self.cmb_reference_shape = QtWidgets.QComboBox()
@@ -647,7 +651,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         region_layout.addLayout(region_bottom)
         left_layout.addWidget(region_box, 1)
 
-        self.lbl_reference_status = QtWidgets.QLabel("状态：这里设置的是标准片上的基准 ROI。")
+        self.lbl_reference_status = QtWidgets.QLabel(tr("ncc.reference_status"))
         self.lbl_reference_status.setWordWrap(True)
         left_layout.addWidget(self.lbl_reference_status)
 
@@ -774,7 +778,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         search_layout = QtWidgets.QVBoxLayout(search_box)
         self.btn_apply_search_roi = QtWidgets.QPushButton("应用当前框为搜索ROI")
         self.btn_clear_search_roi = QtWidgets.QPushButton("清空搜索ROI")
-        self.lbl_search_roi = QtWidgets.QLabel("状态：未设置搜索ROI，默认全图搜索。")
+        self.lbl_search_roi = QtWidgets.QLabel(tr("ncc.search_roi_unset"))
         self.lbl_search_roi.setWordWrap(True)
         search_layout.addWidget(self.btn_apply_search_roi)
         search_layout.addWidget(self.btn_clear_search_roi)
@@ -797,7 +801,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.btn_toggle_writeback = QtWidgets.QToolButton()
         self.btn_toggle_writeback.setCheckable(True)
         self.btn_toggle_writeback.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.btn_toggle_writeback.setToolTip("仅调试或生成 LabelMe 标注时使用，不影响正式运行。")
+        self.btn_toggle_writeback.setToolTip(tr("ncc.writeback_toggle_tip"))
         left_layout.addWidget(self.btn_toggle_writeback)
 
         self.writeback_box = QtWidgets.QGroupBox("高级写回（LabelMe）")
@@ -862,7 +866,146 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.btn_toggle_writeback.setArrowType(
             QtCore.Qt.ArrowType.DownArrow if is_visible else QtCore.Qt.ArrowType.RightArrow
         )
-        self.btn_toggle_writeback.setText("隐藏高级写回" if is_visible else "显示高级写回")
+        self.btn_toggle_writeback.setText(
+            tr("ncc.hide_advanced_writeback")
+            if is_visible
+            else tr("ncc.show_advanced_writeback")
+        )
+
+    @staticmethod
+    def _set_group_title_for(widget: QtWidgets.QWidget, text_key: str) -> None:
+        parent = widget.parentWidget()
+        while parent is not None:
+            if isinstance(parent, QtWidgets.QGroupBox):
+                parent.setTitle(tr(text_key))
+                return
+            parent = parent.parentWidget()
+
+    @staticmethod
+    def _set_form_label_for(widget: QtWidgets.QWidget, text_key: str) -> None:
+        parent = widget.parentWidget()
+        while parent is not None:
+            layout = parent.layout()
+            if isinstance(layout, QtWidgets.QFormLayout):
+                label = layout.labelForField(widget)
+                if isinstance(label, QtWidgets.QLabel):
+                    label.setText(tr(text_key))
+                    return
+            parent = parent.parentWidget()
+
+    def retranslate_ui(self) -> None:
+        """Refresh all persistent NCC controls after the application language changes."""
+        product = self._product_name or tr("ncc.unnamed_product")
+        self.setWindowTitle(tr("ncc.title", product=product))
+
+        for page, key in (
+            (self._create_tab_page, "ncc.tab_create"),
+            (self._mask_tab_page, "ncc.tab_mask"),
+            (self._reference_tab_page, "ncc.tab_reference"),
+            (self._find_tab_page, "ncc.tab_find"),
+        ):
+            index = self.tabs.indexOf(page)
+            if index >= 0:
+                self.tabs.setTabText(index, tr(key))
+
+        group_titles = (
+            (self.edt_product, "ncc.product_info"),
+            (self.edt_source_path, "ncc.reference_image"),
+            (self.edt_display_name, "ncc.template_edit"),
+            (self.txt_model_summary, "ncc.model_summary"),
+            (self.source_canvas, "ncc.reference_image"),
+            (self.template_canvas, "ncc.template_preview"),
+            (self.preview_canvas, "ncc.template_box_preview"),
+            (self.edt_mask_path, "ncc.template_mask"),
+            (self.mask_canvas, "ncc.reference_mask_edit"),
+            (self.edit_output_label, "ncc.selected_roi_properties"),
+            (self.table_reference_regions, "ncc.reference_regions"),
+            (self.ref_canvas, "ncc.reference_region_edit"),
+            (self.edt_scene_path, "ncc.scene_image"),
+            (self.list_find_images, "ncc.test_images"),
+            (self.spn_target_num, "ncc.find_parameters"),
+            (self.btn_apply_search_roi, "ncc.search_roi"),
+            (self.find_canvas, "ncc.scene_preview"),
+        )
+        for widget, key in group_titles:
+            self._set_group_title_for(widget, key)
+        self.writeback_box.setTitle(tr("ncc.advanced_writeback"))
+
+        for widget, key in (
+            (self.edt_product, "ncc.product"),
+            (self.edt_camera, "ncc.camera"),
+            (self.edt_model_path, "ncc.model"),
+            (self.edt_display_name, "ncc.display_name"),
+            (self.edt_roi_usage, "ncc.current_usage"),
+            (self.edt_template_path, "ncc.template"),
+            (self.edt_preview_path, "ncc.preview"),
+            (self.edt_mask_path, "ncc.mask_file"),
+            (self.cmb_mask_shape, "ncc.mask_shape"),
+            (self.edit_output_label, "ncc.roi_label"),
+            (self.edit_display_name, "ncc.display_name"),
+            (self.cmb_reference_shape, "ncc.shape_operation"),
+            (self.edt_scene_path, "ncc.path"),
+            (self.edt_backend, "ncc.backend"),
+            (self.edt_writeback_label, "ncc.writeback_label"),
+        ):
+            self._set_form_label_for(widget, key)
+
+        self.chk_enable_template_mask.setText(tr("ncc.enable_template_mask"))
+        self.chk_enable_template_mask.setToolTip(tr("ncc.mask_enable_tip"))
+        self.edit_output_label.setPlaceholderText(tr("ncc.select_roi_placeholder"))
+        self.edit_display_name.setPlaceholderText(tr("ncc.select_roi_placeholder"))
+        self.btn_pick_source.setText(tr("ncc.open_image"))
+        self.btn_apply_template_roi.setText(tr("ncc.apply_current_box"))
+        self.btn_clear_source_roi.setText(tr("ncc.clear_template_roi"))
+        self.btn_save_template.setText(tr("ncc.save_template"))
+        self.btn_apply_template_mask.setText(tr("ncc.save_current_mask"))
+        self.btn_clear_template_mask.setText(tr("ncc.clear_mask"))
+        self.btn_apply_region_name.setText(tr("ncc.apply_name"))
+        self.btn_add_reference_roi.setText(tr("ncc.new_roi"))
+        self.btn_load_reference_roi.setText(tr("ncc.load_reference_roi"))
+        self.btn_remove_reference_roi.setText(tr("ncc.delete_selected_roi"))
+        self.btn_clear_reference_rois.setText(tr("ncc.clear_all_roi"))
+        self.btn_save_reference_roi.setText(tr("ncc.save_current_roi"))
+        self.btn_pick_scene.setText(tr("ncc.add_images"))
+        self.btn_remove_find_image.setText(tr("ncc.remove"))
+        self.btn_clear_find_images.setText(tr("ncc.clear"))
+        self.chk_use_subpixel.setText(tr("ncc.subpixel"))
+        self.chk_bitwise_not.setText(tr("ncc.bitwise_not"))
+        self.chk_pose_refine.setText(tr("ncc.contour_refine"))
+        self.chk_stop_layer1.setText(tr("ncc.fast_mode"))
+        self.btn_apply_search_roi.setText(tr("ncc.apply_search_roi"))
+        self.btn_clear_search_roi.setText(tr("ncc.clear_search_roi"))
+        self.btn_run_match.setText(tr("ncc.run_selected"))
+        self.btn_run_all.setText(tr("ncc.run_all"))
+        self.btn_writeback.setText(tr("ncc.writeback_top1"))
+        self.btn_writeback_regions.setText(tr("ncc.writeback_regions"))
+        self.btn_toggle_writeback.setToolTip(tr("ncc.writeback_toggle_tip"))
+        self.edt_writeback_label.setPlaceholderText(tr("ncc.writeback_placeholder"))
+        self.edt_writeback_label.setToolTip(tr("ncc.writeback_label_tip"))
+        self.btn_writeback.setToolTip(tr("ncc.writeback_top1_tip"))
+        self.btn_writeback_regions.setToolTip(tr("ncc.writeback_regions_tip"))
+        self.chk_stop_layer1.setToolTip(tr("ncc.stop_layer1_tip"))
+        self.lbl_writeback_hint.setText(tr("ncc.writeback_hint"))
+        self.lbl_mask_hint.setText(tr("ncc.mask_hint"))
+        self._set_writeback_actions_visible(self.writeback_box.isVisible())
+        self.table_reference_regions.setHorizontalHeaderLabels(
+            ["#", tr("ncc.table_name"), tr("ncc.roi_label"), tr("ncc.table_info")]
+        )
+
+        params_layout = self.spn_target_num.parentWidget().layout()
+        if isinstance(params_layout, QtWidgets.QGridLayout):
+            for row, column, key in (
+                (0, 0, "ncc.target_num"),
+                (0, 2, "ncc.score"),
+                (1, 0, "ncc.max_overlap"),
+                (1, 2, "ncc.min_area"),
+                (2, 0, "ncc.angle_start"),
+                (2, 2, "ncc.angle_end"),
+            ):
+                item = params_layout.itemAtPosition(row, column)
+                label = item.widget() if item is not None else None
+                if isinstance(label, QtWidgets.QLabel):
+                    label.setText(tr(key))
 
     def _finalize_ui(self) -> None:
         root_layout = self.layout()
@@ -871,15 +1014,15 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             if isinstance(header_widget, QtWidgets.QWidget):
                 header_widget.hide()
 
-        self.edt_writeback_label.setPlaceholderText("例如：ncc_roi")
-        self.edt_writeback_label.setToolTip("写入到当前场景图对应的 LabelMe JSON 里的标签名。")
-        self.btn_writeback.setText("写回当前 Top1 外框")
-        self.btn_writeback.setToolTip("按上面的标签名，把当前图片的 Top1 匹配外框写回 LabelMe JSON。")
-        self.btn_writeback_regions.setToolTip("把当前 Top1 匹配下投影得到的 roi1/roi2/... 参考区域批量写回 LabelMe JSON。")
-        self.chk_stop_layer1.setToolTip("只做到金字塔第1层就停止细化，通常更快，但角度和位置精度可能略降。")
+        self.edt_writeback_label.setPlaceholderText(tr("ncc.writeback_placeholder"))
+        self.edt_writeback_label.setToolTip(tr("ncc.writeback_label_tip"))
+        self.btn_writeback.setText(tr("ncc.writeback_top1"))
+        self.btn_writeback.setToolTip(tr("ncc.writeback_top1_tip"))
+        self.btn_writeback_regions.setToolTip(tr("ncc.writeback_regions_tip"))
+        self.chk_stop_layer1.setToolTip(tr("ncc.stop_layer1_tip"))
         if hasattr(self, "lbl_writeback_hint") and isinstance(self.lbl_writeback_hint, QtWidgets.QLabel):
             self.lbl_writeback_hint.setText(
-                "说明：上面填写的是写回到 LabelMe 的标签名；下面按钮会把当前 Top1 匹配结果按这个标签写回。"
+                tr("ncc.writeback_hint")
             )
         if hasattr(self, "scene_form") and isinstance(self.scene_form, QtWidgets.QFormLayout):
             if hasattr(self.scene_form, "setRowVisible"):
@@ -889,6 +1032,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
                 if label is not None:
                     label.hide()
                 self.edt_backend.hide()
+        self.retranslate_ui()
 
     def _load_model(self) -> None:
         self._loading_model = True
@@ -991,7 +1135,9 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             return
         current_index = self.tabs.indexOf(self._mask_tab_page)
         if visible and current_index < 0:
-            self.tabs.insertTab(int(self._mask_tab_index), self._mask_tab_page, "Template Mask")
+            self.tabs.insertTab(
+                int(self._mask_tab_index), self._mask_tab_page, tr("ncc.tab_mask")
+            )
             return
         if (not visible) and current_index >= 0:
             if self.tabs.currentWidget() is self._mask_tab_page:
@@ -1017,9 +1163,9 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._refresh_model_summary()
         self.modelSaved.emit(self._model_path)
         if checked:
-            self._set_status("已启用 Template Mask。")
+            self._set_status(tr("ncc.status_mask_enabled"))
         else:
-            self._set_status("已关闭 Template Mask。")
+            self._set_status(tr("ncc.status_mask_disabled"))
 
     def _mask_shape_name(self) -> str:
         if not self._template_mask_enabled() or not hasattr(self, "cmb_mask_shape"):
@@ -1092,7 +1238,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         if not self._template_mask_enabled():
             self.mask_canvas.clear_roi(emit_signal=False)
             self.mask_canvas.set_overlays([])
-            self.lbl_mask_status.setText("状态：Template Mask 已关闭。")
+            self.lbl_mask_status.setText(tr("ncc.mask_status_disabled"))
             self._apply_mask_edit_mode()
             return
         source_path = self._reference_image_path()
@@ -1110,7 +1256,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
                 )
         else:
             self.mask_canvas.clear_image()
-            self.lbl_mask_status.setText("状态：请先加载参考图。")
+            self.lbl_mask_status.setText(tr("ncc.mask_status_load_reference"))
             return
 
         overlay_items: List[OverlayShape] = []
@@ -1148,13 +1294,13 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
                         ),
                         emit_signal=False,
                     )
-                self.lbl_mask_status.setText("状态：当前 Template Mask 已加载。")
+                self.lbl_mask_status.setText(tr("ncc.mask_status_loaded"))
             else:
                 index = self.cmb_mask_shape.findData("disabled")
                 if index >= 0:
                     self.cmb_mask_shape.setCurrentIndex(index)
                 self.mask_canvas.clear_roi(emit_signal=False)
-                self.lbl_mask_status.setText("状态：未启用 Template Mask。")
+                self.lbl_mask_status.setText(tr("ncc.mask_status_not_enabled"))
         finally:
             self._syncing_mask_view = False
         self._apply_mask_edit_mode()
@@ -1288,7 +1434,9 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
     def _apply_current_template_roi(self) -> None:
         roi = self.source_canvas.roi_xywh()
         if roi is None:
-            QtWidgets.QMessageBox.information(self, "NCC", "请先在右侧参考图上框出 template ROI。")
+            QtWidgets.QMessageBox.information(
+                self, "NCC", tr("ncc.draw_template_roi_first")
+            )
             return
         self._save_template()
 
@@ -1328,12 +1476,12 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
     def _clear_source_roi(self) -> None:
         self.source_canvas.clear_roi(emit_signal=False)
         self._set_roi_spin_values((0, 0, 1, 1))
-        self._set_status("已清空模板 ROI。")
+        self._set_status(tr("ncc.status_template_roi_cleared"))
 
     def _pick_source_image(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
-            "选择参考图",
+            tr("ncc.select_reference_image"),
             self.source_canvas.image_path() or self._initial_image_path or self._product_dir,
             _image_file_filter(),
         )
@@ -1341,7 +1489,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             return
         self.source_canvas.set_image(path)
         self._refresh_reference_image(force=True)
-        self._set_status(f"已加载参考图：{path}")
+        self._set_status(tr("ncc.status_reference_loaded", path=path))
 
     def _save_model_metadata(self) -> None:
         self._sync_model_without_template_roi_from_ui()
@@ -1351,11 +1499,13 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
     def _save_template(self, _checked: object = None, *, show_progress: bool = True) -> None:
         source_path = str(self.source_canvas.image_path() or "").strip()
         if not source_path:
-            QtWidgets.QMessageBox.warning(self, "NCC", "请先加载参考图。")
+            QtWidgets.QMessageBox.warning(self, "NCC", tr("ncc.load_reference_first"))
             return
         roi = self.source_canvas.roi_xywh()
         if roi is None:
-            QtWidgets.QMessageBox.warning(self, "NCC", "请先在右侧参考图上框选模板 ROI。")
+            QtWidgets.QMessageBox.warning(
+                self, "NCC", tr("ncc.draw_template_roi_first")
+            )
             return
         progress: Optional[QtWidgets.QProgressDialog] = None
         buttons = [
@@ -1367,11 +1517,13 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             if isinstance(button, QtWidgets.QAbstractButton)
         ]
         if show_progress:
-            self._set_status("正在保存 NCC 模板，请稍候...")
+            self._set_status(tr("ncc.status_saving_template"))
             for button in buttons:
                 button.setEnabled(False)
-            progress = QtWidgets.QProgressDialog("正在保存 NCC 模板，请稍候...", "", 0, 0, self)
-            progress.setWindowTitle("保存模板")
+            progress = QtWidgets.QProgressDialog(
+                tr("ncc.status_saving_template"), "", 0, 0, self
+            )
+            progress.setWindowTitle(tr("ncc.save_template"))
             progress.setCancelButton(None)
             progress.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
             progress.setMinimumDuration(0)
@@ -1385,7 +1537,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             self._model.reference_regions = [region.normalized() for region in self._reference_regions]
             save_model(self._model_path, self._model)
             self._load_model()
-            self._set_status("模板已保存。")
+            self._set_status(tr("ncc.status_template_saved"))
             self.modelSaved.emit(self._model_path)
         finally:
             if progress is not None:
@@ -1717,7 +1869,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._refresh_reference_region_fields()
         self._refresh_reference_canvas()
         self._save_reference_regions_to_model()
-        self._set_reference_status("已删除选中的参考 ROI。")
+        self._set_reference_status(tr("ncc.reference_removed"))
 
     def _clear_reference_roi(self) -> None:
         self._creating_reference_roi = False
@@ -1728,7 +1880,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._refresh_reference_region_fields()
         self._refresh_reference_canvas()
         self._save_reference_regions_to_model()
-        self._set_reference_status("已清空全部参考 ROI。")
+        self._set_reference_status(tr("ncc.reference_cleared"))
 
     def _apply_reference_region_fields(self) -> None:
         if self._selected_reference_idx is None or not (0 <= self._selected_reference_idx < len(self._reference_regions)):
@@ -1804,12 +1956,12 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         image_path = self._reference_image_path()
         if not image_path or not Path(image_path).exists():
             if not silent:
-                QtWidgets.QMessageBox.warning(self, "NCC", "请先加载参考图。")
+                QtWidgets.QMessageBox.warning(self, "NCC", tr("ncc.load_reference_first"))
             return
         jpath = Path(labelme_json_of_image(image_path))
         if not jpath.exists():
             if not silent:
-                QtWidgets.QMessageBox.information(self, "NCC", "当前参考图还没有 labelme json。")
+                QtWidgets.QMessageBox.information(self, "NCC", tr("ncc.no_labelme_json"))
             return
         try:
             regions: List[NccReferenceRegion] = []
@@ -1859,10 +2011,10 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
     def _save_reference_roi_to_json(self) -> None:
         image_path = self._reference_image_path()
         if not image_path or not Path(image_path).exists():
-            QtWidgets.QMessageBox.warning(self, "NCC", "请先加载参考图。")
+            QtWidgets.QMessageBox.warning(self, "NCC", tr("ncc.load_reference_first"))
             return
         if not self._reference_regions:
-            QtWidgets.QMessageBox.warning(self, "NCC", "当前没有可保存的参考 ROI。")
+            QtWidgets.QMessageBox.warning(self, "NCC", tr("ncc.no_reference_roi"))
             return
         for region in self._reference_regions:
             label_name = str(region.label_name or "").strip()
@@ -1891,7 +2043,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
     def _add_find_images(self) -> None:
         paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
             self,
-            "选择测试图片",
+            tr("ncc.select_test_images"),
             self.edt_scene_path.text() or self._initial_image_path or self._product_dir,
             _image_file_filter(),
         )
@@ -2012,22 +2164,24 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             x, y, w, h = stored_roi
             self.lbl_search_roi.setText(f"状态：搜索ROI=({x},{y},{w},{h})，Find 默认限制在此区域搜索。")
             return
-        self.lbl_search_roi.setText("状态：未设置搜索ROI，默认全图搜索。")
+        self.lbl_search_roi.setText(tr("ncc.search_roi_unset"))
 
     def _apply_find_search_roi(self) -> None:
         xywh = self.find_canvas.roi_xywh()
         if xywh is None:
-            QtWidgets.QMessageBox.information(self, "NCC", "请先在右侧图片上拖一个矩形搜索区域。")
+            QtWidgets.QMessageBox.information(
+                self, "NCC", tr("ncc.draw_search_roi_first")
+            )
             return
         self._update_search_roi(xywh, persist=True)
         self._refresh_search_roi_status()
-        self._set_status("已保存搜索 ROI。")
+        self._set_status(tr("ncc.status_search_roi_saved"))
 
     def _clear_find_search_roi(self) -> None:
         self.find_canvas.clear_roi()
         self._update_search_roi(None, persist=True)
         self._refresh_search_roi_status()
-        self._set_status("已清空搜索 ROI。")
+        self._set_status(tr("ncc.status_search_roi_cleared"))
 
     def _effective_search_roi(self) -> Optional[Tuple[int, int, int, int]]:
         current_roi = self.find_canvas.roi_xywh() if self.find_canvas.has_image() else None
@@ -2279,7 +2433,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
 
     def _start_find_worker(self, scene_paths: Sequence[str]) -> None:
         if self._find_running:
-            self._set_status("NCC find is already running")
+            self._set_status(tr("ncc.status_find_already_running"))
             return
         paths = [str(path or "").strip() for path in scene_paths if str(path or "").strip()]
         if not paths:
@@ -2297,7 +2451,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
                 continue
             item.setText(f"{Path(scene_path).name} | RUNNING")
             item.setForeground(QtGui.QBrush(QtGui.QColor(220, 180, 60)))
-        self._set_status(f"NCC find running: {len(paths)} image(s)")
+        self._set_status(tr("ncc.status_find_running", count=len(paths)))
 
         thread = QtCore.QThread(self)
         worker = _NccFindWorker(
@@ -2339,7 +2493,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             if self.list_find_images.currentItem() is item:
                 self._latest_response = None
                 self._show_find_scene(scene_path, summary_text=f"ERROR: {message}")
-            self._set_status(f"NCC find failed: {message}")
+            self._set_status(tr("ncc.status_find_failed", error=message))
             return
 
         response = response_obj
@@ -2353,7 +2507,9 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         if self.list_find_images.currentItem() is item:
             self._latest_response = response
             self._show_find_scene(scene_path, response=response, summary_text=summary_text)
-        self._set_status(f"{Path(scene_path).name} NCC find done")
+        self._set_status(
+            tr("ncc.status_find_item_done", image=Path(scene_path).name)
+        )
 
     @QtCore.Slot()
     def _on_find_worker_finished(self) -> None:
@@ -2362,7 +2518,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._find_progress_timer.stop()
         self._find_active_paths = []
         self._set_find_running(False)
-        self._set_status("NCC find finished")
+        self._set_status(tr("ncc.status_find_finished"))
         # Let the worker's queued shutdown work complete before touching the
         # canvas.  This also coalesces the final refresh with the image already
         # shown by _on_find_worker_item_finished.
@@ -2391,7 +2547,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             }
             if self.list_find_images.currentItem() is item:
                 self._show_find_scene(scene_path, summary_text=f"ERROR: {message}")
-            self._set_status(f"测试失败：{message}")
+            self._set_status(tr("ncc.status_test_failed", error=message))
             return
 
         self._latest_response = response
@@ -2403,7 +2559,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         }
         if self.list_find_images.currentItem() is item:
             self._show_find_scene(scene_path, response=response, summary_text=summary_text)
-        self._set_status(f"{Path(scene_path).name} 测试完成。")
+        self._set_status(tr("ncc.status_test_done", image=Path(scene_path).name))
 
     def _run_match(self) -> None:
         current_item = self.list_find_images.currentItem()
@@ -2413,23 +2569,25 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
 
         scene_path = self.edt_scene_path.text().strip()
         if not scene_path:
-            QtWidgets.QMessageBox.warning(self, "NCC", "请先加载场景图。")
+            QtWidgets.QMessageBox.warning(self, "NCC", tr("ncc.load_scene_first"))
             return
         try:
             response = self._run_match_for_scene_path(scene_path)
         except Exception as exc:
             QtWidgets.QMessageBox.critical(self, "NCC", str(exc))
-            self._set_status("匹配失败。")
+            self._set_status(tr("ncc.status_match_failed"))
             return
 
         self._latest_response = response
         summary_text = self._summary_text_for_response(response)
         self._show_find_scene(scene_path, response=response, summary_text=summary_text)
-        self._set_status(f"匹配完成，命中 {len(response.matches)} 个结果。")
+        self._set_status(
+            tr("ncc.status_match_done", count=len(response.matches))
+        )
 
     def _run_all_find(self) -> None:
         if self.list_find_images.count() <= 0:
-            QtWidgets.QMessageBox.information(self, "NCC", "请先添加测试图片。")
+            QtWidgets.QMessageBox.information(self, "NCC", tr("ncc.add_test_images_first"))
             return
         for index in range(self.list_find_images.count()):
             item = self.list_find_images.item(index)
@@ -2453,13 +2611,13 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
 
         scene_path = self.edt_scene_path.text().strip()
         if not scene_path:
-            QtWidgets.QMessageBox.warning(self, "NCC", "Please load a scene image first.")
+            QtWidgets.QMessageBox.warning(self, "NCC", tr("ncc.load_scene_first"))
             return
         self._start_find_worker([scene_path])
 
     def _run_all_find(self) -> None:
         if self.list_find_images.count() <= 0:
-            QtWidgets.QMessageBox.information(self, "NCC", "Please add test images first.")
+            QtWidgets.QMessageBox.information(self, "NCC", tr("ncc.add_test_images_first"))
             return
         paths: List[str] = []
         for index in range(self.list_find_images.count()):
@@ -2474,24 +2632,24 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
     def _writeback_top1(self) -> None:
         scene_path = self.edt_scene_path.text().strip()
         if not scene_path or self._latest_response is None or not self._latest_response.matches:
-            QtWidgets.QMessageBox.warning(self, "NCC", "当前没有可写回的匹配结果。")
+            QtWidgets.QMessageBox.warning(self, "NCC", tr("ncc.no_writeback_match"))
             return
         label_name = self.edt_writeback_label.text().strip() or "ncc_roi"
         top1 = self._latest_response.matches[0]
         upsert_labelme_polygon(scene_path, list(top1.quad), label_name=label_name)
-        self._set_status(f"已写回 LabelMe 标签：{label_name}")
+        self._set_status(tr("ncc.status_writeback_label", label=label_name))
 
     def _writeback_reference_regions(self) -> None:
         scene_path = self.edt_scene_path.text().strip()
         if not scene_path or self._latest_response is None or not self._latest_response.matches:
-            QtWidgets.QMessageBox.warning(self, "NCC", "当前没有可写回的匹配结果。")
+            QtWidgets.QMessageBox.warning(self, "NCC", tr("ncc.no_writeback_match"))
             return
         if not self._reference_regions:
-            QtWidgets.QMessageBox.information(self, "NCC", "当前还没有配置 Reference ROI。")
+            QtWidgets.QMessageBox.information(self, "NCC", tr("ncc.no_reference_roi"))
             return
         projected = self._projected_reference_regions(self._latest_response.matches[0])
         if not projected:
-            QtWidgets.QMessageBox.warning(self, "NCC", "当前没有可写回的投影参考 ROI。")
+            QtWidgets.QMessageBox.warning(self, "NCC", tr("ncc.no_projected_roi"))
             return
 
         written_labels: List[str] = []
@@ -2501,7 +2659,14 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
 
         preview = ", ".join(written_labels[:6])
         suffix = " ..." if len(written_labels) > 6 else ""
-        self._set_status(f"已写回 {len(written_labels)} 个参考ROI：{preview}{suffix}")
+        self._set_status(
+            tr(
+                "ncc.status_writeback_regions",
+                count=len(written_labels),
+                labels=preview,
+                suffix=suffix,
+            )
+        )
 
     def _sync_roi_to_canvas(self) -> None:
         if self._syncing_roi:
@@ -2521,12 +2686,12 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.source_canvas.clear_roi(emit_signal=False)
         self._set_roi_spin_values((0, 0, 1, 1))
         self._refresh_mask_canvas()
-        self._set_status("已清空模板 ROI。")
+        self._set_status(tr("ncc.status_template_roi_cleared"))
 
     def _pick_source_image(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
-            "选择参考图",
+            tr("ncc.select_reference_image"),
             self.source_canvas.image_path() or self._initial_image_path or self._product_dir,
             _image_file_filter(),
         )
@@ -2536,7 +2701,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._refresh_source_canvas_overlays()
         self._refresh_mask_canvas()
         self._refresh_reference_image(force=True)
-        self._set_status(f"已加载参考图：{path}")
+        self._set_status(tr("ncc.status_reference_loaded", path=path))
 
     def _on_mask_shape_changed(self, _index: int) -> None:
         self._apply_mask_edit_mode()
@@ -2546,25 +2711,25 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             self.mask_canvas.clear_roi(emit_signal=False)
             self._model.template_mask = None
             self._refresh_source_canvas_overlays()
-            self.lbl_mask_status.setText("状态：未启用 Template Mask。")
+            self.lbl_mask_status.setText(tr("ncc.mask_status_not_enabled"))
         else:
-            self.lbl_mask_status.setText("状态：请在右侧参考图上绘制 Template Mask。")
+            self.lbl_mask_status.setText(tr("ncc.mask_status_draw"))
 
     def _on_mask_canvas_shape_changed(self) -> None:
         if getattr(self, "_syncing_mask_view", False) or self._mask_shape_name() == "disabled":
             return
         region = self._template_mask_from_canvas()
         if region is None:
-            self.lbl_mask_status.setText("状态：请先绘制一个有效的 Mask。")
+            self.lbl_mask_status.setText(tr("ncc.mask_status_invalid"))
             return
         self._model.template_mask = region
         self._refresh_source_canvas_overlays()
-        self.lbl_mask_status.setText("状态：Mask 已更新，点击“保存当前 Mask”或直接“保存模板”即可生效。")
+        self.lbl_mask_status.setText(tr("ncc.mask_status_updated"))
 
     def _save_template_mask(self) -> None:
         source_path = str(self.mask_canvas.image_path() or "").strip()
         if not source_path:
-            QtWidgets.QMessageBox.warning(self, "NCC", "请先加载参考图。")
+            QtWidgets.QMessageBox.warning(self, "NCC", tr("ncc.load_reference_first"))
             return
         self._sync_model_without_template_roi_from_ui()
         save_model(self._model_path, self._model)
@@ -2572,11 +2737,11 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._refresh_model_summary()
         self.modelSaved.emit(self._model_path)
         if self._model.template_mask is None:
-            self.lbl_mask_status.setText("状态：Template Mask 已关闭。")
-            self._set_status("已关闭 Template Mask。")
+            self.lbl_mask_status.setText(tr("ncc.mask_status_disabled"))
+            self._set_status(tr("ncc.status_mask_disabled"))
         else:
-            self.lbl_mask_status.setText("状态：Template Mask 已保存到模型，保存模板后会生成 mask 图。")
-            self._set_status("Template Mask 已保存，保存模板后生效。")
+            self.lbl_mask_status.setText(tr("ncc.mask_status_saved"))
+            self._set_status(tr("ncc.status_mask_saved"))
 
     def _clear_template_mask(self) -> None:
         self.mask_canvas.clear_roi(emit_signal=False)
@@ -2588,8 +2753,8 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._refresh_source_canvas_overlays()
         self._refresh_model_summary()
         self.modelSaved.emit(self._model_path)
-        self.lbl_mask_status.setText("状态：Template Mask 已清空。")
-        self._set_status("已清空 Template Mask。")
+        self.lbl_mask_status.setText(tr("ncc.mask_status_cleared"))
+        self._set_status(tr("ncc.status_mask_cleared"))
 
     def _refresh_source_canvas_overlays(self) -> None:
         if not hasattr(self, "source_canvas") or not self.source_canvas.has_image():
@@ -2639,7 +2804,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         if not self._template_mask_enabled():
             self.mask_canvas.clear_roi(emit_signal=False)
             self.mask_canvas.set_overlays([])
-            self.lbl_mask_status.setText("状态：Template Mask 已关闭。")
+            self.lbl_mask_status.setText(tr("ncc.mask_status_disabled"))
             self._apply_mask_edit_mode()
             return
         source_path = self._reference_image_path()
@@ -2657,7 +2822,7 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
                 )
         else:
             self.mask_canvas.clear_image()
-            self.lbl_mask_status.setText("状态：请先加载参考图。")
+            self.lbl_mask_status.setText(tr("ncc.mask_status_load_reference"))
             return
 
         overlay_items: List[OverlayShape] = []
@@ -2695,12 +2860,12 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
                         ),
                         emit_signal=False,
                     )
-                self.lbl_mask_status.setText("状态：当前 Template Mask 已加载。")
+                self.lbl_mask_status.setText(tr("ncc.mask_status_loaded"))
             else:
                 if self.cmb_mask_shape.count() > 0:
                     self.cmb_mask_shape.setCurrentIndex(0)
                 self.mask_canvas.clear_roi(emit_signal=False)
-                self.lbl_mask_status.setText("状态：请在右侧参考图上绘制 Template Mask。")
+                self.lbl_mask_status.setText(tr("ncc.mask_status_draw"))
         finally:
             self._syncing_mask_view = False
         self._apply_mask_edit_mode()
@@ -2710,36 +2875,36 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         if getattr(self, "_syncing_mask_view", False):
             return
         if not self._template_mask_enabled():
-            self.lbl_mask_status.setText("状态：Template Mask 已关闭。")
+            self.lbl_mask_status.setText(tr("ncc.mask_status_disabled"))
             return
-        self.lbl_mask_status.setText("状态：请在右侧参考图上绘制 Template Mask。")
+        self.lbl_mask_status.setText(tr("ncc.mask_status_draw"))
 
     def _on_mask_canvas_shape_changed(self) -> None:
         if getattr(self, "_syncing_mask_view", False) or not self._template_mask_enabled():
             return
         region = self._template_mask_from_canvas()
         if region is None:
-            self.lbl_mask_status.setText("状态：请先绘制一个有效的 Mask。")
+            self.lbl_mask_status.setText(tr("ncc.mask_status_invalid"))
             return
         self._model.template_mask = region
         self._refresh_source_canvas_overlays()
-        self.lbl_mask_status.setText("状态：Mask 已更新，点击“保存当前 Mask”或直接“保存模板”即可生效。")
+        self.lbl_mask_status.setText(tr("ncc.mask_status_updated"))
 
     def _save_template_mask(self) -> None:
         if not self._template_mask_enabled():
-            QtWidgets.QMessageBox.information(self, "NCC", "请先打开“启用 Template Mask”。")
+            QtWidgets.QMessageBox.information(self, "NCC", tr("ncc.enable_mask_first"))
             return
         source_path = str(self.mask_canvas.image_path() or "").strip()
         if not source_path:
-            QtWidgets.QMessageBox.warning(self, "NCC", "请先加载参考图。")
+            QtWidgets.QMessageBox.warning(self, "NCC", tr("ncc.load_reference_first"))
             return
         self._sync_model_without_template_roi_from_ui()
         save_model(self._model_path, self._model)
         self._refresh_source_canvas_overlays()
         self._refresh_model_summary()
         self.modelSaved.emit(self._model_path)
-        self.lbl_mask_status.setText("状态：Template Mask 已保存到模型，保存模板后会生成 mask 图。")
-        self._set_status("Template Mask 已保存，保存模板后生效。")
+        self.lbl_mask_status.setText(tr("ncc.mask_status_saved"))
+        self._set_status(tr("ncc.status_mask_saved"))
 
     def _clear_template_mask(self) -> None:
         self.mask_canvas.clear_roi(emit_signal=False)
@@ -2748,8 +2913,8 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._refresh_source_canvas_overlays()
         self._refresh_model_summary()
         self.modelSaved.emit(self._model_path)
-        self.lbl_mask_status.setText("状态：Template Mask 已清空。")
-        self._set_status("已清空 Template Mask。")
+        self.lbl_mask_status.setText(tr("ncc.mask_status_cleared"))
+        self._set_status(tr("ncc.status_mask_cleared"))
 
 
 __all__ = ["NccMatchWorkbenchDialog"]

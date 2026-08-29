@@ -269,7 +269,11 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
                 if role == tool_page.current_camera_role():
                     tool_page.shape_recipe = recipe
             except Exception as exc:
-                QtWidgets.QMessageBox.warning(self, "Info", f"Failed to load template recipe: {exc}")
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    tr("debug.info"),
+                    tr("debug.template_recipe_failed", error=exc),
+                )
                 return None
             if recipe.reference_image and os.path.exists(recipe.reference_image):
                 ref_image = recipe.reference_image
@@ -340,7 +344,9 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
         if self._autogen_running:
             return
         if getattr(self._tool_page, "_sample_auto_roi_jobs", []):
-            QtWidgets.QMessageBox.information(self, tr("common.info"), "自动 ROI 正在处理，请等待")
+            QtWidgets.QMessageBox.information(
+                self, tr("common.info"), tr("debug.auto_roi_processing")
+            )
             return
         payload = self._prepare_autogen_payload(paths, only_missing=only_missing)
         if payload is None:
@@ -365,7 +371,7 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
         thread.finished.connect(lambda: self._forget_autogen_job(thread, worker))
-        self._set_autogen_running(True, "处理中...")
+        self._set_autogen_running(True, tr("debug.processing"))
         thread.start()
 
     def _forget_autogen_job(self, thread: QtCore.QThread, worker: _SampleAutoRoiWorker) -> None:
@@ -380,7 +386,7 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
 
     def _on_autogen_progress(self, message: str) -> None:
         if self._autogen_running:
-            self.lbl_status.setText(f"处理中... {message}")
+            self.lbl_status.setText(tr("debug.processing_detail", message=message))
 
     def _on_autogen_finished(self, result: dict) -> None:
         tool_page = self._tool_page

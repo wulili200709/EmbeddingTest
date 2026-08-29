@@ -46,7 +46,9 @@ def _resolve_autogen_targets(
     missing = service_missing_roi_files(paths, labels)
     if not missing:
         if not silent:
-            QtWidgets.QMessageBox.information(self, "Info", "These images already have ROI.")
+            QtWidgets.QMessageBox.information(
+                self, tr("common.info"), tr("auto.images_already_have_roi")
+            )
             self._skip_empty_autogen_message = True
         return []
 
@@ -90,7 +92,9 @@ def _autogen_roi_for_images(
             return
     if not paths:
         if not silent:
-            QtWidgets.QMessageBox.information(self, "Info", "No image to process")
+            QtWidgets.QMessageBox.information(
+                self, tr("common.info"), tr("debug.no_image_to_process")
+            )
         return
     ref_image = self.ref_image
     labels: List[str] = ["roi"]
@@ -103,7 +107,11 @@ def _autogen_roi_for_images(
             if role == self.current_camera_role():
                 self.shape_recipe = recipe
         except Exception as exc:
-            QtWidgets.QMessageBox.warning(self, "Info", f"Failed to load template recipe: {exc}")
+            QtWidgets.QMessageBox.warning(
+                self,
+                tr("common.info"),
+                tr("debug.template_recipe_failed", error=exc),
+            )
             return
         if recipe.reference_image and os.path.exists(recipe.reference_image):
             ref_image = recipe.reference_image
@@ -249,7 +257,9 @@ def _clear_roi_for_images(
             return
     if not paths:
         if not silent:
-            QtWidgets.QMessageBox.information(self, tr("common.info"), "No image to process")
+            QtWidgets.QMessageBox.information(
+                self, tr("common.info"), tr("debug.no_image_to_process")
+            )
         return
     role = self.current_camera_role() if camera_role is None else str(camera_role)
     self._clear_training_roi_review_state(role)

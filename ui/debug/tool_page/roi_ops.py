@@ -13,6 +13,7 @@ from common.camera_roles import DEFAULT_CAMERA_ROLE, normalize_camera_role
 from shape.core.recipe_labels import output_labels_from_shape_recipe
 from ui.debug import OverlayShape
 from ui.debug.tool_page.roi_measurement_overlays import measurement_overlays_for_path
+from ui.i18n import tr
 from ui.roi_overlay_colors import (
     ROI_DISABLED_COLOR,
     SEARCH_REGION_COLOR,
@@ -110,7 +111,7 @@ def _current_label(tool_page) -> str:
 
 def _update_save_label_text(tool_page) -> None:
     label = tool_page._current_label()
-    tool_page.btn_save.setText(f"淇濆瓨鏍囨敞({label}) -> labelme json")
+    tool_page.btn_save.setText(tr("debug.save_annotation", label=label))
 
 
 def _set_overlay_shapes(tool_page, img_path: str, current_label: str) -> None:

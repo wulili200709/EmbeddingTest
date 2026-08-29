@@ -38,49 +38,33 @@ _PENDING_GRAY = "#666666"
 _RUNNING_YELLOW = "#eab308"
 _RUNTIME_ROI_RECORD_COLUMN_RE = re.compile(r"^cam\d+\..+$", re.IGNORECASE)
 
-_CONVEYOR_STATE_OPERATOR_TEXT = {
-    "BOOTING": "初始化中",
-    "SAFETY_LOCKED": "急停或安全回路未复位",
-    "DOOR_OPEN_STOPPED": "安全门打开",
-    "READY_STOPPED": "已停止",
-    "RUNNING": "运行中",
-    "CONTROLLED_STOPPING": "正在停止",
-    "SAFETY_PAUSED": "急停暂停",
-    "DOOR_PAUSED": "开门暂停",
-    "READY_TO_RESUME": "等待重新启动",
-    "PURGE_PREPARING": "清线准备中",
-    "PURGE_RUNNING": "清线中",
-    "PURGE_PAUSED": "清线已暂停",
-    "FAULT_STOPPED": "故障停机",
+_CONVEYOR_STATE_OPERATOR_KEYS = {
+    state: f"conveyor.state.{state}"
+    for state in (
+        "BOOTING", "SAFETY_LOCKED", "DOOR_OPEN_STOPPED", "READY_STOPPED",
+        "RUNNING", "CONTROLLED_STOPPING", "SAFETY_PAUSED", "DOOR_PAUSED",
+        "READY_TO_RESUME", "PURGE_PREPARING", "PURGE_RUNNING", "PURGE_PAUSED",
+        "FAULT_STOPPED",
+    )
 }
 
-_CONVEYOR_FAULT_OPERATOR_TEXT = {
-    "IO_NOT_READY": "IO通信异常",
-    "FIFO_OVERFLOW": "在途物料队列已满",
-    "FIFO_UNDERFLOW": "DI1触发但没有对应物料",
-    "RESULT_NOT_READY": "物料到达DI1时检测尚未完成",
-    "INSPECTION_ERROR": "视觉检测异常",
-    "CONTROLLED_STOP_TIMEOUT": "停止过程超时",
-    "PURGE_STATE_ERROR": "清线状态异常",
-    "PURGE_TIMEOUT": "一键清线运行超时",
-    "ITEM_ARRIVAL_TIMEOUT": "物料未在规定时间到达DI1",
-    "OUTPUT_WRITE_FAILED": "输出控制异常",
-    "BLOW_INTERRUPTED": "NG吹气被安全联锁中断，必须清线",
-    "BLOW_WINDOW_CONFLICT": "GOOD到位时吹气仍开启，必须清线",
-    "GOOD_OUTLET_TIMEOUT": "GOOD产品未在规定时间到达DI7，必须清线",
-    "WASTE_OUTLET_TIMEOUT": "NG产品未在规定时间到达DI8，必须清线",
-    "REJECT_FAILED_WRONG_OUTLET": "NG产品进入GOOD出口，剔除失败",
-    "GOOD_WRONG_OUTLET": "GOOD产品误入废料出口",
-    "UNEXPECTED_GOOD_OUTLET": "DI7检测到未跟踪产品",
-    "UNEXPECTED_WASTE_OUTLET": "DI8检测到未跟踪产品",
-    "MULTIPLE_PRODUCTS_IN_FOV": "单次检测视野中出现多件产品",
-    "PRODUCT_SPACING_TOO_SMALL": "产品间距过小或DI0持续遮挡",
+_CONVEYOR_FAULT_OPERATOR_KEYS = {
+    code: f"conveyor.fault.{code}"
+    for code in (
+        "IO_NOT_READY", "FIFO_OVERFLOW", "FIFO_UNDERFLOW", "RESULT_NOT_READY",
+        "INSPECTION_ERROR", "CONTROLLED_STOP_TIMEOUT", "PURGE_STATE_ERROR",
+        "PURGE_TIMEOUT", "ITEM_ARRIVAL_TIMEOUT", "OUTPUT_WRITE_FAILED",
+        "BLOW_INTERRUPTED", "BLOW_WINDOW_CONFLICT", "GOOD_OUTLET_TIMEOUT",
+        "WASTE_OUTLET_TIMEOUT", "REJECT_FAILED_WRONG_OUTLET", "GOOD_WRONG_OUTLET",
+        "UNEXPECTED_GOOD_OUTLET", "UNEXPECTED_WASTE_OUTLET",
+        "MULTIPLE_PRODUCTS_IN_FOV", "PRODUCT_SPACING_TOO_SMALL",
+    )
 }
 
-_CONVEYOR_JAM_OPERATOR_TEXT = (
-    ("end_test_sensor", "DI6末端检测位置堵料"),
-    ("good_outlet_sensor", "DI7 GOOD出口堵料"),
-    ("waste_outlet_sensor", "DI8废料出口堵料"),
+_CONVEYOR_JAM_OPERATOR_KEYS = (
+    ("end_test_sensor", "conveyor.jam.end_test_sensor"),
+    ("good_outlet_sensor", "conveyor.jam.good_outlet_sensor"),
+    ("waste_outlet_sensor", "conveyor.jam.waste_outlet_sensor"),
 )
 
 _DEFAULT_CAMERA_LAYOUT = "two_top_one_bottom"
@@ -142,11 +126,17 @@ def _conveyor_operator_fault_text(
     detail = str(fault_detail or "").strip().casefold()
     if code == "JAM_DETECTED":
         input_states = dict(inputs or {}) if isinstance(inputs, dict) else {}
-        for sensor_name, operator_text in _CONVEYOR_JAM_OPERATOR_TEXT:
-            if sensor_name.casefold() in detail or bool(input_states.get(sensor_name, False)):
-                return operator_text
-        return "检测到堵料"
-    return _CONVEYOR_FAULT_OPERATOR_TEXT.get(code, f"设备故障（{code}）")
+        # Prefer the controller's explicit fault detail. Other sensors can also
+        # be active after the belt has stopped, so input state is secondary.
+        for sensor_name, text_key in _CONVEYOR_JAM_OPERATOR_KEYS:
+            if sensor_name.casefold() in detail:
+                return tr(text_key)
+        for sensor_name, text_key in _CONVEYOR_JAM_OPERATOR_KEYS:
+            if bool(input_states.get(sensor_name, False)):
+                return tr(text_key)
+        return tr("conveyor.jam.generic")
+    text_key = _CONVEYOR_FAULT_OPERATOR_KEYS.get(code)
+    return tr(text_key) if text_key else tr("conveyor.fault.unknown", code=code)
 
 
 def _status_badge_width(label: QtWidgets.QLabel, text: str, *, minimum: int = 56, maximum: int = 160) -> int:
@@ -621,6 +611,12 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.btn_trigger_cam1.setText(tr("runtime.trigger_cam1"))
         self.btn_trigger_cam2.setText(tr("runtime.trigger_cam2"))
         self.btn_trigger_cam3.setText(tr("runtime.trigger_cam3"))
+        self.fifo_indicator_panel.setToolTip(tr("conveyor.fifo_tip"))
+        self.btn_conveyor_start.setText(tr("conveyor.start"))
+        self.btn_conveyor_stop.setText(tr("conveyor.stop"))
+        self.btn_conveyor_continue.setText(tr("conveyor.continue_purge"))
+        self.btn_conveyor_ack.setText(tr("conveyor.ack"))
+        self.btn_conveyor_ack.setToolTip(tr("conveyor.ack_tip"))
         self.lbl_panel_title.setText(tr("runtime.items"))
         self.lbl_total_label.setText(tr("runtime.stats"))
         self.lbl_camera_layout_caption.setText(tr("runtime.view_layout"))
@@ -656,6 +652,13 @@ class RuntimeModePage(QtWidgets.QWidget):
         if self._inspection_rows:
             self.set_inspection_items(self._inspection_rows)
         self._refresh_count_labels()
+        if self._last_conveyor_snapshot:
+            # Force tooltip regeneration even when the FIFO contents are unchanged.
+            self._fifo_indicator_signature = ()
+            self.set_conveyor_state(self._last_conveyor_snapshot)
+        else:
+            self.lbl_conveyor_state.setText(tr("conveyor.disconnected"))
+            self.btn_conveyor_purge.setText(tr("conveyor.purge"))
 
     def _build_ui(self) -> None:
         self.setStyleSheet(f"background:{_DARK_BG};")
@@ -731,7 +734,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.btn_trigger_cam3.clicked.connect(lambda: self.triggerCameraRequested.emit(3))
         header_layout.addWidget(self.btn_trigger_cam3)
 
-        self.lbl_conveyor_state = QtWidgets.QLabel("皮带: 未连接 | FIFO: 0")
+        self.lbl_conveyor_state = QtWidgets.QLabel(tr("conveyor.disconnected"))
         self.lbl_conveyor_state.setStyleSheet(
             f"color:{_TEXT_DIM};font-size:12px;border-left:1px solid #555;padding-left:8px;"
         )
@@ -745,17 +748,17 @@ class RuntimeModePage(QtWidgets.QWidget):
             QtWidgets.QSizePolicy.Policy.Preferred,
             QtWidgets.QSizePolicy.Policy.Fixed,
         )
-        self.fifo_indicator_panel.setToolTip("FIFO：黄色=检测中，绿色=OK，红色=NG")
+        self.fifo_indicator_panel.setToolTip(tr("conveyor.fifo_tip"))
         self._fifo_indicator_layout = QtWidgets.QHBoxLayout(self.fifo_indicator_panel)
         self._fifo_indicator_layout.setContentsMargins(4, 3, 4, 3)
         self._fifo_indicator_layout.setSpacing(4)
         header_layout.addWidget(self.fifo_indicator_panel)
 
-        self.btn_conveyor_start = QtWidgets.QPushButton("启动")
-        self.btn_conveyor_stop = QtWidgets.QPushButton("停止")
-        self.btn_conveyor_purge = QtWidgets.QPushButton("一键清线")
-        self.btn_conveyor_continue = QtWidgets.QPushButton("继续清线")
-        self.btn_conveyor_ack = QtWidgets.QPushButton("报警复位")
+        self.btn_conveyor_start = QtWidgets.QPushButton(tr("conveyor.start"))
+        self.btn_conveyor_stop = QtWidgets.QPushButton(tr("conveyor.stop"))
+        self.btn_conveyor_purge = QtWidgets.QPushButton(tr("conveyor.purge"))
+        self.btn_conveyor_continue = QtWidgets.QPushButton(tr("conveyor.continue_purge"))
+        self.btn_conveyor_ack = QtWidgets.QPushButton(tr("conveyor.ack"))
         for button in (
             self.btn_conveyor_start,
             self.btn_conveyor_stop,
@@ -778,9 +781,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.btn_conveyor_start.hide()
         self.btn_conveyor_stop.hide()
         self.btn_conveyor_continue.hide()
-        self.btn_conveyor_ack.setToolTip(
-            "仅在产线故障、IO正常、DI5有效且门关闭时可用；复位后不会自动启动"
-        )
+        self.btn_conveyor_ack.setToolTip(tr("conveyor.ack_tip"))
 
         header_layout.addStretch(1)
 
@@ -1851,21 +1852,28 @@ class RuntimeModePage(QtWidgets.QWidget):
             and bool(payload.get("safety_ok", False))
             and bool(payload.get("door_closed", False))
         )
-        state_text = _CONVEYOR_STATE_OPERATOR_TEXT.get(state, state)
+        state_key = _CONVEYOR_STATE_OPERATOR_KEYS.get(state)
+        state_text = tr(state_key) if state_key else state
         fault_text = _conveyor_operator_fault_text(
             fault_code,
             fault_detail,
             payload.get("inputs"),
         )
-        self.lbl_conveyor_state.setText(
-            f"皮带: {state_text} | 在途: {inflight_count}"
-            f" (DI1前:{fifo_count} DI7:{good_outlet_pending} DI8:{waste_outlet_pending})"
-            + (f" | {fault_text}" if fault_text else "")
+        summary = tr(
+            "conveyor.summary",
+            state=state_text,
+            inflight=inflight_count,
+            fifo=fifo_count,
+            good=good_outlet_pending,
+            waste=waste_outlet_pending,
         )
+        self.lbl_conveyor_state.setText(summary + (f" | {fault_text}" if fault_text else ""))
         if fault_code:
-            engineering_detail = f"故障代码：{fault_code}"
+            engineering_detail = tr("conveyor.engineering_code", code=fault_code)
             if fault_detail:
-                engineering_detail += f"\n详细信息：{fault_detail}"
+                engineering_detail += "\n" + tr(
+                    "conveyor.engineering_detail", detail=fault_detail
+                )
             self.lbl_conveyor_state.setToolTip(engineering_detail)
         else:
             self.lbl_conveyor_state.setToolTip("")
@@ -1881,13 +1889,13 @@ class RuntimeModePage(QtWidgets.QWidget):
             state in {"RUNNING", "CONTROLLED_STOPPING", "PURGE_PREPARING", "PURGE_RUNNING"}
         )
         if state in {"PURGE_PREPARING", "PURGE_RUNNING"}:
-            self.btn_conveyor_purge.setText("清线中…")
+            self.btn_conveyor_purge.setText(tr("conveyor.purge_running"))
             self.btn_conveyor_purge.setEnabled(False)
         elif state == "PURGE_PAUSED":
-            self.btn_conveyor_purge.setText("继续清线")
+            self.btn_conveyor_purge.setText(tr("conveyor.continue_purge"))
             self.btn_conveyor_purge.setEnabled(hardware_permitted)
         else:
-            self.btn_conveyor_purge.setText("一键清线")
+            self.btn_conveyor_purge.setText(tr("conveyor.purge"))
             self.btn_conveyor_purge.setEnabled(
                 hardware_permitted
                 and (
@@ -1954,7 +1962,9 @@ class RuntimeModePage(QtWidgets.QWidget):
         if len(signature) > max_visible:
             remaining = QtWidgets.QLabel(f"+{len(signature) - max_visible}")
             remaining.setStyleSheet(f"color:{_TEXT_DIM};font-size:11px;")
-            remaining.setToolTip(f"还有 {len(signature) - max_visible} 件未显示")
+            remaining.setToolTip(
+                tr("conveyor.hidden_items", count=len(signature) - max_visible)
+            )
             self._fifo_indicator_layout.addWidget(remaining)
         self._fifo_indicator_layout.addStretch(1)
 

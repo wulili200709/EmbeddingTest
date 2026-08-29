@@ -7,6 +7,7 @@ from PySide6 import QtWidgets
 from common.app_paths import writable_embedding_test_root
 from common.camera_roles import CAMERA_ROLES, normalize_camera_role
 from common.safe_io import atomic_write_json, load_json_with_backup
+from ui.i18n import tr
 
 
 DEFAULT_ADMIN_PASSWORD = "admin123"
@@ -319,16 +320,16 @@ def confirm_admin_password(
 ) -> bool:
     entered_password, ok = prompt_password_dialog(
         parent,
-        title="管理员验证",
-        label="输入管理员密码：",
+        title=tr("shell.admin_verify"),
+        label=tr("shell.admin_password_prompt"),
     )
     if not ok:
         return False
     if str(entered_password) != str(admin_password):
         QtWidgets.QMessageBox.warning(
             parent,
-            "管理员验证",
-            "管理员密码错误。",
+            tr("shell.admin_verify"),
+            tr("shell.admin_password_wrong"),
         )
         return False
     return True
@@ -336,23 +337,23 @@ def confirm_admin_password(
 
 def prompt_change_release_password(parent: QtWidgets.QWidget) -> str | None:
     dialog = QtWidgets.QDialog(parent)
-    dialog.setWindowTitle("修改放行密码")
+    dialog.setWindowTitle(tr("shell.release_password_title"))
     dialog.setMinimumWidth(360)
     _apply_dialog_theme(dialog)
     layout = QtWidgets.QFormLayout(dialog)
 
-    label_tip = QtWidgets.QLabel("仅管理员可修改 NG 放行密码。")
+    label_tip = QtWidgets.QLabel(tr("shell.release_password_admin_only"))
     label_tip.setStyleSheet("color:#b8b8b8;")
     layout.addRow(label_tip)
 
     edit_new_password = QtWidgets.QLineEdit()
     edit_new_password.setEchoMode(QtWidgets.QLineEdit.Password)
-    edit_new_password.setPlaceholderText("输入新的放行密码")
+    edit_new_password.setPlaceholderText(tr("shell.release_password_new_placeholder"))
     edit_confirm_password = QtWidgets.QLineEdit()
     edit_confirm_password.setEchoMode(QtWidgets.QLineEdit.Password)
-    edit_confirm_password.setPlaceholderText("再次输入新密码")
-    layout.addRow("新密码", edit_new_password)
-    layout.addRow("确认密码", edit_confirm_password)
+    edit_confirm_password.setPlaceholderText(tr("shell.release_password_confirm_placeholder"))
+    layout.addRow(tr("shell.release_password_new"), edit_new_password)
+    layout.addRow(tr("shell.release_password_confirm"), edit_confirm_password)
 
     button_box = QtWidgets.QDialogButtonBox(
         QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
@@ -367,10 +368,14 @@ def prompt_change_release_password(parent: QtWidgets.QWidget) -> str | None:
         new_password = edit_new_password.text().strip()
         confirm_password = edit_confirm_password.text().strip()
         if not new_password:
-            QtWidgets.QMessageBox.warning(parent, "修改放行密码", "新密码不能为空。")
+            QtWidgets.QMessageBox.warning(
+                parent, tr("shell.release_password_title"), tr("shell.release_password_empty")
+            )
             continue
         if new_password != confirm_password:
-            QtWidgets.QMessageBox.warning(parent, "修改放行密码", "两次输入的新密码不一致。")
+            QtWidgets.QMessageBox.warning(
+                parent, tr("shell.release_password_title"), tr("shell.release_password_mismatch")
+            )
             continue
         return new_password
 
@@ -386,17 +391,21 @@ def prompt_connect_camera_bindings(
     physical_roles_only: bool = False,
 ) -> tuple[dict[str, str], list[str]] | None:
     dialog = QtWidgets.QDialog(parent)
-    dialog.setWindowTitle("连接相机")
+    dialog.setWindowTitle(tr("shell.connect_camera"))
     dialog.setMinimumWidth(420)
     _apply_dialog_theme(dialog)
     layout = QtWidgets.QGridLayout(dialog)
     layout.setColumnStretch(1, 1)
     layout.addWidget(
-        QtWidgets.QLabel("物理相机" if physical_roles_only else "本产品参与检测"),
+        QtWidgets.QLabel(
+            tr("shell.camera_scope_physical")
+            if physical_roles_only
+            else tr("shell.camera_scope_product")
+        ),
         0,
         0,
     )
-    layout.addWidget(QtWidgets.QLabel("相机序列号"), 0, 1)
+    layout.addWidget(QtWidgets.QLabel(tr("shell.camera_serial")), 0, 1)
 
     enabled = {str(role).strip() for role in (enabled_roles or []) if str(role).strip()}
     if not enabled:
@@ -406,7 +415,7 @@ def prompt_connect_camera_bindings(
     chk_cam1 = QtWidgets.QCheckBox("Cam1")
     chk_cam1.setChecked("cam1" in enabled)
     edit_cam1 = QtWidgets.QLineEdit(cam1_serial)
-    edit_cam1.setPlaceholderText("Cam1 序列号")
+    edit_cam1.setPlaceholderText(tr("shell.camera_serial_placeholder", camera="Cam1"))
 
     chk_cam2 = QtWidgets.QCheckBox("Cam2")
     chk_cam2.setChecked("cam2" in enabled)
@@ -415,8 +424,8 @@ def prompt_connect_camera_bindings(
     chk_cam3 = QtWidgets.QCheckBox("Cam3")
     chk_cam3.setChecked("cam3" in enabled)
     edit_cam3 = QtWidgets.QLineEdit(cam3_serial)
-    edit_cam3.setPlaceholderText("Cam3 序列号（可选）")
-    edit_cam2.setPlaceholderText("Cam2 序列号（可选）")
+    edit_cam3.setPlaceholderText(tr("shell.camera_serial_optional", camera="Cam3"))
+    edit_cam2.setPlaceholderText(tr("shell.camera_serial_optional", camera="Cam2"))
 
     layout.addWidget(chk_cam1, 1, 0)
     layout.addWidget(edit_cam1, 1, 1)
@@ -445,7 +454,9 @@ def prompt_connect_camera_bindings(
 
     def _accept_selected_roles() -> None:
         if not any(checkbox.isChecked() for _role, checkbox in role_checkboxes):
-            QtWidgets.QMessageBox.warning(dialog, "连接相机", "请至少选择一台相机。")
+            QtWidgets.QMessageBox.warning(
+                dialog, tr("shell.connect_camera"), tr("shell.camera_select_one")
+            )
             return
         dialog.accept()
 
@@ -470,7 +481,7 @@ def prompt_tower_light_settings(
     current_settings: dict[str, int],
 ) -> dict[str, int] | None:
     dialog = QtWidgets.QDialog(parent)
-    dialog.setWindowTitle("\u4e09\u8272\u706f\u5e8f\u8bbe\u7f6e")
+    dialog.setWindowTitle(tr("shell.tower_settings"))
     dialog.setMinimumWidth(380)
     _apply_dialog_theme(dialog)
 
@@ -483,28 +494,28 @@ def prompt_tower_light_settings(
     ok_spin.setSingleStep(10)
     ok_spin.setSuffix(" ms")
     ok_spin.setValue(max(10, int(current_settings.get("ok_flash_ms", 200))))
-    layout.addRow("\u7eff\u706f\u65f6\u957f", ok_spin)
+    layout.addRow(tr("shell.tower_ok_ms"), ok_spin)
 
     ng_spin = QtWidgets.QSpinBox()
     ng_spin.setRange(10, 10000)
     ng_spin.setSingleStep(10)
     ng_spin.setSuffix(" ms")
     ng_spin.setValue(max(10, int(current_settings.get("ng_flash_ms", 200))))
-    layout.addRow("\u7ea2\u706f\u65f6\u957f", ng_spin)
+    layout.addRow(tr("shell.tower_ng_ms"), ng_spin)
 
     buzzer_spin = QtWidgets.QSpinBox()
     buzzer_spin.setRange(0, 10000)
     buzzer_spin.setSingleStep(10)
     buzzer_spin.setSuffix(" ms")
     buzzer_spin.setValue(max(0, int(current_settings.get("ng_buzzer_ms", 500))))
-    layout.addRow("\u8702\u9e23\u5668\u65f6\u957f", buzzer_spin)
+    layout.addRow(tr("shell.tower_buzzer_ms"), buzzer_spin)
 
     idle_spin = QtWidgets.QSpinBox()
     idle_spin.setRange(0, 600000)
     idle_spin.setSingleStep(100)
     idle_spin.setSuffix(" ms")
     idle_spin.setValue(max(0, int(current_settings.get("idle_blue_delay_ms", 30000))))
-    layout.addRow("\u56de\u84dd\u7b49\u5f85", idle_spin)
+    layout.addRow(tr("shell.tower_idle_ms"), idle_spin)
 
     button_box = QtWidgets.QDialogButtonBox(
         QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel

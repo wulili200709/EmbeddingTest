@@ -165,28 +165,39 @@ def _update_debug_io_panels(self, di_word: int, do_word: int) -> None:
     )
     enabled_channels = ", ".join(f"DO_{channel}" for channel in sorted(do_map)) or "-"
     self.lbl_debug_io_mapping_summary.setText(
-        f"Mapping: DI {len(di_map)} / DO {len(do_map)}; enabled output channels {enabled_channels}"
+        tr(
+            "debug.io_dialog.mapping",
+            di=len(di_map),
+            do=len(do_map),
+            channels=enabled_channels,
+        )
     )
 
 
 def _open_debug_io(self) -> None:
     runtime_ctrl = self.runtime_controller()
     if runtime_ctrl is None:
-        QtWidgets.QMessageBox.warning(self, "DI/DO Debug", "Runtime IO service is unavailable in the current environment")
+        QtWidgets.QMessageBox.warning(
+            self, tr("debug.io_dialog.title"), tr("debug.io_dialog.unavailable")
+        )
         return
 
     if getattr(self, "_runtime_io_ready", False) and getattr(self, "_runtime_io_controller", None) is not None:
         self._apply_runtime_io_debug_state()
-        self.lbl_status.setText("Status: DI/DO debug attached to runtime IO")
+        self.lbl_status.setText(tr("debug.io_dialog.attached"))
         return
 
     if not runtime_ctrl.initialize_startup_io(force=True):
         detail = getattr(self, "_runtime_io_status_detail", "") or "unknown error"
-        QtWidgets.QMessageBox.critical(self, "DI/DO Debug", f"Failed to open IO debug: {detail}")
+        QtWidgets.QMessageBox.critical(
+            self,
+            tr("debug.io_dialog.title"),
+            tr("debug.io_dialog.open_failed", detail=detail),
+        )
         return
 
     self._apply_runtime_io_debug_state()
-    self.lbl_status.setText("Status: DI/DO debug reloaded from runtime IO")
+    self.lbl_status.setText(tr("debug.io_dialog.reloaded"))
 
 
 def _close_debug_io(self, *, silent: bool = False) -> None:
@@ -209,7 +220,7 @@ def _close_debug_io(self, *, silent: bool = False) -> None:
     if getattr(self, "_runtime_io_ready", False) and getattr(self, "_runtime_io_controller", None) is not None:
         self._apply_runtime_io_debug_state()
     if not silent:
-        self.lbl_status.setText("Status: DI/DO debug closed")
+        self.lbl_status.setText(tr("debug.io_dialog.closed"))
 
 
 def _refresh_debug_io_snapshot(self) -> None:
@@ -219,9 +230,13 @@ def _refresh_debug_io_snapshot(self) -> None:
         di_word = self._debug_io_controller.board.read_di_word()
         do_word = self._debug_io_controller.board.read_do_word()
     except Exception as exc:
-        self.lbl_debug_di_snapshot.setText(f"DI read failed ({exc})")
-        self.lbl_debug_do_snapshot.setText(f"DO read failed ({exc})")
-        self.lbl_debug_io_mapping_summary.setText("Mapping: read failed")
+        self.lbl_debug_di_snapshot.setText(
+            "DI " + tr("debug.io_dialog.read_failed", error=exc)
+        )
+        self.lbl_debug_do_snapshot.setText(
+            "DO " + tr("debug.io_dialog.read_failed", error=exc)
+        )
+        self.lbl_debug_io_mapping_summary.setText(tr("debug.io_dialog.mapping_read_failed"))
         return
     _update_debug_io_panels(self, di_word, do_word)
 
@@ -229,7 +244,9 @@ def _refresh_debug_io_snapshot(self) -> None:
 def _set_debug_output_channel(self, channel: int, on: bool) -> None:
     button = self._debug_do_channel_buttons.get(int(channel))
     if self._debug_io_controller is None or not self._debug_io_controller.is_open:
-        QtWidgets.QMessageBox.information(self, "DI/DO Debug", "Open IO debug first")
+        QtWidgets.QMessageBox.information(
+            self, tr("debug.io_dialog.title"), tr("debug.io_dialog.open_first")
+        )
         if button is not None:
             button.blockSignals(True)
             button.setChecked(False)
@@ -243,24 +260,38 @@ def _set_debug_output_channel(self, channel: int, on: bool) -> None:
             button.blockSignals(True)
             button.setChecked(False)
             button.blockSignals(False)
-        QtWidgets.QMessageBox.information(self, "DI/DO Debug", f"DO_{channel} is not mapped and cannot be written")
+        QtWidgets.QMessageBox.information(
+            self,
+            tr("debug.io_dialog.title"),
+            tr("debug.io_dialog.output_unmapped", name=f"DO_{channel}"),
+        )
         return
 
     name, _cfg = mapped
     try:
         self._debug_io_controller.set_output(name, on)
     except Exception as exc:
-        QtWidgets.QMessageBox.critical(self, "DI/DO Debug", f"{name} output failed: {exc}")
+        QtWidgets.QMessageBox.critical(
+            self,
+            tr("debug.io_dialog.title"),
+            tr("debug.io_dialog.output_failed", name=name, error=exc),
+        )
     self._refresh_debug_io_snapshot()
 
 
 def _set_debug_output(self, name: str, on: bool) -> None:
     if self._debug_io_controller is None or not self._debug_io_controller.is_open:
-        QtWidgets.QMessageBox.information(self, "DI/DO Debug", "Open IO debug first")
+        QtWidgets.QMessageBox.information(
+            self, tr("debug.io_dialog.title"), tr("debug.io_dialog.open_first")
+        )
         return
     _di_map, do_map = _debug_io_channel_maps(self._debug_io_controller)
     for channel, (mapped_name, _cfg) in do_map.items():
         if mapped_name == name:
             self._set_debug_output_channel(channel, on)
             return
-    QtWidgets.QMessageBox.information(self, "DI/DO Debug", f"{name} has no mapped output channel")
+    QtWidgets.QMessageBox.information(
+        self,
+        tr("debug.io_dialog.title"),
+        tr("debug.io_dialog.output_unmapped", name=name),
+    )

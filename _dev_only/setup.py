@@ -217,28 +217,49 @@ def build_backend_extension(
 
 
 def build_extensions() -> list[Extension]:
-    require_path(EIGEN_VENDOR_ROOT / "Eigen", "vendored Eigen headers")
-    extensions = [
-        build_backend_extension(
+    # Optional comma-separated filter, for example:
+    # SHAPE_NATIVE_MODULES=shape_fusionv2
+    requested_raw = os.environ.get("SHAPE_NATIVE_MODULES", "").strip()
+    requested = {
+        item.strip()
+        for item in requested_raw.split(",")
+        if item.strip()
+    }
+    known_modules = {"shape_original", "shape_fusion", "shape_fusionv2", "shape_sim3"}
+    unknown_modules = requested - known_modules
+    if unknown_modules:
+        raise RuntimeError(f"Unknown SHAPE_NATIVE_MODULES entries: {sorted(unknown_modules)}")
+
+    def selected(module_name: str) -> bool:
+        return not requested or module_name in requested
+
+    extensions: list[Extension] = []
+    if selected("shape_original"):
+        extensions.append(build_backend_extension(
             module_name="shape_original",
             backend_root=ORIGINAL_ROOT,
-        ),
-        build_backend_extension(
+        ))
+    if selected("shape_fusion"):
+        extensions.append(build_backend_extension(
             module_name="shape_fusion",
             backend_root=FUSION_ROOT,
             extra_compile_args=openmp_compile_args(),
             extra_link_args=openmp_link_args(),
-        ),
-        build_backend_extension(
+        ))
+    if selected("shape_fusionv2"):
+        extensions.append(build_backend_extension(
             module_name="shape_fusionv2",
             backend_root=FUSION_ROOT,
             extra_compile_args=openmp_compile_args(),
             extra_link_args=openmp_link_args(),
             extra_define_macros=[
                 ("LINE2DUP_ENABLE_FUSION_V2", "1"),
+                ("LINE2DUP_FUSIONV2_FORCE_GRAYSCALE", "1"),
             ],
-        ),
-        build_backend_extension(
+        ))
+    if selected("shape_sim3"):
+        require_path(EIGEN_VENDOR_ROOT / "Eigen", "vendored Eigen headers")
+        extensions.append(build_backend_extension(
             module_name="shape_sim3",
             backend_root=SIM3_ROOT,
             extra_sources=[
@@ -252,8 +273,7 @@ def build_extensions() -> list[Extension]:
             extra_define_macros=[
                 ("LINE2DUP_ENABLE_SIM3_ICP", "1"),
             ],
-        ),
-    ]
+        ))
     return extensions
 
 

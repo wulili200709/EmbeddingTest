@@ -105,7 +105,7 @@ def build_action_panel(
     if getattr(owner, "lite_mode", False):
         owner.btn_export_onnx = QtWidgets.QPushButton(
             standard_icon(standard_pixmap.SP_DialogSaveButton),
-            "导出ONNX",
+            tr("debug.export_onnx"),
         )
         owner.btn_export_onnx.setStyleSheet(compact_btn)
         owner.btn_export_onnx.clicked.connect(owner._export_current_backbone_onnx)

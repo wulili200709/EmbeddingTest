@@ -511,8 +511,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self._require_permission("runtime.connect_camera", "连接相机"):
             return
         if self.runtime_ctrl.connected_roles():
-            QtWidgets.QMessageBox.information(self, "连接相机", "相机已经连接。")
-            self.runtime_ctrl.refresh_all_status("相机已经连接")
+            message = tr("shell.camera_already_connected")
+            QtWidgets.QMessageBox.information(self, tr("shell.connect_camera"), message)
+            self.runtime_ctrl.refresh_all_status(message)
             return
         self.runtime_ctrl.connect_cameras(self._runtime_physical_camera_bindings(bindings))
 
@@ -612,7 +613,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def _apply_release_password(self, password: str) -> bool:
         password_text = str(password).strip()
         if len(password_text) < 4:
-            QtWidgets.QMessageBox.warning(self, "修改放行密码", "新密码至少需要 4 位。")
+            QtWidgets.QMessageBox.warning(
+                self,
+                tr("shell.release_password_title"),
+                tr("shell.release_password_too_short"),
+            )
             return False
 
         settings = dict(self._password_settings)
@@ -622,8 +627,8 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as exc:
             QtWidgets.QMessageBox.critical(
                 self,
-                "修改放行密码",
-                f"保存密码失败：\n{exc}",
+                tr("shell.release_password_title"),
+                tr("shell.release_password_save_failed", error=exc),
             )
             return False
 
@@ -631,7 +636,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._release_password = password_text
         self.runtime_page.edit_release_password.setText(password_text)
         self.runtime_ctrl.update_release_password(password_text)
-        self._bottom_status_bar.showMessage("放行密码已更新", 3000)
+        self._bottom_status_bar.showMessage(tr("shell.release_password_updated"), 3000)
         return True
 
     def _show_change_release_password_dialog(self) -> None:
@@ -645,7 +650,11 @@ class MainWindow(QtWidgets.QMainWindow):
             if not self._apply_release_password(new_password):
                 continue
             self._audit_event(module="设置", action="修改放行密码", product_name="")
-            QtWidgets.QMessageBox.information(self, "修改放行密码", "放行密码已更新。")
+            QtWidgets.QMessageBox.information(
+                self,
+                tr("shell.release_password_title"),
+                tr("shell.release_password_updated"),
+            )
             return
 
     # ------------------------------------------------------------------
@@ -669,8 +678,8 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as exc:
             QtWidgets.QMessageBox.critical(
                 self,
-                "\u5854\u706f\u65f6\u5e8f\u8bbe\u7f6e",
-                f"\u4fdd\u5b58\u5854\u706f\u53c2\u6570\u5931\u8d25\uff1a\n{exc}",
+                tr("shell.tower_settings"),
+                tr("shell.tower_save_failed", error=exc),
             )
             return
 
@@ -1087,7 +1096,7 @@ class MainWindow(QtWidgets.QMainWindow):
             current_dir = str(Path(self.session.product_dir) / "runtime_records")
         selected_dir = QtWidgets.QFileDialog.getExistingDirectory(
             self,
-            "保存运行记录",
+            tr("shell.records_path_title"),
             current_dir,
         )
         if not selected_dir:
@@ -1100,8 +1109,8 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as exc:
             QtWidgets.QMessageBox.critical(
                 self,
-                "保存运行记录",
-                f"保存运行记录目录失败：\n{exc}",
+                tr("shell.records_path_title"),
+                tr("shell.records_path_failed", error=exc),
             )
             return
 
@@ -1114,7 +1123,7 @@ class MainWindow(QtWidgets.QMainWindow):
             after_value=str(selected_dir),
             product_name="",
         )
-        self._bottom_status_bar.showMessage("运行记录保存目录已更新", 3000)
+        self._bottom_status_bar.showMessage(tr("shell.records_path_updated"), 3000)
 
     def _show_runtime_capture_directory_dialog(self) -> None:
         if not self._require_permission("settings.record_path", "运行图片保存目录"):
@@ -1124,7 +1133,7 @@ class MainWindow(QtWidgets.QMainWindow):
             current_dir = str(Path(self.session.product_dir) / "runtime_capture")
         selected_dir = QtWidgets.QFileDialog.getExistingDirectory(
             self,
-            "保存图片路径",
+            tr("shell.images_path_title"),
             current_dir,
         )
         if not selected_dir:
@@ -1137,8 +1146,8 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as exc:
             QtWidgets.QMessageBox.critical(
                 self,
-                "保存图片路径",
-                f"保存运行图片目录失败：\n{exc}",
+                tr("shell.images_path_title"),
+                tr("shell.images_path_failed", error=exc),
             )
             return
 
@@ -1151,7 +1160,7 @@ class MainWindow(QtWidgets.QMainWindow):
             after_value=str(selected_dir),
             product_name="",
         )
-        self._bottom_status_bar.showMessage("运行图片保存目录已更新", 3000)
+        self._bottom_status_bar.showMessage(tr("shell.images_path_updated"), 3000)
 
     def _reload_debug_session(self) -> None:
         _reload_debug_session_impl(self)
@@ -1199,7 +1208,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if binding_issues:
             QtWidgets.QMessageBox.warning(
                 self,
-                "连接相机",
+                tr("shell.connect_camera"),
                 "\n".join(binding_issues),
             )
             return
@@ -1266,17 +1275,16 @@ class MainWindow(QtWidgets.QMainWindow):
         if name == "Default":
             QtWidgets.QMessageBox.warning(
                 self,
-                "\u5220\u9664\u4ea7\u54c1",
-                "Default \u4ea7\u54c1\u4e0d\u80fd\u5220\u9664",
+                tr("shell.delete_product"),
+                tr("shell.delete_default_forbidden"),
             )
             return
         if not self._require_permission("product.delete", "删除产品"):
             return
         ret = QtWidgets.QMessageBox.question(
             self,
-            "\u5220\u9664\u4ea7\u54c1",
-            f"\u786e\u8ba4\u5220\u9664\u4ea7\u54c1 {name}?\n"
-            "\u4ea7\u54c1\u76ee\u5f55\u4f1a\u79fb\u52a8\u5230 _deleted\uff0c\u53ef\u624b\u52a8\u6062\u590d\u3002",
+            tr("shell.delete_product"),
+            tr("shell.delete_product_confirm", name=name),
         )
         if ret != QtWidgets.QMessageBox.Yes:
             return
@@ -1284,7 +1292,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.runtime_ctrl.disconnect(silent=True)
         error = self.session.delete_product(name)
         if error:
-            QtWidgets.QMessageBox.critical(self, "\u5220\u9664\u4ea7\u54c1", error)
+            QtWidgets.QMessageBox.critical(self, tr("shell.delete_product"), error)
             return
 
         self.tool_page.refresh_product_selector()
@@ -1292,14 +1300,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if is_qr_core_ready():
             self._preload_current_embedding_model()
         self._sync_shell_status()
-        self.runtime_ctrl.refresh_all_status("\u4ea7\u54c1\u5df2\u5220\u9664\uff0c\u8bf7\u91cd\u65b0\u8fde\u63a5\u8fd0\u884c\u94fe\u8def")
+        self.runtime_ctrl.refresh_all_status(tr("shell.product_deleted", name=name))
         self._audit_event(
             module="产品",
             action="删除产品",
             before_value=name,
             product_name=name,
         )
-        self._bottom_status_bar.showMessage(f"\u4ea7\u54c1\u5df2\u5220\u9664: {name}", 3000)
+        self._bottom_status_bar.showMessage(tr("shell.product_deleted", name=name), 3000)
 
     def _on_session_clear_request(self) -> None:
         _on_session_clear_request_impl(self)
