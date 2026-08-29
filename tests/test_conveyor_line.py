@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from domain.conveyor_line import (
@@ -39,11 +40,15 @@ class ConveyorLineTests(unittest.TestCase):
             reject_blow_duration_ms=300,
             max_inflight_items=8,
             front_to_reject_max_run_ms=5000,
+            good_outlet_arrival_min_run_ms=0,
+            good_outlet_arrival_max_run_ms=500,
+            waste_outlet_arrival_min_run_ms=0,
+            waste_outlet_arrival_max_run_ms=500,
             end_test_sensor_enabled=True,
             upper_door_sensor_enabled=True,
-            end_test_jam_timeout_s=1.0,
-            good_jam_timeout_s=1.0,
-            waste_jam_timeout_s=1.0,
+            end_test_blocked_timeout_s=1.0,
+            good_outlet_blocked_timeout_s=1.0,
+            waste_outlet_blocked_timeout_s=1.0,
             purge_air_lead_ms=100,
             purge_min_run_s=0.5,
             purge_tail_run_s=0.5,
@@ -274,6 +279,29 @@ class ConveyorLineTests(unittest.TestCase):
             motion_before + 0.1,
         )
 
+    def test_safety_pause_preserves_and_freezes_outlet_expectation(self) -> None:
+        self.line.request_start()
+        self.edge("camera_trigger_sensor")
+        self.line.inspection_completed(1, self.line.epoch, "OK")
+        self.edge("reject_position_sensor")
+        self.line.tick(self.clock.advance(0.2))
+        motion_before = self.line.snapshot()["motion_elapsed_s"]
+
+        self.line.handle_input_change("safety_ok", False)
+        self.line.tick(self.clock.advance(2.0))
+        paused = self.line.snapshot()
+        self.assertEqual(paused["good_outlet_pending_count"], 1)
+        self.assertEqual(paused["motion_elapsed_s"], motion_before)
+        self.assertEqual(paused["fault_code"], "")
+
+        self.line.handle_input_change("safety_ok", True)
+        self.assertTrue(self.line.request_start())
+        self.line.tick(self.clock.advance(0.2))
+        self.edge("good_outlet_sensor")
+        resumed = self.line.snapshot()
+        self.assertEqual(resumed["good_outlet_pending_count"], 0)
+        self.assertEqual(resumed["fault_code"], "")
+
     def test_interrupted_blow_requires_purge_before_production_can_resume(self) -> None:
         self.line.request_start()
         self.edge("camera_trigger_sensor")
@@ -331,6 +359,9 @@ class ConveyorLineTests(unittest.TestCase):
 
     def test_outlet_jam_is_latched_fault(self) -> None:
         self.line.request_start()
+        self.edge("camera_trigger_sensor")
+        self.line.inspection_completed(1, self.line.epoch, "OK")
+        self.edge("reject_position_sensor")
         self.line.handle_input_change("good_outlet_sensor", True)
         self.line.tick(self.clock.advance(1.1))
         snapshot = self.line.snapshot()
@@ -340,6 +371,110 @@ class ConveyorLineTests(unittest.TestCase):
         self.assertFalse(self.line.acknowledge_alarm())
         self.line.handle_input_change("good_outlet_sensor", False)
         self.assertTrue(self.line.acknowledge_alarm())
+
+    def test_good_requires_di7_confirmation(self) -> None:
+        self.line.request_start()
+        self.edge("camera_trigger_sensor")
+        self.line.inspection_completed(1, self.line.epoch, "OK")
+        self.edge("reject_position_sensor")
+
+        snapshot = self.line.snapshot()
+        self.assertEqual(snapshot["fifo_count"], 0)
+        self.assertEqual(snapshot["good_outlet_pending_count"], 1)
+        self.assertEqual(snapshot["inflight_count"], 1)
+
+        self.edge("good_outlet_sensor")
+        snapshot = self.line.snapshot()
+        self.assertEqual(snapshot["good_outlet_pending_count"], 0)
+        self.assertEqual(snapshot["inflight_count"], 0)
+        self.assertEqual(snapshot["fault_code"], "")
+
+    def test_ng_requires_di8_confirmation(self) -> None:
+        self.line.request_start()
+        self.edge("camera_trigger_sensor")
+        self.line.inspection_completed(1, self.line.epoch, "NG")
+        self.edge("reject_position_sensor")
+        self.assertEqual(self.line.snapshot()["waste_outlet_pending_count"], 1)
+
+        self.edge("waste_outlet_sensor")
+        snapshot = self.line.snapshot()
+        self.assertEqual(snapshot["waste_outlet_pending_count"], 0)
+        self.assertEqual(snapshot["inflight_count"], 0)
+        self.assertEqual(snapshot["fault_code"], "")
+
+    def test_missing_good_outlet_confirmation_times_out(self) -> None:
+        self.line.request_start()
+        self.edge("camera_trigger_sensor")
+        self.line.inspection_completed(1, self.line.epoch, "OK")
+        self.edge("reject_position_sensor")
+
+        self.line.tick(self.clock.advance(0.51))
+        snapshot = self.line.snapshot()
+        self.assertEqual(snapshot["fault_code"], "GOOD_OUTLET_TIMEOUT")
+        self.assertEqual(snapshot["fault_recovery"], "PURGE_REQUIRED")
+
+    def test_ng_reaching_di7_reports_reject_failure(self) -> None:
+        self.line.request_start()
+        self.edge("camera_trigger_sensor")
+        self.line.inspection_completed(1, self.line.epoch, "NG")
+        self.edge("reject_position_sensor")
+
+        self.line.handle_input_change("good_outlet_sensor", True)
+        snapshot = self.line.snapshot()
+        self.assertEqual(snapshot["fault_code"], "REJECT_FAILED_WRONG_OUTLET")
+        self.assertEqual(snapshot["fault_recovery"], "PURGE_REQUIRED")
+
+    def test_two_good_items_need_two_distinct_di7_edges(self) -> None:
+        self.line.request_start()
+        self.edge("camera_trigger_sensor")
+        self.edge("camera_trigger_sensor")
+        self.line.inspection_completed(1, self.line.epoch, "OK")
+        self.line.inspection_completed(2, self.line.epoch, "OK")
+        self.edge("reject_position_sensor")
+        self.edge("reject_position_sensor")
+        self.assertEqual(self.line.snapshot()["good_outlet_pending_count"], 2)
+
+        self.edge("good_outlet_sensor")
+        self.assertEqual(self.line.snapshot()["good_outlet_pending_count"], 1)
+        self.line.tick(self.clock.advance(0.51))
+        self.assertEqual(self.line.snapshot()["fault_code"], "GOOD_OUTLET_TIMEOUT")
+
+    def test_multiple_products_result_stops_and_requires_purge(self) -> None:
+        self.line.request_start()
+        self.edge("camera_trigger_sensor")
+        self.assertTrue(
+            self.line.inspection_completed(
+                1,
+                self.line.epoch,
+                "MULTIPLE_PRODUCTS_IN_FOV",
+                detail="two products detected",
+            )
+        )
+        snapshot = self.line.snapshot()
+        self.assertEqual(snapshot["fault_code"], "MULTIPLE_PRODUCTS_IN_FOV")
+        self.assertEqual(snapshot["fault_recovery"], "PURGE_REQUIRED")
+
+    def test_di0_minimum_clear_interval_can_detect_tight_spacing(self) -> None:
+        self.line.config = replace(self.line.config, front_sensor_min_clear_ms=100)
+        self.line.request_start()
+        self.edge("camera_trigger_sensor")
+        self.line.handle_input_change("camera_trigger_sensor", True)
+
+        self.assertEqual(
+            self.line.snapshot()["fault_code"],
+            "PRODUCT_SPACING_TOO_SMALL",
+        )
+
+    def test_di0_maximum_active_time_can_detect_one_long_pulse(self) -> None:
+        self.line.config = replace(self.line.config, front_sensor_max_active_ms=100)
+        self.line.request_start()
+        self.line.handle_input_change("camera_trigger_sensor", True)
+        self.line.tick(self.clock.advance(0.11))
+
+        self.assertEqual(
+            self.line.snapshot()["fault_code"],
+            "PRODUCT_SPACING_TOO_SMALL",
+        )
 
     def test_raw_di8_presence_does_not_block_purge_start(self) -> None:
         self.line.handle_input_change("waste_outlet_sensor", True)
@@ -394,9 +529,9 @@ class ConveyorLineTests(unittest.TestCase):
         self.assertEqual(config.max_inflight_items, 9)
         self.assertEqual(config.front_to_reject_max_run_ms, 6500)
         self.assertFalse(config.end_test_sensor_enabled)
-        self.assertEqual(config.end_test_jam_timeout_s, 1.1)
-        self.assertEqual(config.good_jam_timeout_s, 1.2)
-        self.assertEqual(config.waste_jam_timeout_s, 1.3)
+        self.assertEqual(config.end_test_blocked_timeout_s, 1.1)
+        self.assertEqual(config.good_outlet_blocked_timeout_s, 1.2)
+        self.assertEqual(config.waste_outlet_blocked_timeout_s, 1.3)
 
     def test_default_config_uses_only_canonical_control_names(self) -> None:
         config_path = (
@@ -413,9 +548,13 @@ class ConveyorLineTests(unittest.TestCase):
                 "max_inflight_items",
                 "front_to_reject_max_run_ms",
                 "end_test_sensor_enabled",
-                "end_test_jam_timeout_s",
-                "good_jam_timeout_s",
-                "waste_jam_timeout_s",
+                "end_test_blocked_timeout_s",
+                "good_outlet_blocked_timeout_s",
+                "waste_outlet_blocked_timeout_s",
+                "good_outlet_arrival_min_run_ms",
+                "good_outlet_arrival_max_run_ms",
+                "waste_outlet_arrival_min_run_ms",
+                "waste_outlet_arrival_max_run_ms",
             }.issubset(payload)
         )
         self.assertFalse(
@@ -428,7 +567,17 @@ class ConveyorLineTests(unittest.TestCase):
                 "end_sensor_jam_s",
                 "good_outlet_jam_s",
                 "waste_outlet_jam_s",
+                "end_test_jam_timeout_s",
+                "good_jam_timeout_s",
+                "waste_jam_timeout_s",
             }.intersection(payload)
+        )
+        self.assertIsInstance(payload.get("_comments"), dict)
+        self.assertIn("reject_blow_delay_ms", payload["_comments"])
+        self.assertIn("good_outlet_arrival_max_run_ms", payload["_comments"])
+        self.assertEqual(
+            set(payload) - {"_comments"},
+            set(payload["_comments"]),
         )
 
     def test_latched_fault_survives_safety_loss_and_restore(self) -> None:

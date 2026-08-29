@@ -3,7 +3,7 @@
 > 文档用途：说明当前代码中 DI 采集、状态机、FIFO、视觉检测、NG 吹气、自动清线、堵料监控和 DO 输出之间的完整调用关系。  
 > 适用代码：`EmbeddingTest-conveyor` 当前版本。  
 > 配套设计文档：`皮带线IO信号与控制逻辑.md`。  
-> 更新日期：2026-08-27。
+> 更新日期：2026-08-29。
 
 ## 1. 核心结论
 
@@ -13,7 +13,7 @@
 IO板卡只负责物理读写
 DI轮询器负责整字采集、去抖和边沿事件
 产线状态机负责决定允许什么动作
-独立领域组件负责FIFO、吹气、清线和堵料计时
+独立领域组件负责FIFO、出口确认、吹气、清线和堵料计时
 输出仲裁器负责执行最终DO请求
 ```
 
@@ -27,6 +27,8 @@ DI轮询器负责整字采集、去抖和边沿事件
 6. 自动清线时 DO3 持续吹气，预吹气结束后 DO4 必须运行，否则无法把物料清出设备。
 7. DI8 当前有料不阻止启动清线；持续有效超过堵料阈值才构成堵料。
 8. 安全恢复、门恢复、报警确认后均不得自动启动皮带。
+9. DI1只完成第一段跟踪：GOOD转入等待DI7，NG转入等待DI8；正确出口有效沿到达后产品才真正完成。
+10. DI7、DI8同时承担“逐件出口确认”和“持续有效堵料检测”，两种判断使用不同计时起点和参数。
 
 ## 2. 整体软件架构
 
@@ -43,11 +45,13 @@ flowchart TD
     F --> G
 
     G --> H["WorkpieceTracker<br/>FIFO和epoch"]
+    G --> O["OutletConfirmationTracker<br/>DI7/DI8逐件出口确认"]
     G --> I["RejectBlowController<br/>NG吹气窗口"]
     G --> J["AutoPurgeController<br/>一键清线"]
     G --> K["JamMonitor<br/>DI6/DI7/DI8堵料"]
 
     H --> G
+    O --> G
     I --> G
     J --> G
     K --> G
@@ -66,12 +70,12 @@ flowchart TD
 | 层级 | 文件 | 主要职责 |
 |---|---|---|
 | IO映射 | `config/defaults/io_mapping.json` | DI/DO业务名称、板卡通道和有效电平 |
-| 控制参数 | `config/defaults/conveyor_control.json` | 去抖、吹气、FIFO、清线和堵料时间参数 |
+| 控制参数 | `config/defaults/conveyor_control.json` | 去抖、吹气、FIFO、出口确认、清线和堵料时间参数；`_comments`提供中文备注 |
 | 板卡业务接口 | `devices/io_controller.py` | 读取完整DI字、写DO、物理电平与业务状态转换 |
 | DI扫描 | `devices/di_poller.py` | 定时扫描、去抖、生成上升沿/下降沿事件 |
 | 输出仲裁 | `devices/output_arbiter.py` | 执行产线输出、批量关闭DO3/DO4、仲裁共享蜂鸣器 |
 | 产线状态机 | `domain/conveyor_line.py` | 安全联锁、状态转换、动作决策、故障恢复分类 |
-| 领域组件 | `domain/conveyor_components.py` | FIFO、NG吹气窗口、清线上下文、堵料运动计时 |
+| 领域组件 | `domain/conveyor_components.py` | FIFO、DI7/DI8出口等待、NG吹气窗口、清线上下文、堵料运动计时 |
 | 产线运行接入 | `application/runtime/conveyor.py` | 连接状态机、相机采图、检测任务和运行界面 |
 | 硬件运行接入 | `application/runtime/hardware.py` | 打开IO、建立安全初始输出、启动DI轮询 |
 | 操作界面 | `ui/runtime/runtime_mode_pyside6.py` | 显示产线/FIFO/故障状态并提供清线、继续和确认操作 |
@@ -87,9 +91,9 @@ flowchart TD
 | DI2 | `start_button` | 高有效 | 请求启动正常生产 |
 | DI3 | `stop_button` | 低有效 | 请求受控停止；清线中则暂停清线 |
 | DI5 | `safety_ok` | 高有效 | 安全继电器运行许可 |
-| DI6 | `end_test_sensor` | 高有效 | 末端测试堵料监控，可配置关闭 |
-| DI7 | `good_outlet_sensor` | 高有效 | GOOD出口堵料监控 |
-| DI8 | `waste_outlet_sensor` | 高有效 | 废料出口活动和堵料监控 |
+| DI6 | `end_test_sensor` | 高有效 | 专用堵料监控，可配置关闭 |
+| DI7 | `good_outlet_sensor` | 高有效 | GOOD逐件出料确认，同时监控GOOD出口持续堵料 |
+| DI8 | `waste_outlet_sensor` | 高有效 | NG逐件剔除确认，同时监控废料出口持续堵料和清线物料活动 |
 | DI9 | `door_closed` | 高有效 | 下部门关闭许可 |
 | DI10 | `door_upper_closed` | 高有效 | 上部门关闭许可，可配置启用 |
 
@@ -216,13 +220,19 @@ flowchart TD
     I --> J{"队头状态"}
     J -->|"FIFO为空"| K["FIFO_UNDERFLOW"]
     J -->|"PENDING"| L["RESULT_NOT_READY"]
-    J -->|"GOOD且DO3关闭"| M["移除队头，不吹气"]
+    J -->|"GOOD且DO3关闭"| M["移除队头，建立等待DI7记录"]
     J -->|"GOOD且DO3开启"| N["BLOW_WINDOW_CONFLICT"]
-    J -->|"NG"| O["移除队头并提交吹气窗口"]
+    J -->|"NG"| O["移除队头，提交吹气并建立等待DI8记录"]
     O --> P["等待reject_blow_delay_ms"]
     P --> Q["DO3 ON"]
     Q --> R["保持reject_blow_duration_ms"]
     R --> S["DO3 OFF"]
+    M --> T{"规定运行时间内收到DI7？"}
+    S --> U{"规定运行时间内收到DI8？"}
+    T -->|"是"| V["GOOD完整离开设备"]
+    U -->|"是"| W["NG剔除成功"]
+    T -->|"否"| X["GOOD_OUTLET_TIMEOUT"]
+    U -->|"否"| Y["WASTE_OUTLET_TIMEOUT"]
 ```
 
 ### 7.1 启动条件
@@ -348,6 +358,22 @@ FIFO只知道顺序，不能测量每件产品的精确位置，必须保证：
 4. 正常生产期间不能人工插入、取走或移动内部产品。
 5. 程序重启后若设备内仍有物料，必须清线后再生产。
 
+### 8.6 两段在途跟踪
+
+“在途产品”不是只有 `WorkpieceTracker.fifo`。当前代码分成两段：
+
+```text
+第一段：DI0 → DI1
+  WorkpieceTracker.fifo
+  保存检测结果并按物理顺序等待DI1
+
+第二段：DI1 → DI7/DI8
+  OutletConfirmationTracker.pending
+  GOOD等待DI7，NG等待DI8
+```
+
+`max_inflight_items`约束两段数量之和。界面分别显示“DI1前、等待DI7、等待DI8”，收到正确出口有效沿后才从总在途中移除。
+
 ## 9. DI1 与 NG 吹气
 
 DI1只读取 FIFO 队头，等价逻辑如下：
@@ -366,6 +392,7 @@ elif record.inspection_status == GOOD:
         trip_fault("BLOW_WINDOW_CONFLICT", recovery="PURGE_REQUIRED")
     else:
         tracker.pop_head()
+        outlet.expect(record, expected_input="good_outlet_sensor", ...)
 
 elif record.inspection_status == NG:
     tracker.pop_head()
@@ -375,11 +402,14 @@ elif record.inspection_status == NG:
         delay_s=reject_blow_delay_ms / 1000,
         duration_s=reject_blow_duration_ms / 1000,
     )
+    outlet.expect(record, expected_input="waste_outlet_sensor", ...)
 ```
 
-NG从FIFO移除后，已经提交的吹气动作由 `RejectBlowController` 保存。连续NG的吹气窗口可以重叠，DO3在任一窗口有效时保持ON。
+NG从第一段FIFO移除后，已经提交的吹气动作由 `RejectBlowController` 保存，逐件剔除确认由 `OutletConfirmationTracker` 保存。连续NG的吹气窗口可以重叠，DO3在任一窗口有效时保持ON。
 
 如果 GOOD 到达 DI1 时 DO3 仍为ON，程序不继续消费这件 GOOD，而是锁存 `BLOW_WINDOW_CONFLICT`，关闭DO4、DO3并要求清线。
+
+DI7、DI8有效沿按各自合法到达窗口匹配：GOOD收到DI7、NG收到DI8才算正确完成；超过最大运行时间未收到、走错出口或没有待匹配产品却出现出口信号，都会停机并要求清线。
 
 ## 10. 周期 tick
 
@@ -390,10 +420,11 @@ flowchart LR
     A["周期tick"] --> B["累计皮带实际运行时间"]
     B --> C["更新NG吹气窗口"]
     C --> D["检查DI6/DI7/DI8堵料"]
-    D --> E["检查FIFO队头到达超时"]
-    E --> F["处理受控停止"]
-    F --> G["处理自动清线"]
-    G --> H["刷新按钮灯和蜂鸣器"]
+    D --> E["检查DI7/DI8出口确认超时"]
+    E --> F["检查DI0贴料/间距和FIFO队头到达超时"]
+    F --> G["处理受控停止"]
+    G --> H["处理自动清线"]
+    H --> I["刷新按钮灯和蜂鸣器"]
 ```
 
 等价代码：
@@ -402,6 +433,8 @@ flowchart LR
 advance_motion_clock()
 update_reject_output()
 monitor_jams()
+monitor_outlet_timeouts()
+monitor_front_sensor_spacing()
 monitor_fifo_timeout()
 
 if state == CONTROLLED_STOPPING:
@@ -417,6 +450,7 @@ apply_indicator_outputs()
 - DI0到DI1物料到达超时；
 - DI1到吹气口延时；
 - 正常NG吹气持续时间；
+- DI1到DI7/DI8出口确认时间；
 - DI6、DI7、DI8堵料时间。
 
 ## 11. DI3 受控停止
@@ -429,7 +463,7 @@ flowchart TD
     D -->|"是"| E["等待有限动作完成"]
     E --> D
     D -->|"否"| F["关闭DO4、DO3"]
-    F --> G["READY_STOPPED<br/>FIFO保留"]
+    F --> G["READY_STOPPED<br/>两段在途队列保留"]
     B -->|"超过controlled_stop_timeout_ms"| H["CONTROLLED_STOP_TIMEOUT"]
 ```
 
@@ -468,6 +502,23 @@ BLOW_INTERRUPTED
 
 安全恢复只代表重新具备动作许可，不代表自动恢复动作。
 
+### 12.1 急停时第二段出口队列是否还能对应
+
+可以保留对应关系，但前提是现场已确认的条件成立：急停后皮带立即停止，期间无人移动、取走或插入产品，程序进程也没有重启。实现方式如下：
+
+```text
+急停前：#101 GOOD等待DI7，#102 NG等待DI8
+急停发生：DO4/DO3立即关闭，OutletConfirmationTracker.pending原样保留
+急停期间：motion_elapsed_s停止累计，两个产品的出口到达窗口同时冻结
+安全复位：只进入READY_TO_RESUME，不自动开皮带
+人工重新启动：运动时间继续累计，后续DI7/DI8仍按原sequence_id和顺序确认
+```
+
+有两个例外不能继续原队列：
+
+1. 急停打断了正在执行的NG吹气，程序锁存 `BLOW_INTERRUPTED` 并要求一键清线，因为该NG是否被剔除已经不可确定；
+2. 急停期间有人移动物料、程序重启或传感器状态无法确认，软件没有位置编码器可重建一一对应，必须清线后重新生产。
+
 > DI5急停由硬件安全回路切断执行机构电源。DI9、DI10目前属于软件门联锁，不能替代安全门接入安全继电器的硬件安全设计。
 
 ## 13. 一键自动清线
@@ -500,8 +551,8 @@ flowchart TD
     A["点击一键清线"] --> B["检查IO、安全、门和停止状态"]
     B -->|"不满足"| C["拒绝清线"]
     B -->|"满足"| D["epoch递增"]
-    D --> E["FIFO标记PURGED并清空"]
-    E --> F["清除旧采图提交和NG吹气窗口"]
+    D --> E["epoch递增，第一段FIFO标记PURGED并清空"]
+    E --> F["清除第二段出口等待、旧采图提交和NG吹气窗口"]
     F --> G["进入PURGE_PREPARING"]
     G --> H["DO4 OFF、DO3 ON"]
     H --> I["等待purge_air_lead_ms"]
@@ -548,7 +599,7 @@ DO3 ON
 → 继续清线
 ```
 
-## 14. DI6、DI7、DI8堵料监控
+## 14. DI6堵料与DI7、DI8出口确认/堵料复用
 
 堵料按皮带实际运行时间判断：
 
@@ -561,11 +612,25 @@ AND 连续运动时间超过配置阈值
 
 | 输入 | 阈值 |
 |---|---|
-| DI6 `end_test_sensor` | `end_test_jam_timeout_s` |
-| DI7 `good_outlet_sensor` | `good_jam_timeout_s` |
-| DI8 `waste_outlet_sensor` | `waste_jam_timeout_s` |
+| DI6 `end_test_sensor` | `end_test_blocked_timeout_s` |
+| DI7 `good_outlet_sensor` | `good_outlet_blocked_timeout_s` |
+| DI8 `waste_outlet_sensor` | `waste_outlet_blocked_timeout_s` |
 
 皮带启动时，如果堵料输入已经有效，计时从皮带启动的运动时刻开始。皮带停止时清除本次运动计时。
+
+DI7、DI8还有一套独立的逐件确认计时，不能与堵料阈值混用：
+
+```text
+GOOD离开DI1 → 在good_outlet_arrival_min/max_run_ms窗口等待DI7上升沿
+NG离开DI1   → 在waste_outlet_arrival_min/max_run_ms窗口等待DI8上升沿
+
+未收到正确有效沿 → GOOD_OUTLET_TIMEOUT / WASTE_OUTLET_TIMEOUT
+NG却到DI7       → REJECT_FAILED_WRONG_OUTLET
+GOOD却到DI8     → GOOD_WRONG_OUTLET
+无待确认产品     → UNEXPECTED_GOOD_OUTLET / UNEXPECTED_WASTE_OUTLET
+```
+
+因此，DI7/DI8短脉冲用于“确认一件产品”，持续高电平超过堵料阈值用于“出口堵料”。两套计时都只累计皮带实际运行时间。
 
 DI8在清线中的判断：
 
@@ -583,7 +648,7 @@ DI8尚未恢复无料         → 不允许确认堵料报警
 | 恢复类型 | 典型故障 | 恢复操作 |
 |---|---|---|
 | `ACKNOWLEDGE` | 堵料已清除、受控停止超时、清线超时 | 确认报警，回到停止状态 |
-| `PURGE_REQUIRED` | FIFO溢出/下溢、结果未就绪、物料到达超时、吹气中断、吹气窗口冲突 | 必须一键清线 |
+| `PURGE_REQUIRED` | FIFO溢出/下溢、结果未就绪、物料到达或出口确认超时、走错出口、非预期出口产品、多料同视野、产品间距过小、吹气中断、吹气窗口冲突 | 必须一键清线 |
 | `RECONNECT_IO` | IO未就绪、DO写入失败 | 必须重新连接IO |
 
 所有恢复方式完成后皮带均保持停止，不自动启动。
@@ -708,11 +773,11 @@ stateDiagram-v2
 - 正常生产运行；
 - 受控停止中；
 - 清线准备、运行或暂停；
-- FIFO中仍有在途物料；
+- 第一段FIFO或第二段出口等待队列中仍有在途物料；
 - 仍有采图任务未完成；
 - DO4或DO3仍处于动作状态。
 
-只有产线停止、FIFO为空、没有采图任务、没有清线上下文时才允许调试和相机配置操作。
+只有产线停止、两段在途队列均为空、没有采图任务、没有清线上下文时才允许调试和相机配置操作。
 
 ## 19. 控制参数
 
@@ -726,13 +791,19 @@ stateDiagram-v2
   "controlled_stop_timeout_ms": 1500,
   "reject_blow_delay_ms": 0,
   "reject_blow_duration_ms": 300,
-  "max_inflight_items": 128,
-  "front_to_reject_max_run_ms": 10000,
+  "max_inflight_items": 20,
+  "front_to_reject_max_run_ms": 5000,
+  "front_sensor_max_active_ms": 0,
+  "front_sensor_min_clear_ms": 0,
+  "good_outlet_arrival_min_run_ms": 500,
+  "good_outlet_arrival_max_run_ms": 3000,
+  "waste_outlet_arrival_min_run_ms": 500,
+  "waste_outlet_arrival_max_run_ms": 3000,
   "end_test_sensor_enabled": true,
   "upper_door_sensor_enabled": false,
-  "end_test_jam_timeout_s": 3.0,
-  "good_jam_timeout_s": 3.0,
-  "waste_jam_timeout_s": 3.0,
+  "end_test_blocked_timeout_s": 3.0,
+  "good_outlet_blocked_timeout_s": 3.0,
+  "waste_outlet_blocked_timeout_s": 3.0,
   "purge_air_lead_ms": 200,
   "purge_min_run_s": 10.0,
   "purge_tail_run_s": 5.0,
@@ -741,7 +812,74 @@ stateDiagram-v2
 }
 ```
 
-程序兼容旧参数名，但默认配置、代码和文档统一使用以上规范名称。
+标准JSON不允许在每行后直接写 `// 中文备注`。默认配置使用合法的 `_comments` 对象逐项保存中文解释，`ConveyorConfig.from_mapping()`只读取数据字段并自动忽略 `_comments`。程序仍兼容旧参数名，但默认配置、代码和文档统一使用以上规范名称。
+
+`front_sensor_max_active_ms`和`front_sensor_min_clear_ms`当前为0，即保护逻辑已实现但暂未启用。必须先现场测出单件最长遮挡和最短正常无料间隙，再设置非零阈值，避免误报警。
+
+### 19.1 DI0产品间距保护代码示例
+
+`front_sensor_max_active_ms`检查DI0单次遮挡是不是太长：
+
+```text
+正常单件：DI0有效 ───── 120ms ───── DI0恢复
+两件贴料：产品1遮挡 ── 产品2继续遮挡 ── 总共400ms
+```
+
+例如设置 `"front_sensor_max_active_ms": 200`，DI0连续有效超过200ms时，`_monitor_front_sensor_spacing()`报告 `PRODUCT_SPACING_TOO_SMALL`。该判断也能发现产品卡在DI0或传感器粘连。
+
+`front_sensor_min_clear_ms`检查两件产品之间DI0恢复无料的时间是不是太短：
+
+```text
+产品1离开 → DI0恢复无料100ms → 产品2到达
+```
+
+例如设置 `"front_sensor_min_clear_ms": 50`，第二次DI0有效沿到达时，如果之前无料时间不足50ms，`_on_camera_sensor()`报告 `PRODUCT_SPACING_TOO_SMALL`，并且不会再为这次异常触发创建正常产品记录。
+
+| 参数 | 代码检查内容 |
+|---|---|
+| `front_sensor_max_active_ms` | DI0一次持续有效时间上限 |
+| `front_sensor_min_clear_ms` | 两次DI0有效沿之间的最短无料时间 |
+
+两个阈值和出口确认时间一样，都按皮带实际运行时间计算，停止和急停期间不累计。当前值为0表示禁用。以上120ms、400ms、200ms、100ms和50ms只用于解释代码，必须在最快皮带速度下测量单件最长遮挡、正常最小无料间隙后再留余量设置。
+
+### 19.2 视觉多产品结果接口
+
+`application/runtime/conveyor.py / _reported_product_count()`从算法响应中读取：
+
+```text
+product_count
+detected_product_count
+instance_count
+object_count
+```
+
+例如算法返回：
+
+```json
+{
+  "product_count": 2
+}
+```
+
+运行接入层把最终结果改为 `MULTIPLE_PRODUCTS_IN_FOV`，领域状态机随后关闭DO4、DO3并要求一键清线。
+
+当前代码只完成了数量字段接入和故障处理，没有新增通用视觉计数算法。如果画面实际有两件，但现有算法只找一个最佳匹配并返回1或不返回数量字段，程序不会在拍照阶段立即知道画面中有两件。后续可能表现为：
+
+- 两件分别触发DI1但FIFO只有一件，产生 `FIFO_UNDERFLOW`；
+- DI7/DI8只产生一个有效沿，第二件出口确认超时；
+- DI0形成长遮挡或无料间隔过短，产生 `PRODUCT_SPACING_TOO_SMALL`；
+- 所有传感器都把两件当成一个长脉冲且视觉也只返回一件时，纯IO无法保证发现多料。
+
+完整保护链为：
+
+```text
+机械分料保证间距
+→ DI0长遮挡/最短无料间隔
+→ 视觉算法输出产品数量
+→ DI7/DI8逐件出口确认
+```
+
+机械和DI0是第一道保护，视觉产品计数是第二道确认，DI7/DI8是最终出料校验。
 
 ## 20. 从输入到输出的完整调用示例
 
@@ -760,14 +898,17 @@ stateDiagram-v2
 10. 状态机按sequence_id和epoch把#1001改为NG
 11. 产品到达DI1，DI1产生reject_position_sensor=True事件
 12. 状态机读取FIFO队头#1001
-13. 从FIFO移除#1001
+13. 从第一段FIFO移除#1001
 14. RejectBlowController建立延时和吹气窗口
-15. 周期tick发现吹气窗口已经开始
-16. 状态机请求waste_removal=True
-17. OutputArbiter接收DO3业务请求
-18. IoController根据active_high=false转换物理电平
-19. NK板卡DO3动作，电磁阀持续吹气
-20. 吹气窗口结束后DO3业务状态恢复False
+15. OutletConfirmationTracker建立#1001等待DI8记录
+16. 周期tick发现吹气窗口已经开始
+17. 状态机请求waste_removal=True
+18. OutputArbiter接收DO3业务请求
+19. IoController根据active_high=false转换物理电平
+20. NK板卡DO3动作，电磁阀持续吹气
+21. 吹气窗口结束后DO3业务状态恢复False
+22. 产品在合法到达窗口内触发DI8有效沿
+23. OutletConfirmationTracker移除#1001，确认NG剔除成功
 ```
 
 ## 21. 现场验证重点
@@ -784,6 +925,9 @@ stateDiagram-v2
 8. 清线时是否按“DO3预吹气→DO4运行→DO4停止→DO3停止”执行。
 9. DI8有料能否启动清线，持续堵料能否在阈值后停机。
 10. 急停、开门和清线中断恢复后是否始终保持停止并等待人工操作。
+11. GOOD是否逐件触发DI7、NG是否逐件触发DI8，未到达和走错出口是否正确停机。
+12. 两件产品最小间距下DI0、DI1、DI7、DI8是否都能恢复无效并形成两个独立有效沿。
+13. 视觉算法是否输出 `product_count`、`detected_product_count`、`instance_count` 或 `object_count`；若没有，当前框架无法凭空识别同一视野多件产品。
 
 ## 22. 相关源代码入口
 
@@ -797,11 +941,15 @@ stateDiagram-v2
   - `tick()`：周期定时动作；
   - `_on_camera_sensor()`：DI0物料创建；
   - `_on_reject_sensor()`：DI1 FIFO消费；
+  - `_on_outlet_sensor()`：DI7/DI8逐件确认、走错出口和非预期出口处理；
   - `_handle_interlock_change()`：DI5、DI9、DI10联锁；
   - `_monitor_jams()`：堵料监控；
+  - `_monitor_outlet_timeouts()`：DI7/DI8未到达超时；
+  - `_monitor_front_sensor_spacing()`：DI0长遮挡和最小无料间隙保护；
   - `_trip_fault()`：故障锁存和安全停止。
 - `domain/conveyor_components.py`
   - `WorkpieceTracker`：FIFO；
+  - `OutletConfirmationTracker`：GOOD→DI7、NG→DI8的合法到达窗口和逐件确认；
   - `RejectBlowController`：NG吹气窗口；
   - `AutoPurgeController`：清线上下文；
   - `JamMonitor`：堵料运动时间。
@@ -1089,6 +1237,16 @@ DI1确认实物到达
 FIFO队头的检测结果
         ↓
 状态机决定通过、吹气或故障停机
+```
+
+DI1之后再进入出口确认数据流：
+
+```text
+GOOD → OutletConfirmationTracker等待DI7 ─┐
+NG   → 吹气 + OutletConfirmationTracker等待DI8 ─┤
+                                              ↓
+正确出口有效沿 → 完成
+未到达/走错出口/非预期出口信号 → 停机并要求清线
 ```
 
 ### 23.8 架构边界

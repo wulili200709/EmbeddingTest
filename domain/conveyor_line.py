@@ -12,6 +12,7 @@ from .conveyor_components import (
     AutoPurgeController,
     InspectionStatus,
     JamMonitor,
+    OutletConfirmationTracker,
     RejectBlowController,
     WorkpieceRecord,
     WorkpieceTracker,
@@ -48,13 +49,19 @@ class ConveyorConfig:
     controlled_stop_timeout_ms: int = 1500
     reject_blow_delay_ms: int = 0
     reject_blow_duration_ms: int = 300
-    max_inflight_items: int = 128
-    front_to_reject_max_run_ms: int = 10000
+    max_inflight_items: int = 20
+    front_to_reject_max_run_ms: int = 5000
+    front_sensor_max_active_ms: int = 0
+    front_sensor_min_clear_ms: int = 0
+    good_outlet_arrival_min_run_ms: int = 500
+    good_outlet_arrival_max_run_ms: int = 3000
+    waste_outlet_arrival_min_run_ms: int = 500
+    waste_outlet_arrival_max_run_ms: int = 3000
     end_test_sensor_enabled: bool = True
     upper_door_sensor_enabled: bool = False
-    end_test_jam_timeout_s: float = 3.0
-    good_jam_timeout_s: float = 3.0
-    waste_jam_timeout_s: float = 3.0
+    end_test_blocked_timeout_s: float = 3.0
+    good_outlet_blocked_timeout_s: float = 3.0
+    waste_outlet_blocked_timeout_s: float = 3.0
     purge_air_lead_ms: int = 200
     purge_min_run_s: float = 10.0
     purge_tail_run_s: float = 5.0
@@ -69,9 +76,12 @@ class ConveyorConfig:
             "reject_duration_ms": "reject_blow_duration_ms",
             "fifo_max_items": "max_inflight_items",
             "end_sensor_enabled": "end_test_sensor_enabled",
-            "end_sensor_jam_s": "end_test_jam_timeout_s",
-            "good_outlet_jam_s": "good_jam_timeout_s",
-            "waste_outlet_jam_s": "waste_jam_timeout_s",
+            "end_test_jam_timeout_s": "end_test_blocked_timeout_s",
+            "good_jam_timeout_s": "good_outlet_blocked_timeout_s",
+            "waste_jam_timeout_s": "waste_outlet_blocked_timeout_s",
+            "end_sensor_jam_s": "end_test_blocked_timeout_s",
+            "good_outlet_jam_s": "good_outlet_blocked_timeout_s",
+            "waste_outlet_jam_s": "waste_outlet_blocked_timeout_s",
         }
         for old_name, canonical_name in aliases.items():
             if canonical_name not in values and old_name in values:
@@ -114,15 +124,27 @@ class ConveyorConfig:
 
     @property
     def end_sensor_jam_s(self) -> float:
-        return self.end_test_jam_timeout_s
+        return self.end_test_blocked_timeout_s
 
     @property
     def good_outlet_jam_s(self) -> float:
-        return self.good_jam_timeout_s
+        return self.good_outlet_blocked_timeout_s
 
     @property
     def waste_outlet_jam_s(self) -> float:
-        return self.waste_jam_timeout_s
+        return self.waste_outlet_blocked_timeout_s
+
+    @property
+    def end_test_jam_timeout_s(self) -> float:
+        return self.end_test_blocked_timeout_s
+
+    @property
+    def good_jam_timeout_s(self) -> float:
+        return self.good_outlet_blocked_timeout_s
+
+    @property
+    def waste_jam_timeout_s(self) -> float:
+        return self.waste_outlet_blocked_timeout_s
 
 
 OutputWriter = Callable[[str, bool], None]
@@ -151,6 +173,10 @@ class ConveyorLineController:
     )
     JAM_INPUTS = (
         "end_test_sensor",
+        "good_outlet_sensor",
+        "waste_outlet_sensor",
+    )
+    OUTLET_INPUTS = (
         "good_outlet_sensor",
         "waste_outlet_sensor",
     )
@@ -199,6 +225,7 @@ class ConveyorLineController:
         self._tracker = WorkpieceTracker()
         self.fifo = self._tracker.fifo
         self._reject = RejectBlowController()
+        self._outlet = OutletConfirmationTracker()
         self._active_captures: set[tuple[int, int]] = set()
         self._io_ready = False
         self._fault_code = ""
@@ -207,6 +234,8 @@ class ConveyorLineController:
         self._fault_input = ""
         self._controlled_stop_started_at: float | None = None
         self._last_capture_edge_at: float | None = None
+        self._front_sensor_active_since_motion_s: float | None = None
+        self._front_sensor_clear_since_motion_s: float | None = None
         self._purge = AutoPurgeController()
         self._resume_purge_after_interlock = False
         self._motion_elapsed_s = 0.0
@@ -232,6 +261,7 @@ class ConveyorLineController:
         return (
             self.state == ConveyorState.READY_STOPPED
             and not self.fifo
+            and not self._outlet.pending
             and not self._active_captures
             and not self._purge.active
             and not self._fault_code
@@ -248,6 +278,7 @@ class ConveyorLineController:
                 ConveyorState.FAULT_STOPPED,
             }
             and not self.fifo
+            and not self._outlet.pending
             and not self._active_captures
             and not self._purge.active
             and not self.outputs.get("conveyor_run", False)
@@ -315,6 +346,25 @@ class ConveyorLineController:
                 self._publish()
                 return
 
+            # Outlet edges are both confirmation events and blockage signals.
+            # Apply the observed edge before checking arrival deadlines so a
+            # valid edge at the end of its window is not turned into a timeout.
+            if input_name in self.OUTLET_INPUTS:
+                self._advance_motion_clock(current)
+                self.inputs[input_name] = business_state
+                if previous is not business_state:
+                    self._record_material_activity(current)
+                    self._jam_monitor.observe_input(
+                        input_name,
+                        active=business_state,
+                        motion_s=self._motion_elapsed_s,
+                        conveyor_running=self.outputs.get("conveyor_run", False),
+                    )
+                    if business_state:
+                        self._on_outlet_sensor(input_name)
+                self.tick(current)
+                return
+
             self.tick(current)
             self.inputs[input_name] = business_state
             if previous is business_state:
@@ -334,8 +384,12 @@ class ConveyorLineController:
                 self.request_start(now=current)
             elif business_state and input_name == "stop_button":
                 self.request_controlled_stop(now=current)
-            elif business_state and input_name == "camera_trigger_sensor":
-                self._on_camera_sensor(current)
+            elif input_name == "camera_trigger_sensor":
+                if business_state:
+                    self._on_camera_sensor(current)
+                else:
+                    self._front_sensor_active_since_motion_s = None
+                    self._front_sensor_clear_since_motion_s = self._motion_elapsed_s
             elif business_state and input_name == "reject_position_sensor":
                 self._on_reject_sensor(current)
             self._apply_indicator_outputs()
@@ -418,6 +472,9 @@ class ConveyorLineController:
             self._fault_input = ""
             self._tracker.invalidate_for_purge()
             self._reject.clear()
+            self._outlet.clear()
+            self._front_sensor_active_since_motion_s = None
+            self._front_sensor_clear_since_motion_s = None
             self._active_captures.clear()
             self._controlled_stop_started_at = None
             self._purge.begin(
@@ -496,6 +553,20 @@ class ConveyorLineController:
                 self._log(f"ignored result for unknown/purged item: {sequence_id}")
                 return False
             normalized = str(result or "").strip().upper()
+            if normalized in {"MULTIPLE_PRODUCTS", "MULTIPLE_PRODUCTS_IN_FOV"}:
+                record.inspection_status = InspectionStatus.ERROR
+                record.inspection_detail = str(
+                    detail or "multiple products were detected in one inspection frame"
+                )
+                record.result_at = current
+                self._notify_inspection_result(record)
+                self._trip_fault(
+                    "MULTIPLE_PRODUCTS_IN_FOV",
+                    f"item {record.sequence_id}: {record.inspection_detail}",
+                    recovery=FaultRecovery.PURGE_REQUIRED,
+                )
+                self._publish()
+                return True
             status = (
                 InspectionStatus.GOOD
                 if normalized in {"OK", "GOOD"}
@@ -526,6 +597,8 @@ class ConveyorLineController:
 
             self._update_reject_output()
             self._monitor_jams()
+            self._monitor_outlet_timeouts()
+            self._monitor_front_sensor_spacing()
             self._monitor_fifo_timeout()
             if self.state == ConveyorState.CONTROLLED_STOPPING:
                 self._evaluate_controlled_stop(current)
@@ -551,8 +624,19 @@ class ConveyorLineController:
                 "manual_operations_permitted": self.manual_operations_permitted,
                 "configuration_operations_permitted": self.configuration_operations_permitted,
                 "fifo_count": len(self.fifo),
+                "outlet_pending_count": len(self._outlet.pending),
+                "good_outlet_pending_count": self._outlet.count_for_input(
+                    "good_outlet_sensor"
+                ),
+                "waste_outlet_pending_count": self._outlet.count_for_input(
+                    "waste_outlet_sensor"
+                ),
+                "inflight_count": len(self.fifo) + len(self._outlet.pending),
                 "capture_pending_count": len(self._active_captures),
                 "fifo": [record.to_dict() for record in self.fifo],
+                "outlet_pending": [item.to_dict() for item in self._outlet.pending],
+                "inflight": [record.to_dict() for record in self.fifo]
+                + [item.to_dict() for item in self._outlet.pending],
                 "epoch": self.epoch,
                 "motion_elapsed_s": self._motion_elapsed_s,
                 "outputs": dict(self.outputs),
@@ -574,7 +658,24 @@ class ConveyorLineController:
     def _on_camera_sensor(self, now: float) -> None:
         if self.state not in {ConveyorState.RUNNING, ConveyorState.CONTROLLED_STOPPING}:
             return
-        if len(self.fifo) >= max(1, int(self.config.max_inflight_items)):
+        min_clear_s = max(0.0, self.config.front_sensor_min_clear_ms / 1000.0)
+        if (
+            min_clear_s > 0.0
+            and self._front_sensor_clear_since_motion_s is not None
+            and self._motion_elapsed_s - self._front_sensor_clear_since_motion_s
+            < min_clear_s
+        ):
+            self._trip_fault(
+                "PRODUCT_SPACING_TOO_SMALL",
+                "DI0 clear interval was shorter than the configured minimum",
+                recovery=FaultRecovery.PURGE_REQUIRED,
+            )
+            return
+        self._front_sensor_active_since_motion_s = self._motion_elapsed_s
+        if len(self.fifo) + len(self._outlet.pending) >= max(
+            1,
+            int(self.config.max_inflight_items),
+        ):
             self._trip_fault("FIFO_OVERFLOW", "in-flight workpiece queue is full")
             return
         record = self._tracker.create(
@@ -636,10 +737,69 @@ class ConveyorLineController:
                 delay_s=self.config.reject_blow_delay_ms / 1000.0,
                 duration_s=self.config.reject_blow_duration_ms / 1000.0,
             )
-            self._log(f"NG item={record.sequence_id} scheduled for blow-off")
+            self._outlet.expect(
+                record,
+                expected_input="waste_outlet_sensor",
+                motion_s=self._motion_elapsed_s,
+                min_run_s=self.config.waste_outlet_arrival_min_run_ms / 1000.0,
+                max_run_s=self.config.waste_outlet_arrival_max_run_ms / 1000.0,
+            )
+            self._log(
+                f"NG item={record.sequence_id} scheduled for blow-off and DI8 confirmation"
+            )
         else:
-            self._log(f"GOOD item={record.sequence_id} passed without blow-off")
+            self._outlet.expect(
+                record,
+                expected_input="good_outlet_sensor",
+                motion_s=self._motion_elapsed_s,
+                min_run_s=self.config.good_outlet_arrival_min_run_ms / 1000.0,
+                max_run_s=self.config.good_outlet_arrival_max_run_ms / 1000.0,
+            )
+            self._log(
+                f"GOOD item={record.sequence_id} passed DI1 and awaits DI7 confirmation"
+            )
         self._update_reject_output()
+
+    def _on_outlet_sensor(self, input_name: str) -> None:
+        if self.state not in {
+            ConveyorState.RUNNING,
+            ConveyorState.CONTROLLED_STOPPING,
+        }:
+            return
+        outcome, expectation = self._outlet.confirm(
+            input_name,
+            motion_s=self._motion_elapsed_s,
+        )
+        if outcome == "CONFIRMED" and expectation is not None:
+            outlet = "DI7" if input_name == "good_outlet_sensor" else "DI8"
+            self._log(
+                f"outlet confirmed: item={expectation.sequence_id}, outlet={outlet}"
+            )
+            return
+        if outcome == "WRONG_OUTLET" and expectation is not None:
+            if input_name == "good_outlet_sensor":
+                code = "REJECT_FAILED_WRONG_OUTLET"
+                detail = (
+                    f"NG item {expectation.sequence_id} reached DI7 instead of DI8"
+                )
+            else:
+                code = "GOOD_WRONG_OUTLET"
+                detail = (
+                    f"GOOD item {expectation.sequence_id} reached DI8 instead of DI7"
+                )
+            self._trip_fault(code, detail, recovery=FaultRecovery.PURGE_REQUIRED)
+            return
+        code = (
+            "UNEXPECTED_GOOD_OUTLET"
+            if input_name == "good_outlet_sensor"
+            else "UNEXPECTED_WASTE_OUTLET"
+        )
+        outlet = "DI7" if input_name == "good_outlet_sensor" else "DI8"
+        self._trip_fault(
+            code,
+            f"{outlet} triggered without an eligible outlet expectation",
+            recovery=FaultRecovery.PURGE_REQUIRED,
+        )
 
     def _update_reject_output(self) -> None:
         motion = self._motion_elapsed_s
@@ -813,9 +973,9 @@ class ConveyorLineController:
             self._jam_monitor.reset()
             return
         thresholds = {
-            "end_test_sensor": self.config.end_test_jam_timeout_s,
-            "good_outlet_sensor": self.config.good_jam_timeout_s,
-            "waste_outlet_sensor": self.config.waste_jam_timeout_s,
+            "end_test_sensor": self.config.end_test_blocked_timeout_s,
+            "good_outlet_sensor": self.config.good_outlet_blocked_timeout_s,
+            "waste_outlet_sensor": self.config.waste_outlet_blocked_timeout_s,
         }
         timed_out = self._jam_monitor.first_timeout(
             inputs=self.inputs,
@@ -832,6 +992,45 @@ class ConveyorLineController:
                 f"{name} remained active for {threshold} s",
                 recovery=FaultRecovery.ACKNOWLEDGE,
                 source_input=name,
+            )
+
+    def _monitor_outlet_timeouts(self) -> None:
+        if self.state not in {
+            ConveyorState.RUNNING,
+            ConveyorState.CONTROLLED_STOPPING,
+        }:
+            return
+        expired = self._outlet.first_expired(self._motion_elapsed_s)
+        if expired is None:
+            return
+        if expired.expected_input == "good_outlet_sensor":
+            code = "GOOD_OUTLET_TIMEOUT"
+            detail = f"GOOD item {expired.sequence_id} did not reach DI7 in time"
+        else:
+            code = "WASTE_OUTLET_TIMEOUT"
+            detail = f"NG item {expired.sequence_id} did not reach DI8 in time"
+        self._trip_fault(code, detail, recovery=FaultRecovery.PURGE_REQUIRED)
+
+    def _monitor_front_sensor_spacing(self) -> None:
+        if self.state not in {
+            ConveyorState.RUNNING,
+            ConveyorState.CONTROLLED_STOPPING,
+        }:
+            return
+        maximum_s = max(0.0, self.config.front_sensor_max_active_ms / 1000.0)
+        since = self._front_sensor_active_since_motion_s
+        if (
+            maximum_s <= 0.0
+            or since is None
+            or not self.inputs.get("camera_trigger_sensor", False)
+        ):
+            return
+        if self._motion_elapsed_s - since >= maximum_s:
+            self._trip_fault(
+                "PRODUCT_SPACING_TOO_SMALL",
+                "DI0 remained active beyond the configured product-spacing limit",
+                recovery=FaultRecovery.PURGE_REQUIRED,
+                source_input="camera_trigger_sensor",
             )
 
     def _monitor_fifo_timeout(self) -> None:
@@ -973,6 +1172,14 @@ class ConveyorLineController:
             "ITEM_ARRIVAL_TIMEOUT",
             "BLOW_INTERRUPTED",
             "BLOW_WINDOW_CONFLICT",
+            "GOOD_OUTLET_TIMEOUT",
+            "WASTE_OUTLET_TIMEOUT",
+            "REJECT_FAILED_WRONG_OUTLET",
+            "GOOD_WRONG_OUTLET",
+            "UNEXPECTED_GOOD_OUTLET",
+            "UNEXPECTED_WASTE_OUTLET",
+            "MULTIPLE_PRODUCTS_IN_FOV",
+            "PRODUCT_SPACING_TOO_SMALL",
         }:
             return FaultRecovery.PURGE_REQUIRED
         return FaultRecovery.ACKNOWLEDGE

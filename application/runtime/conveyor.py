@@ -294,6 +294,7 @@ def _run_conveyor_inspection(
     item_results_by_camera: dict[str, list] = {}
     preview_frames: dict[str, object] = {}
     roles: list[str] = []
+    multiple_product_reports: list[str] = []
     trigger_id = f"conveyor-{epoch}-{sequence_id}"
 
     for capture in captured:
@@ -337,6 +338,9 @@ def _run_conveyor_inspection(
                 )
             )
         inspect_ms = (time.perf_counter() - inspect_t0) * 1000.0
+        product_count = _reported_product_count(response)
+        if product_count is not None and product_count > 1:
+            multiple_product_reports.append(f"{role} reported {product_count} products")
         item_results_by_camera[role] = list(response.item_results)
         preview = build_runtime_preview_frame(
             role=role,
@@ -366,7 +370,11 @@ def _run_conveyor_inspection(
         str(getattr(outcome, "result", "") or "").upper() == "OK"
         for outcome in camera_outcomes.values()
     )
-    final_result = "OK" if final_ok else "NG"
+    final_result = (
+        "MULTIPLE_PRODUCTS_IN_FOV"
+        if multiple_product_reports
+        else ("OK" if final_ok else "NG")
+    )
     duration_ms = int((time.perf_counter() - started_at) * 1000.0)
     outcome = runtime_controller_module.FinalInspectionOutcome(
         final_result=final_result,
@@ -388,10 +396,36 @@ def _run_conveyor_inspection(
             if result_object is not None and hasattr(result_object, "summary_text")
             else ""
         )
+        if multiple_product_reports:
+            detail = "; ".join(multiple_product_reports)
     runtime.logAppended.emit(
         f"[conveyor] inspection completed: item={sequence_id}, result={final_result}"
     )
     return final_result, detail
+
+
+def _reported_product_count(response) -> int | None:
+    """Read an optional product-count result without coupling to one algorithm."""
+    keys = ("product_count", "detected_product_count", "instance_count", "object_count")
+    candidates: list[object] = []
+    raw_row = getattr(response, "raw_row", None)
+    if isinstance(raw_row, dict):
+        candidates.extend(raw_row.get(key) for key in keys if key in raw_row)
+        for item_row in list(raw_row.get("item_rows", []) or []):
+            if isinstance(item_row, dict):
+                candidates.extend(item_row.get(key) for key in keys if key in item_row)
+    for measurement in tuple(getattr(response, "measurements", ()) or ()):
+        if isinstance(measurement, dict):
+            candidates.extend(
+                measurement.get(key) for key in keys if key in measurement
+            )
+    reported_counts: list[int] = []
+    for value in candidates:
+        try:
+            reported_counts.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    return max(reported_counts) if reported_counts else None
 
 
 def _show_conveyor_inspection_result(runtime, result: str) -> None:
@@ -485,6 +519,7 @@ __all__ = [
     "_run_conveyor_capture",
     "_on_conveyor_capture_task_finished",
     "_run_conveyor_inspection",
+    "_reported_product_count",
     "_on_conveyor_inspection_task_finished",
     "start_conveyor",
     "stop_conveyor",

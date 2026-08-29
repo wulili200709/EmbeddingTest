@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
-from application.runtime.conveyor import _show_conveyor_inspection_result
+from application.runtime.conveyor import (
+    _reported_product_count,
+    _show_conveyor_inspection_result,
+)
 
 
 class _FakeTowerLightController:
@@ -36,6 +40,24 @@ class ConveyorResultSignalTests(unittest.TestCase):
         runtime = _FakeRuntime()
         _show_conveyor_inspection_result(runtime, "ERROR")
         self.assertEqual(runtime._tower_light_controller.events, ["NG"])
+
+    def test_product_count_reads_nested_algorithm_result(self) -> None:
+        response = SimpleNamespace(
+            raw_row={"item_rows": [{"detected_product_count": 2}]},
+            measurements=(),
+        )
+        self.assertEqual(_reported_product_count(response), 2)
+
+    def test_product_count_uses_largest_reported_value(self) -> None:
+        response = SimpleNamespace(
+            raw_row={"product_count": 1},
+            measurements=({"object_count": "3"},),
+        )
+        self.assertEqual(_reported_product_count(response), 3)
+
+    def test_product_count_is_optional(self) -> None:
+        response = SimpleNamespace(raw_row={}, measurements=())
+        self.assertIsNone(_reported_product_count(response))
 
 
 if __name__ == "__main__":

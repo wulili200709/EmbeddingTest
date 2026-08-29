@@ -67,6 +67,14 @@ _CONVEYOR_FAULT_OPERATOR_TEXT = {
     "OUTPUT_WRITE_FAILED": "输出控制异常",
     "BLOW_INTERRUPTED": "NG吹气被安全联锁中断，必须清线",
     "BLOW_WINDOW_CONFLICT": "GOOD到位时吹气仍开启，必须清线",
+    "GOOD_OUTLET_TIMEOUT": "GOOD产品未在规定时间到达DI7，必须清线",
+    "WASTE_OUTLET_TIMEOUT": "NG产品未在规定时间到达DI8，必须清线",
+    "REJECT_FAILED_WRONG_OUTLET": "NG产品进入GOOD出口，剔除失败",
+    "GOOD_WRONG_OUTLET": "GOOD产品误入废料出口",
+    "UNEXPECTED_GOOD_OUTLET": "DI7检测到未跟踪产品",
+    "UNEXPECTED_WASTE_OUTLET": "DI8检测到未跟踪产品",
+    "MULTIPLE_PRODUCTS_IN_FOV": "单次检测视野中出现多件产品",
+    "PRODUCT_SPACING_TOO_SMALL": "产品间距过小或DI0持续遮挡",
 }
 
 _CONVEYOR_JAM_OPERATOR_TEXT = (
@@ -1831,6 +1839,9 @@ class RuntimeModePage(QtWidgets.QWidget):
         self._last_conveyor_snapshot = payload
         state = str(payload.get("state", "-") or "-")
         fifo_count = int(payload.get("fifo_count", 0) or 0)
+        inflight_count = int(payload.get("inflight_count", fifo_count) or 0)
+        good_outlet_pending = int(payload.get("good_outlet_pending_count", 0) or 0)
+        waste_outlet_pending = int(payload.get("waste_outlet_pending_count", 0) or 0)
         fault_code = str(payload.get("fault_code", "") or "")
         fault_detail = str(payload.get("fault_detail", "") or "")
         fault_recovery = str(payload.get("fault_recovery", "") or "")
@@ -1847,7 +1858,9 @@ class RuntimeModePage(QtWidgets.QWidget):
             payload.get("inputs"),
         )
         self.lbl_conveyor_state.setText(
-            f"皮带: {state_text} | FIFO: {fifo_count}" + (f" | {fault_text}" if fault_text else "")
+            f"皮带: {state_text} | 在途: {inflight_count}"
+            f" (DI1前:{fifo_count} DI7:{good_outlet_pending} DI8:{waste_outlet_pending})"
+            + (f" | {fault_text}" if fault_text else "")
         )
         if fault_code:
             engineering_detail = f"故障代码：{fault_code}"
@@ -1860,7 +1873,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.lbl_conveyor_state.setStyleSheet(
             f"color:{color};font-size:12px;border-left:1px solid #555;padding-left:8px;"
         )
-        self._refresh_fifo_indicators(payload.get("fifo", []))
+        self._refresh_fifo_indicators(payload.get("inflight", payload.get("fifo", [])))
         self.btn_conveyor_start.setEnabled(
             permitted and state in {"READY_STOPPED", "READY_TO_RESUME"}
         )

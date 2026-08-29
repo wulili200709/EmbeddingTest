@@ -71,6 +71,107 @@ class WorkpieceTracker:
 
 
 @dataclass
+class OutletExpectation:
+    sequence_id: int
+    epoch: int
+    inspection_status: InspectionStatus
+    expected_input: str
+    started_motion_s: float
+    earliest_motion_s: float
+    deadline_motion_s: float
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "sequence_id": self.sequence_id,
+            "epoch": self.epoch,
+            "inspection_status": self.inspection_status.value,
+            "expected_input": self.expected_input,
+            "started_motion_s": self.started_motion_s,
+            "earliest_motion_s": self.earliest_motion_s,
+            "deadline_motion_s": self.deadline_motion_s,
+            "tracking_status": (
+                "WAITING_GOOD_OUTLET"
+                if self.expected_input == "good_outlet_sensor"
+                else "WAITING_WASTE_OUTLET"
+            ),
+        }
+
+
+class OutletConfirmationTracker:
+    """Track workpieces from DI1 until their expected outlet edge arrives."""
+
+    def __init__(self) -> None:
+        self.pending: list[OutletExpectation] = []
+
+    def expect(
+        self,
+        record: WorkpieceRecord,
+        *,
+        expected_input: str,
+        motion_s: float,
+        min_run_s: float,
+        max_run_s: float,
+    ) -> OutletExpectation:
+        started = float(motion_s)
+        minimum = max(0.0, float(min_run_s))
+        maximum = max(minimum + 0.001, float(max_run_s))
+        expectation = OutletExpectation(
+            sequence_id=int(record.sequence_id),
+            epoch=int(record.epoch),
+            inspection_status=record.inspection_status,
+            expected_input=str(expected_input),
+            started_motion_s=started,
+            earliest_motion_s=started + minimum,
+            deadline_motion_s=started + maximum,
+        )
+        self.pending.append(expectation)
+        return expectation
+
+    def confirm(
+        self,
+        input_name: str,
+        *,
+        motion_s: float,
+    ) -> tuple[str, OutletExpectation | None]:
+        """Return CONFIRMED, WRONG_OUTLET or UNEXPECTED for an outlet edge."""
+        name = str(input_name)
+        motion = float(motion_s)
+        eligible = [
+            item
+            for item in self.pending
+            if item.earliest_motion_s <= motion <= item.deadline_motion_s
+        ]
+        correct = next(
+            (item for item in eligible if item.expected_input == name),
+            None,
+        )
+        if correct is not None:
+            self.pending.remove(correct)
+            return "CONFIRMED", correct
+        wrong = next(
+            (item for item in eligible if item.expected_input != name),
+            None,
+        )
+        if wrong is not None:
+            return "WRONG_OUTLET", wrong
+        return "UNEXPECTED", None
+
+    def first_expired(self, motion_s: float) -> OutletExpectation | None:
+        motion = float(motion_s)
+        return next(
+            (item for item in self.pending if motion > item.deadline_motion_s),
+            None,
+        )
+
+    def count_for_input(self, input_name: str) -> int:
+        name = str(input_name)
+        return sum(1 for item in self.pending if item.expected_input == name)
+
+    def clear(self) -> None:
+        self.pending.clear()
+
+
+@dataclass
 class RejectWindow:
     sequence_id: int
     start_motion_s: float
@@ -208,6 +309,8 @@ __all__ = [
     "AutoPurgeController",
     "InspectionStatus",
     "JamMonitor",
+    "OutletConfirmationTracker",
+    "OutletExpectation",
     "PurgeContext",
     "RejectBlowController",
     "RejectWindow",
