@@ -109,6 +109,38 @@ class InspectionExecutionResponse:
     measurements: tuple[dict, ...] = field(default_factory=tuple)
 
 
+@dataclass(frozen=True)
+class InspectionExecutionPlan:
+    enabled_items: List[InspectionItem]
+    predicted_items: List[InspectionItem]
+    distance_items: List[InspectionItem]
+
+    @classmethod
+    def from_items(cls, items: List[InspectionItem]) -> "InspectionExecutionPlan":
+        enabled = [item for item in items if item.enabled]
+        return cls(
+            enabled_items=enabled,
+            predicted_items=[item for item in enabled if not _is_post_distance_item(item)],
+            distance_items=[item for item in enabled if _is_post_distance_item(item)],
+        )
+
+
+@dataclass(frozen=True)
+class PrimaryInspectionBatch:
+    item_results: List[InspectionItemResult]
+    enabled_results: List[InspectionItemResult]
+    item_rows: List[dict]
+    rows_by_item_id: dict[str, dict]
+    roi_shapes: tuple[object, ...] = ()
+    timing_breakdown: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class DistanceInspectionBatch:
+    item_results: List[InspectionItemResult]
+    item_rows: List[dict]
+
+
 class InspectionExecutor:
     """
     相机级检测执行器。
@@ -139,137 +171,21 @@ class InspectionExecutor:
                 item_results=[],
             )
 
-        item_results: List[InspectionItemResult] = []
-        item_rows: List[dict] = []
-        enabled_item_results: List[InspectionItemResult] = []
-        enabled_items = [item for item in request.items if item.enabled]
-        predicted_enabled_items = [item for item in enabled_items if not _is_post_distance_item(item)]
-        distance_items = [item for item in enabled_items if _is_post_distance_item(item)]
-        batch_rows: List[dict] | None = None
-        batch_timing_breakdown: dict[str, object] = {}
-        roi_shapes: tuple[object, ...] = ()
-        batch_predict_from_frame = getattr(self._predictor, "predict_items_batch_from_frame", None)
-        batch_predict = getattr(self._predictor, "predict_items_batch", None)
-        if request.image_bgr is not None and callable(batch_predict_from_frame) and predicted_enabled_items:
-            batch_prediction = batch_predict_from_frame(
-                request.image_bgr,
-                camera_role=request.camera_id,
-                items=predicted_enabled_items,
-            )
-            if batch_prediction is not None:
-                batch_rows = [dict(row) for row in list(getattr(batch_prediction, "rows", []) or [])]
-                roi_shapes = tuple(getattr(batch_prediction, "roi_shapes", ()) or ())
-                batch_timing_breakdown = {
-                    str(key): value
-                    for key, value in dict(
-                        getattr(batch_prediction, "timing_breakdown", {}) or {}
-                    ).items()
-                }
-        elif callable(batch_predict) and predicted_enabled_items:
-            batch_rows = [dict(row) for row in batch_predict(request.image_path, items=predicted_enabled_items)]
-        predicted_index = 0
-        rows_by_item_id: dict[str, dict] = {}
+        plan = InspectionExecutionPlan.from_items(request.items)
+        enabled_items = plan.enabled_items
+        primary = self._predict_primary_items(request, plan)
+        item_results = list(primary.item_results)
+        item_rows = list(primary.item_rows)
+        enabled_item_results = list(primary.enabled_results)
+        rows_by_item_id = dict(primary.rows_by_item_id)
+        roi_shapes = tuple(primary.roi_shapes)
+        batch_timing_breakdown = dict(primary.timing_breakdown)
 
-        for item in request.items:
-            if not item.enabled:
-                item_results.append(
-                    InspectionItemResult(
-                        item_id=item.item_id,
-                        display_name=item.display_name,
-                        camera_id=item.camera_id,
-                        roi_label=item.roi_label,
-                        algorithm_code=item.algorithm_code,
-                        enabled=False,
-                        params=dict(item.params or {}),
-                        result="DISABLED",
-                    )
-                )
-                continue
-            if _is_post_distance_item(item):
-                continue
-
-            if batch_rows is not None:
-                row = dict(batch_rows[predicted_index]) if predicted_index < len(batch_rows) else {}
-            else:
-                roi_label = str(item.roi_label or "").strip()
-                labels_override = [roi_label] if roi_label else None
-                row = self._predict_image_for_item(
-                    request.image_path,
-                    labels_override=labels_override,
-                    algorithm_override=item.algorithm_code,
-                    model_key_override=item.model_key,
-                    params_override=dict(item.params or {}),
-                )
-            predicted_index += 1
-            item_rows.append(dict(row))
-            item_key = str(getattr(item, "item_id", "") or "").strip()
-            if item_key:
-                rows_by_item_id[item_key] = dict(row)
-            item_result = InspectionItemResult(
-                item_id=item.item_id,
-                display_name=item.display_name,
-                camera_id=item.camera_id,
-                roi_label=item.roi_label,
-                algorithm_code=item.algorithm_code,
-                enabled=True,
-                params=dict(item.params or {}),
-                result=str(row.get("pred", "NG") or "NG"),
-                detail=self._build_detail(row),
-                value=self._row_value(row),
-                unit=self._row_unit(row),
-            )
-            item_results.append(item_result)
-            enabled_item_results.append(item_result)
-
-        post_distance_results: List[InspectionItemResult] = []
-        for distance_item in distance_items:
-            if _is_center_distance_item(distance_item):
-                distance_row = self._build_center_distance_row(
-                    distance_item=distance_item,
-                    center_items=predicted_enabled_items,
-                    rows_by_item_id=rows_by_item_id,
-                    camera_id=request.camera_id,
-                    image_path=request.image_path,
-                )
-            else:
-                distance_row = self._build_find_line_distance_row(
-                    distance_item=distance_item,
-                    line_items=predicted_enabled_items,
-                    line_rows_by_item_id=rows_by_item_id,
-                    camera_id=request.camera_id,
-                    image_path=request.image_path,
-                )
-            if distance_row is None:
-                distance_algorithm = str(getattr(distance_item, "algorithm_code", "") or "").strip() or "line_distance"
-                pair_detail = "center distance pair missing" if _is_center_distance_item(distance_item) else "line distance pair missing"
-                distance_row = {
-                    "file_path": request.image_path,
-                    "file_name": str(distance_item.display_name or distance_item.item_id or "Distance"),
-                    "pred": "NG",
-                    "detail": pair_detail,
-                    "algorithm": distance_algorithm,
-                    "tool_name": str(distance_item.display_name or distance_item.item_id or "Distance"),
-                    "camera_id": request.camera_id,
-                    "roi_label": str(distance_item.roi_label or ""),
-                    "params": dict(distance_item.params or {}),
-                }
-            item_rows.append(dict(distance_row))
-            distance_result = InspectionItemResult(
-                item_id=distance_item.item_id,
-                display_name=distance_item.display_name,
-                camera_id=distance_item.camera_id,
-                roi_label=distance_item.roi_label,
-                algorithm_code=distance_item.algorithm_code,
-                enabled=True,
-                params=dict(distance_item.params or {}),
-                result=str(distance_row.get("pred", "NG") or "NG"),
-                detail=self._build_detail(distance_row),
-                value=self._row_value(distance_row),
-                unit=self._row_unit(distance_row),
-            )
-            item_results.append(distance_result)
-            enabled_item_results.append(distance_result)
-            post_distance_results.append(distance_result)
+        distance = self._evaluate_distance_items(request, plan, rows_by_item_id)
+        post_distance_results = list(distance.item_results)
+        item_rows.extend(distance.item_rows)
+        item_results.extend(post_distance_results)
+        enabled_item_results.extend(post_distance_results)
 
         if not enabled_item_results:
             return InspectionExecutionResponse(
@@ -366,6 +282,172 @@ class InspectionExecutor:
             roi_shapes=roi_shapes,
             measurements=measurements,
         )
+
+    def _predict_primary_items(
+        self,
+        request: InspectionExecutionRequest,
+        plan: InspectionExecutionPlan,
+    ) -> PrimaryInspectionBatch:
+        batch_rows: List[dict] | None = None
+        timing_breakdown: dict[str, object] = {}
+        roi_shapes: tuple[object, ...] = ()
+        batch_predict_from_frame = getattr(self._predictor, "predict_items_batch_from_frame", None)
+        batch_predict = getattr(self._predictor, "predict_items_batch", None)
+        if request.image_bgr is not None and callable(batch_predict_from_frame) and plan.predicted_items:
+            batch_prediction = batch_predict_from_frame(
+                request.image_bgr,
+                camera_role=request.camera_id,
+                items=plan.predicted_items,
+            )
+            if batch_prediction is not None:
+                batch_rows = [
+                    dict(row)
+                    for row in list(getattr(batch_prediction, "rows", []) or [])
+                ]
+                roi_shapes = tuple(getattr(batch_prediction, "roi_shapes", ()) or ())
+                timing_breakdown = {
+                    str(key): value
+                    for key, value in dict(
+                        getattr(batch_prediction, "timing_breakdown", {}) or {}
+                    ).items()
+                }
+        elif callable(batch_predict) and plan.predicted_items:
+            batch_rows = [
+                dict(row)
+                for row in batch_predict(request.image_path, items=plan.predicted_items)
+            ]
+
+        item_results: List[InspectionItemResult] = []
+        enabled_results: List[InspectionItemResult] = []
+        item_rows: List[dict] = []
+        rows_by_item_id: dict[str, dict] = {}
+        predicted_index = 0
+        for item in request.items:
+            if not item.enabled:
+                item_results.append(
+                    InspectionItemResult(
+                        item_id=item.item_id,
+                        display_name=item.display_name,
+                        camera_id=item.camera_id,
+                        roi_label=item.roi_label,
+                        algorithm_code=item.algorithm_code,
+                        enabled=False,
+                        params=dict(item.params or {}),
+                        result="DISABLED",
+                    )
+                )
+                continue
+            if _is_post_distance_item(item):
+                continue
+
+            if batch_rows is not None:
+                row = dict(batch_rows[predicted_index]) if predicted_index < len(batch_rows) else {}
+            else:
+                roi_label = str(item.roi_label or "").strip()
+                row = self._predict_image_for_item(
+                    request.image_path,
+                    labels_override=[roi_label] if roi_label else None,
+                    algorithm_override=item.algorithm_code,
+                    model_key_override=item.model_key,
+                    params_override=dict(item.params or {}),
+                )
+            predicted_index += 1
+            item_rows.append(dict(row))
+            item_key = str(getattr(item, "item_id", "") or "").strip()
+            if item_key:
+                rows_by_item_id[item_key] = dict(row)
+            item_result = InspectionItemResult(
+                item_id=item.item_id,
+                display_name=item.display_name,
+                camera_id=item.camera_id,
+                roi_label=item.roi_label,
+                algorithm_code=item.algorithm_code,
+                enabled=True,
+                params=dict(item.params or {}),
+                result=str(row.get("pred", "NG") or "NG"),
+                detail=self._build_detail(row),
+                value=self._row_value(row),
+                unit=self._row_unit(row),
+            )
+            item_results.append(item_result)
+            enabled_results.append(item_result)
+
+        return PrimaryInspectionBatch(
+            item_results=item_results,
+            enabled_results=enabled_results,
+            item_rows=item_rows,
+            rows_by_item_id=rows_by_item_id,
+            roi_shapes=roi_shapes,
+            timing_breakdown=timing_breakdown,
+        )
+
+    def _evaluate_distance_items(
+        self,
+        request: InspectionExecutionRequest,
+        plan: InspectionExecutionPlan,
+        rows_by_item_id: dict[str, dict],
+    ) -> DistanceInspectionBatch:
+        item_results: List[InspectionItemResult] = []
+        item_rows: List[dict] = []
+        for distance_item in plan.distance_items:
+            if _is_center_distance_item(distance_item):
+                row = self._build_center_distance_row(
+                    distance_item=distance_item,
+                    center_items=plan.predicted_items,
+                    rows_by_item_id=rows_by_item_id,
+                    camera_id=request.camera_id,
+                    image_path=request.image_path,
+                )
+            else:
+                row = self._build_find_line_distance_row(
+                    distance_item=distance_item,
+                    line_items=plan.predicted_items,
+                    line_rows_by_item_id=rows_by_item_id,
+                    camera_id=request.camera_id,
+                    image_path=request.image_path,
+                )
+            if row is None:
+                algorithm = (
+                    str(getattr(distance_item, "algorithm_code", "") or "").strip()
+                    or "line_distance"
+                )
+                pair_detail = (
+                    "center distance pair missing"
+                    if _is_center_distance_item(distance_item)
+                    else "line distance pair missing"
+                )
+                row = {
+                    "file_path": request.image_path,
+                    "file_name": str(
+                        distance_item.display_name or distance_item.item_id or "Distance"
+                    ),
+                    "pred": "NG",
+                    "detail": pair_detail,
+                    "algorithm": algorithm,
+                    "tool_name": str(
+                        distance_item.display_name or distance_item.item_id or "Distance"
+                    ),
+                    "camera_id": request.camera_id,
+                    "roi_label": str(distance_item.roi_label or ""),
+                    "params": dict(distance_item.params or {}),
+                }
+            item_rows.append(dict(row))
+            item_results.append(
+                InspectionItemResult(
+                    item_id=distance_item.item_id,
+                    display_name=distance_item.display_name,
+                    camera_id=distance_item.camera_id,
+                    roi_label=distance_item.roi_label,
+                    algorithm_code=distance_item.algorithm_code,
+                    enabled=True,
+                    params=dict(distance_item.params or {}),
+                    result=str(row.get("pred", "NG") or "NG"),
+                    detail=self._build_detail(row),
+                    value=self._row_value(row),
+                    unit=self._row_unit(row),
+                )
+            )
+        return DistanceInspectionBatch(item_results=item_results, item_rows=item_rows)
 
     def _predict_image_for_item(self, path: str, **kwargs) -> dict:
         try:

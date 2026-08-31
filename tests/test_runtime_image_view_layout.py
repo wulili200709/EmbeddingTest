@@ -32,6 +32,12 @@ class RuntimeImageViewLayoutTests(unittest.TestCase):
         self.assertEqual(view.minimumHeight(), 120)
         self.assertEqual(view.pixmap().size(), view.size())
 
+    def test_runtime_ui_builder_is_split_into_stable_sections(self) -> None:
+        self.assertTrue(hasattr(RuntimeModePage, "_build_header_ui"))
+        self.assertTrue(hasattr(RuntimeModePage, "_build_runtime_body_ui"))
+        self.assertTrue(hasattr(RuntimeModePage, "_build_footer_ui"))
+        self.assertTrue(hasattr(RuntimeModePage, "_build_compatibility_controls"))
+
     def test_conveyor_controls_and_fifo_lights_follow_runtime_state(self) -> None:
         page = RuntimeModePage()
         self.assertTrue(page.btn_conveyor_start.isHidden())
@@ -149,6 +155,18 @@ class RuntimeImageViewLayoutTests(unittest.TestCase):
         self.assertTrue(page.btn_trigger_cam1.isHidden())
         self.assertTrue(page.btn_trigger_cam2.isHidden())
         self.assertTrue(page.btn_trigger_cam3.isHidden())
+
+    def test_runtime_status_sanitizer_removes_duplicate_timing_tokens(self) -> None:
+        self.assertEqual(
+            RuntimeModePage._sanitize_runtime_status_text(
+                "检测完成； capture=12.1ms, match: 3ms；infer 4.5ms, total=19.6ms"
+            ),
+            "检测完成",
+        )
+        self.assertEqual(
+            RuntimeModePage._sanitize_runtime_status_text("处理：10ms；等待下一件"),
+            "等待下一件",
+        )
 
 
 if __name__ == "__main__":

@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 from PySide6 import QtCore
 
 from common.camera_roles import CAMERA_ROLES, camera_index_for_role
-from . import bindings
 from .capture_channels import (
     is_single_multi_light_mode,
     physical_connected_bindings,
@@ -26,6 +25,11 @@ from .capture_policy import (
     normalize_capture_retention_policy,
     retained_capture_paths_for_policy,
 )
+from .status_bus import RuntimeStatusService
+from .conveyor_service import RuntimeConveyorService
+from .hardware_service import RuntimeHardwareService
+from .execution_service import RuntimeExecutionService
+from .operation_mixins import RuntimeConveyorMixin, RuntimeExecutionMixin, RuntimeHardwareMixin
 
 _RUN_STATE_ZH_FOR_STATUS = {
     "WaitingTrigger": "等待触发",
@@ -158,7 +162,12 @@ class _UiOnlyTowerLightController:
 # RuntimeController
 # ---------------------------------------------------------------------------
 
-class RuntimeController(QtCore.QObject):
+class RuntimeController(
+    RuntimeConveyorMixin,
+    RuntimeHardwareMixin,
+    RuntimeExecutionMixin,
+    QtCore.QObject,
+):
     """
     运行链路业务控制器。
 
@@ -225,6 +234,10 @@ class RuntimeController(QtCore.QObject):
         self._session = session
         self._algo = algo
         self._runtime_context = runtime_context
+        self._status_service = RuntimeStatusService(self)
+        self._conveyor_service = RuntimeConveyorService(self)
+        self._hardware_service = RuntimeHardwareService(self)
+        self._execution_service = RuntimeExecutionService(self)
         self._import_error = import_error
         self._release_password = release_password
         self._lock_on_ng = bool(lock_on_ng)
@@ -1007,18 +1020,31 @@ class RuntimeController(QtCore.QObject):
     def connected_physical_bindings(self) -> dict[str, str]:
         return physical_connected_bindings(self)
 
-    # ------------------------------------------------------------------
-    # 内部：构建运行链路
-    # ------------------------------------------------------------------
+    # Explicit delegates keep controller APIs stable while status behavior is
+    # owned by a separately testable collaborator.
+    def _update_status(self, message=None) -> None:
+        self._status_service.update_status(message)
 
+    def _connected_roles(self) -> list[str]:
+        return self._status_service.connected_roles()
 
-    # ------------------------------------------------------------------
-    # 内部：检测回调
-    # ------------------------------------------------------------------
+    def _required_roles(self) -> list[str]:
+        return self._status_service.required_roles()
 
+    def _current_item_signature(self):
+        return self._status_service.current_item_signature()
 
-    # ------------------------------------------------------------------
-    # 内部：统一状态推送（替代原 _refresh_runtime_status_ui）
-    # ------------------------------------------------------------------
+    def _result_item_signature(self):
+        return self._status_service.result_item_signature()
 
-bindings.bind_runtime_controller(RuntimeController)
+    def _runtime_result_is_stale(self) -> bool:
+        return self._status_service.runtime_result_is_stale()
+
+    def _emit_runtime_context(self) -> None:
+        self._status_service.emit_runtime_context()
+
+    def _build_pending_runtime_result(self, *, status: str):
+        return self._status_service.build_pending_runtime_result(status=status)
+
+    def _current_runtime_state_text(self) -> str:
+        return self._status_service.current_runtime_state_text()

@@ -19,6 +19,7 @@ _SYMBOL_TO_MODULE = {
     "aggregate_runtime_outcome": ".result_aggregator",
     "build_pending_result": ".result_aggregator",
     "recipe_name_from_path": ".result_aggregator",
+    "ConveyorSnapshot": ".conveyor_line",
 }
 
 __all__ = sorted(_SYMBOL_TO_MODULE.keys())

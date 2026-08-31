@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import math
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Callable, Mapping
@@ -68,6 +69,82 @@ class ConveyorConfig:
     purge_quiet_s: float = 2.0
     purge_max_run_s: float = 30.0
 
+    _INTEGER_FIELDS = (
+        "poll_interval_ms",
+        "debounce_ms",
+        "capture_commit_guard_ms",
+        "controlled_stop_timeout_ms",
+        "reject_blow_delay_ms",
+        "reject_blow_duration_ms",
+        "max_inflight_items",
+        "front_to_reject_max_run_ms",
+        "front_sensor_max_active_ms",
+        "front_sensor_min_clear_ms",
+        "good_outlet_arrival_min_run_ms",
+        "good_outlet_arrival_max_run_ms",
+        "waste_outlet_arrival_min_run_ms",
+        "waste_outlet_arrival_max_run_ms",
+        "purge_air_lead_ms",
+    )
+    _FLOAT_FIELDS = (
+        "end_test_blocked_timeout_s",
+        "good_outlet_blocked_timeout_s",
+        "waste_outlet_blocked_timeout_s",
+        "purge_min_run_s",
+        "purge_tail_run_s",
+        "purge_quiet_s",
+        "purge_max_run_s",
+    )
+    _BOOLEAN_FIELDS = (
+        "end_test_sensor_enabled",
+        "upper_door_sensor_enabled",
+    )
+
+    def __post_init__(self) -> None:
+        for name in self._INTEGER_FIELDS:
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"{name} must be an integer")
+            if value < 0:
+                raise ValueError(f"{name} must be greater than or equal to 0")
+
+        for name in self._FLOAT_FIELDS:
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError(f"{name} must be a number")
+            if not math.isfinite(float(value)) or float(value) < 0.0:
+                raise ValueError(f"{name} must be a finite number greater than or equal to 0")
+
+        for name in self._BOOLEAN_FIELDS:
+            if not isinstance(getattr(self, name), bool):
+                raise TypeError(f"{name} must be a boolean")
+
+        if self.poll_interval_ms <= 0:
+            raise ValueError("poll_interval_ms must be greater than 0")
+        if self.max_inflight_items <= 0:
+            raise ValueError("max_inflight_items must be greater than 0")
+        self._validate_time_window(
+            "good_outlet_arrival",
+            self.good_outlet_arrival_min_run_ms,
+            self.good_outlet_arrival_max_run_ms,
+        )
+        self._validate_time_window(
+            "waste_outlet_arrival",
+            self.waste_outlet_arrival_min_run_ms,
+            self.waste_outlet_arrival_max_run_ms,
+        )
+        if self.purge_min_run_s > self.purge_max_run_s:
+            raise ValueError("purge_min_run_s must not exceed purge_max_run_s")
+        if self.purge_tail_run_s > self.purge_max_run_s:
+            raise ValueError("purge_tail_run_s must not exceed purge_max_run_s")
+        if self.purge_quiet_s > self.purge_max_run_s:
+            raise ValueError("purge_quiet_s must not exceed purge_max_run_s")
+
+    @staticmethod
+    def _validate_time_window(name: str, minimum: int, maximum: int) -> None:
+        if minimum > maximum:
+            raise ValueError(f"{name}_min_run_ms must not exceed {name}_max_run_ms")
+
     @classmethod
     def from_mapping(cls, payload: Mapping[str, object] | None) -> "ConveyorConfig":
         values = dict(payload or {})
@@ -83,6 +160,11 @@ class ConveyorConfig:
             "good_outlet_jam_s": "good_outlet_blocked_timeout_s",
             "waste_outlet_jam_s": "waste_outlet_blocked_timeout_s",
         }
+        known = cls.__dataclass_fields__
+        allowed_keys = set(known) | set(aliases) | {"item_to_reject_timeout_s", "_comments"}
+        unknown_keys = sorted(str(key) for key in values if key not in allowed_keys)
+        if unknown_keys:
+            raise ValueError(f"unknown conveyor configuration field(s): {', '.join(unknown_keys)}")
         for old_name, canonical_name in aliases.items():
             if canonical_name not in values and old_name in values:
                 values[canonical_name] = values[old_name]
@@ -90,7 +172,6 @@ class ConveyorConfig:
             values["front_to_reject_max_run_ms"] = int(
                 float(values["item_to_reject_timeout_s"]) * 1000.0
             )
-        known = cls.__dataclass_fields__
         return cls(**{key: values[key] for key in known if key in values})
 
     @classmethod
@@ -145,6 +226,41 @@ class ConveyorConfig:
     @property
     def waste_jam_timeout_s(self) -> float:
         return self.waste_outlet_blocked_timeout_s
+
+
+@dataclass(frozen=True)
+class ConveyorSnapshot:
+    state: str
+    run_permitted: bool
+    io_ready: bool
+    safety_ok: bool
+    door_closed: bool
+    door_lower_closed: bool
+    door_upper_closed: bool
+    fault_code: str
+    fault_detail: str
+    fault_recovery: str
+    fault_input: str
+    manual_operations_permitted: bool
+    configuration_operations_permitted: bool
+    fifo_count: int
+    outlet_pending_count: int
+    good_outlet_pending_count: int
+    waste_outlet_pending_count: int
+    inflight_count: int
+    capture_pending_count: int
+    fifo: list[dict[str, object]]
+    outlet_pending: list[dict[str, object]]
+    inflight: list[dict[str, object]]
+    epoch: int
+    motion_elapsed_s: float
+    outputs: dict[str, bool]
+    inputs: dict[str, bool]
+    purge_active: bool
+    purge_paused: bool
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
 
 
 OutputWriter = Callable[[str, bool], None]
@@ -608,45 +724,45 @@ class ConveyorLineController:
             self._publish()
 
     def snapshot(self) -> dict[str, object]:
+        return self.snapshot_model().to_dict()
+
+    def snapshot_model(self) -> ConveyorSnapshot:
         with self._lock:
-            return {
-                "state": self.state.value,
-                "run_permitted": self.run_permitted,
-                "io_ready": self._io_ready,
-                "safety_ok": self.inputs.get("safety_ok", False),
-                "door_closed": self._doors_closed(),
-                "door_lower_closed": self.inputs.get("door_closed", False),
-                "door_upper_closed": self.inputs.get("door_upper_closed", False),
-                "fault_code": self._fault_code,
-                "fault_detail": self._fault_detail,
-                "fault_recovery": self._fault_recovery.value,
-                "fault_input": self._fault_input,
-                "manual_operations_permitted": self.manual_operations_permitted,
-                "configuration_operations_permitted": self.configuration_operations_permitted,
-                "fifo_count": len(self.fifo),
-                "outlet_pending_count": len(self._outlet.pending),
-                "good_outlet_pending_count": self._outlet.count_for_input(
-                    "good_outlet_sensor"
-                ),
-                "waste_outlet_pending_count": self._outlet.count_for_input(
-                    "waste_outlet_sensor"
-                ),
-                "inflight_count": len(self.fifo) + len(self._outlet.pending),
-                "capture_pending_count": len(self._active_captures),
-                "fifo": [record.to_dict() for record in self.fifo],
-                "outlet_pending": [item.to_dict() for item in self._outlet.pending],
-                "inflight": [record.to_dict() for record in self.fifo]
-                + [item.to_dict() for item in self._outlet.pending],
-                "epoch": self.epoch,
-                "motion_elapsed_s": self._motion_elapsed_s,
-                "outputs": dict(self.outputs),
-                "inputs": dict(self.inputs),
-                "purge_active": self.state in {
+            fifo = [record.to_dict() for record in self.fifo]
+            outlet_pending = [item.to_dict() for item in self._outlet.pending]
+            return ConveyorSnapshot(
+                state=self.state.value,
+                run_permitted=self.run_permitted,
+                io_ready=self._io_ready,
+                safety_ok=self.inputs.get("safety_ok", False),
+                door_closed=self._doors_closed(),
+                door_lower_closed=self.inputs.get("door_closed", False),
+                door_upper_closed=self.inputs.get("door_upper_closed", False),
+                fault_code=self._fault_code,
+                fault_detail=self._fault_detail,
+                fault_recovery=self._fault_recovery.value,
+                fault_input=self._fault_input,
+                manual_operations_permitted=self.manual_operations_permitted,
+                configuration_operations_permitted=self.configuration_operations_permitted,
+                fifo_count=len(fifo),
+                outlet_pending_count=len(outlet_pending),
+                good_outlet_pending_count=self._outlet.count_for_input("good_outlet_sensor"),
+                waste_outlet_pending_count=self._outlet.count_for_input("waste_outlet_sensor"),
+                inflight_count=len(fifo) + len(outlet_pending),
+                capture_pending_count=len(self._active_captures),
+                fifo=fifo,
+                outlet_pending=outlet_pending,
+                inflight=fifo + outlet_pending,
+                epoch=self.epoch,
+                motion_elapsed_s=self._motion_elapsed_s,
+                outputs=dict(self.outputs),
+                inputs=dict(self.inputs),
+                purge_active=self.state in {
                     ConveyorState.PURGE_PREPARING,
                     ConveyorState.PURGE_RUNNING,
                 },
-                "purge_paused": self.state == ConveyorState.PURGE_PAUSED,
-            }
+                purge_paused=self.state == ConveyorState.PURGE_PAUSED,
+            )
 
     def shutdown(self) -> None:
         with self._lock:
@@ -1129,12 +1245,20 @@ class ConveyorLineController:
         self._fault_recovery = FaultRecovery.RECONNECT_IO
         self._fault_input = ""
         self.state = ConveyorState.FAULT_STOPPED
+        safe_off_failures: list[str] = []
         for safe_name in ("conveyor_run", "waste_removal"):
             self.outputs[safe_name] = False
             try:
                 self._write_output_callback(safe_name, False)
-            except Exception:
-                pass
+            except Exception as safe_exc:
+                safe_off_failures.append(f"{safe_name}: {safe_exc}")
+        if safe_off_failures:
+            failure_detail = "; ".join(safe_off_failures)
+            self._fault_detail = (
+                f"{self._fault_detail}; safe-off failed, physical output state unknown: "
+                f"{failure_detail}"
+            )
+        self._log(f"fault {self._fault_code}: {self._fault_detail}")
 
     def _advance_motion_clock(self, now: float) -> None:
         delta = max(0.0, float(now) - self._last_tick_at)
@@ -1213,6 +1337,7 @@ class ConveyorLineController:
 __all__ = [
     "ConveyorConfig",
     "ConveyorLineController",
+    "ConveyorSnapshot",
     "ConveyorState",
     "FaultRecovery",
     "InspectionStatus",

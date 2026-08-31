@@ -28,6 +28,39 @@ class AutoRoiValidation:
     issue: Optional[AutoRoiIssue] = None
 
 
+@dataclass(frozen=True)
+class AutoRoiExecutionSpec:
+    method: str
+    labels: tuple[str, ...]
+    ref_image: str
+    product_dir: str
+    camera_role: str
+
+    def payload(
+        self,
+        paths: Iterable[str],
+        *,
+        only_missing: bool,
+        pre_resolved: bool,
+    ) -> dict[str, object]:
+        return {
+            "paths": [str(path) for path in paths if str(path)],
+            "labels": list(self.labels),
+            "method": self.method,
+            "ref_image": self.ref_image,
+            "product_dir": self.product_dir,
+            "camera_role": self.camera_role,
+            "only_missing": bool(only_missing),
+            "pre_resolved": bool(pre_resolved),
+        }
+
+
+@dataclass(frozen=True)
+class AutoRoiSpecResult:
+    spec: AutoRoiExecutionSpec | None
+    issue: AutoRoiIssue | None = None
+
+
 def recipe_region_labels(reference_regions: Iterable[Mapping[str, object]] | None) -> set[str]:
     labels = {
         str(region.get("output_label") or region.get("reference_label") or "").strip()
@@ -130,6 +163,41 @@ def validate_autogen_reference(
     if labelme_io.try_read_xywh_from_labelme(ref_json, "roi") is None:
         return AutoRoiValidation(ok=False, labels=["roi"], issue=AutoRoiIssue("auto.reference_missing_roi"))
     return AutoRoiValidation(ok=True, labels=["roi"])
+
+
+def build_auto_roi_spec(
+    *,
+    method: str,
+    ref_image: str,
+    product_dir: str,
+    camera_role: str,
+    labels: Iterable[str] = (),
+    shape_model_path: str = "",
+    reference_regions: Iterable[Mapping[str, object]] | None = None,
+    ncc_model_path: str = "",
+) -> AutoRoiSpecResult:
+    normalized_method = str(method or "").strip().lower()
+    normalized_labels = [str(label).strip() for label in labels if str(label).strip()]
+    validation = validate_autogen_reference(
+        method=normalized_method,
+        ref_image=ref_image,
+        shape_model_path=shape_model_path,
+        shape_labels=normalized_labels,
+        reference_regions=reference_regions,
+        ncc_model_path=ncc_model_path,
+        ncc_labels=normalized_labels,
+    )
+    if not validation.ok:
+        return AutoRoiSpecResult(spec=None, issue=validation.issue)
+    return AutoRoiSpecResult(
+        spec=AutoRoiExecutionSpec(
+            method=normalized_method,
+            labels=tuple(validation.labels or normalized_labels or ["roi"]),
+            ref_image=str(ref_image or ""),
+            product_dir=str(product_dir or ""),
+            camera_role=str(camera_role or "cam1"),
+        )
+    )
 
 
 def run_auto_roi_batch(

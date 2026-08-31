@@ -16,6 +16,15 @@ from .capture_policy import DEFAULT_LIGHT_STABLE_MS
 from .capture_channels import physical_connected_roles
 
 
+def _log_cleanup_failure(runtime, component: str, exc: Exception) -> None:
+    message = f"[hardware] {component} cleanup failed: {exc}"
+    try:
+        runtime.logAppended.emit(message)
+    except Exception:
+        # Logging must never prevent the remaining outputs from being made safe.
+        return
+
+
 def _load_nkio_runtime_options(mapping_path: Path) -> dict[str, str]:
     try:
         payload = json.loads(mapping_path.read_text(encoding="utf-8"))
@@ -180,15 +189,14 @@ def _initialize_startup_io(runtime, force: bool = False) -> bool:
         return False
     if runtime._io_controller is not None and getattr(runtime._io_controller, "is_open", False) and not force:
         runtime._emit_io_status(True, runtime._io_status_detail or "real IO ready", runtime._io_controller)
-        runtime._start_di_poller_if_available()
-        return True
+        return bool(runtime._start_di_poller_if_available())
     if runtime._io_controller is not None:
         runtime._close_io_controller()
     runtime._io_controller = runtime._try_create_io_controller()
     ready = runtime._io_controller is not None
     if ready:
-        runtime._start_di_poller_if_available()
-    return ready
+        return bool(runtime._start_di_poller_if_available())
+    return False
 
 
 def _close_io_controller(runtime) -> None:
@@ -196,33 +204,33 @@ def _close_io_controller(runtime) -> None:
     if hasattr(runtime._tower_light_controller, "close"):
         try:
             runtime._tower_light_controller.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_cleanup_failure(runtime, "tower light", exc)
     if hasattr(runtime._light_controller, "turn_off_all"):
         try:
             runtime._light_controller.turn_off_all()
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_cleanup_failure(runtime, "light source", exc)
     if runtime._io_controller is not None:
         try:
             if hasattr(runtime._tower_light_controller, "all_off"):
                 runtime._tower_light_controller.all_off()
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_cleanup_failure(runtime, "tower light all-off", exc)
         try:
             runtime._io_controller.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_cleanup_failure(runtime, "IO controller", exc)
     runtime._output_arbiter = None
     runtime._emit_io_status(False, runtime._io_status_detail or "IO closed")
 
 
-def _start_di_poller_if_available(runtime) -> None:
+def _start_di_poller_if_available(runtime) -> bool:
     from . import controller as runtime_controller_module
 
     runtime._stop_di_poller()
     if runtime._io_controller is None or runtime_controller_module.DiMonitor is None:
-        return
+        return False
     try:
         config = runtime._load_conveyor_config()
         poller = runtime_controller_module.DiMonitor(
@@ -237,9 +245,15 @@ def _start_di_poller_if_available(runtime) -> None:
         runtime._initialize_conveyor_controller(poller.snapshot())
     except Exception as exc:
         runtime.logAppended.emit(f"[IO] failed to start foot-switch DI monitor: {exc}")
-        return
+        runtime._emit_io_status(
+            False,
+            f"conveyor control unavailable: {exc}",
+            runtime._io_controller,
+        )
+        return False
     runtime._di_poller = poller
     runtime.logAppended.emit("[IO] conveyor DI monitor started")
+    return True
 
 
 def _stop_di_poller(runtime) -> None:
@@ -413,8 +427,8 @@ def reset_all_camera_triggers_off(runtime) -> None:
     finally:
         try:
             manager.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_cleanup_failure(runtime, "camera manager", exc)
 
     if failures:
         runtime.logAppended.emit("[camera] startup trigger reset partial failure")

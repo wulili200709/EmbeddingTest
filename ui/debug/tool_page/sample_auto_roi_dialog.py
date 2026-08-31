@@ -7,9 +7,9 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from application.auto_roi_service import (
     AutoRoiIssue,
+    build_auto_roi_spec,
     missing_roi_files as service_missing_roi_files,
     run_auto_roi_batch,
-    validate_autogen_reference,
 )
 from ui.i18n import tr
 
@@ -260,7 +260,10 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
         role = self._camera_role()
         method_getter = getattr(tool_page, "loc_method_for_role", None)
         method = method_getter(role) if callable(method_getter) else tool_page.loc_method
-        labels: List[str]
+        labels: List[str] = ["roi"]
+        shape_model_path = ""
+        ncc_model_path = ""
+        reference_regions = None
         pre_resolved = False
 
         if method == "shape":
@@ -288,34 +291,31 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
                             )
                             tool_page.lbl_ref.setToolTip(ref_image)
             labels = tool_page._shape_output_labels(role)
-            validation = validate_autogen_reference(
-                method=method,
-                ref_image=ref_image,
-                shape_model_path=tool_page.shape_model_path_for_role(role),
-                shape_labels=labels,
-                reference_regions=recipe.reference_regions,
-            )
+            shape_model_path = tool_page.shape_model_path_for_role(role)
+            reference_regions = recipe.reference_regions
         elif method == "ncc":
             labels = tool_page._ncc_output_labels(role)
-            validation = validate_autogen_reference(
-                method=method,
-                ref_image="",
-                ncc_model_path=tool_page.ncc_model_path_for_role(role),
-                ncc_labels=labels,
-            )
-        else:
-            validation = validate_autogen_reference(method=method, ref_image=ref_image)
-            labels = validation.labels
+            ncc_model_path = tool_page.ncc_model_path_for_role(role)
 
-        if not validation.ok:
-            issue = validation.issue
+        spec_result = build_auto_roi_spec(
+            method=method,
+            ref_image=ref_image,
+            product_dir=tool_page.session.product_dir,
+            camera_role=role,
+            labels=labels,
+            shape_model_path=shape_model_path,
+            reference_regions=reference_regions,
+            ncc_model_path=ncc_model_path,
+        )
+        if spec_result.spec is None:
+            issue = spec_result.issue
             QtWidgets.QMessageBox.warning(
                 self,
                 tr("common.info"),
                 _auto_roi_issue_text(issue) if issue is not None else tr("common.error"),
             )
             return None
-        labels = validation.labels
+        spec = spec_result.spec
 
         resolved_paths = list(paths)
         if not only_missing:
@@ -329,16 +329,11 @@ class _SampleAnnotationAutoRoiDialog(QtWidgets.QDialog):
             if not resolved_paths:
                 return None
 
-        return {
-            "paths": resolved_paths,
-            "labels": labels,
-            "method": method,
-            "ref_image": ref_image,
-            "product_dir": tool_page.session.product_dir,
-            "camera_role": role,
-            "only_missing": bool(only_missing),
-            "pre_resolved": pre_resolved,
-        }
+        return spec.payload(
+            resolved_paths,
+            only_missing=only_missing,
+            pre_resolved=pre_resolved,
+        )
 
     def _start_autogen_job(self, paths: List[str], *, only_missing: bool) -> None:
         if self._autogen_running:

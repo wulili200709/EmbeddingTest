@@ -12,9 +12,9 @@ from common.app_logging import get_app_logger
 
 from application.auto_roi_service import (
     AutoRoiIssue,
+    build_auto_roi_spec,
     missing_roi_files as service_missing_roi_files,
     run_auto_roi_batch,
-    validate_autogen_reference,
 )
 from ui.debug.tool_page.camera_roles import filter_paths_for_camera as _filter_paths_for_camera
 from ui.i18n import tr
@@ -98,6 +98,9 @@ def _autogen_roi_for_images(
         return
     ref_image = self.ref_image
     labels: List[str] = ["roi"]
+    shape_model_path = ""
+    ncc_model_path = ""
+    reference_regions = None
     role = self.current_camera_role() if camera_role is None else str(camera_role)
     method_getter = getattr(self, "loc_method_for_role", None)
     method = method_getter(role) if callable(method_getter) else self.loc_method
@@ -124,33 +127,32 @@ def _autogen_roi_for_images(
                         self.lbl_ref.setText(f"{tr('debug.reference_image')}: {os.path.basename(ref_image)}")
                         self.lbl_ref.setToolTip(ref_image)
         labels = self._shape_output_labels(role)
-        validation = validate_autogen_reference(
-            method=method,
-            ref_image=ref_image,
-            shape_model_path=self.shape_model_path_for_role(role),
-            shape_labels=labels,
-            reference_regions=recipe.reference_regions,
-        )
+        shape_model_path = self.shape_model_path_for_role(role)
+        reference_regions = recipe.reference_regions
     elif method == "ncc":
         labels = self._ncc_output_labels(role)
-        validation = validate_autogen_reference(
-            method=method,
-            ref_image="",
-            ncc_model_path=self.ncc_model_path_for_role(role),
-            ncc_labels=labels,
-        )
-    else:
-        validation = validate_autogen_reference(method=method, ref_image=ref_image)
+        ncc_model_path = self.ncc_model_path_for_role(role)
 
-    if not validation.ok:
-        issue = validation.issue
+    spec_result = build_auto_roi_spec(
+        method=method,
+        ref_image=ref_image,
+        product_dir=self.session.product_dir,
+        camera_role=role,
+        labels=labels,
+        shape_model_path=shape_model_path,
+        reference_regions=reference_regions,
+        ncc_model_path=ncc_model_path,
+    )
+    if spec_result.spec is None:
+        issue = spec_result.issue
         QtWidgets.QMessageBox.warning(
             self,
             tr("common.info"),
             _auto_roi_issue_text(issue) if issue is not None else tr("common.error"),
         )
         return
-    labels = validation.labels or labels
+    spec = spec_result.spec
+    labels = list(spec.labels)
 
     todo = self._resolve_autogen_targets(paths, only_missing=only_missing, silent=silent, camera_role=role)
     if not todo:
@@ -161,16 +163,7 @@ def _autogen_roi_for_images(
             QtWidgets.QMessageBox.information(self, tr("common.info"), tr("auto.images_already_have_roi"))
         return
 
-    result = run_auto_roi_batch(
-        paths=todo,
-        labels=labels,
-        method=method,
-        ref_image=ref_image,
-        product_dir=self.session.product_dir,
-        camera_role=role,
-        only_missing=only_missing,
-        pre_resolved=True,
-    )
+    result = run_auto_roi_batch(**spec.payload(todo, only_missing=only_missing, pre_resolved=True))
     ok = int(result.get("ok", 0) or 0)
     errs = [str(err) for err in result.get("errs", []) or [] if str(err)]
     for path, elapsed_ms in dict(result.get("timings", {}) or {}).items():

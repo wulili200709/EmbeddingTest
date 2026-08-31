@@ -103,6 +103,14 @@ class RuntimeFrameBatchPrediction:
     timing_breakdown: Dict[str, object] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class InspectionItemGroups:
+    enabled: List[InspectionItem]
+    learning: List[InspectionItem]
+    traditional: List[InspectionItem]
+    measurement: List[InspectionItem]
+
+
 def _runtime_prediction_row(
     *,
     pred: object,
@@ -147,6 +155,28 @@ def _is_measurement_item(algo, item: InspectionItem) -> bool:
 
 def _is_line_distance_item(item: InspectionItem) -> bool:
     return str(getattr(item, "algorithm_code", "") or "").strip() in LINE_DISTANCE_ALGORITHMS
+
+
+def _group_inspection_items(items: List[InspectionItem], algo) -> InspectionItemGroups:
+    enabled = [item for item in items if item.enabled]
+    learning = [item for item in enabled if algo.is_learning_tool(item.algorithm_code)]
+    measurement = [
+        item
+        for item in enabled
+        if _is_measurement_item(algo, item) and not _is_line_distance_item(item)
+    ]
+    traditional = [
+        item
+        for item in enabled
+        if not algo.is_learning_tool(item.algorithm_code)
+        and not _is_measurement_item(algo, item)
+    ]
+    return InspectionItemGroups(
+        enabled=enabled,
+        learning=learning,
+        traditional=traditional,
+        measurement=measurement,
+    )
 
 
 def _predict_learning_items_batch_rows(
@@ -212,6 +242,46 @@ def _predict_learning_items_batch_rows(
             rows_by_key[item.model_key]["infer_ms"] = per_item_infer_ms
             rows_by_key[item.model_key]["total_ms"] = per_item_infer_ms
     return rows_by_key
+
+
+def _predict_grouped_items_from_path(
+    *,
+    path: str,
+    groups: InspectionItemGroups,
+    match_ms: float | None,
+    algo,
+    predict_image,
+    load_embedding_model,
+    feat_net=None,
+) -> List[Dict[str, object]]:
+    rows_by_key = _predict_learning_items_batch_rows(
+        path=path,
+        items=groups.learning,
+        match_ms=match_ms,
+        algo=algo,
+        load_embedding_model=load_embedding_model,
+        feat_net=feat_net,
+    )
+    for item in groups.traditional:
+        roi_label = str(item.roi_label or "").strip()
+        rows_by_key[item.model_key] = predict_image(
+            path,
+            feat_net=feat_net,
+            labels_override=[roi_label] if roi_label else None,
+            algorithm_override=item.algorithm_code,
+            model_key_override=item.model_key,
+        )
+    for item in groups.measurement:
+        roi_label = str(item.roi_label or "").strip()
+        rows_by_key[item.model_key] = predict_image(
+            path,
+            feat_net=feat_net,
+            labels_override=[roi_label] if roi_label else None,
+            algorithm_override=item.algorithm_code,
+            model_key_override=item.model_key,
+            params_override=dict(item.params or {}),
+        )
+    return [dict(rows_by_key[item.model_key]) for item in groups.enabled]
 
 
 def _runtime_shape_by_label(
@@ -397,22 +467,10 @@ class ToolPageRuntimeContext:
             raise FileNotFoundError(path)
 
         tool_page = self.tool_page
-        enabled_items = [item for item in items if item.enabled]
-        learning_items = [item for item in enabled_items if tool_page.algo.is_learning_tool(item.algorithm_code)]
-        measurement_items = [
-            item
-            for item in enabled_items
-            if _is_measurement_item(tool_page.algo, item) and not _is_line_distance_item(item)
-        ]
-        traditional_items = [
-            item
-            for item in enabled_items
-            if not tool_page.algo.is_learning_tool(item.algorithm_code)
-            and not _is_measurement_item(tool_page.algo, item)
-        ]
+        groups = _group_inspection_items(items, tool_page.algo)
         camera_role = (
-            str(enabled_items[0].camera_id or "").strip()
-            if enabled_items
+            str(groups.enabled[0].camera_id or "").strip()
+            if groups.enabled
             else str(tool_page.current_camera_role() or "cam1").strip()
         ) or "cam1"
 
@@ -445,36 +503,15 @@ class ToolPageRuntimeContext:
         elif tool_page.ref_image and os.path.exists(tool_page.ref_image):
             tool_page._autogen_roi_for_images([path], only_missing=True, silent=True)
 
-        rows_by_key = _predict_learning_items_batch_rows(
+        return _predict_grouped_items_from_path(
             path=path,
-            items=learning_items,
+            groups=groups,
             match_ms=match_ms,
             algo=tool_page.algo,
+            predict_image=self.predict_image,
             load_embedding_model=tool_page.load_embedding_model,
             feat_net=feat_net,
         )
-        for item in traditional_items:
-            roi_label = str(item.roi_label or "").strip()
-            labels_override = [roi_label] if roi_label else None
-            rows_by_key[item.model_key] = self.predict_image(
-                path,
-                feat_net=feat_net,
-                labels_override=labels_override,
-                algorithm_override=item.algorithm_code,
-                model_key_override=item.model_key,
-            )
-        for item in measurement_items:
-            roi_label = str(item.roi_label or "").strip()
-            rows_by_key[item.model_key] = self.predict_image(
-                path,
-                feat_net=feat_net,
-                labels_override=[roi_label] if roi_label else None,
-                algorithm_override=item.algorithm_code,
-                model_key_override=item.model_key,
-                params_override=dict(item.params or {}),
-            )
-
-        return [dict(rows_by_key[item.model_key]) for item in enabled_items]
 
     def reload(self) -> None:
         return None
@@ -600,24 +637,12 @@ class ProductRuntimeContext:
         if not os.path.exists(path):
             raise FileNotFoundError(path)
 
-        enabled_items = [item for item in items if item.enabled]
-        learning_items = [item for item in enabled_items if self.algo.is_learning_tool(item.algorithm_code)]
-        measurement_items = [
-            item
-            for item in enabled_items
-            if _is_measurement_item(self.algo, item) and not _is_line_distance_item(item)
-        ]
-        traditional_items = [
-            item
-            for item in enabled_items
-            if not self.algo.is_learning_tool(item.algorithm_code)
-            and not _is_measurement_item(self.algo, item)
-        ]
+        groups = _group_inspection_items(items, self.algo)
 
         match_ms = None
         camera_role = (
-            normalize_camera_role(enabled_items[0].camera_id, default=DEFAULT_CAMERA_ROLE)
-            if enabled_items
+            normalize_camera_role(groups.enabled[0].camera_id, default=DEFAULT_CAMERA_ROLE)
+            if groups.enabled
             else DEFAULT_CAMERA_ROLE
         )
         method = self.loc_method_for_role(camera_role)
@@ -642,36 +667,15 @@ class ProductRuntimeContext:
             match_ms = float(run.total_ms)
             self._shape_match_ms_by_image[path] = match_ms
 
-        rows_by_key = _predict_learning_items_batch_rows(
+        return _predict_grouped_items_from_path(
             path=path,
-            items=learning_items,
+            groups=groups,
             match_ms=match_ms,
             algo=self.algo,
+            predict_image=self.predict_image,
             load_embedding_model=self.load_embedding_model,
             feat_net=feat_net,
         )
-        for item in traditional_items:
-            roi_label = str(item.roi_label or "").strip()
-            labels_override = [roi_label] if roi_label else None
-            rows_by_key[item.model_key] = self.predict_image(
-                path,
-                feat_net=feat_net,
-                labels_override=labels_override,
-                algorithm_override=item.algorithm_code,
-                model_key_override=item.model_key,
-            )
-        for item in measurement_items:
-            roi_label = str(item.roi_label or "").strip()
-            rows_by_key[item.model_key] = self.predict_image(
-                path,
-                feat_net=feat_net,
-                labels_override=[roi_label] if roi_label else None,
-                algorithm_override=item.algorithm_code,
-                model_key_override=item.model_key,
-                params_override=dict(item.params or {}),
-            )
-
-        return [dict(rows_by_key[item.model_key]) for item in enabled_items]
 
     def predict_items_batch_from_frame(
         self,
@@ -684,19 +688,11 @@ class ProductRuntimeContext:
         image = np.asarray(image_bgr)
         if image.ndim not in {2, 3}:
             raise ValueError(f"unsupported image shape: {image.shape!r}")
-        enabled_items = [item for item in items if item.enabled]
-        learning_items = [item for item in enabled_items if self.algo.is_learning_tool(item.algorithm_code)]
-        measurement_items = [
-            item
-            for item in enabled_items
-            if _is_measurement_item(self.algo, item) and not _is_line_distance_item(item)
-        ]
-        traditional_items = [
-            item
-            for item in enabled_items
-            if not self.algo.is_learning_tool(item.algorithm_code)
-            and not _is_measurement_item(self.algo, item)
-        ]
+        groups = _group_inspection_items(items, self.algo)
+        enabled_items = groups.enabled
+        learning_items = groups.learning
+        measurement_items = groups.measurement
+        traditional_items = groups.traditional
 
         role = normalize_camera_role(camera_role, default=DEFAULT_CAMERA_ROLE)
         match_ms = 0.0

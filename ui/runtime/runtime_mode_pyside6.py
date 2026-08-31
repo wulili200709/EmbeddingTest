@@ -666,6 +666,12 @@ class RuntimeModePage(QtWidgets.QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
+        self._build_header_ui(root)
+        self._build_runtime_body_ui(root)
+        self._build_footer_ui(root)
+        self._build_compatibility_controls()
+
+    def _build_header_ui(self, root: QtWidgets.QVBoxLayout) -> None:
         # ── 顶栏 ──
         header = QtWidgets.QFrame()
         header.setMinimumHeight(40)
@@ -791,6 +797,8 @@ class RuntimeModePage(QtWidgets.QWidget):
 
         root.addWidget(header)
 
+
+    def _build_runtime_body_ui(self, root: QtWidgets.QVBoxLayout) -> None:
         # ── 主体：画面 + 右侧面板 ──
         body = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         body.setChildrenCollapsible(False)
@@ -997,6 +1005,8 @@ class RuntimeModePage(QtWidgets.QWidget):
 
         root.addWidget(body, 1)
 
+
+    def _build_footer_ui(self, root: QtWidgets.QVBoxLayout) -> None:
         # ── 底栏 ──
         footer = QtWidgets.QFrame()
         footer.setMinimumHeight(28)
@@ -1082,6 +1092,8 @@ class RuntimeModePage(QtWidgets.QWidget):
 
         root.addWidget(footer)
 
+
+    def _build_compatibility_controls(self) -> None:
         # ── 隐藏控件（保持接口兼容） ──
         self.edit_cam1_serial = QtWidgets.QLineEdit()
         self.edit_cam1_serial.hide()
@@ -1413,7 +1425,7 @@ class RuntimeModePage(QtWidgets.QWidget):
 
     def set_runtime_status(self, status_text: str) -> None:
         self._last_runtime_status = str(status_text or "")
-        clean_text = self._sanitize_runtime_status_text_v3(status_text)
+        clean_text = self._sanitize_runtime_status_text(status_text)
         display = tr_status_text(clean_text)
         self.lbl_footer_state.setText(
             f"{tr('runtime.status')}: {display}" if display else f"{tr('runtime.status')}: -"
@@ -2061,22 +2073,6 @@ class RuntimeModePage(QtWidgets.QWidget):
         has_ng_summary = bool(summary_label.text().strip())
         bar.setVisible(has_timing or has_ng_summary)
 
-    @staticmethod
-    def _sanitize_runtime_status_text(status_text: str) -> str:
-        text = " ".join(str(status_text or "").split())
-        patterns = [
-            r"(?:^|[\s,;，；]+)capture\s*[:=]?\s*\d+(?:\.\d+)?\s*ms",
-            r"(?:^|[\s,;，；]+)match\s*[:=]?\s*\d+(?:\.\d+)?\s*ms",
-            r"(?:^|[\s,;，；]+)infer\s*[:=]?\s*\d+(?:\.\d+)?\s*ms",
-            r"(?:^|[\s,;，；]+)total\s*[:=]?\s*\d+(?:\.\d+)?\s*ms",
-            r"(?:^|[;, ]+)耗时[:：]?\s*\d+(?:\.\d+)?\s*ms",
-            r"(?:^|[;, ]+)处理[:：]?\s*\d+(?:\.\d+)?\s*ms",
-        ]
-        for pattern in patterns:
-            text = re.sub(pattern, "", text, flags=re.IGNORECASE)
-        text = re.sub(r"\s{2,}", " ", text).strip(" ;,")
-        return text
-
     def _set_total_duration_labels(self, duration_ms: float) -> None:
         self._last_duration_ms = float(duration_ms or 0.0)
         self.lbl_footer_time.setText(
@@ -2085,23 +2081,6 @@ class RuntimeModePage(QtWidgets.QWidget):
             else self._format_timing_label(tr("runtime.process"), 0.0)
         )
         self.lbl_duration.setText(self._format_timing_label(tr("runtime.total_flow"), duration_ms))
-
-    @staticmethod
-    def _sanitize_runtime_status_text_v2(status_text: str) -> str:
-        text = " ".join(str(status_text or "").split())
-        patterns = [
-            r"(?:^|[\s,;，；]+)capture\s*[:=]?\s*\d+(?:\.\d+)?\s*ms",
-            r"(?:^|[\s,;，；]+)match\s*[:=]?\s*\d+(?:\.\d+)?\s*ms",
-            r"(?:^|[\s,;，；]+)infer\s*[:=]?\s*\d+(?:\.\d+)?\s*ms",
-            r"(?:^|[\s,;，；]+)total\s*[:=]?\s*\d+(?:\.\d+)?\s*ms",
-            r"(?:^|[\s,;，；]+)耗时\s*[:：=]?\s*\d+(?:\.\d+)?\s*ms",
-            r"(?:^|[\s,;，；]+)处理\s*[:：=]?\s*\d+(?:\.\d+)?\s*ms",
-        ]
-        for pattern in patterns:
-            text = re.sub(pattern, "", text, flags=re.IGNORECASE)
-        text = re.sub(r"\s*[;；,，]\s*[;；,，]+\s*", "; ", text)
-        text = re.sub(r"\s{2,}", " ", text).strip(" ;,，；")
-        return text
 
     def _refresh_camera_timing_visibility(self) -> None:
         for role in CAMERA_ROLES:
@@ -2135,7 +2114,7 @@ class RuntimeModePage(QtWidgets.QWidget):
             caption.setEnabled(selectable)
 
     @staticmethod
-    def _sanitize_runtime_status_text_v3(status_text: str) -> str:
+    def _sanitize_runtime_status_text(status_text: str) -> str:
         text = " ".join(str(status_text or "").split())
         patterns = [
             r"(?:^|[\s,;\uFF0C\uFF1B]+)capture\s*[:=]?\s*\d+(?:\.\d+)?\s*ms",

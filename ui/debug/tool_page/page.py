@@ -1,4 +1,4 @@
-﻿"""
+"""
 Tool page UI for template setup, ROI review, training, and testing.
 
 Main workflow groups:
@@ -79,6 +79,7 @@ from ui.debug.tool_page.sample_list_controller import SampleListController
 from ui.debug.tool_page.test_execution_controller import TestExecutionController
 from ui.debug.tool_page.training_controller import TrainingController
 from ui.debug.tool_page.training_worker import TrainingJobWorker
+from ui.debug.tool_page.operation_mixins import ToolPageOperationsMixin
 from ui.debug.tool_page.view_builders import (
     build_action_panel,
     build_camera_debug_page,
@@ -105,6 +106,30 @@ ROI_OVERLAY_PALETTE = [
     QtGui.QColor(128, 255, 0),
 ]
 
+_DARK_BG = "#2d2d2d"
+_PANEL_BG = "#363636"
+_HEADER_BG = "#3a3a3a"
+_TEXT_LIGHT = "#e0e0e0"
+_TEXT_DIM = "#888888"
+_compact_btn = (
+    "QPushButton{background:#444444;color:#d0d0d0;border:1px solid #5a5a5a;"
+    "padding:4px 8px;border-radius:3px;font-size:12px;}"
+    "QPushButton:hover{background:#505050;}"
+)
+_input_style = (
+    "QComboBox,QDoubleSpinBox,QSpinBox{"
+    "background:#404040;color:#e0e0e0;border:1px solid #5a5a5a;"
+    "padding:2px 4px;border-radius:3px;font-size:12px;}"
+    "QComboBox:disabled,QDoubleSpinBox:disabled,QSpinBox:disabled{"
+    "background:#353535;color:#8a8a8a;border:1px solid #4a4a4a;}"
+    "QSpinBox::up-button:disabled,QSpinBox::down-button:disabled{"
+    "background:#353535;border-left:1px solid #444444;}"
+)
+_section_style = (
+    f"background:#404040;color:{_TEXT_LIGHT};font-size:12px;font-weight:bold;"
+    "border-bottom:1px solid #505050;padding:6px 10px;"
+)
+
 def _pixmap_from_path(path: str) -> QtGui.QPixmap:
     return QtGui.QPixmap(path)
 
@@ -128,7 +153,7 @@ def _loc_method_display_name(method: object) -> str:
 # ToolPage
 # ---------------------------------------------------------------------------
 
-class ToolPage(QtWidgets.QWidget):
+class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
     """
     Main debug tool page widget.
 
@@ -1281,38 +1306,20 @@ class ToolPage(QtWidgets.QWidget):
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        def _si(sp):
-            return self.style().standardIcon(sp)
-        SP = QtWidgets.QStyle.StandardPixmap
-        _DARK_BG = "#2d2d2d"
-        _PANEL_BG = "#363636"
-        _HEADER_BG = "#3a3a3a"
-        _TEXT_LIGHT = "#e0e0e0"
-        _TEXT_DIM = "#888888"
-        _compact_btn = (
-            "QPushButton{background:#444444;color:#d0d0d0;border:1px solid #5a5a5a;"
-            "padding:4px 8px;border-radius:3px;font-size:12px;}"
-            "QPushButton:hover{background:#505050;}"
-        )
-        _input_style = (
-            "QComboBox,QDoubleSpinBox,QSpinBox{"
-            "background:#404040;color:#e0e0e0;border:1px solid #5a5a5a;padding:2px 4px;border-radius:3px;font-size:12px;}"
-            "QComboBox:disabled,QDoubleSpinBox:disabled,QSpinBox:disabled{"
-            "background:#353535;color:#8a8a8a;border:1px solid #4a4a4a;}"
-            "QSpinBox::up-button:disabled,QSpinBox::down-button:disabled{"
-            "background:#353535;border-left:1px solid #444444;}"
-        )
-        _section_style = (
-            f"background:#404040;color:{_TEXT_LIGHT};font-size:12px;font-weight:bold;"
-            "border-bottom:1px solid #505050;padding:6px 10px;"
-        )
-
         self.setStyleSheet(f"background:{_DARK_BG};color:{_TEXT_LIGHT};")
 
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
+        self._build_header_ui(root)
+        self._build_workspace_ui(root)
+        self._build_footer_ui(root)
+        self._build_compatibility_ui()
+
+    def _build_header_ui(self, root: QtWidgets.QVBoxLayout) -> None:
+        _si = self.style().standardIcon
+        SP = QtWidgets.QStyle.StandardPixmap
         # Header
         header = QtWidgets.QFrame()
         header.setFixedHeight(44)
@@ -1369,6 +1376,10 @@ class ToolPage(QtWidgets.QWidget):
 
         root.addWidget(header)
 
+
+    def _build_workspace_ui(self, root: QtWidgets.QVBoxLayout) -> None:
+        _si = self.style().standardIcon
+        SP = QtWidgets.QStyle.StandardPixmap
         # Main canvas and side panels
         body = QtWidgets.QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
@@ -1537,6 +1548,10 @@ class ToolPage(QtWidgets.QWidget):
         body.addWidget(right_panel, 0)
         root.addLayout(body, 1)
 
+
+    def _build_footer_ui(self, root: QtWidgets.QVBoxLayout) -> None:
+        _si = self.style().standardIcon
+        SP = QtWidgets.QStyle.StandardPixmap
         # Footer
         footer = QtWidgets.QFrame()
         footer.setFixedHeight(28)
@@ -1557,6 +1572,10 @@ class ToolPage(QtWidgets.QWidget):
         footer_layout.addWidget(self.lbl_footer_product_dir)
         root.addWidget(footer)
 
+
+    def _build_compatibility_ui(self) -> None:
+        _si = self.style().standardIcon
+        SP = QtWidgets.QStyle.StandardPixmap
         # Hidden controls kept for dialog/API compatibility
 
         # Hidden ROI annotation toolbar
@@ -1656,6 +1675,7 @@ class ToolPage(QtWidgets.QWidget):
         self.lbl_template_tool_hint.hide()
         self._normalize_stylesheet_font_units()
         self._update_responsive_layout()
+
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:
         super().showEvent(event)

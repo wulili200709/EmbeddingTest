@@ -12,19 +12,19 @@ from common.app_paths import packaged_embedding_test_root
 from common.camera_roles import camera_index_for_role
 from domain.conveyor_line import ConveyorConfig, ConveyorLineController
 from application.inspection_executor import InspectionExecutionRequest
-from .capture_channels import channels_for_roles, light_output_index, required_runtime_roles
+from .capture_channels import channels_for_roles, required_runtime_roles
+from .capture_pipeline import capture_runtime_channel
 from .preview_frame import build_runtime_preview_frame
 
 
 def _load_conveyor_config(runtime) -> ConveyorConfig:
     path = packaged_embedding_test_root(__file__) / "config" / "defaults" / "conveyor_control.json"
-    try:
-        config = ConveyorConfig.from_json_file(path)
-    except Exception as exc:
-        runtime.logAppended.emit(f"[conveyor] failed to load {path}: {exc}; using defaults")
-        config = ConveyorConfig()
     runtime._conveyor_config_path = Path(path)
-    return config
+    try:
+        return ConveyorConfig.from_json_file(path)
+    except Exception as exc:
+        runtime.logAppended.emit(f"[conveyor] invalid configuration {path}: {exc}")
+        raise RuntimeError(f"invalid conveyor configuration: {exc}") from exc
 
 
 def _initialize_conveyor_controller(runtime, input_snapshot=None) -> bool:
@@ -209,35 +209,18 @@ def _run_conveyor_capture(runtime, sequence_id: int, epoch: int) -> list[dict[st
         controller = runtime._conveyor_controller
         if controller is None or controller.epoch != int(epoch):
             raise RuntimeError("capture invalidated by purge or shutdown")
-        role = str(channel.get("role", "") or "").strip()
-        physical_role = str(channel.get("physical_role", role) or role).strip()
-        light_index = int(channel.get("light_index", 0) or 0)
-        if light_index <= 0:
-            light_index = light_output_index(channel) if configured_channels else camera_index_for_role(role)
-        if configured_channels:
-            runtime_execution._apply_capture_channel_camera_settings(runtime, channel)
-
-        capture_t0 = time.perf_counter()
-        light_prepared = False
-        try:
-            runtime._light_controller.prepare_capture(light_index)
-            light_prepared = True
-            if runtime._light_controller.requires_stable_delay(light_index):
-                stable_ms = int(channel.get("stable_delay_ms", 50) or 0)
-                if stable_ms > 0:
-                    time.sleep(stable_ms / 1000.0)
-            frame = runtime._frame_grab_service.capture_once(physical_role, timeout_ms=1000)
-        finally:
-            if light_prepared:
-                runtime._light_controller.finish_capture(light_index)
-        captured.append(
-            {
-                "role": role,
-                "physical_role": physical_role,
-                "frame": frame,
-                "capture_ms": (time.perf_counter() - capture_t0) * 1000.0,
-            }
+        captured_frame = capture_runtime_channel(
+            runtime,
+            channel,
+            apply_camera_settings=(
+                lambda current: runtime_execution._apply_capture_channel_camera_settings(
+                    runtime, current
+                )
+                if configured_channels
+                else None
+            ),
         )
+        captured.append(captured_frame.to_payload())
     runtime.logAppended.emit(
         f"[conveyor] capture completed: item={sequence_id}, epoch={epoch}, roles={roles}"
     )

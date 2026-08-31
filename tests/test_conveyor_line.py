@@ -8,6 +8,7 @@ from pathlib import Path
 from domain.conveyor_line import (
     ConveyorConfig,
     ConveyorLineController,
+    ConveyorSnapshot,
     ConveyorState,
     InspectionStatus,
 )
@@ -107,6 +108,11 @@ class ConveyorLineTests(unittest.TestCase):
         self.assertEqual(self.line.state, ConveyorState.READY_TO_RESUME)
         self.assertFalse(self.outputs["conveyor_run"])
         self.assertTrue(self.line.request_start())
+
+    def test_typed_snapshot_matches_compatible_dictionary_snapshot(self) -> None:
+        model = self.line.snapshot_model()
+        self.assertIsInstance(model, ConveyorSnapshot)
+        self.assertEqual(model.to_dict(), self.line.snapshot())
 
     def test_interlock_event_never_advances_purge_before_stopping_outputs(self) -> None:
         self.assertTrue(self.line.request_purge())
@@ -532,6 +538,67 @@ class ConveyorLineTests(unittest.TestCase):
         self.assertEqual(config.end_test_blocked_timeout_s, 1.1)
         self.assertEqual(config.good_outlet_blocked_timeout_s, 1.2)
         self.assertEqual(config.waste_outlet_blocked_timeout_s, 1.3)
+
+    def test_config_rejects_string_boolean(self) -> None:
+        with self.assertRaisesRegex(TypeError, "upper_door_sensor_enabled must be a boolean"):
+            ConveyorConfig.from_mapping({"upper_door_sensor_enabled": "false"})
+
+    def test_config_rejects_unknown_field_instead_of_ignoring_typo(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unknown conveyor configuration field"):
+            ConveyorConfig.from_mapping({"reject_blow_duraton_ms": 300})
+
+    def test_config_rejects_invalid_outlet_arrival_window(self) -> None:
+        with self.assertRaisesRegex(ValueError, "good_outlet_arrival_min_run_ms"):
+            ConveyorConfig.from_mapping(
+                {
+                    "good_outlet_arrival_min_run_ms": 3001,
+                    "good_outlet_arrival_max_run_ms": 3000,
+                }
+            )
+
+    def test_config_rejects_non_positive_capacity_and_poll_interval(self) -> None:
+        with self.assertRaisesRegex(ValueError, "max_inflight_items"):
+            ConveyorConfig.from_mapping({"max_inflight_items": 0})
+        with self.assertRaisesRegex(ValueError, "poll_interval_ms"):
+            ConveyorConfig.from_mapping({"poll_interval_ms": 0})
+
+    def test_config_rejects_impossible_purge_timing(self) -> None:
+        with self.assertRaisesRegex(ValueError, "purge_min_run_s"):
+            ConveyorConfig.from_mapping({"purge_min_run_s": 31.0, "purge_max_run_s": 30.0})
+
+    def test_output_failure_reports_unknown_physical_safe_state(self) -> None:
+        failures_enabled = False
+
+        def write_output(name: str, on: bool) -> None:
+            if failures_enabled:
+                raise OSError(f"single write failed for {name}")
+
+        def write_outputs(updates: dict[str, bool]) -> None:
+            if failures_enabled:
+                raise OSError("batch write failed")
+
+        logs: list[str] = []
+        line = ConveyorLineController(
+            config=self.config,
+            output_writer=write_output,
+            output_batch_writer=write_outputs,
+            inspection_requester=lambda _sequence_id, _epoch: None,
+            log_writer=logs.append,
+            clock=self.clock,
+        )
+        line.initialize_inputs(
+            {"safety_ok": True, "door_closed": True, "door_upper_closed": True},
+            io_ready=True,
+        )
+        failures_enabled = True
+
+        with self.assertRaisesRegex(RuntimeError, "physical output state unknown"):
+            line.request_start()
+
+        snapshot = line.snapshot()
+        self.assertEqual(snapshot["fault_code"], "OUTPUT_WRITE_FAILED")
+        self.assertIn("safe-off failed", snapshot["fault_detail"])
+        self.assertTrue(any("physical output state unknown" in entry for entry in logs))
 
     def test_default_config_uses_only_canonical_control_names(self) -> None:
         config_path = (

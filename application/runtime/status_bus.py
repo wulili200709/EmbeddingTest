@@ -28,6 +28,40 @@ _RUN_STATE_ZH_FOR_STATUS = {
     "Unavailable": "服务不可用",
 }
 
+
+class RuntimeStatusService:
+    """Owns runtime status/query behavior without modifying the controller class."""
+
+    def __init__(self, runtime) -> None:
+        self._runtime = runtime
+
+    def update_status(self, message=None) -> None:
+        _update_status(self._runtime, message)
+
+    def connected_roles(self) -> list[str]:
+        return _connected_roles(self._runtime)
+
+    def required_roles(self) -> list[str]:
+        return _required_roles(self._runtime)
+
+    def current_item_signature(self):
+        return _current_item_signature(self._runtime)
+
+    def result_item_signature(self):
+        return _result_item_signature(self._runtime)
+
+    def runtime_result_is_stale(self) -> bool:
+        return _runtime_result_is_stale(self._runtime)
+
+    def emit_runtime_context(self) -> None:
+        _emit_runtime_context(self._runtime)
+
+    def build_pending_runtime_result(self, *, status: str):
+        return _build_pending_runtime_result(self._runtime, status=status)
+
+    def current_runtime_state_text(self) -> str:
+        return _current_runtime_state_text(self._runtime)
+
 def _recipe_path_for_role(runtime, role: str) -> str:
     getter = getattr(runtime._session, "shape_recipe_path_for_role", None)
     if callable(getter):

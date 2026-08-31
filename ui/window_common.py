@@ -19,6 +19,7 @@ from application.runtime.preview_frame import RuntimePreviewFrame, RuntimePrevie
 from application.runtime.preview_frame import read_exported_runtime_preview_measurements
 from shape.core import locator as shape_locator
 from ui.i18n import tr
+from ui.algorithm_labels import algorithm_display_name
 from ui.roi_overlay_colors import is_roi_label, overlay_style_for_label, search_region_style
 
 
@@ -47,7 +48,7 @@ def build_default_session_and_algo(anchor_file: str) -> tuple[ProductSession, Al
     session = ProductSession(default_session_dir(anchor_file))
     session.load()
     session.switch_product(session.current_product)
-    algo = AlgorithmController()
+    algo = AlgorithmController(display_name_resolver=algorithm_display_name)
     return session, algo
 
 

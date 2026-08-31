@@ -22,6 +22,7 @@ from .capture_channels import (
     required_runtime_roles,
 )
 from .preview_frame import RuntimePreviewFrame, build_runtime_preview_frame, export_runtime_preview_frame
+from .capture_pipeline import capture_runtime_channel
 
 _MIN_RUNTIME_CAPTURE_FREE_BYTES = 1 * 1024 * 1024 * 1024
 _DATE_DIRECTORY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -624,7 +625,6 @@ def _run_single_multi_light_trigger(runtime, requested_roles=None):
             virtual_index = camera_index_for_role(virtual_role, default=light_index)
 
             capture_t0 = time.perf_counter()
-            light_prepared = False
             try:
                 runtime.logAppended.emit(
                     f"[runtime] single-multi-light capture {virtual_role} "
@@ -634,29 +634,19 @@ def _run_single_multi_light_trigger(runtime, requested_roles=None):
             except Exception:
                 pass
             try:
-                _apply_capture_channel_camera_settings(runtime, channel)
-                if hasattr(runtime._light_controller, "set_camera_light_mode"):
-                    runtime._light_controller.set_camera_light_mode(light_index, "board_io")
-                try:
-                    runtime._light_controller.prepare_capture(light_index)
-                    light_prepared = True
-                    requires_stable_delay = True
-                    requires_stable_delay_getter = getattr(
-                        runtime._light_controller,
-                        "requires_stable_delay",
-                        None,
-                    )
-                    if callable(requires_stable_delay_getter):
-                        requires_stable_delay = bool(requires_stable_delay_getter(light_index))
-                    stable_delay_ms = _channel_int(channel, "stable_delay_ms", 50)
-                    if stable_delay_ms > 0 and requires_stable_delay:
-                        time.sleep(stable_delay_ms / 1000.0)
-                    runtime._scheduler.on_capture_started(virtual_index)
-                    frame = runtime._frame_grab_service.capture_once(physical_role, timeout_ms=1000)
-                finally:
-                    if light_prepared:
-                        runtime._light_controller.finish_capture(light_index)
-                capture_ms = (time.perf_counter() - capture_t0) * 1000.0
+                captured = capture_runtime_channel(
+                    runtime,
+                    channel,
+                    apply_camera_settings=lambda current: _apply_capture_channel_camera_settings(
+                        runtime, current
+                    ),
+                    before_capture=lambda _role, _light_index: runtime._scheduler.on_capture_started(
+                        virtual_index
+                    ),
+                    force_board_io_light=True,
+                )
+                frame = captured.frame
+                capture_ms = captured.capture_ms
                 outcome = runtime._inspect_frame(
                     virtual_role,
                     frame,

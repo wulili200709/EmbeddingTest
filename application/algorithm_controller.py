@@ -63,7 +63,7 @@ from infrastructure.product_params import (
 )
 import algorithms.lazy_api as qr_core
 from common import labelme_io
-from ui.algorithm_labels import algorithm_display_name
+from common.algorithm_catalog import default_algorithm_display_name
 
 
 SUPPORTED_EMBEDDING_ALGORITHMS = list(LEARNING_BACKBONES)
@@ -144,8 +144,13 @@ class AlgorithmController:
         model, msg = ctrl.load_model_for_algorithm(algorithm, session.product_dir)
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        display_name_resolver: Callable[[object], str] | None = None,
+    ) -> None:
         self.product_params: ProductRuntimeParams = ProductRuntimeParams()
+        self._display_name_resolver = display_name_resolver or default_algorithm_display_name
         self.model: Optional[Any] = None          # qr_core.RegisterModel | None
         self._feat_net_cache: Dict[Tuple[str, str, str], Any] = {}
         self._embedding_model_cache: Dict[str, Tuple[Tuple[int, int], Any]] = {}
@@ -275,7 +280,7 @@ class AlgorithmController:
         return get_tool_algorithm_spec(algorithm_code)
 
     def algorithm_display_name(self, algorithm_code: object) -> str:
-        return algorithm_display_name(algorithm_code)
+        return str(self._display_name_resolver(algorithm_code) or "")
 
     def is_learning_tool(self, algorithm_code: object) -> bool:
         return is_learning_tool_algorithm(algorithm_code)

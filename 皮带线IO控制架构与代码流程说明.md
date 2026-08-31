@@ -1269,3 +1269,210 @@ NG   → 吹气 + OutletConfirmationTracker等待DI8 ─┤
 ```
 
 软件快速关闭DO3、DO4是必要的防自动恢复措施，但不能替代硬件安全回路。
+
+## 24. 代码重构后的结构约束
+
+本轮重构不改变皮带动作时序、FIFO规则、DI7/DI8出口确认规则和清线规则，主要调整软件依赖关系及错误诊断能力。
+
+### 24.1 运行控制器不再动态注入方法
+
+旧结构在模块导入时通过 `setattr()` 把硬件、检测、皮带和状态方法写入 `RuntimeController`，方法来源和依赖不够明确。当前已经取消动态绑定：
+
+```text
+RuntimeController
+├── RuntimeStatusService          状态计算和界面状态发布
+├── RuntimeConveyorService        皮带运行接入
+├── RuntimeHardwareService        IO和相机硬件接入
+└── RuntimeExecutionService       手动检测执行
+```
+
+Mixin只保留原方法名称的兼容委托，实际职责由组合服务对象承担；程序启动时不会再修改控制器类。
+
+相关代码：
+
+- `application/runtime/controller.py`
+- `application/runtime/status_bus.py`
+- `application/runtime/operation_mixins.py`
+
+### 24.2 调试工具页不再动态注入方法
+
+`ToolPage` 已取消导入时 `setattr()`，原有操作由 `ToolPageOperationsMixin` 显式声明。现有的ROI、产品会话、样本列表、训练和测试控制器继续作为实际职责组件使用。
+
+```text
+ToolPage
+├── RoiAnnotationController
+├── ProductSessionController
+├── SampleListController
+├── TrainingController
+├── TestExecutionController
+└── ToolPageOperationsMixin       尚未迁移功能的兼容过渡层
+```
+
+相关代码：`ui/debug/tool_page/operation_mixins.py`。
+
+### 24.3 调试检测和正式运行共用检测分流
+
+`ToolPageRuntimeContext` 与 `ProductRuntimeContext` 现在共用以下处理：
+
+```text
+检测项列表
+→ 过滤禁用项
+→ 学习算法 / 传统算法 / 测量算法统一分组
+→ 调用对应预测入口
+→ 按原检测项顺序返回结果
+```
+
+这样可以避免调试检测和皮带自动检测分别维护算法分流规则。定位方式和产品数据来源仍由各自运行上下文提供。
+
+相关代码：`application/runtime_context.py`中的 `InspectionItemGroups`、`_group_inspection_items()` 和 `_predict_grouped_items_from_path()`。
+
+### 24.4 皮带参数在启动前严格校验
+
+`ConveyorConfig` 会在对象创建和JSON加载时检查：
+
+- 布尔参数必须是JSON布尔值，字符串 `"false"` 不再被接受；
+- 时间、消抖和延迟参数不得为负数或非有限数；
+- DI轮询周期和最大在途数量必须大于0；
+- GOOD/废料出口最早到达时间不得大于最晚到达时间；
+- 清线最短、尾部和安静时间不得超过清线最大时间。
+
+配置不合法时，程序在建立产线控制器之前报告错误，不允许带错误参数进入生产状态。
+
+### 24.5 强类型状态快照与兼容接口
+
+状态机新增 `ConveyorSnapshot`，内部状态字段具有明确类型。已有界面和运行层仍可继续调用 `snapshot()` 获取字典；新代码可以调用 `snapshot_model()` 获取强类型对象。
+
+```text
+snapshot_model() → ConveyorSnapshot
+                         ↓ to_dict()
+snapshot()       → 原有dict兼容接口
+```
+
+### 24.6 安全输出失败诊断
+
+当批量DO写入失败时，状态机会继续尝试分别关闭皮带和废料吹气。如果安全关闭写入也失败：
+
+```text
+OUTPUT_WRITE_FAILED
+safe-off failed, physical output state unknown
+```
+
+故障详情会明确指出物理输出状态未知，并记录每个关闭失败的输出。IO、塔灯、光源和相机管理器关闭失败也会写入运行日志，不再静默忽略。
+
+### 24.7 回归测试
+
+本轮新增测试覆盖：
+
+- 皮带配置类型、范围和关联参数校验；
+- 安全输出关闭失败诊断；
+- 强类型快照与原字典快照兼容性；
+- 调试/正式运行共用检测分流和结果顺序；
+- RuntimeController、ToolPage不再依赖动态方法绑定；
+- 运行状态文本中的重复耗时字段清理。
+
+### 24.8 共享采图流水线和自动ROI规格
+
+手动检测和皮带检测共用 `application/runtime/capture_pipeline.py`：
+
+```text
+应用相机参数
+→ 准备灯光
+→ 等待灯光稳定
+→ 通知采图状态
+→ 相机采图
+→ finally关闭灯光
+→ RuntimeCapturedFrame
+```
+
+无论相机采图成功还是抛出异常，已经打开的灯光都会在 `finally` 中关闭。两种运行模式不再分别维护这段安全清理逻辑。
+
+自动ROI的Shape/NCC引用检查、标签和工作线程参数由 `application/auto_roi_service.py` 中的 `AutoRoiExecutionSpec` 统一生成，工具页批量生成与样本预览窗口共用同一套规格。
+
+### 24.9 检测执行计划
+
+`InspectionExecutor` 新增 `InspectionExecutionPlan`，在执行前明确分出：
+
+- 普通预测项；
+- 后处理距离项；
+- 禁用项。
+
+这一步保持现有结果计算不变，为后续把不同算法拆成独立Handler提供稳定边界和特征测试。
+
+## 25. 第二阶段架构收敛
+
+### 25.1 RuntimeController使用完整对象组合
+
+皮带、硬件、检测执行和状态发布现在分别由独立服务对象持有：
+
+```text
+RuntimeController
+├── RuntimeConveyorService
+├── RuntimeHardwareService
+├── RuntimeExecutionService
+└── RuntimeStatusService
+```
+
+`RuntimeController`保留原方法名称作为兼容入口，入口只把参数委托给服务对象。业务函数不再直接作为控制器类方法挂载。对应文件：
+
+- `application/runtime/conveyor_service.py`
+- `application/runtime/hardware_service.py`
+- `application/runtime/execution_service.py`
+- `application/runtime/status_bus.py`
+- `application/runtime/operation_mixins.py`
+
+这样可以单独测试服务边界，并逐步把旧业务函数内部的 `runtime._xxx` 依赖替换为明确依赖参数。
+
+### 25.2 多语言资源按功能域拆分
+
+`ui/i18n.py`只保留语言选择、持久化、翻译查找和状态文本转换。实际中英文资源位于：
+
+```text
+ui/i18n_resources/
+├── zh_cn/
+│   ├── shell.py
+│   ├── runtime.py
+│   ├── debug.py
+│   ├── template.py
+│   ├── ncc.py
+│   └── access.py
+└── en_us/
+    └── 同样的功能域结构
+```
+
+资源加载时检查重复键；测试继续检查中英文键集合完全一致以及格式化占位符一致。
+
+### 25.3 InspectionExecutor执行阶段拆分
+
+相机检测执行现在分为三个明确阶段：
+
+```text
+InspectionExecutionPlan
+        ↓
+PrimaryInspectionBatch      普通学习/传统/测量工具预测
+        ↓
+DistanceInspectionBatch     中心距离和直线距离后处理
+        ↓
+决策策略、相机结果和耗时汇总
+```
+
+禁用项、普通预测项和距离项不再全部混在 `execute()` 的同一个大循环中。
+
+### 25.4 大型UI构建函数分段
+
+运行界面和调试工具页的控件名称、布局层级和信号连接保持不变，但构建函数按稳定区域拆开：
+
+```text
+RuntimeModePage
+├── _build_header_ui
+├── _build_runtime_body_ui
+├── _build_footer_ui
+└── _build_compatibility_controls
+
+ToolPage
+├── _build_header_ui
+├── _build_workspace_ui
+├── _build_footer_ui
+└── _build_compatibility_ui
+```
+
+以后修改顶栏、相机主体区、底栏或兼容控件时，不再需要进入一个数百行的单体构建函数。
