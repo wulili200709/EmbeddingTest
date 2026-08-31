@@ -774,8 +774,20 @@ class ToolPage(QtWidgets.QWidget):
     def _cancel_training_pending_action(self, action_key: str | None = None) -> None:
         self.training_controller.cancel_pending_action(action_key)
 
-    def _ensure_training_roi_reviewed(self, camera_role: object, *, action_name: str, action_key: str) -> bool:
-        return self.training_controller.ensure_roi_reviewed(camera_role, action_name=action_name, action_key=action_key)
+    def _ensure_training_roi_reviewed(
+        self,
+        camera_role: object,
+        *,
+        action_name: str,
+        action_key: str,
+        confirmation_token: str = "",
+    ) -> bool:
+        return self.training_controller.ensure_roi_reviewed(
+            camera_role,
+            action_name=action_name,
+            action_key=action_key,
+            confirmation_token=confirmation_token,
+        )
 
     def _set_current_camera_role(self, role: object, *, sync_debug_role: bool = True) -> None:
         normalized = _normalize_camera_role(role) or "cam1"
@@ -1922,8 +1934,6 @@ class ToolPage(QtWidgets.QWidget):
         if not candidate_paths:
             return tr("debug.training_validation_no_samples", role=camera_role)
         _ok_count, _ng_count, missing_count = self._sample_annotation_counts_for_roi(roi_label, camera_role, paths=candidate_paths)
-        if missing_count > 0:
-            return tr("debug.training_validation_missing_annotations", roi=roi_label, count=missing_count)
         if not ok_files or not ng_files:
             missing_groups: List[str] = []
             if not ok_files:
@@ -1931,6 +1941,8 @@ class ToolPage(QtWidgets.QWidget):
             if not ng_files:
                 missing_groups.append("NG")
             return tr("debug.training_validation_missing_groups", roi=roi_label, groups="/".join(missing_groups))
+        if missing_count > 0:
+            return tr("debug.training_validation_ready_with_skipped", roi=roi_label, count=missing_count)
         return tr("debug.training_validation_ready", roi=roi_label)
 
     def _update_sample_panel_widgets(self) -> None:

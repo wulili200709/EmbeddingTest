@@ -38,6 +38,9 @@ class _SampleAnnotationCanvas(QtWidgets.QWidget):
         self._scaled_pixmap = QtGui.QPixmap()
         self._pan_offset = QtCore.QPointF(0.0, 0.0)
         self._zoom = 1.0
+        self._pressed_button = 0
+        self._is_panning = False
+        self.unsetCursor()
         self.update()
 
     def set_image(self, pixmap: QtGui.QPixmap) -> None:
@@ -45,6 +48,7 @@ class _SampleAnnotationCanvas(QtWidgets.QWidget):
         self._pan_offset = QtCore.QPointF(0.0, 0.0)
         self._zoom = 1.0
         self._update_scaled_pixmap()
+        self._refresh_cursor()
         self.update()
 
     def set_overlays(self, overlays: Optional[List[OverlayShape]]) -> None:
@@ -83,18 +87,33 @@ class _SampleAnnotationCanvas(QtWidgets.QWidget):
                 self._base_image_offset().y() + self._pan_offset.y(),
             )
         self.update()
+        self._refresh_cursor()
         event.accept()
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         if self._pixmap.isNull():
+            super().mousePressEvent(event)
             return
-        self._pressed_button = int(getattr(event.button(), "value", event.button()))
+        pressed_button = int(getattr(event.button(), "value", event.button()))
+        left_button = int(getattr(QtCore.Qt.MouseButton.LeftButton, "value", QtCore.Qt.MouseButton.LeftButton))
+        middle_button = int(getattr(QtCore.Qt.MouseButton.MiddleButton, "value", QtCore.Qt.MouseButton.MiddleButton))
+        right_button = int(getattr(QtCore.Qt.MouseButton.RightButton, "value", QtCore.Qt.MouseButton.RightButton))
+        if pressed_button not in {left_button, middle_button, right_button}:
+            super().mousePressEvent(event)
+            return
+        self._pressed_button = pressed_button
         self._press_pos = event.position()
         self._pan_anchor = QtCore.QPointF(self._pan_offset)
         self._is_panning = False
+        event.accept()
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
         if self._pixmap.isNull() or self._pressed_button == 0:
+            super().mouseMoveEvent(event)
+            return
+        left_button = int(getattr(QtCore.Qt.MouseButton.LeftButton, "value", QtCore.Qt.MouseButton.LeftButton))
+        middle_button = int(getattr(QtCore.Qt.MouseButton.MiddleButton, "value", QtCore.Qt.MouseButton.MiddleButton))
+        if self._pressed_button not in {left_button, middle_button}:
             return
         if not self._can_pan():
             return
@@ -102,6 +121,7 @@ class _SampleAnnotationCanvas(QtWidgets.QWidget):
             if (event.position() - self._press_pos).manhattanLength() < 6:
                 return
             self._is_panning = True
+            self.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
         delta = event.position() - self._press_pos
         self._pan_offset = self._clamp_pan_offset(
             QtCore.QPointF(
@@ -114,16 +134,21 @@ class _SampleAnnotationCanvas(QtWidgets.QWidget):
             self._base_image_offset().y() + self._pan_offset.y(),
         )
         self.update()
+        event.accept()
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
         if self._pixmap.isNull():
+            super().mouseReleaseEvent(event)
             return
         released_button = int(getattr(event.button(), "value", event.button()))
         image_xy = self._widget_to_image(event.position())
-        if released_button == self._pressed_button and not self._is_panning and image_xy is not None:
+        was_panning = bool(self._is_panning)
+        if released_button == self._pressed_button and not was_panning and image_xy is not None:
             self.imagePressed.emit(released_button, int(round(image_xy[0])), int(round(image_xy[1])))
         self._pressed_button = 0
         self._is_panning = False
+        self._refresh_cursor()
+        event.accept()
 
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:
         painter = QtGui.QPainter(self)
@@ -186,12 +211,25 @@ class _SampleAnnotationCanvas(QtWidgets.QWidget):
         base_offset = self._base_image_offset()
         self._pan_offset = self._clamp_pan_offset(self._pan_offset)
         self._image_offset = QtCore.QPointF(base_offset.x() + self._pan_offset.x(), base_offset.y() + self._pan_offset.y())
+        self._refresh_cursor()
 
     def _base_image_offset(self) -> QtCore.QPointF:
+        # Keep the scaled image centered even when it is larger than the
+        # viewport.  The old max(0, ...) anchoring put oversized images at
+        # (0, 0), while the pan clamp assumed a centered origin.  That mismatch
+        # made one drag direction appear locked after zooming.
         return QtCore.QPointF(
-            float(max(0, (self.width() - self._scaled_pixmap.width()) / 2.0)),
-            float(max(0, (self.height() - self._scaled_pixmap.height()) / 2.0)),
+            float((self.width() - self._scaled_pixmap.width()) / 2.0),
+            float((self.height() - self._scaled_pixmap.height()) / 2.0),
         )
+
+    def _refresh_cursor(self) -> None:
+        if self._is_panning:
+            self.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
+        elif self._can_pan():
+            self.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
+        else:
+            self.unsetCursor()
 
     def _widget_to_image(self, widget_pos: QtCore.QPointF) -> tuple[float, float] | None:
         if self._pixmap.isNull() or self._scale <= 0.0:
