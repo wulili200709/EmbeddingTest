@@ -44,6 +44,47 @@ class _LiteWarmupSignals(QtCore.QObject):
     finished = QtCore.Signal(str, str)
 
 
+class _LiteUiSignals(QtCore.QObject):
+    image_loaded = QtCore.Signal(int, str, QtGui.QImage, str)
+    reconciliation_finished = QtCore.Signal(int, str, object)
+
+
+class _LiteFileJobSignals(QtCore.QObject):
+    finished = QtCore.Signal(object)
+
+
+class _LiteImageLoadTask(QtCore.QRunnable):
+    """Decode an image away from Qt's UI thread; QPixmap is created on delivery."""
+
+    def __init__(self, signals: _LiteUiSignals, request_id: int, path: str) -> None:
+        super().__init__()
+        self._signals = signals
+        self._request_id = int(request_id)
+        self._path = str(path)
+
+    def run(self) -> None:
+        image = QtGui.QImage()
+        error_text = ""
+        try:
+            reader = QtGui.QImageReader(self._path)
+            reader.setAutoTransform(True)
+            image = reader.read()
+            if image.isNull():
+                error_text = reader.errorString() or "unable to decode image"
+        except Exception as exc:
+            error_text = str(exc)
+        try:
+            self._signals.image_loaded.emit(
+                self._request_id,
+                self._path,
+                image,
+                error_text,
+            )
+        except RuntimeError:
+            # The application may close while a slow decoder is still returning.
+            pass
+
+
 def _lite_text(zh_text: str, en_text: str) -> str:
     return zh_text if language_code().lower().startswith("zh") else en_text
 
@@ -189,6 +230,22 @@ class LiteDebugMainWindow(DebugMainWindow):
         super().__init__(lite_mode=True)
         self._lite_warmup_signals = _LiteWarmupSignals(self)
         self._lite_warmup_signals.finished.connect(self._on_lite_model_warmup_finished)
+        self._lite_ui_signals = _LiteUiSignals(self)
+        self._lite_ui_signals.image_loaded.connect(self._on_lite_image_loaded)
+        self._lite_ui_signals.reconciliation_finished.connect(
+            self._on_lite_reconciliation_finished
+        )
+        self._lite_annotation_cache: dict[
+            str,
+            tuple[Optional[tuple[int, int]], bool, frozenset[str], Optional[dict[str, str]]],
+        ] = {}
+        self._lite_reconcile_generation = 0
+        self._lite_reconcile_running = False
+        self._lite_reconcile_pending = False
+        self._lite_image_request_id = 0
+        self._lite_image_loading_path = ""
+        self._lite_image_pool = QtCore.QThreadPool(self)
+        self._lite_image_pool.setMaxThreadCount(1)
         self._lite_warmup_running = False
         self._lite_warmup_pending = False
         self._lite_warmup_ready_signature = ""
@@ -196,6 +253,7 @@ class LiteDebugMainWindow(DebugMainWindow):
         self._lite_warmup_event.set()
         self._install_lite_halcon_item_reconciliation()
         self._install_halcon_crop_import()
+        self._install_lite_ui_performance()
         self._install_lite_calibration_model_name()
         self._install_lite_embedding_analysis()
         self._install_lite_onnx_export()
@@ -464,16 +522,52 @@ class LiteDebugMainWindow(DebugMainWindow):
                 )
             )
 
-    def _halcon_item_specs(self) -> list[dict[str, str]]:
-        page = self.tool_page
-        configured_names = load_json_with_backup(
-            os.path.join(page.session.product_dir, LITE_MODEL_NAMES_FILENAME),
-            default={},
+    def _lite_annotation_snapshot(
+        self,
+        image_path: object,
+    ) -> tuple[bool, frozenset[str], Optional[dict[str, str]]]:
+        """Read each LabelMe file once per file version for Lite list/status queries."""
+        path = str(image_path or "").strip()
+        if not path:
+            return False, frozenset(), None
+        json_path = labelme_io.labelme_json_of_image(path)
+        cache_key = os.path.normcase(os.path.abspath(json_path))
+        try:
+            stat = os.stat(json_path)
+            signature: Optional[tuple[int, int]] = (int(stat.st_mtime_ns), int(stat.st_size))
+        except OSError:
+            signature = None
+
+        cached = self._lite_annotation_cache.get(cache_key)
+        if cached is not None and cached[0] == signature:
+            return cached[1], cached[2], cached[3]
+
+        payload = load_json_with_backup(json_path, default={}) if signature is not None else {}
+        if not isinstance(payload, dict):
+            payload = {}
+        labels = frozenset(
+            str(shape.get("label", "")).strip()
+            for shape in list(payload.get("shapes", []) or [])
+            if isinstance(shape, dict) and str(shape.get("label", "")).strip()
         )
-        if not isinstance(configured_names, dict):
-            configured_names = {}
+        raw_metadata = payload.get("lc_system_source")
+        metadata: Optional[dict[str, str]] = None
+        if isinstance(raw_metadata, dict) and str(raw_metadata.get("source", "")) == HALCON_CROP_SOURCE:
+            metadata = {str(key): str(value or "") for key, value in raw_metadata.items()}
+        snapshot = (signature, signature is not None, labels, metadata)
+        self._lite_annotation_cache[cache_key] = snapshot
+        return snapshot[1], snapshot[2], snapshot[3]
+
+    def _lite_explicit_crop_metadata(self, image_path: object) -> Optional[dict[str, str]]:
+        return self._lite_annotation_snapshot(image_path)[2]
+
+    @staticmethod
+    def _scan_lite_halcon_item_specs(
+        paths: Iterable[object],
+        configured_names: dict[object, object],
+    ) -> list[dict[str, str]]:
         specs: dict[tuple[str, str, str], dict[str, str]] = {}
-        for path in list(dict.fromkeys(list(page.train_files) + list(page.test_files))):
+        for path in paths:
             metadata = _halcon_crop_metadata(path)
             if metadata is None:
                 continue
@@ -493,10 +587,42 @@ class LiteDebugMainWindow(DebugMainWindow):
             }
         return list(specs.values())
 
-    def _reconcile_lite_halcon_items(self) -> bool:
+    def _halcon_item_specs(self) -> list[dict[str, str]]:
+        page = self.tool_page
+        configured_names = load_json_with_backup(
+            os.path.join(page.session.product_dir, LITE_MODEL_NAMES_FILENAME),
+            default={},
+        )
+        if not isinstance(configured_names, dict):
+            configured_names = {}
+        specs: dict[tuple[str, str, str], dict[str, str]] = {}
+        for path in list(dict.fromkeys(list(page.train_files) + list(page.test_files))):
+            metadata = self._lite_explicit_crop_metadata(path)
+            if metadata is None:
+                continue
+            role = normalize_camera_role(metadata.get("camera_role"), default="cam1")
+            item_id = str(metadata.get("item_id", "") or metadata.get("roi_label", "")).strip()
+            roi_label = str(metadata.get("roi_label", "") or item_id).strip()
+            if not item_id or not roi_label:
+                continue
+            model_key = f"{role}__{item_id}"
+            source_stem = Path(str(metadata.get("source_name", "") or item_id)).stem
+            inferred_name = re.sub(r"_\d{8}_\d{6}$", "", source_stem).strip(" _-")
+            specs[(role, item_id, roi_label)] = {
+                "camera_role": role,
+                "item_id": item_id,
+                "roi_label": roi_label,
+                "display_name": str(configured_names.get(model_key, "") or inferred_name or item_id),
+            }
+        return list(specs.values())
+
+    def _reconcile_lite_halcon_items(
+        self,
+        specs: Optional[list[dict[str, str]]] = None,
+    ) -> bool:
         """Keep inspection items aligned with the ROI identities stored in HALCON crops."""
         page = self.tool_page
-        specs = self._halcon_item_specs()
+        specs = self._halcon_item_specs() if specs is None else list(specs)
         if not specs:
             return False
         desired_by_role = {
@@ -548,38 +674,95 @@ class LiteDebugMainWindow(DebugMainWindow):
             page._refresh_inspection_items_table()
         return changed
 
+    def _schedule_lite_halcon_reconciliation(self) -> None:
+        self._lite_reconcile_generation += 1
+        self._lite_reconcile_pending = True
+        if not self._lite_reconcile_running:
+            self._start_lite_halcon_reconciliation()
+
+    def _start_lite_halcon_reconciliation(self) -> None:
+        if self._lite_reconcile_running or not self._lite_reconcile_pending:
+            return
+        page = self.tool_page
+        generation = self._lite_reconcile_generation
+        product_dir = os.path.normcase(os.path.abspath(str(page.session.product_dir or "")))
+        paths = list(dict.fromkeys(list(page.train_files) + list(page.test_files)))
+        configured_names = load_json_with_backup(
+            os.path.join(page.session.product_dir, LITE_MODEL_NAMES_FILENAME),
+            default={},
+        )
+        if not isinstance(configured_names, dict):
+            configured_names = {}
+        self._lite_reconcile_running = True
+        self._lite_reconcile_pending = False
+
+        def scan_worker() -> None:
+            try:
+                specs = self._scan_lite_halcon_item_specs(paths, configured_names)
+            except Exception:
+                specs = []
+            try:
+                self._lite_ui_signals.reconciliation_finished.emit(
+                    generation,
+                    product_dir,
+                    specs,
+                )
+            except RuntimeError:
+                pass
+
+        threading.Thread(
+            target=scan_worker,
+            name="MainLiteSampleMetadata",
+            daemon=True,
+        ).start()
+
+    @QtCore.Slot(int, str, object)
+    def _on_lite_reconciliation_finished(
+        self,
+        generation: int,
+        product_dir: str,
+        specs: object,
+    ) -> None:
+        self._lite_reconcile_running = False
+        current_dir = os.path.normcase(
+            os.path.abspath(str(self.tool_page.session.product_dir or ""))
+        )
+        if generation == self._lite_reconcile_generation and product_dir == current_dir:
+            self._reconcile_lite_halcon_items(
+                list(specs) if isinstance(specs, list) else []
+            )
+        if self._lite_reconcile_pending:
+            self._start_lite_halcon_reconciliation()
+
     def _install_lite_halcon_item_reconciliation(self) -> None:
         page = self.tool_page
         original_reload = page._reload_inspection_items
 
         def lite_reload(tool_page) -> None:
             original_reload()
-            self._reconcile_lite_halcon_items()
+            self._schedule_lite_halcon_reconciliation()
 
         page._reload_inspection_items = MethodType(lite_reload, page)
-        self._reconcile_lite_halcon_items()
+        self._schedule_lite_halcon_reconciliation()
 
     def _lite_crop_context(self, image_path: object) -> Optional[dict[str, str]]:
         """Return explicit or safe inferred full-image ROI metadata for Lite testing."""
-        metadata = _halcon_crop_metadata(image_path)
+        metadata = self._lite_explicit_crop_metadata(image_path)
         if metadata is not None:
             return metadata
         path = str(image_path or "").strip()
         if not path:
             return None
-        json_path = labelme_io.labelme_json_of_image(path)
-        if os.path.exists(json_path):
-            try:
-                if labelme_io.list_shapes_from_labelme(json_path):
-                    return None
-            except Exception:
-                return None
+        json_exists, labels, _metadata = self._lite_annotation_snapshot(path)
+        if json_exists and labels:
+            return None
         role = camera_role_from_text(os.path.basename(path), default="")
         if not role:
             return None
         known_roles = {
-            normalize_camera_role(spec.get("camera_role"), default="cam1")
-            for spec in self._halcon_item_specs()
+            normalize_camera_role(getattr(item, "camera_id", ""), default="cam1")
+            for item in list(getattr(self.tool_page, "inspection_items", []) or [])
+            if bool(getattr(item, "enabled", True))
         }
         if role not in known_roles:
             return None
@@ -668,6 +851,276 @@ class LiteDebugMainWindow(DebugMainWindow):
         self._refresh_lite_text()
         self._install_lite_training_filters()
         self._install_lite_test_execution()
+
+    def _run_lite_file_job(
+        self,
+        title: str,
+        message: str,
+        job,
+    ):
+        """Run bulk file I/O in a worker while a modal progress UI pumps events."""
+        progress = QtWidgets.QProgressDialog(message, "", 0, 0, self)
+        progress.setWindowTitle(title)
+        progress.setCancelButton(None)
+        progress.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        signals = _LiteFileJobSignals(self)
+        wait_loop = QtCore.QEventLoop(self)
+        outcome: dict[str, object] = {}
+
+        def finish(result: object) -> None:
+            outcome["result"] = result
+            wait_loop.quit()
+
+        def worker() -> None:
+            try:
+                result = (True, job())
+            except BaseException as exc:
+                result = (False, exc)
+            signals.finished.emit(result)
+
+        signals.finished.connect(finish)
+        progress.show()
+        threading.Thread(target=worker, name="MainLiteFileImport", daemon=True).start()
+        wait_loop.exec()
+        progress.close()
+        progress.deleteLater()
+        signals.deleteLater()
+        success, value = outcome.get("result", (False, RuntimeError("file job stopped")))
+        if not success:
+            if isinstance(value, BaseException):
+                raise value
+            raise RuntimeError(str(value))
+        return value
+
+    def _install_lite_ui_performance(self) -> None:
+        """Keep large sample collections from monopolizing Qt's event loop."""
+        page = self.tool_page
+        controller = page.sample_list_controller
+        for list_widget in (page.ok_list, page.ng_list, page.test_list):
+            list_widget.setUniformItemSizes(True)
+            list_widget.setLayoutMode(QtWidgets.QListView.LayoutMode.Batched)
+            list_widget.setBatchSize(128)
+
+        self._lite_list_refresh_generation = 0
+        self._lite_list_refresh_active = False
+        self._lite_list_refresh_state: list[dict[str, object]] = []
+        self._lite_pending_list_selection = ""
+        self._lite_list_refresh_timer = QtCore.QTimer(self)
+        self._lite_list_refresh_timer.setInterval(0)
+
+        def item_path(item: Optional[QtWidgets.QListWidgetItem]) -> str:
+            if item is None:
+                return ""
+            return str(item.data(QtCore.Qt.ItemDataRole.UserRole) or item.toolTip() or "")
+
+        def list_title(role: str, *, loading: bool = False) -> str:
+            title = tr("debug.image_list")
+            if role:
+                title = (
+                    f"{title}（{role}）"
+                    if language_code().lower().startswith("zh")
+                    else f"{title} ({role})"
+                )
+            if loading:
+                title += _lite_text(" · 正在加载…", " · Loading...")
+            return title
+
+        def finish_list_refresh() -> None:
+            self._lite_list_refresh_timer.stop()
+            self._lite_list_refresh_active = False
+            role = str(getattr(self, "_lite_list_refresh_role", "") or "")
+            if hasattr(page, "lbl_images_section"):
+                page.lbl_images_section.setText(list_title(role))
+            page._update_sample_panel_widgets()
+            pending_path = self._lite_pending_list_selection
+            self._lite_pending_list_selection = ""
+            if pending_path:
+                original_select_path(pending_path)
+
+        def append_list_batch() -> None:
+            states = self._lite_list_refresh_state
+            while states and int(states[0]["cursor"]) >= len(states[0]["files"]):
+                completed = states.pop(0)
+                selected_path = str(completed.get("selected_path", "") or "")
+                selected_row = int(completed.get("selected_row", -1))
+                if selected_path and selected_row >= 0:
+                    list_widget = completed["widget"]
+                    blocker = QtCore.QSignalBlocker(list_widget)
+                    list_widget.setCurrentRow(selected_row)
+                    del blocker
+            if not states:
+                finish_list_refresh()
+                return
+
+            state = states[0]
+            list_widget = state["widget"]
+            files = state["files"]
+            cursor = int(state["cursor"])
+            end = min(len(files), cursor + 128)
+            deadline = time.perf_counter() + 0.010
+            list_widget.setUpdatesEnabled(False)
+            blocker = QtCore.QSignalBlocker(list_widget)
+            try:
+                while cursor < end:
+                    path = str(files[cursor])
+                    item = QtWidgets.QListWidgetItem(
+                        page._sample_item_display_text(
+                            path,
+                            str(state["sample_kind"]),
+                            str(state["role"]),
+                        )
+                    )
+                    item.setToolTip(path)
+                    item.setData(QtCore.Qt.ItemDataRole.UserRole, path)
+                    list_widget.addItem(item)
+                    if path == state["selected_path"]:
+                        state["selected_row"] = cursor
+                    cursor += 1
+                    if cursor % 16 == 0 and time.perf_counter() >= deadline:
+                        break
+                state["cursor"] = cursor
+            finally:
+                del blocker
+                list_widget.setUpdatesEnabled(True)
+
+        self._lite_list_refresh_timer.timeout.connect(append_list_batch)
+
+        def lite_refresh_lists(tool_page) -> None:
+            self._lite_list_refresh_generation += 1
+            self._lite_list_refresh_timer.stop()
+            role = tool_page._selected_image_list_camera_role()
+            self._lite_list_refresh_role = role
+            train_paths = list(tool_page._sample_paths_for_kind("train", role))
+            test_paths = list(tool_page._sample_paths_for_kind("test", role))
+            ordered = (
+                [(tool_page.ok_list, train_paths, "train"), (tool_page.test_list, test_paths, "test")]
+                if tool_page.tabs.currentIndex() == 0
+                else [(tool_page.test_list, test_paths, "test"), (tool_page.ok_list, train_paths, "train")]
+            )
+            states: list[dict[str, object]] = []
+            for list_widget, files, sample_kind in ordered:
+                selected_path = item_path(list_widget.currentItem())
+                blocker = QtCore.QSignalBlocker(list_widget)
+                list_widget.setUpdatesEnabled(False)
+                try:
+                    list_widget.clear()
+                finally:
+                    list_widget.setUpdatesEnabled(True)
+                    del blocker
+                states.append(
+                    {
+                        "widget": list_widget,
+                        "files": files,
+                        "sample_kind": sample_kind,
+                        "role": role,
+                        "cursor": 0,
+                        "selected_path": selected_path,
+                        "selected_row": -1,
+                    }
+                )
+            blocker = QtCore.QSignalBlocker(tool_page.ng_list)
+            tool_page.ng_list.clear()
+            del blocker
+            if hasattr(tool_page, "tabs"):
+                tool_page.tabs.setTabText(0, f"{tr('debug.train_samples')} ({len(train_paths)})")
+                tool_page.tabs.setTabText(1, f"{tr('debug.test_samples')} ({len(test_paths)})")
+            if hasattr(tool_page, "lbl_images_section"):
+                tool_page.lbl_images_section.setText(list_title(role, loading=True))
+            self._lite_list_refresh_state = states
+            self._lite_list_refresh_active = True
+            self._lite_list_refresh_timer.start()
+
+        original_localize_files = controller._localize_training_files
+
+        def lite_localize_files(sample_controller, files: list[str]):
+            if len(files) < 8:
+                return original_localize_files(files)
+            return self._run_lite_file_job(
+                _lite_text("导入训练图片", "Importing Training Images"),
+                _lite_text(
+                    f"正在复制并检查 {len(files)} 张图片，请稍候…",
+                    f"Copying and checking {len(files)} images. Please wait...",
+                ),
+                lambda: original_localize_files(files),
+            )
+
+        original_select_path = controller.select_path_in_current_tab
+
+        def lite_select_path(sample_controller, path: str) -> None:
+            if self._lite_list_refresh_active:
+                self._lite_pending_list_selection = str(path or "")
+                return
+            original_select_path(path)
+
+        original_show_path = controller.show_selected_image_path
+
+        def lite_show_path(sample_controller, path: Optional[str]) -> None:
+            if not path:
+                self._lite_image_request_id += 1
+                self._lite_image_loading_path = ""
+                self._lite_image_pool.clear()
+                original_show_path(path)
+                return
+            path = str(path)
+            if page.canvas.image_path() == path:
+                # Lite training is tool-oriented. Keep the selected tool when
+                # operators review samples so calibration remains available.
+                page._set_status_for_current_image(path)
+                page._update_sample_panel_widgets()
+                return
+            self._lite_image_request_id += 1
+            request_id = self._lite_image_request_id
+            self._lite_image_loading_path = path
+            self._lite_image_pool.clear()
+            page.lbl_status.setText(
+                _lite_text(
+                    f"状态：正在加载图片 {os.path.basename(path)}…",
+                    f"Status: loading image {os.path.basename(path)}...",
+                )
+            )
+            self._lite_image_pool.start(
+                _LiteImageLoadTask(self._lite_ui_signals, request_id, path)
+            )
+
+        page._refresh_lists = MethodType(lite_refresh_lists, page)
+        controller._localize_training_files = MethodType(lite_localize_files, controller)
+        controller.select_path_in_current_tab = MethodType(lite_select_path, controller)
+        controller.show_selected_image_path = MethodType(lite_show_path, controller)
+
+    @QtCore.Slot(int, str, QtGui.QImage, str)
+    def _on_lite_image_loaded(
+        self,
+        request_id: int,
+        path: str,
+        image: QtGui.QImage,
+        error_text: str,
+    ) -> None:
+        if request_id != self._lite_image_request_id:
+            return
+        page = self.tool_page
+        selected_path = page.sample_list_controller.current_selected_path()
+        if str(selected_path or "") != str(path):
+            return
+        self._lite_image_loading_path = ""
+        if error_text or image.isNull():
+            page.lbl_status.setText(
+                _lite_text(
+                    f"状态：图片加载失败：{error_text or os.path.basename(path)}",
+                    f"Status: image load failed: {error_text or os.path.basename(path)}",
+                )
+            )
+            page._update_sample_panel_widgets()
+            return
+        try:
+            page.canvas.set_image(path, pixmap=QtGui.QPixmap.fromImage(image))
+            page._load_shape_for_label(path, page._current_label())
+            page._set_status_for_current_image(path)
+        except Exception as exc:
+            page.lbl_status.setText(
+                _lite_text(f"状态：图片显示失败：{exc}", f"Status: image display failed: {exc}")
+            )
+        page._update_sample_panel_widgets()
 
     def _refresh_lite_text(self) -> None:
         import_label = getattr(self, "lbl_lite_import_mode", None)
@@ -823,16 +1276,31 @@ class LiteDebugMainWindow(DebugMainWindow):
         role = page.current_camera_role()
         roi_label = str(getattr(inspection_item, "roi_label", ""))
         status = str(status_combo.currentData() or "OK")
-        imported, errors = _import_halcon_crop_files(
-            files,
-            product_dir=page.session.product_dir,
-            camera_role=role,
-            item_id=getattr(inspection_item, "item_id", ""),
-            roi_label=roi_label,
-            status=status,
+        product_dir = str(page.session.product_dir)
+        item_id = str(getattr(inspection_item, "item_id", ""))
+        imported, errors = self._run_lite_file_job(
+            _lite_text("导入 HALCON 小图", "Importing HALCON Crops"),
+            _lite_text(
+                f"正在复制并创建 {len(files)} 张图片的标注，请稍候…",
+                f"Copying and annotating {len(files)} images. Please wait...",
+            ),
+            lambda: _import_halcon_crop_files(
+                files,
+                product_dir=product_dir,
+                camera_role=role,
+                item_id=item_id,
+                roi_label=roi_label,
+                status=status,
+            ),
         )
+        annotation_key = page.roi_annotations.roi_key(role, roi_label)
         for path in imported:
-            page._set_sample_roi_status_for_path(path, role, roi_label, status)
+            normalized_path = os.path.normpath(path)
+            annotations = dict(page._sample_roi_annotations_by_path.get(normalized_path, {}))
+            annotations[annotation_key] = status
+            page._sample_roi_annotations_by_path[normalized_path] = annotations
+        if imported:
+            page._save_sample_roi_annotations()
 
         if imported:
             if create_new_item:
@@ -886,7 +1354,6 @@ class LiteDebugMainWindow(DebugMainWindow):
         builder = page.training_controller.task_builder
         original_train_paths = builder.train_sample_paths_for_role
         original_ensure_reviewed = page._ensure_training_roi_reviewed
-        original_has_geometry = page._path_has_roi_geometry
 
         def crop_applies(path: str, role: str, label: str) -> bool:
             metadata = self._lite_crop_context(path)
@@ -898,7 +1365,8 @@ class LiteDebugMainWindow(DebugMainWindow):
             )
 
         def lite_has_geometry(tool_page, path: str, label_name: str) -> bool:
-            if original_has_geometry(path, label_name):
+            _json_exists, labels, _metadata = self._lite_annotation_snapshot(path)
+            if str(label_name or "").strip() in labels:
                 return True
             metadata = self._lite_crop_context(path)
             return bool(
@@ -1007,6 +1475,7 @@ class LiteDebugMainWindow(DebugMainWindow):
             *,
             action_name: str,
             action_key: str,
+            confirmation_token: str = "",
         ) -> bool:
             role = normalize_camera_role(camera_role or tool_page.current_camera_role(), default="cam1")
             normal_paths = [path for path in original_train_paths(role) if self._lite_crop_context(path) is None]
@@ -1025,7 +1494,12 @@ class LiteDebugMainWindow(DebugMainWindow):
 
             builder.train_sample_paths_for_role = MethodType(normal_train_paths, builder)
             try:
-                return original_ensure_reviewed(role, action_name=action_name, action_key=action_key)
+                return original_ensure_reviewed(
+                    role,
+                    action_name=action_name,
+                    action_key=action_key,
+                    confirmation_token=confirmation_token,
+                )
             finally:
                 builder.train_sample_paths_for_role = previous_train_paths
 
@@ -1269,6 +1743,31 @@ class LiteDebugMainWindow(DebugMainWindow):
         def selected_item():
             return page._selected_inspection_item()
 
+        def selected_or_only_trainable_item():
+            item = selected_item()
+            if item is not None:
+                return item
+            role = page.current_camera_role()
+            candidates = [
+                (index, candidate)
+                for index, candidate in enumerate(list(getattr(page, "inspection_items", []) or []))
+                if bool(getattr(candidate, "enabled", True))
+                and normalize_camera_role(getattr(candidate, "camera_id", ""), default="cam1") == role
+                and page.algo.is_learning_tool(getattr(candidate, "algorithm_code", ""))
+            ]
+            if len(candidates) != 1:
+                return None
+            item_index, candidate = candidates[0]
+            visible_indexes = list(getattr(page, "_visible_inspection_item_indexes", []) or [])
+            try:
+                row = visible_indexes.index(item_index)
+            except ValueError:
+                row = 0 if page.inspection_items_table.rowCount() == 1 else -1
+            if row >= 0:
+                page.inspection_items_table.setCurrentCell(row, 1)
+                page.inspection_items_table.selectRow(row)
+            return selected_item() or candidate
+
         def sync_name_editor(*_args) -> None:
             item = selected_item()
             name_edit.blockSignals(True)
@@ -1351,7 +1850,7 @@ class LiteDebugMainWindow(DebugMainWindow):
         original_train_all = page._train_all_tools
 
         def lite_train_current(tool_page) -> None:
-            item = selected_item()
+            item = selected_or_only_trainable_item()
             if item is None or not page.algo.is_learning_tool(getattr(item, "algorithm_code", "")):
                 original_train_current()
                 return
