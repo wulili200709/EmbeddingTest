@@ -36,6 +36,7 @@ class ConveyorLineTests(unittest.TestCase):
         self.logs: list[str] = []
         self.config = ConveyorConfig(
             capture_commit_guard_ms=100,
+            inspection_result_wait_timeout_ms=3000,
             controlled_stop_timeout_ms=1500,
             reject_blow_delay_ms=0,
             reject_blow_duration_ms=300,
@@ -46,6 +47,7 @@ class ConveyorLineTests(unittest.TestCase):
             waste_outlet_arrival_min_run_ms=0,
             waste_outlet_arrival_max_run_ms=500,
             end_test_sensor_enabled=True,
+            waste_outlet_confirmation_enabled=True,
             upper_door_sensor_enabled=True,
             end_test_blocked_timeout_s=1.0,
             good_outlet_blocked_timeout_s=1.0,
@@ -182,6 +184,7 @@ class ConveyorLineTests(unittest.TestCase):
     def test_good_arrival_during_ng_blow_window_stops_with_conflict(self) -> None:
         self.line.request_start()
         self.edge("camera_trigger_sensor")
+        self.line.tick(self.clock.advance(0.5))
         self.edge("camera_trigger_sensor")
         self.line.inspection_completed(1, self.line.epoch, "NG")
         self.line.inspection_completed(2, self.line.epoch, "OK")
@@ -198,10 +201,82 @@ class ConveyorLineTests(unittest.TestCase):
         self.assertFalse(self.outputs["waste_removal"])
         self.assertEqual(len(self.line.fifo), 1)
 
-    def test_pending_result_at_di1_faults_instead_of_guessing(self) -> None:
+    def test_close_following_item_blocks_ng_blow_before_fifo_can_desynchronize(self) -> None:
+        self.line.request_start()
+        self.edge("camera_trigger_sensor")
+        self.line.tick(self.clock.advance(0.2))
+        self.edge("camera_trigger_sensor")
+        self.line.inspection_completed(1, self.line.epoch, "NG")
+        self.line.inspection_completed(2, self.line.epoch, "OK")
+
+        self.edge("reject_position_sensor")
+
+        snapshot = self.line.snapshot()
+        self.assertEqual(snapshot["state"], "FAULT_STOPPED")
+        self.assertEqual(snapshot["fault_code"], "PRODUCT_SPACING_TOO_SMALL")
+        self.assertEqual(snapshot["fault_recovery"], "PURGE_REQUIRED")
+        self.assertIn("following item 2", snapshot["fault_detail"])
+        self.assertEqual(snapshot["fifo_count"], 2)
+        self.assertFalse(self.outputs["conveyor_run"])
+        self.assertFalse(self.outputs["waste_removal"])
+
+    def test_safely_spaced_following_item_allows_ng_blow(self) -> None:
+        self.line.request_start()
+        self.edge("camera_trigger_sensor")
+        self.line.tick(self.clock.advance(0.5))
+        self.edge("camera_trigger_sensor")
+        self.line.inspection_completed(1, self.line.epoch, "NG")
+        self.line.inspection_completed(2, self.line.epoch, "OK")
+
+        self.edge("reject_position_sensor")
+
+        self.assertEqual(self.line.state, ConveyorState.RUNNING)
+        self.assertEqual([item.sequence_id for item in self.line.fifo], [2])
+        self.assertTrue(self.outputs["waste_removal"])
+
+    def test_pending_result_at_di1_stops_then_good_result_resumes(self) -> None:
         self.line.request_start()
         self.edge("camera_trigger_sensor")
         self.edge("reject_position_sensor")
+        snapshot = self.line.snapshot()
+        self.assertEqual(snapshot["state"], "WAITING_INSPECTION")
+        self.assertEqual(snapshot["fault_code"], "")
+        self.assertFalse(self.outputs["conveyor_run"])
+        self.assertFalse(self.outputs["waste_removal"])
+
+        self.assertTrue(
+            self.line.inspection_completed(1, self.line.epoch, "OK")
+        )
+        snapshot = self.line.snapshot()
+        self.assertEqual(snapshot["state"], "RUNNING")
+        self.assertTrue(self.outputs["conveyor_run"])
+        self.assertFalse(self.outputs["waste_removal"])
+        self.assertEqual(snapshot["fifo_count"], 0)
+        self.assertEqual(snapshot["good_outlet_pending_count"], 1)
+
+    def test_pending_result_at_di1_stops_then_ng_result_resumes_with_blow(self) -> None:
+        self.line.request_start()
+        self.edge("camera_trigger_sensor")
+        self.edge("reject_position_sensor")
+
+        self.assertTrue(
+            self.line.inspection_completed(1, self.line.epoch, "NG")
+        )
+        snapshot = self.line.snapshot()
+        self.assertEqual(snapshot["state"], "RUNNING")
+        self.assertTrue(self.outputs["conveyor_run"])
+        self.assertTrue(self.outputs["waste_removal"])
+        self.assertEqual(snapshot["fifo_count"], 0)
+        self.assertEqual(snapshot["waste_outlet_pending_count"], 1)
+
+    def test_pending_result_at_di1_faults_only_after_wait_timeout(self) -> None:
+        self.line.request_start()
+        self.edge("camera_trigger_sensor")
+        self.edge("reject_position_sensor")
+
+        self.line.tick(self.clock.advance(2.9))
+        self.assertEqual(self.line.state, ConveyorState.WAITING_INSPECTION)
+        self.line.tick(self.clock.advance(0.2))
         snapshot = self.line.snapshot()
         self.assertEqual(snapshot["state"], "FAULT_STOPPED")
         self.assertEqual(snapshot["fault_code"], "RESULT_NOT_READY")
@@ -324,7 +399,11 @@ class ConveyorLineTests(unittest.TestCase):
         self.assertEqual(snapshot["fault_code"], "BLOW_INTERRUPTED")
         self.assertEqual(snapshot["fault_recovery"], "PURGE_REQUIRED")
         self.assertFalse(self.line.request_start())
-        self.assertFalse(self.line.acknowledge_alarm())
+        self.assertTrue(self.outputs["buzzer"])
+        self.assertTrue(self.line.acknowledge_alarm())
+        self.assertFalse(self.outputs["buzzer"])
+        self.assertEqual(self.line.snapshot()["state"], "FAULT_STOPPED")
+        self.assertEqual(self.line.snapshot()["fault_code"], "BLOW_INTERRUPTED")
         self.assertTrue(self.line.request_purge())
 
     def test_purge_invalidates_old_results_and_finishes_when_line_is_quiet(self) -> None:
@@ -374,9 +453,20 @@ class ConveyorLineTests(unittest.TestCase):
         self.assertEqual(snapshot["state"], "FAULT_STOPPED")
         self.assertEqual(snapshot["fault_code"], "JAM_DETECTED")
         self.assertTrue(self.outputs["buzzer"])
-        self.assertFalse(self.line.acknowledge_alarm())
+        self.assertTrue(self.line.acknowledge_alarm())
+        self.assertFalse(self.outputs["buzzer"])
+        self.assertEqual(self.line.snapshot()["state"], "FAULT_STOPPED")
+        self.line.tick(self.clock.advance(0.1))
+        self.assertFalse(self.outputs["buzzer"])
         self.line.handle_input_change("good_outlet_sensor", False)
         self.assertTrue(self.line.acknowledge_alarm())
+        self.assertEqual(self.line.snapshot()["state"], "READY_STOPPED")
+
+        self.assertTrue(self.line.request_start())
+        self.line.handle_input_change("end_test_sensor", True)
+        self.line.tick(self.clock.advance(1.1))
+        self.assertEqual(self.line.snapshot()["fault_code"], "JAM_DETECTED")
+        self.assertTrue(self.outputs["buzzer"])
 
     def test_good_requires_di7_confirmation(self) -> None:
         self.line.request_start()
@@ -395,6 +485,66 @@ class ConveyorLineTests(unittest.TestCase):
         self.assertEqual(snapshot["inflight_count"], 0)
         self.assertEqual(snapshot["fault_code"], "")
 
+    def test_outlet_calibration_logs_use_millisecond_motion_time(self) -> None:
+        self.line.request_start()
+        self.edge("camera_trigger_sensor")
+        self.line.inspection_completed(1, self.line.epoch, "OK")
+        self.edge("reject_position_sensor")
+
+        self.clock.advance(0.234)
+        self.edge("good_outlet_sensor")
+
+        self.assertTrue(
+            any(
+                "GOOD item=1 passed DI1" in entry
+                and "window_ms=0.0..500.0" in entry
+                for entry in self.logs
+            )
+        )
+        self.assertTrue(
+            any(
+                "DI7 edge:" in entry
+                and "item=1/result=GOOD/expected=DI7/elapsed_ms=234.0" in entry
+                for entry in self.logs
+            )
+        )
+        self.assertTrue(
+            any(
+                "outlet confirmed: item=1, outlet=DI7, travel_ms=234.0" in entry
+                for entry in self.logs
+            )
+        )
+
+    def test_outlet_signal_logs_include_high_and_low_millisecond_intervals(self) -> None:
+        self.line.request_start()
+        self.edge("camera_trigger_sensor")
+        self.line.inspection_completed(1, self.line.epoch, "OK")
+        self.edge("reject_position_sensor")
+
+        self.clock.advance(0.234)
+        self.line.handle_input_change("good_outlet_sensor", True)
+        self.clock.advance(0.125)
+        self.line.handle_input_change("good_outlet_sensor", False)
+
+        self.assertTrue(
+            any(
+                "DI7 signal ON:" in entry
+                and "low_wall_ms=234.0" in entry
+                and "low_motion_ms=234.0" in entry
+                and "debounce_ms=20" in entry
+                for entry in self.logs
+            )
+        )
+        self.assertTrue(
+            any(
+                "DI7 signal OFF:" in entry
+                and "high_wall_ms=125.0" in entry
+                and "high_motion_ms=125.0" in entry
+                and "debounce_ms=20" in entry
+                for entry in self.logs
+            )
+        )
+
     def test_ng_requires_di8_confirmation(self) -> None:
         self.line.request_start()
         self.edge("camera_trigger_sensor")
@@ -407,6 +557,128 @@ class ConveyorLineTests(unittest.TestCase):
         self.assertEqual(snapshot["waste_outlet_pending_count"], 0)
         self.assertEqual(snapshot["inflight_count"], 0)
         self.assertEqual(snapshot["fault_code"], "")
+
+    def test_ng_guard_completes_without_di8_when_confirmation_is_disabled(self) -> None:
+        self.line.config = replace(
+            self.line.config,
+            waste_outlet_confirmation_enabled=False,
+        )
+        self.line.request_start()
+        self.edge("camera_trigger_sensor")
+        self.line.inspection_completed(1, self.line.epoch, "NG")
+        self.edge("reject_position_sensor")
+        self.assertEqual(self.line.snapshot()["waste_outlet_pending_count"], 1)
+
+        self.line.tick(self.clock.advance(0.51))
+        snapshot = self.line.snapshot()
+        self.assertEqual(snapshot["waste_outlet_pending_count"], 0)
+        self.assertEqual(snapshot["inflight_count"], 0)
+        self.assertEqual(snapshot["fault_code"], "")
+        self.assertTrue(any("reject guard passed" in entry for entry in self.logs))
+
+    def test_di6_short_pulse_does_not_fail_ng_guard(self) -> None:
+        self.line.config = replace(
+            self.line.config,
+            waste_outlet_confirmation_enabled=False,
+        )
+        self.line.request_start()
+        self.edge("camera_trigger_sensor")
+        self.line.inspection_completed(1, self.line.epoch, "NG")
+        self.edge("reject_position_sensor")
+
+        self.edge("end_test_sensor")
+        snapshot = self.line.snapshot()
+        self.assertEqual(snapshot["fault_code"], "")
+        self.assertEqual(snapshot["waste_outlet_pending_count"], 1)
+
+        self.line.tick(self.clock.advance(0.51))
+        self.assertEqual(self.line.snapshot()["waste_outlet_pending_count"], 0)
+
+    def test_ng_guard_reports_reject_failure_on_di7(self) -> None:
+        self.line.config = replace(
+            self.line.config,
+            waste_outlet_confirmation_enabled=False,
+        )
+        self.line.request_start()
+        self.edge("camera_trigger_sensor")
+        self.line.inspection_completed(1, self.line.epoch, "NG")
+        self.edge("reject_position_sensor")
+
+        self.edge("good_outlet_sensor")
+        self.assertEqual(
+            self.line.snapshot()["fault_code"],
+            "REJECT_FAILED_WRONG_OUTLET",
+        )
+
+    def test_di8_edge_does_not_complete_ng_guard_when_confirmation_is_disabled(self) -> None:
+        self.line.config = replace(
+            self.line.config,
+            waste_outlet_confirmation_enabled=False,
+        )
+        self.line.request_start()
+        self.edge("camera_trigger_sensor")
+        self.line.inspection_completed(1, self.line.epoch, "NG")
+        self.edge("reject_position_sensor")
+
+        self.edge("waste_outlet_sensor")
+        snapshot = self.line.snapshot()
+        self.assertEqual(snapshot["waste_outlet_pending_count"], 1)
+        self.assertEqual(snapshot["fault_code"], "")
+
+    def test_di8_jam_monitor_remains_enabled_when_confirmation_is_disabled(self) -> None:
+        self.line.config = replace(
+            self.line.config,
+            waste_outlet_confirmation_enabled=False,
+        )
+        self.line.request_start()
+        self.line.handle_input_change("waste_outlet_sensor", True)
+        self.line.tick(self.clock.advance(1.1))
+
+        snapshot = self.line.snapshot()
+        self.assertEqual(snapshot["fault_code"], "JAM_DETECTED")
+        self.assertEqual(snapshot["fault_input"], "waste_outlet_sensor")
+
+    def test_di6_remains_a_dedicated_jam_sensor(self) -> None:
+        self.line.config = replace(
+            self.line.config,
+            waste_outlet_confirmation_enabled=False,
+        )
+        self.line.request_start()
+        self.line.handle_input_change("end_test_sensor", True)
+        self.line.tick(self.clock.advance(1.1))
+
+        snapshot = self.line.snapshot()
+        self.assertEqual(snapshot["fault_code"], "JAM_DETECTED")
+        self.assertEqual(snapshot["fault_input"], "end_test_sensor")
+
+    def test_di7_cannot_skip_earlier_ng_to_confirm_later_good(self) -> None:
+        self.line.config = replace(
+            self.line.config,
+            waste_outlet_confirmation_enabled=False,
+        )
+        self.line.request_start()
+        self.edge("camera_trigger_sensor")
+        self.line.tick(self.clock.advance(0.5))
+        self.edge("camera_trigger_sensor")
+        self.line.inspection_completed(1, self.line.epoch, "NG")
+        self.line.inspection_completed(2, self.line.epoch, "OK")
+        self.edge("reject_position_sensor")
+        self.line.tick(self.clock.advance(0.31))
+        self.edge("reject_position_sensor")
+
+        self.edge("good_outlet_sensor")
+        snapshot = self.line.snapshot()
+        self.assertEqual(snapshot["fault_code"], "REJECT_FAILED_WRONG_OUTLET")
+        self.assertEqual(snapshot["good_outlet_pending_count"], 1)
+        edge_log = next(entry for entry in self.logs if "DI7 edge:" in entry)
+        self.assertIn(
+            "item=1/result=NG/expected=DI7_REJECT_GUARD/elapsed_ms=310.0",
+            edge_log,
+        )
+        self.assertIn(
+            "item=2/result=GOOD/expected=DI7/elapsed_ms=0.0",
+            edge_log,
+        )
 
     def test_missing_good_outlet_confirmation_times_out(self) -> None:
         self.line.request_start()
@@ -483,6 +755,10 @@ class ConveyorLineTests(unittest.TestCase):
         )
 
     def test_raw_di8_presence_does_not_block_purge_start(self) -> None:
+        self.line.config = replace(
+            self.line.config,
+            waste_outlet_confirmation_enabled=False,
+        )
         self.line.handle_input_change("waste_outlet_sensor", True)
         self.assertTrue(self.line.request_purge())
         self.assertEqual(self.line.state, ConveyorState.PURGE_PREPARING)
@@ -612,9 +888,12 @@ class ConveyorLineTests(unittest.TestCase):
             {
                 "reject_blow_delay_ms",
                 "reject_blow_duration_ms",
+                "reject_following_item_guard_ms",
                 "max_inflight_items",
                 "front_to_reject_max_run_ms",
+                "inspection_result_wait_timeout_ms",
                 "end_test_sensor_enabled",
+                "waste_outlet_confirmation_enabled",
                 "end_test_blocked_timeout_s",
                 "good_outlet_blocked_timeout_s",
                 "waste_outlet_blocked_timeout_s",

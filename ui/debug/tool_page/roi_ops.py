@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from PySide6 import QtGui
 
@@ -84,8 +84,8 @@ def _canvas_roi_style_for_label(tool_page, img_path: str, label_name: str) -> tu
     return color, dash, width
 
 
-def _load_canvas_image(tool_page, path: str) -> None:
-    tool_page.canvas.set_image(path, pixmap=QtGui.QPixmap(path))
+def _load_canvas_image(tool_page, path: str, pixmap: Optional[QtGui.QPixmap] = None) -> None:
+    tool_page.canvas.set_image(path, pixmap=pixmap if pixmap is not None else QtGui.QPixmap(path))
     tool_page._load_shape_for_label(path, tool_page._current_label())
 
 
@@ -114,7 +114,53 @@ def _update_save_label_text(tool_page) -> None:
     tool_page.btn_save.setText(tr("debug.save_annotation", label=label))
 
 
-def _set_overlay_shapes(tool_page, img_path: str, current_label: str) -> None:
+def _shape_geometry(shape: object) -> tuple[Optional[List[Tuple[float, float]]], Optional[Tuple[int, int, int, int]]]:
+    if not isinstance(shape, dict):
+        return None, None
+    try:
+        points = [(float(x), float(y)) for x, y in list(shape.get("points") or [])]
+    except (TypeError, ValueError):
+        return None, None
+    if shape.get("shape_type") == "polygon" and len(points) >= 3:
+        return points, None
+    if not points:
+        return None, None
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    x_min, x_max = min(xs), max(xs)
+    y_min, y_max = min(ys), max(ys)
+    width = int(round(x_max - x_min))
+    height = int(round(y_max - y_min))
+    if width <= 0 or height <= 0:
+        return None, None
+    return None, (int(round(x_min)), int(round(y_min)), width, height)
+
+
+def _shape_index(labelme_path: str) -> Dict[str, dict]:
+    result: Dict[str, dict] = {}
+    for shape in labelme_io.list_shapes_from_labelme(labelme_path):
+        label = str(shape.get("label", "") or "").strip()
+        if label and label not in result:
+            result[label] = shape
+    return result
+
+
+def _roi_label_sort_key(name: str) -> tuple[int, int | str]:
+    suffix = name[3:] if name.lower().startswith("roi") else ""
+    if suffix.isdigit():
+        return 0, int(suffix)
+    if name.lower() == "roi":
+        return 0, 0
+    return 1, name
+
+
+def _set_overlay_shapes(
+    tool_page,
+    img_path: str,
+    current_label: str,
+    *,
+    shapes_by_label: Optional[Dict[str, dict]] = None,
+) -> None:
     j = labelme_io.labelme_json_of_image(img_path)
     overlays: List[OverlayShape] = []
     visible_roi_labels: Optional[set[str]] = None
@@ -165,17 +211,23 @@ def _set_overlay_shapes(tool_page, img_path: str, current_label: str) -> None:
         tool_page.canvas.set_overlays(overlays)
         return
 
+    if shapes_by_label is None:
+        shapes_by_label = _shape_index(j)
+
     def add_shape(label: str, color: QtGui.QColor, *, width: float, dash: bool = False) -> None:
-        poly_pts = labelme_io.try_read_polygon_points_from_labelme(j, label)
+        poly_pts, xywh = _shape_geometry(shapes_by_label.get(label))
         if poly_pts and len(poly_pts) >= 3:
             overlays.append(OverlayShape(shape_type="polygon", points=poly_pts, color=color, width=width, dash=dash))
             return
-        xywh = labelme_io.try_read_xywh_from_labelme(j, label)
         if xywh:
             overlays.append(OverlayShape(shape_type="rect", xywh=xywh, color=color, width=width, dash=dash))
 
     seen_labels: set[str] = set()
-    for label in labelme_io.sorted_label_names_from_labelme(j, label_prefix="roi"):
+    roi_labels = sorted(
+        (label for label in shapes_by_label if label.startswith("roi")),
+        key=_roi_label_sort_key,
+    )
+    for label in roi_labels:
         if visible_roi_labels is not None and label not in visible_roi_labels:
             continue
         if label == current_label:
@@ -205,18 +257,19 @@ def _load_shape_for_label(tool_page, img_path: str, label_name: str) -> None:
     )
     j = labelme_io.labelme_json_of_image(img_path)
     loaded = False
+    shapes_by_label: Dict[str, dict] = {}
     if os.path.exists(j):
-        poly_pts = labelme_io.try_read_polygon_points_from_labelme(j, label_name)
+        shapes_by_label = _shape_index(j)
+        poly_pts, xywh = _shape_geometry(shapes_by_label.get(label_name))
         if poly_pts and len(poly_pts) >= 3:
             tool_page.canvas.set_roi_polygon(poly_pts)
             tool_page.cmb_shape.setCurrentText("polygon")
             loaded = True
-        xywh = labelme_io.try_read_xywh_from_labelme(j, label_name)
-        if xywh:
+        elif xywh:
             tool_page.canvas.set_roi_rect(xywh)
             tool_page.cmb_shape.setCurrentText("rect")
             loaded = True
-    tool_page._set_overlay_shapes(img_path, label_name)
+    tool_page._set_overlay_shapes(img_path, label_name, shapes_by_label=shapes_by_label)
     if not loaded:
         tool_page._on_shapes_changed()
 

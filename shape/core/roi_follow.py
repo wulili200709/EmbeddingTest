@@ -2,7 +2,7 @@
 
 import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional, Sequence, Tuple
 
 import cv2
@@ -48,6 +48,12 @@ class FollowResult:
     points: List[Point]
     bbox: Tuple[int, int, int, int]
     source_shape_type: str
+    matches: List[Match] = field(default_factory=list)
+
+    @property
+    def detected_product_count(self) -> int:
+        """Number of distinct matches retained for product-count protection."""
+        return len(self.matches) if self.matches else 1
 
 
 def _shape_points_from_labelme(labelme_json_path: str, label_name: str) -> Tuple[str, List[Point]]:
@@ -148,12 +154,12 @@ def _class_ids_for_recipe(detector: ShapeLikeDetector, recipe: ShapeRecipe) -> L
     return detector.class_ids()
 
 
-def _best_match(
+def _find_matches(
     detector: ShapeLikeDetector,
     scene_bgr: np.ndarray,
     recipe: ShapeRecipe,
     scene_mask: Optional[np.ndarray] = None,
-) -> Match:
+) -> List[Match]:
     backend = str(recipe.backend or "original").strip().lower()
     if backend in {"fusion", "fusionv2"}:
         scene_mask = None
@@ -168,7 +174,7 @@ def _best_match(
     matches.sort(key=lambda item: float(item.similarity), reverse=True)
     if not matches:
         raise RuntimeError("match failure")
-    return matches[0]
+    return matches[: max(1, int(recipe.topk))]
 
 
 def _translated_points(points: Sequence[Point], dx: float, dy: float) -> List[Point]:
@@ -236,6 +242,7 @@ def _follow_by_bbox(
     image_shape: Tuple[int, int],
     *,
     label_name: str = "roi",
+    matches: Optional[List[Match]] = None,
 ) -> FollowResult:
     bbox = tuple(match_bbox(detector, match))
     x, y, w, h = bbox
@@ -257,6 +264,7 @@ def _follow_by_bbox(
         points=region.points,
         bbox=region.bbox,
         source_shape_type=region.source_shape_type,
+        matches=list(matches or [match]),
     )
 
 
@@ -266,6 +274,8 @@ def _follow_by_affine_roi(
     recipe: ShapeRecipe,
     ref_img_path: str,
     image_shape: Tuple[int, int],
+    *,
+    matches: Optional[List[Match]] = None,
 ) -> FollowResult:
     source_info, roi_img, _roi_mask, template_roi_rect, _mask_rects = load_class_source_assets(detector, match.class_id)
     region_specs = _region_specs_from_recipe(recipe, ref_img_path, template_roi_rect)
@@ -301,6 +311,7 @@ def _follow_by_affine_roi(
         points=primary.points,
         bbox=primary.bbox,
         source_shape_type=primary.source_shape_type,
+        matches=list(matches or [match]),
     )
 
 
@@ -323,9 +334,13 @@ def locate_and_follow(
         scene_for_match = scene_bgr[offset_y : offset_y + crop_h, offset_x : offset_x + crop_w].copy()
         if mask_for_match is not None:
             mask_for_match = mask_for_match[offset_y : offset_y + crop_h, offset_x : offset_x + crop_w].copy()
-    match = _best_match(det, scene_for_match, recipe, scene_mask=mask_for_match)
+    matches = _find_matches(det, scene_for_match, recipe, scene_mask=mask_for_match)
     if offset_x or offset_y:
-        match = _translate_match_to_scene(det, match, offset_x, offset_y)
+        matches = [
+            _translate_match_to_scene(det, match, offset_x, offset_y)
+            for match in matches
+        ]
+    match = matches[0]
     if normalize_follow_mode(
         recipe.follow_mode,
         recipe.reference_regions,
@@ -338,8 +353,21 @@ def locate_and_follow(
                     label_name = str(region.get("output_label") or region.get("reference_label") or label_name)
                     if label_name:
                         break
-        return _follow_by_bbox(det, match, scene_bgr.shape[:2], label_name=label_name)
-    return _follow_by_affine_roi(det, match, recipe, ref_img_path, scene_bgr.shape[:2])
+        return _follow_by_bbox(
+            det,
+            match,
+            scene_bgr.shape[:2],
+            label_name=label_name,
+            matches=matches,
+        )
+    return _follow_by_affine_roi(
+        det,
+        match,
+        recipe,
+        ref_img_path,
+        scene_bgr.shape[:2],
+        matches=matches,
+    )
 
 
 __all__ = ["FollowRegion", "FollowResult", "locate_and_follow"]

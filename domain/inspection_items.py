@@ -18,7 +18,12 @@ POST_DISTANCE_ALGORITHMS = {"line_distance", "line_distance_ref_normal", "center
 
 
 def _slug_token(value: object, fallback: str = "tool") -> str:
-    normalized = re.sub(r"[^0-9A-Za-z._-]+", "_", str(value or "").strip()).strip("._-")
+    normalized = re.sub(
+        r"[^\w._-]+",
+        "_",
+        str(value or "").strip(),
+        flags=re.UNICODE,
+    ).strip("._-")
     return normalized or fallback
 
 
@@ -31,6 +36,7 @@ class InspectionItem:
     algorithm_code: str = SHARED_BACKBONE_ALGORITHM_CODE
     enabled: bool = True
     params: dict[str, Any] = field(default_factory=dict)
+    task_group: str = ""
 
     def __init__(
         self,
@@ -42,6 +48,7 @@ class InspectionItem:
         enabled: bool = True,
         params: Mapping[str, Any] | None = None,
         *,
+        task_group: str = "",
         algorithm_type: str | None = None,
     ) -> None:
         normalized_camera_id = normalize_camera_role(camera_id, default=DEFAULT_CAMERA_ROLE)
@@ -55,6 +62,7 @@ class InspectionItem:
         self.algorithm_code = resolved_algorithm
         self.enabled = bool(enabled)
         self.params = dict(params or {})
+        self.task_group = str(task_group or "").strip()
 
     @property
     def algorithm_type(self) -> str:
@@ -70,12 +78,38 @@ class InspectionItem:
         item = _slug_token(self.item_id or self.roi_label or self.display_name, "roi")
         return f"{camera}__{item}"
 
+    @property
+    def effective_task_group(self) -> str:
+        return str(
+            self.task_group
+            or self.item_id
+            or self.roi_label
+            or self.display_name
+            or "roi"
+        ).strip() or "roi"
+
+    @property
+    def task_model_key(self) -> str:
+        camera = _slug_token(self.camera_id, DEFAULT_CAMERA_ROLE)
+        task_group = _slug_token(self.effective_task_group, "group")
+        return f"{camera}__{task_group}"
+
+    @property
+    def effective_model_key(self) -> str:
+        if self.task_group:
+            return self.task_model_key
+        return self.model_key
+
     @classmethod
     def from_dict(cls, data: dict) -> "InspectionItem":
         roi_label = str(data.get("roi_label", "")).strip()
         camera_id = normalize_camera_role(data.get("camera_id"), default=DEFAULT_CAMERA_ROLE)
         display_name = str(data.get("display_name", "")).strip() or roi_label or "roi"
         item_id = str(data.get("item_id", "")).strip() or roi_label or display_name
+        task_group = str(
+            data.get("task_group", data.get("group_key", data.get("shared_group", "")))
+            or ""
+        ).strip()
         algorithm_code = str(data.get("algorithm_code", "")).strip()
         algorithm_type = str(data.get("algorithm_type", "")).strip()
         params = data.get("params", {})
@@ -89,6 +123,7 @@ class InspectionItem:
             algorithm_code=algorithm_code or algorithm_type or SHARED_BACKBONE_ALGORITHM_CODE,
             enabled=bool(data.get("enabled", True)),
             params=params,
+            task_group=task_group,
         )
 
     def to_dict(self) -> dict:
@@ -144,6 +179,7 @@ def sync_items_with_labels(
     *,
     default_camera_id: str = DEFAULT_CAMERA_ROLE,
     display_names_by_label: Mapping[str, str] | None = None,
+    task_groups_by_label: Mapping[str, str] | None = None,
 ) -> List[InspectionItem]:
     """
     以 labels 的顺序为准同步检测项。
@@ -159,6 +195,11 @@ def sync_items_with_labels(
         for label, name in dict(display_names_by_label or {}).items()
         if str(label).strip()
     }
+    task_groups_by_label = {
+        str(label).strip(): str(group).strip()
+        for label, group in dict(task_groups_by_label or {}).items()
+        if str(label).strip()
+    }
     existing_by_label = {
         item.roi_label: item
         for item in existing_items
@@ -168,7 +209,17 @@ def sync_items_with_labels(
     for label in normalized_labels:
         existing = existing_by_label.get(label)
         display_name = display_names_by_label.get(label, "")
+        default_group = task_groups_by_label.get(label, "")
         if existing is not None:
+            existing_display_name = str(existing.display_name or "").strip()
+            if display_name == label and existing_display_name and existing_display_name != label:
+                display_name = existing_display_name
+            existing_group = str(existing.task_group or "").strip()
+            if default_group and (
+                not existing_group
+                or re.fullmatch(r"roi(?:\d+)?(?:__\d+)?", existing_group, flags=re.IGNORECASE)
+            ):
+                existing_group = default_group
             synced.append(
                 InspectionItem(
                     item_id=existing.item_id or label,
@@ -178,16 +229,17 @@ def sync_items_with_labels(
                     algorithm_code=existing.algorithm_code or SHARED_BACKBONE_ALGORITHM_CODE,
                     enabled=bool(existing.enabled),
                     params=dict(existing.params or {}),
+                    task_group=existing_group,
                 )
             )
         else:
-            synced.append(
-                build_default_item(
-                    label,
-                    camera_id=default_camera_id,
-                    display_name=display_name or label,
-                )
+            item = build_default_item(
+                label,
+                camera_id=default_camera_id,
+                display_name=display_name or label,
             )
+            item.task_group = default_group
+            synced.append(item)
     existing_distance_items = [
         item
         for item in existing_items
@@ -206,6 +258,7 @@ def sync_items_with_labels(
                 algorithm_code=existing.algorithm_code,
                 enabled=bool(existing.enabled),
                 params=dict(existing.params or {}),
+                task_group=str(existing.task_group or "").strip(),
             )
         )
     return synced

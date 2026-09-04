@@ -52,6 +52,12 @@ class TowerLightController:
             self._set_buzzer_safely(False)
             self._state = "off"
 
+    def silence_buzzer(self) -> None:
+        """Stop the current result buzzer pulse without changing lamp state."""
+        with self._lock:
+            self._cancel_buzzer_timer_locked()
+            self._set_buzzer_safely(False)
+
     def enter_waiting(self) -> None:
         with self._lock:
             self._cancel_flash_timer_locked()

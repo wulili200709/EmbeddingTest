@@ -10,11 +10,28 @@ from PySide6 import QtCore
 
 from common.app_paths import packaged_embedding_test_root
 from common.camera_roles import camera_index_for_role
+from domain import InspectionItemResult
 from domain.conveyor_line import ConveyorConfig, ConveyorLineController
 from application.inspection_executor import InspectionExecutionRequest
 from .capture_channels import channels_for_roles, required_runtime_roles
 from .capture_pipeline import capture_runtime_channel
 from .preview_frame import build_runtime_preview_frame
+
+
+_TEMPLATE_MATCH_FAILURE_MARKERS = (
+    "match failure",
+    "match failed",
+    "matching failed",
+    "did not find any match",
+    "no match",
+    "\u5339\u914d\u5931\u8d25",
+    "\u672a\u5339\u914d",
+)
+
+
+def _is_template_match_failure(error: BaseException) -> bool:
+    detail = str(error or "").strip().lower()
+    return bool(detail) and any(marker in detail for marker in _TEMPLATE_MATCH_FAILURE_MARKERS)
 
 
 def _load_conveyor_config(runtime) -> ConveyorConfig:
@@ -126,12 +143,60 @@ def _tick_conveyor(runtime) -> None:
         runtime.logAppended.emit(f"[conveyor] control tick failed: {exc}")
 
 
-@QtCore.Slot(str, bool)
-def _handle_conveyor_di_event(runtime, name: str, state: bool) -> None:
+@QtCore.Slot(str, bool, float, float, int)
+def _handle_conveyor_di_event(
+    runtime,
+    name: str,
+    state: bool,
+    sample_wall_s: float = 0.0,
+    sample_monotonic_s: float = 0.0,
+    raw_word: int = -1,
+) -> None:
     controller = runtime._conveyor_controller
     if controller is None:
         return
     try:
+        if str(name) in {
+            "camera_trigger_sensor",
+            "reject_position_sensor",
+            "end_test_sensor",
+            "good_outlet_sensor",
+            "waste_outlet_sensor",
+        }:
+            channel = -1
+            active_high = None
+            io_controller = getattr(runtime, "_io_controller", None)
+            mapping = getattr(io_controller, "mapping", None)
+            if mapping is not None:
+                try:
+                    input_config = mapping.get_input(str(name))
+                    channel = int(input_config.channel)
+                    active_high = bool(input_config.active_high)
+                except Exception:
+                    pass
+            delay_ms = (
+                max(0.0, time.perf_counter() - float(sample_monotonic_s)) * 1000.0
+                if float(sample_monotonic_s) > 0.0
+                else -1.0
+            )
+            sample_time = "unknown"
+            if float(sample_wall_s) > 0.0:
+                whole_seconds = int(float(sample_wall_s))
+                milliseconds = int((float(sample_wall_s) - whole_seconds) * 1000.0)
+                sample_time = (
+                    f"{time.strftime('%H:%M:%S', time.localtime(whole_seconds))}."
+                    f"{milliseconds:03d}"
+                )
+            raw_text = f"0x{int(raw_word) & 0xFFFF:04X}" if int(raw_word) >= 0 else "unknown"
+            runtime.logAppended.emit(
+                "[DI-sample] "
+                f"logical={name}; physical=DI{channel if channel >= 0 else '?'}; "
+                f"state={'ON' if state else 'OFF'}; raw_word={raw_text}; "
+                f"active_high={active_high if active_high is not None else 'unknown'}; "
+                f"sample_time={sample_time}; "
+                f"sample_epoch_ms={float(sample_wall_s) * 1000.0:.1f}; "
+                f"ui_delay_ms={delay_ms:.1f}"
+            )
         controller.handle_input_change(str(name), bool(state))
     except Exception as exc:
         runtime.logAppended.emit(f"[conveyor] DI event failed ({name}={state}): {exc}")
@@ -169,9 +234,14 @@ def _prepare_conveyor_start(runtime) -> tuple[bool, str]:
             return False, "manual inspection is still running"
     runtime._reload_runtime_context()
     roles = required_runtime_roles(runtime)
+    warmup_started = time.perf_counter()
     ok, reason = runtime._precheck_for_roles(roles)
     if ok:
         runtime._conveyor_required_roles = list(roles)
+        runtime.logAppended.emit(
+            "[conveyor] inspection pipeline ready; "
+            f"precheck_and_warmup_ms={(time.perf_counter() - warmup_started) * 1000.0:.1f}"
+        )
     else:
         runtime._conveyor_required_roles = []
     return bool(ok), str(reason or "")
@@ -306,20 +376,55 @@ def _run_conveyor_inspection(
         runtime.previewCycleStarted.emit(role, trigger_id)
         runtime.previewUpdated.emit(role, preview)
 
+        camera_items = [
+            item
+            for item in runtime._runtime_context.inspection_items
+            if item.camera_id == role
+        ]
         inspect_t0 = time.perf_counter()
-        with runtime._inspect_lock:
-            response = runtime._inspection_executor.execute(
-                InspectionExecutionRequest(
-                    camera_id=role,
-                    image_path="",
-                    image_bgr=image,
-                    items=[
-                        item
-                        for item in runtime._runtime_context.inspection_items
-                        if item.camera_id == role
-                    ],
+        try:
+            with runtime._inspect_lock:
+                response = runtime._inspection_executor.execute(
+                    InspectionExecutionRequest(
+                        camera_id=role,
+                        image_path="",
+                        image_bgr=image,
+                        items=camera_items,
+                    )
                 )
+        except Exception as exc:
+            if not _is_template_match_failure(exc):
+                raise
+            match_ms = (time.perf_counter() - inspect_t0) * 1000.0
+            failure_detail = str(exc or "match failure").strip() or "match failure"
+            item_results_by_camera[role] = [
+                InspectionItemResult(
+                    item_id=item.item_id,
+                    display_name=item.display_name,
+                    camera_id=item.camera_id,
+                    roi_label=item.roi_label,
+                    algorithm_code=item.algorithm_code,
+                    enabled=item.enabled,
+                    params=dict(item.params or {}),
+                    result="NG" if item.enabled else "DISABLED",
+                    detail=failure_detail if item.enabled else "",
+                )
+                for item in camera_items
+            ]
+            preview_frames[role] = preview
+            camera_outcomes[role] = runtime_controller_module.CameraInspectionOutcome(
+                role=role,
+                result="NG",
+                message=f"{role} {failure_detail}",
+                capture_ms=float(capture.get("capture_ms", 0.0) or 0.0),
+                match_ms=float(match_ms),
+                infer_ms=0.0,
             )
+            runtime.logAppended.emit(
+                f"[conveyor] template match failed: item={sequence_id}, role={role}, "
+                f"treated as NG: {failure_detail}"
+            )
+            continue
         inspect_ms = (time.perf_counter() - inspect_t0) * 1000.0
         product_count = _reported_product_count(response)
         if product_count is not None and product_count > 1:
@@ -481,11 +586,17 @@ def continue_conveyor_purge(runtime) -> None:
 
 @QtCore.Slot()
 def acknowledge_conveyor_alarm(runtime) -> None:
+    tower_controller = getattr(runtime, "_tower_light_controller", None)
+    if tower_controller is not None and hasattr(tower_controller, "silence_buzzer"):
+        tower_controller.silence_buzzer()
     controller = runtime._conveyor_controller
     if controller is None:
         return
-    if not controller.acknowledge_alarm():
-        runtime.warningOccurred.emit("报警暂时不能复位，请先排除堵料并确认DI5有效、门已关闭。")
+    try:
+        controller.acknowledge_alarm()
+    except Exception as exc:
+        runtime.logAppended.emit(f"[conveyor] alarm buzzer silence failed: {exc}")
+        runtime.warningOccurred.emit("蜂鸣器消音失败，请检查IO连接。")
 
 
 __all__ = [

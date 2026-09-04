@@ -136,24 +136,26 @@ class OutletConfirmationTracker:
         """Return CONFIRMED, WRONG_OUTLET or UNEXPECTED for an outlet edge."""
         name = str(input_name)
         motion = float(motion_s)
-        eligible = [
+        candidates = [
             item
             for item in self.pending
-            if item.earliest_motion_s <= motion <= item.deadline_motion_s
+            if item.started_motion_s <= motion <= item.deadline_motion_s
         ]
-        correct = next(
-            (item for item in eligible if item.expected_input == name),
-            None,
-        )
-        if correct is not None:
-            self.pending.remove(correct)
-            return "CONFIRMED", correct
-        wrong = next(
-            (item for item in eligible if item.expected_input != name),
-            None,
-        )
-        if wrong is not None:
-            return "WRONG_OUTLET", wrong
+        if not candidates:
+            return "UNEXPECTED", None
+
+        # Physical workpieces leave the line in FIFO order.  Never skip an
+        # earlier NG expectation to confirm a later GOOD item, otherwise an NG
+        # that escaped the blow-off could be mistaken for that later GOOD.
+        expectation = candidates[0]
+        if (
+            expectation.expected_input == name
+            and expectation.earliest_motion_s <= motion
+        ):
+            self.pending.remove(expectation)
+            return "CONFIRMED", expectation
+        if expectation.expected_input != name:
+            return "WRONG_OUTLET", expectation
         return "UNEXPECTED", None
 
     def first_expired(self, motion_s: float) -> OutletExpectation | None:
@@ -166,6 +168,10 @@ class OutletConfirmationTracker:
     def count_for_input(self, input_name: str) -> int:
         name = str(input_name)
         return sum(1 for item in self.pending if item.expected_input == name)
+
+    def remove(self, expectation: OutletExpectation) -> None:
+        if expectation in self.pending:
+            self.pending.remove(expectation)
 
     def clear(self) -> None:
         self.pending.clear()

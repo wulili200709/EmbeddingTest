@@ -4364,3 +4364,11 @@ batch=22 chunk=1 calls=22
 主干网络：476.6 → 220.3 ms，降低53.8%
 整体推理：562.4 → 281.1 ms，降低50.0%
 当前稳定总时间约517～526 ms，波动很小。chunk=1 是目前测试中更好的设置，暂时不必测试更大的4。
+
+
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build_py312.ps1 `
+  -Version 3.0.3 `
+  -OutputPath .\dist-without-winring `
+  -SkipArchive `
+  -AllowMissingWinRing

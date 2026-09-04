@@ -338,6 +338,88 @@ def train_threshold_model(
     return best_model, rows
 
 
+def train_threshold_model_from_samples(
+    ok_samples: Sequence[Tuple[str, str]],
+    ng_samples: Sequence[Tuple[str, str]],
+    algorithm: str,
+    *,
+    preferred_label: str = "roi1",
+) -> Tuple[TraditionalThresholdModel, List[Dict[str, Any]]]:
+    """Calibrate one threshold from individually annotated ROIs in a task group."""
+    if not ok_samples or not ng_samples:
+        raise RuntimeError("Traditional algorithm needs both OK and NG samples")
+    if not is_traditional_algorithm(algorithm):
+        raise ValueError(f"Unsupported traditional algorithm: {algorithm}")
+
+    def _normalize(samples: Sequence[Tuple[str, str]]) -> list[Tuple[str, str]]:
+        fallback = str(preferred_label or "roi1").strip() or "roi1"
+        normalized: list[Tuple[str, str]] = []
+        for entry in samples:
+            if not isinstance(entry, (list, tuple)) or len(entry) < 2:
+                continue
+            path = str(entry[0] or "").strip()
+            label = str(entry[1] or "").strip() or fallback
+            if path:
+                normalized.append((path, label))
+        return normalized
+
+    rows: List[Dict[str, Any]] = []
+    ok_values: List[float] = []
+    ng_values: List[float] = []
+    for path, label in _normalize(ok_samples):
+        metrics = compute_roi_metrics(path, preferred_label=label)
+        value = metric_value(metrics, algorithm)
+        ok_values.append(value)
+        rows.append({"gt": "OK", "value": value, **metrics})
+    for path, label in _normalize(ng_samples):
+        metrics = compute_roi_metrics(path, preferred_label=label)
+        value = metric_value(metrics, algorithm)
+        ng_values.append(value)
+        rows.append({"gt": "NG", "value": value, **metrics})
+    if not ok_values or not ng_values:
+        raise RuntimeError("Traditional algorithm needs both OK and NG samples")
+
+    best_acc = -1.0
+    best_candidates: List[Tuple[str, float]] = []
+    all_values = ok_values + ng_values
+    for ok_when in ["greater_equal", "less_equal"]:
+        for threshold in _iter_thresholds(all_values):
+            correct = sum(
+                1
+                for value in ok_values
+                if (value >= threshold if ok_when == "greater_equal" else value <= threshold)
+            )
+            correct += sum(
+                1
+                for value in ng_values
+                if (value < threshold if ok_when == "greater_equal" else value > threshold)
+            )
+            accuracy = float(correct) / float(len(all_values))
+            if accuracy > best_acc + 1e-12:
+                best_acc = accuracy
+                best_candidates = [(ok_when, float(threshold))]
+            elif abs(accuracy - best_acc) <= 1e-12:
+                best_candidates.append((ok_when, float(threshold)))
+
+    best_ok_when, best_threshold = min(
+        best_candidates,
+        key=lambda item: (
+            abs(item[1] - _target_threshold_center(ok_values, ng_values, item[0])),
+            item[1],
+        ),
+    )
+    model = TraditionalThresholdModel(
+        algorithm=str(algorithm),
+        threshold=float(best_threshold),
+        ok_when=best_ok_when,
+        ok_mean=float(np.mean(ok_values)),
+        ng_mean=float(np.mean(ng_values)),
+        accuracy=best_acc,
+        roi_label=str(preferred_label or "roi1"),
+    )
+    return model, rows
+
+
 __all__ = [
     "TRADITIONAL_ALGORITHMS",
     "TraditionalThresholdModel",
@@ -346,4 +428,5 @@ __all__ = [
     "is_traditional_algorithm",
     "metric_value",
     "train_threshold_model",
+    "train_threshold_model_from_samples",
 ]

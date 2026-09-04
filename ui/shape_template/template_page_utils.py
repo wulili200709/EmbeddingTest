@@ -112,7 +112,10 @@ def _overlay_follow_result(
     elapsed_ms: Optional[float] = None,
 ) -> np.ndarray:
     canvas = image_bgr.copy()
-    text = f"{label_name} sim={result.match.similarity:.2f} class={result.match.class_id} tid={result.match.template_id}"
+    text = (
+        f"{label_name} count={result.detected_product_count} "
+        f"sim={result.match.similarity:.2f} class={result.match.class_id} tid={result.match.template_id}"
+    )
     if elapsed_ms is not None and elapsed_ms >= 0.0:
         text += f" time={elapsed_ms:.1f}ms"
     cv2.putText(canvas, text, (16, 48), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (20, 230, 255), 4, cv2.LINE_AA)

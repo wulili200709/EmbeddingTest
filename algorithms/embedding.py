@@ -471,6 +471,26 @@ def _run_embedding_batch(
     return np.asarray(feat, dtype=np.float32)
 
 
+@torch.no_grad()
+def warmup_backbone(
+    feat_net,
+    *,
+    device: Optional[str] = None,
+    batch_size: int = 1,
+) -> None:
+    """Execute a real forward pass so the first production item is not the warm-up."""
+    normalized_batch_size = max(1, int(batch_size))
+    dummy_batch = torch.zeros(
+        (normalized_batch_size, 3, 224, 224),
+        dtype=torch.float32,
+    )
+    _run_embedding_batch(
+        feat_net,
+        dummy_batch,
+        device=device,
+    )
+
+
 def load_images(folder: str) -> List[str]:
     exts = ("*.jpg", "*.jpeg", "*.png", "*.bmp", "*.tif", "*.tiff", "*.webp")
     files: List[str] = []
@@ -992,6 +1012,94 @@ def train_register_model(
     )
 
 
+def train_register_model_from_samples(
+    ok_samples: Sequence[Tuple[str, str]],
+    ng_samples: Sequence[Tuple[str, str]],
+    backbone: str = "b0",
+    score_mode: str = "proto",
+    margin: float = 0.02,
+    topk: int = 3,
+    label_name: str = "roi",
+    label_names: Optional[Sequence[str]] = None,
+    device: Optional[str] = None,
+    progress_callback: Optional[Callable[[str], None]] = None,
+    cache_dir: Optional[str] = None,
+    feat_net: Any = None,
+) -> RegisterModel:
+    """Train one shared model from individually annotated ``(path, ROI)`` samples."""
+
+    def _normalize(samples: Sequence[Tuple[str, str]]) -> list[Tuple[str, str]]:
+        normalized: list[Tuple[str, str]] = []
+        fallback = str(label_name or "roi").strip() or "roi"
+        for entry in samples:
+            if not isinstance(entry, (list, tuple)) or len(entry) < 2:
+                continue
+            path = str(entry[0] or "").strip()
+            label = str(entry[1] or "").strip() or fallback
+            if path:
+                normalized.append((path, label))
+        return normalized
+
+    normalized_ok = _normalize(ok_samples)
+    normalized_ng = _normalize(ng_samples)
+    if not normalized_ok or not normalized_ng:
+        raise RuntimeError("Both OK and NG samples are required")
+
+    backbone = storage_code_backbone(backbone)
+    device = device or get_device()
+    if feat_net is None:
+        feat_net, _ = load_backbone(backbone, device=device)
+    labels = [str(name).strip() for name in list(label_names or []) if str(name).strip()]
+    if not labels:
+        labels = list(dict.fromkeys(label for _path, label in normalized_ok + normalized_ng))
+
+    total = len(normalized_ok) + len(normalized_ng)
+
+    def _stack(samples: Sequence[Tuple[str, str]], group: str, offset: int) -> np.ndarray:
+        vectors: list[np.ndarray] = []
+        for index, (path, label) in enumerate(samples, start=1):
+            if callable(progress_callback):
+                progress_callback(
+                    f"{group} {index}/{len(samples)} ({offset + index}/{total}) "
+                    f"{os.path.basename(path)} [{label}]"
+                )
+            embedded = _embed_many_cached(
+                path,
+                feat_net,
+                [label],
+                backbone=backbone,
+                device=device,
+                cache_dir=cache_dir,
+            )
+            vector = np.asarray(embedded, dtype=np.float32)
+            if vector.ndim == 2 and vector.shape[0] == 1:
+                vector = vector[0]
+            if vector.ndim != 1 or vector.size == 0:
+                raise ValueError(
+                    f"{group} embedding for {os.path.basename(path)} [{label}] "
+                    f"must be a non-empty vector, got shape {vector.shape}"
+                )
+            vectors.append(vector)
+        return np.stack(vectors, axis=0)
+
+    ok_emb = _stack(normalized_ok, "OK", 0)
+    ng_emb = _stack(normalized_ng, "NG", len(normalized_ok))
+    ok_proto, ng_proto = compute_prototypes(ok_emb, ng_emb)
+    return RegisterModel(
+        backbone=backbone,
+        score_mode=score_mode,
+        margin=float(margin),
+        topk=int(topk),
+        label_name=labels[0],
+        label_names=labels,
+        device=device,
+        ok_proto=ok_proto.astype(np.float32),
+        ng_proto=ng_proto.astype(np.float32),
+        ok_bank=ok_emb.astype(np.float32),
+        ng_bank=ng_emb.astype(np.float32),
+    )
+
+
 def predict_one_with_model(
     e: np.ndarray,
     model: RegisterModel,
@@ -1034,4 +1142,6 @@ __all__ = [
     "save_register_model_npz",
     "score_topk",
     "train_register_model",
+    "train_register_model_from_samples",
+    "warmup_backbone",
 ]

@@ -16,6 +16,7 @@ from algorithms.traditional import (
     is_traditional_algorithm,
     metric_value,
     train_threshold_model,
+    train_threshold_model_from_samples,
 )
 from algorithms.measurement import (
     BRIGHT_BLOCK_CENTER_ALGORITHM,
@@ -153,6 +154,8 @@ class AlgorithmController:
         self._display_name_resolver = display_name_resolver or default_algorithm_display_name
         self.model: Optional[Any] = None          # qr_core.RegisterModel | None
         self._feat_net_cache: Dict[Tuple[str, str, str], Any] = {}
+        self._warmed_feat_net_batches: set[Tuple[int, int]] = set()
+        self._feat_net_warmup_lock = threading.RLock()
         self._embedding_model_cache: Dict[str, Tuple[Tuple[int, int], Any]] = {}
         self._embedding_model_cache_lock = threading.RLock()
         self._active_product_dir: str = ""
@@ -293,11 +296,34 @@ class AlgorithmController:
 
     @staticmethod
     def _normalize_model_key(model_key: object) -> str:
-        normalized = re.sub(r"[^0-9A-Za-z._-]+", "_", str(model_key or "").strip()).strip("._-")
+        normalized = re.sub(
+            r"[^\w._-]+",
+            "_",
+            str(model_key or "").strip(),
+            flags=re.UNICODE,
+        ).strip("._-")
         return normalized
 
     def tool_model_key(self, model_key: object) -> str:
         return self._normalize_model_key(model_key)
+
+    @staticmethod
+    def _legacy_ascii_group_model_key(model_key: object) -> str:
+        """Return the key produced by releases that replaced non-ASCII groups with ``group``."""
+        normalized = str(model_key or "").strip()
+        if "__" not in normalized:
+            return normalized
+        camera, group = normalized.split("__", 1)
+        legacy_group = re.sub(r"[^0-9A-Za-z._-]+", "_", group).strip("._-") or "group"
+        return f"{camera}__{legacy_group}"
+
+    def tool_model_storage_keys(self, model_key: object) -> List[str]:
+        normalized = self.tool_model_key(model_key)
+        keys = [normalized] if normalized else []
+        legacy = self._legacy_ascii_group_model_key(normalized)
+        if legacy and legacy not in keys:
+            keys.append(legacy)
+        return keys
 
     def embedding_model_path(self, algorithm: str, product_dir: str, *, model_key: object = "") -> str:
         normalized_key = self.tool_model_key(model_key)
@@ -309,12 +335,17 @@ class AlgorithmController:
     def embedding_model_storage_paths(self, algorithm: str, product_dir: str, *, model_key: object = "") -> List[str]:
         normalized_key = self.tool_model_key(model_key)
         paths: List[str] = []
-        for storage_code in learning_backbone_storage_codes(algorithm):
-            if normalized_key:
-                paths.append(os.path.join(product_dir, f"{normalized_key}_register_model_{storage_code}.npz"))
+        model_keys = self.tool_model_storage_keys(normalized_key) or [""]
+        for candidate_key in model_keys:
+            for storage_code in learning_backbone_storage_codes(algorithm):
+                if candidate_key:
+                    paths.append(os.path.join(product_dir, f"{candidate_key}_register_model_{storage_code}.npz"))
+                else:
+                    paths.append(os.path.join(product_dir, f"register_model_{storage_code}.npz"))
+            if candidate_key:
+                paths.append(self.embedding_model_legacy_path(algorithm, product_dir, model_key=candidate_key))
             else:
-                paths.append(os.path.join(product_dir, f"register_model_{storage_code}.npz"))
-        paths.append(self.embedding_model_legacy_path(algorithm, product_dir, model_key=normalized_key))
+                paths.append(self.embedding_model_legacy_path(algorithm, product_dir))
         return list(dict.fromkeys(paths))
 
     def embedding_model_legacy_path(self, algorithm: str, product_dir: str, *, model_key: object = "") -> str:
@@ -335,10 +366,11 @@ class AlgorithmController:
         return str(algorithm or "").strip()
 
     def get_traditional_model_dict(self, algorithm: str, *, model_key: object = "") -> Optional[dict]:
-        storage_key = self.traditional_model_storage_key(algorithm, model_key=model_key)
-        model_dict = self.product_params.traditional_models.get(storage_key)
-        if isinstance(model_dict, dict):
-            return model_dict
+        for candidate_key in self.tool_model_storage_keys(model_key):
+            storage_key = self.traditional_model_storage_key(algorithm, model_key=candidate_key)
+            model_dict = self.product_params.traditional_models.get(storage_key)
+            if isinstance(model_dict, dict):
+                return model_dict
         legacy_model_dict = self.product_params.traditional_models.get(str(algorithm or "").strip())
         if isinstance(legacy_model_dict, dict):
             return legacy_model_dict
@@ -369,7 +401,15 @@ class AlgorithmController:
             label_name = str(getattr(self.model, "label_name", "")).strip()
             model_labels = [label_name] if label_name else []
         expected_labels = [str(name).strip() for name in labels if str(name).strip()]
-        if expected_labels and model_labels and expected_labels != model_labels:
+        # A keyed model may represent a task group (for example ``cam1__Hole``)
+        # while callers predict one concrete ROI at a time.  In that case the
+        # model key, not the model's descriptive label list, identifies it.
+        if (
+            expected_labels
+            and model_labels
+            and expected_labels != model_labels
+            and not normalized_key
+        ):
             return False
         return True
 
@@ -443,7 +483,30 @@ class AlgorithmController:
         return feat_net
 
     def clear_feat_net_cache(self) -> None:
-        self._feat_net_cache.clear()
+        with self._feat_net_warmup_lock:
+            self._feat_net_cache.clear()
+            self._warmed_feat_net_batches.clear()
+
+    def warmup_feat_net(
+        self,
+        backbone: str,
+        device: Optional[str] = None,
+        *,
+        batch_size: int = 1,
+    ) -> None:
+        """Run one real backbone forward pass per cached runner and batch size."""
+        normalized_batch_size = max(1, int(batch_size))
+        with self._feat_net_warmup_lock:
+            feat_net = self.get_feat_net(backbone, device)
+            warmup_key = (id(feat_net), normalized_batch_size)
+            if warmup_key in self._warmed_feat_net_batches:
+                return
+            qr_core.warmup_backbone(
+                feat_net,
+                device=device,
+                batch_size=normalized_batch_size,
+            )
+            self._warmed_feat_net_batches.add(warmup_key)
 
     def clear_embedding_model_cache(self) -> None:
         with self._embedding_model_cache_lock:
@@ -568,6 +631,8 @@ class AlgorithmController:
         product_dir: str,
         label_names: List[str],
         model_key: object = "",
+        ok_samples: Optional[List[Tuple[str, str]]] = None,
+        ng_samples: Optional[List[Tuple[str, str]]] = None,
         progress_callback: Optional[Callable[[str], None]] = None,
         embedding_cache_dir: Optional[str] = None,
     ) -> TrainResult:
@@ -582,6 +647,8 @@ class AlgorithmController:
         mode = self.product_params.score_mode
         margin = float(self.product_params.margin)
         topk = int(self.product_params.topk)
+        normalized_ok_samples = list(ok_samples or [])
+        normalized_ng_samples = list(ng_samples or [])
 
         if self.is_embedding_algorithm(algorithm):
             device = qr_core.get_device()
@@ -595,20 +662,30 @@ class AlgorithmController:
                 model_path = str(info.get("model_path", "") or "").strip()
                 model_hint = f" {os.path.basename(model_path)}" if model_path else ""
                 progress_callback(f"backbone ready {backend}{model_hint}")
-            model = qr_core.train_register_model(
-                ok_files,
-                ng_files,
-                backbone=algorithm,
-                score_mode=mode,
-                margin=margin,
-                topk=topk,
-                label_name=label_names[0],
-                label_names=label_names,
-                progress_callback=progress_callback,
-                cache_dir=embedding_cache_dir or self.embedding_cache_dir(algorithm, product_dir),
-                device=device,
-                feat_net=feat_net,
-            )
+            train_kwargs = {
+                "backbone": algorithm,
+                "score_mode": mode,
+                "margin": margin,
+                "topk": topk,
+                "label_name": label_names[0],
+                "label_names": label_names,
+                "progress_callback": progress_callback,
+                "cache_dir": embedding_cache_dir or self.embedding_cache_dir(algorithm, product_dir),
+                "device": device,
+                "feat_net": feat_net,
+            }
+            if normalized_ok_samples or normalized_ng_samples:
+                model = qr_core.train_register_model_from_samples(
+                    normalized_ok_samples,
+                    normalized_ng_samples,
+                    **train_kwargs,
+                )
+            else:
+                model = qr_core.train_register_model(
+                    ok_files,
+                    ng_files,
+                    **train_kwargs,
+                )
             saved_path = self.embedding_model_path(algorithm, product_dir, model_key=normalized_model_key)
             qr_core.save_register_model_npz(model, saved_path)
             # Training replaced model data on disk. Rebuild the runtime model
@@ -628,12 +705,20 @@ class AlgorithmController:
                 saved_model_path=saved_path,
             )
         elif is_traditional_algorithm(algorithm):
-            threshold_model, train_rows = train_threshold_model(
-                ok_files,
-                ng_files,
-                algorithm,
-                preferred_label=label_names[0],
-            )
+            if normalized_ok_samples or normalized_ng_samples:
+                threshold_model, train_rows = train_threshold_model_from_samples(
+                    normalized_ok_samples,
+                    normalized_ng_samples,
+                    algorithm,
+                    preferred_label=label_names[0],
+                )
+            else:
+                threshold_model, train_rows = train_threshold_model(
+                    ok_files,
+                    ng_files,
+                    algorithm,
+                    preferred_label=label_names[0],
+                )
             result_rows: List[Dict[str, Any]] = []
             for sample in train_rows:
                 pred, diff = threshold_model.predict(float(sample["value"]))
@@ -745,7 +830,7 @@ class AlgorithmController:
             if not isinstance(model_dict, dict):
                 raise RuntimeError(f"{self.algorithm_display_name(algorithm) or algorithm} 尚未训练")
             threshold_model = TraditionalThresholdModel.from_dict(model_dict)
-            metrics = compute_roi_metrics(path, preferred_label=threshold_model.roi_label or labels[0])
+            metrics = compute_roi_metrics(path, preferred_label=labels[0] or threshold_model.roi_label)
             value = metric_value(metrics, algorithm)
             pred, diff = threshold_model.predict(value)
             sim_ok = None

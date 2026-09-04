@@ -71,7 +71,7 @@ class SampleListController:
         row = self.owner.test_list.row(items[0])
         return visible[row] if row < len(visible) else None
 
-    def select_path_in_current_tab(self, path: str) -> None:
+    def select_path_in_current_tab(self, path: str, *, pixmap=None) -> None:
         if not path:
             return
         list_widget = self.owner.ok_list if self.owner._current_sample_tab_kind() == "train" else self.owner.test_list
@@ -84,16 +84,16 @@ class SampleListController:
                 blocker = QtCore.QSignalBlocker(list_widget)
                 list_widget.setCurrentRow(row)
                 del blocker
-                self.show_selected_image_path(path)
+                self.show_selected_image_path(path, pixmap=pixmap)
                 return
 
-    def show_selected_image_path(self, path: Optional[str]) -> None:
+    def show_selected_image_path(self, path: Optional[str], *, pixmap=None) -> None:
         if not path:
             self.owner._update_sample_panel_widgets()
             return
         self.owner._clear_selected_inspection_item()
         if self.owner.canvas.image_path() != path:
-            self.owner._load_canvas_image(path)
+            self.owner._load_canvas_image(path, pixmap=pixmap)
         self.owner._set_status_for_current_image(path)
         self.owner._update_sample_panel_widgets()
 

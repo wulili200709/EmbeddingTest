@@ -536,11 +536,15 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         self.spin_nms_create.setRange(0.0, 1.0)
         self.spin_nms_create.setDecimals(2)
         self.spin_nms_create.setValue(0.3)
+        self.spin_topk_create = QtWidgets.QSpinBox()
+        self.spin_topk_create.setRange(1, 2)
+        self.spin_topk_create.setValue(1)
         self.cmb_follow_create = QtWidgets.QComboBox()
         self.cmb_follow_create.addItems(["affine_roi", "match_bbox"])
         recipe_form.addRow("backend", self.cmb_backend_create)
         recipe_form.addRow("threshold", self.spin_threshold_create)
         recipe_form.addRow("nms_iou", self.spin_nms_create)
+        recipe_form.addRow(tr("template.find_count"), self.spin_topk_create)
         recipe_form.addRow("follow_mode", self.cmb_follow_create)
         recipe_box.setTitle(tr("template.recipe"))
         left.addWidget(recipe_box)
@@ -550,6 +554,7 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
             (self.cmb_backend_create, "create"),
             (self.spin_threshold_create, "create"),
             (self.spin_nms_create, "create"),
+            (self.spin_topk_create, "create"),
             (self.cmb_follow_create, "create"),
         ]:
             if isinstance(widget, QtWidgets.QComboBox):
@@ -782,6 +787,10 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         self.spin_nms_find.setRange(0.0, 1.0)
         self.spin_nms_find.setDecimals(2)
         self.spin_nms_find.setValue(0.3)
+        self.spin_topk_find = QtWidgets.QSpinBox()
+        self.spin_topk_find.setRange(1, 2)
+        self.spin_topk_find.setValue(1)
+        self.spin_topk_find.setToolTip(tr("template.find_count_tip"))
         self.cmb_follow_find = QtWidgets.QComboBox()
         self.cmb_follow_find.addItems(["affine_roi", "match_bbox"])
         self.chk_auto_threshold_sweep = QtWidgets.QCheckBox(tr("template.auto_threshold_sweep"))
@@ -790,6 +799,7 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         recipe_form.addRow("backend", self.cmb_backend_find)
         recipe_form.addRow("threshold", self.spin_threshold_find)
         recipe_form.addRow("nms_iou", self.spin_nms_find)
+        recipe_form.addRow(tr("template.find_count"), self.spin_topk_find)
         recipe_form.addRow("follow_mode", self.cmb_follow_find)
         recipe_form.addRow("", self.chk_auto_threshold_sweep)
         left.addWidget(recipe_box)
@@ -812,6 +822,7 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
             (self.cmb_backend_find, "find"),
             (self.spin_threshold_find, "find"),
             (self.spin_nms_find, "find"),
+            (self.spin_topk_find, "find"),
             (self.cmb_follow_find, "find"),
         ]:
             if isinstance(widget, QtWidgets.QComboBox):
@@ -899,11 +910,13 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
                 self.cmb_backend_find.setCurrentText(self.cmb_backend_create.currentText())
                 self.spin_threshold_find.setValue(float(self.spin_threshold_create.value()))
                 self.spin_nms_find.setValue(float(self.spin_nms_create.value()))
+                self.spin_topk_find.setValue(int(self.spin_topk_create.value()))
                 self.cmb_follow_find.setCurrentText(self.cmb_follow_create.currentText())
             else:
                 self.cmb_backend_create.setCurrentText(self.cmb_backend_find.currentText())
                 self.spin_threshold_create.setValue(float(self.spin_threshold_find.value()))
                 self.spin_nms_create.setValue(float(self.spin_nms_find.value()))
+                self.spin_topk_create.setValue(int(self.spin_topk_find.value()))
                 self.cmb_follow_create.setCurrentText(self.cmb_follow_find.currentText())
         finally:
             self._syncing_recipe_controls = False
@@ -925,11 +938,13 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
             backend = BACKEND_LABEL_TO_KEY.get(self.cmb_backend_find.currentText(), "original")
             threshold = float(self.spin_threshold_find.value())
             nms_iou = float(self.spin_nms_find.value())
+            topk = int(self.spin_topk_find.value())
             follow_mode = self.cmb_follow_find.currentText().strip() or "affine_roi"
         else:
             backend = BACKEND_LABEL_TO_KEY.get(self.cmb_backend_create.currentText(), "original")
             threshold = float(self.spin_threshold_create.value())
             nms_iou = float(self.spin_nms_create.value())
+            topk = int(self.spin_topk_create.value())
             follow_mode = self.cmb_follow_create.currentText().strip() or "affine_roi"
 
         reference_regions = [
@@ -975,7 +990,7 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
             threshold_sweep_step=10,
             threshold_sweep_min=20,
             nms_iou=nms_iou,
-            topk=1,
+            topk=topk,
             crop_stride=0,
             use_scene_mask=False,
             follow_mode=follow_mode,
@@ -1037,6 +1052,7 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         self.cmb_backend_create.setCurrentText(BACKEND_KEY_TO_LABEL.get(recipe.backend, "Original"))
         self.spin_threshold_create.setValue(float(recipe.threshold))
         self.spin_nms_create.setValue(float(recipe.nms_iou))
+        self.spin_topk_create.setValue(max(1, int(recipe.topk)))
         self.chk_auto_threshold_sweep.setChecked(bool(recipe.auto_threshold_sweep))
         idx = self.cmb_follow_create.findText(recipe.follow_mode)
         if idx >= 0:
@@ -2009,7 +2025,9 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
             elapsed_ms = (time.perf_counter() - started) * 1000.0
             if result is None:
                 raise last_exc or RuntimeError("match failure")
-            overlay = _draw_match_overlay(detector, scene_bgr, result.match)
+            overlay = scene_bgr.copy()
+            for match in result.matches:
+                overlay = _draw_match_overlay(detector, overlay, match)
             overlay = _overlay_follow_result(overlay, result, recipe.output_label, elapsed_ms=elapsed_ms)
         except Exception as exc:
             self._set_find_item_error(item, str(exc))
@@ -2019,7 +2037,7 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         self.find_canvas.set_image(scene_path, pixmap=overlay_pixmap)
         self._apply_search_roi_to_find_canvas()
         msg = (
-            f"sim={result.match.similarity:.2f} "
+            f"count={result.detected_product_count} sim={result.match.similarity:.2f} "
             f"bbox={result.bbox[0]},{result.bbox[1]},{result.bbox[2]},{result.bbox[3]} "
             f"time={elapsed_ms:.1f}ms"
         )

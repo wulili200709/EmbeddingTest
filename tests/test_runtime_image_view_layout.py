@@ -27,9 +27,13 @@ class RuntimeImageViewLayoutTests(unittest.TestCase):
         )
 
         view.resize(640, 360)
+        size_hint_before = view.sizeHint()
+        minimum_size_hint_before = view.minimumSizeHint()
         view.set_runtime_pixmap(QtGui.QPixmap(2448, 2048))
         self.assertEqual(view.minimumWidth(), 160)
         self.assertEqual(view.minimumHeight(), 120)
+        self.assertEqual(view.sizeHint(), size_hint_before)
+        self.assertEqual(view.minimumSizeHint(), minimum_size_hint_before)
         self.assertEqual(view.pixmap().size(), view.size())
 
     def test_runtime_ui_builder_is_split_into_stable_sections(self) -> None:
@@ -38,11 +42,42 @@ class RuntimeImageViewLayoutTests(unittest.TestCase):
         self.assertTrue(hasattr(RuntimeModePage, "_build_footer_ui"))
         self.assertTrue(hasattr(RuntimeModePage, "_build_compatibility_controls"))
 
+    def test_alarm_and_ng_frame_do_not_raise_page_minimum_height(self) -> None:
+        page = RuntimeModePage()
+        page.resize(1270, 590)
+        page.show()
+        self._app.processEvents()
+        minimum_before = page.minimumSizeHint()
+
+        page.set_conveyor_state(
+            {
+                "state": "FAULT_STOPPED",
+                "io_ready": True,
+                "safety_ok": True,
+                "door_closed": True,
+                "run_permitted": False,
+                "fifo_count": 0,
+                "fifo": [],
+                "inflight_count": 1,
+                "waste_outlet_pending_count": 1,
+                "fault_code": "REJECT_FAILED_WRONG_OUTLET",
+                "fault_detail": "NG item 123456 reached DI7 after blow-off",
+                "fault_recovery": "PURGE_REQUIRED",
+            }
+        )
+        page.set_camera_pixmap("cam1", QtGui.QPixmap(2448, 2048))
+        self._app.processEvents()
+
+        self.assertEqual(page.minimumSizeHint().height(), minimum_before.height())
+        self.assertLessEqual(page.minimumSizeHint().width(), minimum_before.width())
+        page.close()
+
     def test_conveyor_controls_and_fifo_lights_follow_runtime_state(self) -> None:
         page = RuntimeModePage()
         self.assertTrue(page.btn_conveyor_start.isHidden())
         self.assertTrue(page.btn_conveyor_stop.isHidden())
         self.assertTrue(page.btn_conveyor_continue.isHidden())
+        self.assertTrue(page.btn_conveyor_ack.isEnabled())
 
         purge_events: list[str] = []
         page.conveyorPurgeRequested.connect(lambda: purge_events.append("start"))
@@ -69,6 +104,23 @@ class RuntimeImageViewLayoutTests(unittest.TestCase):
             [label.property("fifoStatus") for label in page._fifo_indicator_labels],
             ["PENDING", "GOOD", "NG"],
         )
+
+        # An NG consumed at DI1 can remain in the second-stage outlet guard,
+        # but it is no longer part of the DI0-to-DI1 FIFO shown by these lamps.
+        page.set_conveyor_state(
+            {
+                **base,
+                "state": "RUNNING",
+                "fifo_count": 0,
+                "fifo": [],
+                "inflight_count": 1,
+                "waste_outlet_pending_count": 1,
+                "inflight": [
+                    {"sequence_id": 3, "inspection_status": "NG"},
+                ],
+            }
+        )
+        self.assertEqual(page._fifo_indicator_labels, [])
 
         page.set_conveyor_state({**base, "state": "PURGE_PREPARING"})
         self.assertEqual(page.btn_conveyor_purge.text(), "清线中…")
@@ -100,7 +152,7 @@ class RuntimeImageViewLayoutTests(unittest.TestCase):
                 "fault_recovery": "ACKNOWLEDGE",
             }
         )
-        self.assertFalse(page.btn_conveyor_ack.isEnabled())
+        self.assertTrue(page.btn_conveyor_ack.isEnabled())
 
     def test_conveyor_faults_are_shown_as_operator_friendly_chinese(self) -> None:
         page = RuntimeModePage()

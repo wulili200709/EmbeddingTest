@@ -424,6 +424,14 @@ blow_off_deadline = max(当前截止时间, 新NG所需截止时间)
 
 ### 11.5 DI7、DI8逐件出口确认（现场定义更新）
 
+> 现场临时策略（DI8逐件检测异常）：默认配置
+> `waste_outlet_confirmation_enabled=false`。此时仅取消DI8的NG逐件确认和
+> `WASTE_OUTLET_TIMEOUT`；NG从DI1吹气后进入原到达时间窗口，窗口内若按物料
+> 顺序触发DI7则判定剔除失败，窗口结束且未触发DI7则完成跟踪。DI6只保留
+> 专用堵料检测。DI8持续
+> 有效堵料检测、一键清线中的废料活动和无料静默判断继续保留。DI8修复后可将
+> 该配置设为`true`恢复本节原有的逐件DI8确认逻辑。
+
 本节是现场重新确认并已落实到当前代码的逻辑：DI6是专用堵料传感器；DI7、DI8既确认逐件出料，也通过持续有效时间检测出口堵料。代码已经实现逐件出口等待、未到达超时、走错出口、非预期出口信号和总在途数量统计。
 
 ```mermaid
@@ -929,13 +937,13 @@ DI7/DI8逐件出口确认
 
 当前 DI4 未确认是软件报警复位按钮，因此先由界面提供报警复位功能。
 
-故障恢复分成三类，界面必须按 `fault_recovery` 提供唯一有效操作：
+故障恢复分成三类，`fault_recovery` 决定解除故障所需的操作；界面的“报警复位”按钮始终可用于蜂鸣器消音：
 
 | 恢复类型 | 适用情况 | 允许操作 |
 |---|---|---|
-| `ACKNOWLEDGE` | 堵料源已清除、一般流程报警 | 确认报警，回到停止待机；不得自动启动 |
-| `PURGE_REQUIRED` | FIFO失步、结果未就绪、物料超时、出口未到达、走错出口、多料同视野、吹气中断或吹气窗口冲突 | 只能一键清线，不允许普通复位后继续生产 |
-| `RECONNECT_IO` | IO 未就绪、输出写入失败 | 重新建立 IO；不得用报警确认绕过 |
+| `ACKNOWLEDGE` | 堵料源已清除、一般流程报警 | 点击“报警复位”消音并解除故障，回到停止待机；不得自动启动 |
+| `PURGE_REQUIRED` | FIFO失步、结果未就绪、物料超时、出口未到达、走错出口、多料同视野、吹气中断或吹气窗口冲突 | “报警复位”只消音；仍须一键清线，不允许绕过 |
+| `RECONNECT_IO` | IO 未就绪、输出写入失败 | “报警复位”只消音；仍须重新建立 IO，不允许绕过 |
 
 堵料报警只有在对应 DI6、DI7 或 DI8 已恢复无料后才能确认。任何恢复动作完成后，皮带都保持停止，必须再由操作员启动生产或清线。
 
@@ -988,6 +996,7 @@ DO3、DO4、按钮灯及由检测结果/产线故障共同使用的 DO8 必须�
 {
   "reject_blow_delay_ms": 0,
   "reject_blow_duration_ms": 300,
+  "inspection_result_wait_timeout_ms": 3000,
   "controlled_stop_timeout_ms": 1500,
   "front_to_reject_max_run_ms": 5000,
   "max_inflight_items": 20,
@@ -1001,6 +1010,7 @@ DO3、DO4、按钮灯及由检测结果/产线故障共同使用的 DO8 必须�
   "good_outlet_blocked_timeout_s": 3.0,
   "waste_outlet_blocked_timeout_s": 3.0,
   "end_test_sensor_enabled": true,
+  "waste_outlet_confirmation_enabled": false,
   "upper_door_sensor_enabled": false,
   "purge_air_lead_ms": 200,
   "purge_min_run_s": 10.0,
@@ -1047,7 +1057,7 @@ DO3、DO4、按钮灯及由检测结果/产线故障共同使用的 DO8 必须�
 清线完成
 ```
 
-运行界面不重复显示启动、停止按钮，正常启动和停止由实体 DI2、DI3 操作。同一个清线按钮在停止状态显示“一键清线”，执行中显示“清线中…”，安全或人工停止导致清线暂停后显示“继续清线”，不再单独显示第二个继续按钮。“报警复位”仅在产线处于 `FAULT_STOPPED`、IO 正常、DI5 有效且门联锁满足时允许点击，复位后保持停止且不得自动启动。
+运行界面不重复显示启动、停止按钮，正常启动和停止由实体 DI2、DI3 操作。同一个清线按钮在停止状态显示“一键清线”，执行中显示“清线中…”，安全或人工停止导致清线暂停后显示“继续清线”，不再单独显示第二个继续按钮。“报警复位”始终允许点击并立即关闭蜂鸣器；仅当产线处于可确认的 `FAULT_STOPPED`、IO 正常、DI5 有效、门联锁满足且故障源已清除时，才同时解除故障。复位后保持停止且不得自动启动；要求清线或重连 IO 的故障不能通过该按钮绕过。
 
 正常生产、受控停止、清线和存在任何在途物料/采图任务期间，手动拍照触发、相机重连及相机参数应用必须禁用。只有产线停止、生产FIFO为空、出口等待为空、无采图任务且无清线上下文时才允许这些操作，避免调试动作与连续生产争用相机或改变节拍。
 
@@ -1167,8 +1177,8 @@ DO3、DO4、按钮灯及由检测结果/产线故障共同使用的 DO8 必须�
 - 生产、受控停止、清线或存在 FIFO/采图任务时，手动触发、相机重连及参数应用均被拒绝；
 - 文档、默认 JSON 和 `ConveyorConfig` 使用同一组规范参数名；
 - 旧参数名仍能加载并正确映射，但默认配置不再写出旧名称；
-- FIFO失步、结果未就绪、到达超时、出口确认超时、走错出口、多料同视野和吹气冲突显示“一键清线”，不错误开放“报警复位”；
-- IO 故障只允许重连恢复，不开放普通报警复位。
+- FIFO失步、结果未就绪、到达超时、出口确认超时、走错出口、多料同视野和吹气冲突仍要求“一键清线”；“报警复位”只能关闭蜂鸣器；
+- IO 故障仍只允许重连恢复；“报警复位”只能关闭当前蜂鸣器，不能绕过重连要求。
 
 ## 23. 现场必须最终确认的事项
 
@@ -1190,3 +1200,247 @@ DO3、DO4、按钮灯及由检测结果/产线故障共同使用的 DO8 必须�
 
 
 NG之后DO3打开吹气 什么时候吹气结束  如果后面有个OK的来或者NG的来会不会误吹   还有个问题就是怎么检查检测的结构和剔除的是否正确
+
+修复思路不是“错位后继续猜产品”，而是在第一次 NG 吹气前阻止错位发生。
+原来流程：
+FIFO：产品1(NG) → 产品2 → 产品3(OK)
+产品1吹气时误带走产品2
+产品3到达DI1，却取出FIFO里的产品2结果
+最终发生错吹
+现在流程：
+1. NG 产品到达 DI1 时，先查看 FIFO 中后一个产品。
+2. 根据两个产品经过 DI0 的“皮带运动时间”计算间隔。
+3. 要求间隔至少为：
+吹气延迟 + 吹气持续时间 + 后产品安全保护时间
+0ms + 300ms + 100ms = 400ms
+4. 如果后一个产品距离太近：
+   - 不弹出 FIFO 头部
+   - 不打开吹气
+   - 立即关闭皮带和吹气
+   - 报警 PRODUCT_SPACING_TOO_SMALL
+   - 要求执行“一键清线”，不能直接复位继续运行
+核心逻辑在 [domain/conveyor_line.py](C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest-conveyor\\domain\\conveyor_line.py)，参数在 [conveyor_control.json](C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest-conveyor\\config\\defaults\\conveyor_control.json)。
+我增加了两种测试：
+- 两个产品相隔 200ms：禁止吹气并停线
+- 两个产品相隔 500ms：允许正常吹气
+测试代码在 [test_conveyor_line.py](C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest-conveyor\\tests\\test_conveyor_line.py)，相关 71 项测试已通过。
+需要注意：当前传感器无法在“两个产品已经被一起吹走”后自动识别少了哪个产品，因此只能提前拦截；一旦触发该报警，必须清线重新建立 FIFO 对应关系。另外，目前只是源代码修复，旧的 EXE 不包含该修复，需要重新打包。
+
+
+
+吹气延迟 + 吹气持续时间 + 后产品安全保护时间
+0ms + 300ms + 100ms = 400ms  那这个和皮带的速度有关系   速度越快应该越有利？
+
+
+
+有关系，但在“吹气固定持续 300ms”的情况下，产品实际距离不变时，皮带越快反而越容易影响后一个产品。
+例如两个产品相距 60mm：
+- 皮带速度 100mm/s：间隔约 600ms
+- 皮带速度 300mm/s：间隔约 200ms
+第二种情况下，后一个产品会在吹气尚未结束时进入吹气位置。
+当前的 400ms 是两次 DI0 触发之间的皮带运动时间，不是固定空间距离。对应的安全距离是：
+安全距离 = 皮带速度 × 0.4秒
+所以速度越快，要求产品之间的实际距离越大。速度快只有在能够同时缩短吹气持续时间，并且仍能可靠吹掉 NG 产品时才会更有利。
+目前建议：
+- 皮带速度固定：现场测试后校准 300ms吹气时间 和 100ms保护时间
+- 皮带速度可调：应该改成根据实时速度计算安全距离/时间
+- 最可靠的方式：接入编码器或皮带速度参数，按产品位置判断，而不是固定使用 400ms
+因此现在的 400ms 属于保守安全保护。真正需要现场确认的是：最短多少毫秒可以稳定吹走一个 NG，同时完全不影响后面的产品。
+
+
+# 如何调整时间？
+先临时设置：
+"reject_blow_delay_ms": 0,
+"reject_blow_duration_ms": 300,
+"reject_following_item_guard_ms": 1000
+这样再摆放相同的三个产品，第一次 NG 到达 DI1 时应该直接报“产品间距过小”，报警详情会显示实际间隔，例如：
+following item 2 is only 520.0 ms behind
+得到实际间隔 T 后，按下面计算：
+保护时间 = T + 安全余量 - 吹气延迟 - 吹气持续时间
+例如实际间隔是 520ms，安全余量取 100ms：
+520 + 100 - 0 - 300 = 320ms
+最终可设置为：
+"reject_blow_delay_ms": 0,
+"reject_blow_duration_ms": 300,
+"reject_following_item_guard_ms": 320
+此时总门槛是：
+0 + 300 + 320 = 620ms
+间隔小于 620ms 就停线，防止吹走两个产品。
+同时还应该单独标定吹气持续时间：
+1. 只放一个 NG 产品。
+2. 从 300ms 逐步降到 250ms、200ms、150ms。
+3. 每档连续测试至少 20～30 个 NG。
+4. 找到能够稳定吹走产品的最短时间，再增加约 20～50ms 余量。
+如果最后发现 200ms 已经能可靠吹走，那么可以使用：
+"reject_blow_delay_ms": 0,
+"reject_blow_duration_ms": 200,
+"reject_following_item_guard_ms": 200
+总门槛变成 400ms，既减少误吹，也不会过度降低产能。
+不要通过增加 reject_blow_delay_ms 解决这个问题，因为延迟吹气可能让气流更靠近后一个产品。这个参数只用于补偿 DI1 与吹气口的位置距离。
+[conveyor_control.json](C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest-conveyor\\config\\defaults\\conveyor_control.json)
+
+
+# 不同的订单可能检测时间不一样 有关系吗
+有影响，但不会直接改变 DI1→DI7 的计时结果。
+程序使用的是“皮带实际运行计时”：
+- 检测结果在产品到达 DI1 前完成：皮带连续运行。
+- 产品到达 DI1 时结果还没完成：皮带停下等待。
+- 检测完成后恢复皮带，才开始累计 DI1→DI7 时间。
+- 皮带停止期间不累计 travel_ms。
+因此不同订单检测耗时不同，主要影响：
+- 是否会在 DI1 停车等待
+- 生产节拍
+- 是否超过 inspection_result_wait_timeout_ms，当前默认是 3000ms
+- 停车再启动时，皮带加速过程可能使 DI1→DI7 时间略有变化
+现场建议分别测试两种情况：
+1. 检测较快、产品到 DI1 前已有结果。
+2. 最慢订单、产品在 DI1 停车等待结果后重新启动。
+最终窗口要覆盖这两种情况下测到的全部 travel_ms。尤其应使用检测最慢、最容易在 DI1 停车的订单作为最差工况。如果所有订单都能在产品到达 DI1 前完成检测，那么订单检测时间基本不会影响出口时间窗口。
+
+# 但是如果是不同订单的检测  这个时间难道都要调整吗
+正常情况下不需要每个订单都调整。DI1→DI7 时间是机械运输参数，主要由以下因素决定：
+- 皮带速度
+- DI1、DI7物理距离
+- 电机启动加速时间
+- 产品尺寸和传感器触发位置
+它与视觉算法检测耗时是两套时间。
+程序在产品到达 DI1、结果确定并允许皮带继续运行后，才开始计算出口运行时间。等待检测结果时皮带停止，这段时间不会计入 travel_ms。
+因此：
+- 不同订单、检测时间不同，但皮带速度相同：共用一套窗口。
+- 慢订单导致产品在 DI1 停车等待：只需验证停车重启后的时间仍在窗口内，不是每次重新设置。
+- 订单使用不同皮带速度：需要按速度设置不同窗口，或者改成速度联动计算。
+- 产品尺寸差异很大：传感器触发边沿可能变化，需要验证是否仍在公共窗口内
+
+# 日志分析
+2026-09-02 15:52:38 [conveyor] DI7 signal OFF: motion_ms=203813.0; high_wall_ms=47.0; high_motion_ms=47.0; debounce_ms=20
+// 中文：DI7从有信号恢复为无信号。上一件产品在程序控制层记录的遮挡时间约47ms；皮带累计运行时间为203813ms；当前DI去抖时间为20ms。这个信号属于前面的第22件产品。
+
+2026-09-02 15:52:38 [conveyor] camera sensor created item=23, fifo=1
+// 中文：第23件产品触发相机入口传感器，系统为它建立跟踪记录。fifo=1表示当前DI0到DI1之间有1件产品等待处理。
+
+2026-09-02 15:52:38 [conveyor] capture completed: item=23, epoch=1, roles=['cam1']
+// 中文：第23件产品拍照完成，本次使用相机cam1。epoch=1是当前这轮生产的跟踪批次编号。
+
+2026-09-02 15:52:39 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=conveyor-1-23 shape=(2048, 2448, 3) dtype=uint8 ui_thread=True
+// 中文：第23件的图像被发送到运行界面的cam1画布。图像尺寸为高2048、宽2448、3通道彩色图，数据类型为8位无符号整数。
+
+2026-09-02 15:52:39 [preview-render] target=cam1 trigger=conveyor-1-23 pixmap=2448x2048 ui_thread=True view_visible=True view_size=980x441 slot_bound=True render_ms=21.6
+// 中文：第23件图像已经显示在界面上。原图显示对象尺寸为2448×2048，界面显示区域为980×441，本次绘制耗时21.6ms。这只是界面显示日志，不参与产品判定。
+
+2026-09-02 15:52:39 [trigger-summary] trigger=pending_20260902_155239_342134 result=OK duration_ms=307 channels=cam1:OK/physical=cam1/serial=DB1938378/frame=23
+// 中文：第23件检测完成，总结果为OK，总耗时307ms。结果来自物理相机cam1，相机序列号DB1938378，相机帧号23。
+
+2026-09-02 15:52:39 [runtime] result=OK detail=cam1=OK锛沜apture 84.5 ms锛沵atch 185.4 ms锛沬nfer 105.3 ms锛涜€楁椂 307 ms
+// 中文：第23件运行检测结果为OK。乱码部分原意是：拍照约84.5ms、定位匹配约185.4ms、算法推理约105.3ms、整体耗时307ms。
+
+2026-09-02 15:52:39 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=conveyor-1-23 shape=(2048, 2448, 3) dtype=uint8 ui_thread=True
+// 中文：检测结果完成后，第23件图像再次发送到运行界面，这一次通常包含检测框和OK/NG颜色。
+
+2026-09-02 15:52:39 [preview-render] target=cam1 trigger=conveyor-1-23 pixmap=2448x2048 ui_thread=True view_visible=True view_size=980x441 slot_bound=True render_ms=17.3
+// 中文：带有检测结果的第23件图像绘制完成，耗时17.3ms。
+
+2026-09-02 15:52:39 [conveyor] inspection completed: item=23, result=OK
+// 中文：运行检测模块把第23件的原始检测结果OK提交给皮带控制模块。
+
+2026-09-02 15:52:39 [conveyor] inspection completed: item=23, result=GOOD
+// 中文：皮带控制模块把OK标准化为GOOD。前后两行是同一次检测结果经过两个处理层，不是重复检测。
+
+2026-09-02 15:52:39 [conveyor] GOOD item=23 passed DI1 and awaits DI7 confirmation; di1_motion_ms=204672.0; window_ms=500.0..1600.0
+// 中文：第23件经过DI1时结果已经是GOOD，因此不吹气，开始等待DI7确认。开始时间为皮带累计运行204672ms；DI7必须在之后500～1600ms内出现。
+
+2026-09-02 15:52:40 [conveyor] camera sensor created item=24, fifo=1
+// 中文：第24件产品已经到达相机入口，系统建立第24件跟踪记录。此时第23件仍在向DI7移动，两件产品处于皮带不同位置。
+
+2026-09-02 15:52:40 [conveyor] capture completed: item=24, epoch=1, roles=['cam1']
+// 中文：第24件的cam1图像拍摄完成。
+
+2026-09-02 15:52:40 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=conveyor-1-24 shape=(2048, 2448, 3) dtype=uint8 ui_thread=True
+// 中文：第24件原始图像被发送到运行界面。
+
+2026-09-02 15:52:40 [preview-render] target=cam1 trigger=conveyor-1-24 pixmap=2448x2048 ui_thread=True view_visible=True view_size=980x441 slot_bound=True render_ms=21.3
+// 中文：第24件原始图像显示完成，耗时21.3ms。
+
+2026-09-02 15:52:40 [conveyor] DI7 signal ON: motion_ms=205735.0; low_wall_ms=1922.0; low_motion_ms=1922.0; debounce_ms=20
+// 中文：DI7出现有效信号。距离DI7上一次恢复无信号已经约1922ms。当前皮带累计运行时间为205735ms，去抖时间为20ms。这个信号实际对应第23件。
+
+2026-09-02 15:52:40 [conveyor] DI7 edge: motion_ms=205735.0; active_candidates=[item=23/result=GOOD/expected=DI7/elapsed_ms=1063.0]
+// 中文：程序收到DI7上升沿后检查等待队列，发现当前可对应的是第23件。第23件从DI1到DI7已经运行1063ms。
+
+2026-09-02 15:52:40 [conveyor] outlet confirmed: item=23, outlet=DI7, travel_ms=1063.0; di1_motion_ms=204672.0; window_ms=500.0..1600.0
+// 中文：第23件GOOD出口确认成功。它从DI1到DI7用了1063ms，处于允许的500～1600ms窗口内，因此第23件从跟踪队列中正常结束。
+
+2026-09-02 15:52:40 [trigger-summary] trigger=pending_20260902_155240_762338 result=OK duration_ms=294 channels=cam1:OK/physical=cam1/serial=DB1938378/frame=24
+// 中文：与此同时，第24件视觉检测完成，结果为OK，总耗时294ms，相机帧号24。日志交叉出现是因为第23件在DI7运行，第24件同时在相机位置检测。
+
+2026-09-02 15:52:40 [conveyor] DI7 signal OFF: motion_ms=205750.0; high_wall_ms=15.0; high_motion_ms=15.0; debounce_ms=20
+// 中文：第23件离开DI7，DI7恢复无信号。控制层记录ON到OFF相隔15ms。该数值受事件线程调度影响，不能直接视为传感器原始电气脉宽。
+
+2026-09-02 15:52:40 [runtime] result=OK detail=cam1=OK锛沜apture 84.6 ms锛沵atch 166.7 ms锛沬nfer 107.3 ms锛涜€楁椂 294 ms
+// 中文：第24件结果为OK。乱码部分表示：拍照约84.6ms、定位匹配约166.7ms、算法推理约107.3ms、整体耗时294ms。
+
+2026-09-02 15:52:40 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=conveyor-1-24 shape=(2048, 2448, 3) dtype=uint8 ui_thread=True
+// 中文：第24件带检测结果的图像再次发送到运行界面。
+
+2026-09-02 15:52:40 [preview-render] target=cam1 trigger=conveyor-1-24 pixmap=2448x2048 ui_thread=True view_visible=True view_size=980x441 slot_bound=True render_ms=18.3
+// 中文：第24件检测结果画面显示完成，耗时18.3ms。
+
+2026-09-02 15:52:40 [conveyor] inspection completed: item=24, result=OK
+// 中文：检测模块把第24件的OK结果提交给皮带控制模块。
+
+2026-09-02 15:52:40 [conveyor] inspection completed: item=24, result=GOOD
+// 中文：皮带控制模块把第24件的OK结果标准化为GOOD。这不是再次检测。
+
+2026-09-02 15:52:41 [conveyor] GOOD item=24 passed DI1 and awaits DI7 confirmation; di1_motion_ms=206078.0; window_ms=500.0..1600.0
+// 中文：第24件经过DI1，结果为GOOD，不吹气，开始等待DI7。它的DI7合法窗口是皮带累计时间206578～207678ms。
+
+2026-09-02 15:52:41 [conveyor] camera sensor created item=25, fifo=1
+// 中文：第25件到达相机入口，系统建立第25件跟踪记录。此时第24件正在DI1到DI7之间运行。
+
+2026-09-02 15:52:41 [conveyor] capture completed: item=25, epoch=1, roles=['cam1']
+// 中文：第25件的cam1图像拍摄完成。
+
+2026-09-02 15:52:41 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=conveyor-1-25 shape=(2048, 2448, 3) dtype=uint8 ui_thread=True
+// 中文：第25件原始图像发送到运行界面。
+
+2026-09-02 15:52:41 [preview-render] target=cam1 trigger=conveyor-1-25 pixmap=2448x2048 ui_thread=True view_visible=True view_size=980x441 slot_bound=True render_ms=23.1
+// 中文：第25件原始图像显示完成，耗时23.1ms。
+
+2026-09-02 15:52:42 [trigger-summary] trigger=pending_20260902_155242_171569 result=OK duration_ms=293 channels=cam1:OK/physical=cam1/serial=DB1938378/frame=25
+// 中文：第25件视觉检测完成，结果为OK，总耗时293ms，相机帧号25。
+
+2026-09-02 15:52:42 [runtime] result=OK detail=cam1=OK锛沜apture 84.4 ms锛沵atch 166.2 ms锛沬nfer 109.7 ms锛涜€楁椂 293 ms
+// 中文：第25件运行检测结果为OK。乱码部分表示：拍照约84.4ms、定位匹配约166.2ms、算法推理约109.7ms、整体耗时293ms。
+
+2026-09-02 15:52:42 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=conveyor-1-25 shape=(2048, 2448, 3) dtype=uint8 ui_thread=True
+// 中文：第25件带检测结果的图像再次发送到运行界面。
+
+2026-09-02 15:52:42 [preview-render] target=cam1 trigger=conveyor-1-25 pixmap=2448x2048 ui_thread=True view_visible=True view_size=980x441 slot_bound=True render_ms=19.7
+// 中文：第25件检测结果画面显示完成，耗时19.7ms。
+
+2026-09-02 15:52:42 [conveyor] inspection completed: item=25, result=OK
+// 中文：检测模块把第25件OK结果提交给皮带控制模块。
+
+2026-09-02 15:52:42 [conveyor] inspection completed: item=25, result=GOOD
+// 中文：皮带控制模块把第25件标准化为GOOD。
+
+2026-09-02 15:52:42 [conveyor] GOOD item=25 passed DI1 and awaits DI7 confirmation; di1_motion_ms=207516.0; window_ms=500.0..1600.0
+// 中文：第25件经过DI1并开始等待DI7。它的合法DI7窗口为皮带累计时间208016～209116ms。此时第24件仍然没有收到DI7确认。
+
+2026-09-02 15:52:42 [conveyor] fault GOOD_OUTLET_TIMEOUT: GOOD item 24 did not reach DI7 in time
+// 中文：第24件从DI1开始已经运行超过1600ms，但期间没有任何新的DI7 ON信号，所以程序判定第24件没有按时到达GOOD出口并报警停机。报警对象是第24件，不是第25件。
+
+2026-09-02 15:53:45 [conveyor] one-click purge started; inspection results from the old epoch are invalid
+// 中文：操作员启动一键清线。系统宣布上一轮epoch中的检测结果和产品跟踪记录全部作废，避免旧产品记录影响下一轮生产。
+
+2026-09-02 15:53:46 [conveyor] purge air lead complete; conveyor started
+// 中文：清线吹气提前开启阶段完成，随后启动皮带，将残留产品排出设备。
+
+2026-09-02 15:53:56 [conveyor] one-click purge completed
+// 中文：满足清线最短运行时间和无料条件，一键清线完成，皮带及清线输出按程序结束。
+
+high_wall_ms=15.0; high_motion_ms=15.0;
+表示 DI7 从“有效 ON”到“恢复 OFF”，程序观察到它保持高电平约 15 毫秒。
+- high_wall_ms=15.0：按电脑实际时间计算，DI7 高电平持续约 15 ms。
+- high_motion_ms=15.0：按皮带有效运行时间计算，DI7 高电平持续约 15 ms；皮带停机时间不计入。
+两者相同，说明这 15 ms 内皮带一直运行，没有停顿。
+但要注意：这里记录的是程序控制线程观察到的时间，不一定等于传感器原始电信号的精确脉宽。它说明 DI7 信号很短，但不能单凭这一条断定物理信号恰好只有 15 ms。

@@ -2,7 +2,8 @@ param(
     [string]$Version = "",
     [string]$PythonExe = "",
     [string]$OutputPath = "",
-    [switch]$SkipArchive
+    [switch]$SkipArchive,
+    [switch]$AllowMissingWinRing
 )
 
 $ErrorActionPreference = "Stop"
@@ -53,11 +54,15 @@ if (-not $winRingSys -and (Test-Path -LiteralPath $sdkRoot)) {
         Select-Object -First 1 -ExpandProperty FullName
 }
 
-if (-not $winRingSys) {
+if (-not $winRingSys -and -not $AllowMissingWinRing) {
     throw "WinRing0x64.sys was not found in the NKDIOLC_SDK paths required for packaging."
 }
 
-Write-Host "Using WinRing0x64.sys: $winRingSys"
+if ($winRingSys) {
+    Write-Host "Using WinRing0x64.sys: $winRingSys"
+} else {
+    Write-Warning "Building without WinRing0x64.sys. Copy the trusted driver into the release folder before deployment."
+}
 
 Write-Host "Generating clean account database..."
 & $PythonExe $seedGenerator $seedAuditDb
@@ -88,8 +93,10 @@ $exeDir = Join-Path $distPath "LC System"
 if (-not (Test-Path -LiteralPath $exeDir)) {
     throw "Build output directory not found: $exeDir"
 }
-Copy-Item -LiteralPath $winRingSys -Destination (Join-Path $exeDir "WinRing0x64.sys") -Force
-Write-Host "Copied WinRing0x64.sys to $exeDir"
+if ($winRingSys) {
+    Copy-Item -LiteralPath $winRingSys -Destination (Join-Path $exeDir "WinRing0x64.sys") -Force
+    Write-Host "Copied WinRing0x64.sys to $exeDir"
+}
 
 $release = Publish-LCReleaseFolder `
     -DistPath $distPath `

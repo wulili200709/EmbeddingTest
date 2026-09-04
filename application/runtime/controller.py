@@ -215,7 +215,7 @@ class RuntimeController(
     errorOccurred   = QtCore.Signal(str)           # → QMessageBox.critical
     infoOccurred    = QtCore.Signal(str)           # → QMessageBox.information
     _triggerTaskFinished = QtCore.Signal(object, str)
-    _conveyorDiEvent = QtCore.Signal(str, bool)
+    _conveyorDiEvent = QtCore.Signal(str, bool, float, float, int)
     _conveyorIoError = QtCore.Signal(str, str)
     _conveyorCaptureTaskFinished = QtCore.Signal(int, int, object)
     _conveyorInspectionTaskFinished = QtCore.Signal(int, int, object)

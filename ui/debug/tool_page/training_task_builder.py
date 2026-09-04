@@ -3,12 +3,9 @@ from __future__ import annotations
 import os
 from typing import List
 
-from common.app_logging import get_app_logger
 from domain import InspectionItem
 from ui.debug.tool_page.camera_roles import normalize_camera_role
-
-
-LOGGER = get_app_logger(__name__)
+from ui.i18n import tr
 
 
 class TrainingTaskBuilder:
@@ -17,7 +14,7 @@ class TrainingTaskBuilder:
 
     @staticmethod
     def item_display_name(inspection_item: InspectionItem) -> str:
-        return str(
+        return str(inspection_item.task_group or "").strip() or str(
             inspection_item.display_name
             or inspection_item.roi_label
             or inspection_item.item_id
@@ -38,6 +35,30 @@ class TrainingTaskBuilder:
         if not train_paths:
             train_paths = list(getattr(self.owner, "ok_files", []) or []) + list(getattr(self.owner, "ng_files", []) or [])
         return self.owner._filter_paths_for_camera(list(dict.fromkeys(train_paths)), role)
+
+    @staticmethod
+    def effective_model_key(inspection_item: InspectionItem) -> str:
+        return str(
+            getattr(
+                inspection_item,
+                "effective_model_key",
+                inspection_item.model_key,
+            )
+            or ""
+        ).strip()
+
+    def group_items_for_item(self, inspection_item: InspectionItem) -> List[InspectionItem]:
+        role = normalize_camera_role(inspection_item.camera_id) or "cam1"
+        model_key = self.effective_model_key(inspection_item)
+        algorithm = self.resolve_algorithm(inspection_item)
+        peers = [
+            item
+            for item in list(getattr(self.owner, "inspection_items", []) or [])
+            if (normalize_camera_role(item.camera_id) or "cam1") == role
+            and self.effective_model_key(item) == model_key
+            and self.resolve_algorithm(item) == algorithm
+        ]
+        return peers or [inspection_item]
 
     def sample_groups_for_role(
         self,
@@ -93,28 +114,14 @@ class TrainingTaskBuilder:
         *,
         camera_role: object = None,
     ) -> List[str]:
-        role = normalize_camera_role(camera_role or self.owner.current_camera_role()) or "cam1"
-        missing_paths: List[str] = []
-        for path in candidate_paths:
-            if not self.owner._path_has_roi_geometry(path, roi_label):
-                missing_paths.append(path)
-        method_getter = getattr(self.owner, "loc_method_for_role", None)
-        method = method_getter(role) if callable(method_getter) else self.owner.loc_method
-        if missing_paths and method in {"shape", "ncc"}:
-            try:
-                self.owner._autogen_roi_for_images(
-                    missing_paths,
-                    only_missing=False,
-                    silent=True,
-                    camera_role=role,
-                )
-                missing_paths = [
-                    path for path in candidate_paths
-                    if not self.owner._path_has_roi_geometry(path, roi_label)
-                ]
-            except Exception as exc:
-                LOGGER.exception("Failed to auto-generate missing training ROI for label %s: %s", roi_label, exc)
-        return missing_paths
+        # Training must never mutate sample ROI geometry.  Template/NCC based
+        # ROI generation is an explicit preparation action because generated
+        # geometry still needs a human OK/NG annotation before model fitting.
+        return [
+            path
+            for path in candidate_paths
+            if not self.owner._path_has_roi_geometry(path, roi_label)
+        ]
 
     def build_task_for_item(self, inspection_item: InspectionItem) -> dict:
         if not inspection_item.enabled:
@@ -126,32 +133,52 @@ class TrainingTaskBuilder:
                 raise RuntimeError("please choose a learning tool subtype first")
             raise RuntimeError("please select an inspection tool")
 
-        roi_label = str(inspection_item.roi_label or "").strip() or "roi"
-        training_ok_files, training_ng_files, candidate_paths = self.sample_groups_for_role(
-            inspection_item.camera_id,
-            roi_label=roi_label,
+        group_items = self.group_items_for_item(inspection_item)
+        label_names = list(
+            dict.fromkeys(
+                str(item.roi_label or "").strip()
+                for item in group_items
+                if str(item.roi_label or "").strip()
+            )
         )
+        if not label_names:
+            label_names = [str(inspection_item.roi_label or "").strip() or "roi"]
+        candidate_paths = self.train_sample_paths_for_role(inspection_item.camera_id)
         if not candidate_paths:
             camera_id = normalize_camera_role(inspection_item.camera_id) or "cam1"
             raise RuntimeError(f"missing training images for {camera_id}")
+
+        camera_id = normalize_camera_role(inspection_item.camera_id) or "cam1"
+        training_ok_files: List[str] = []
+        training_ng_files: List[str] = []
+        training_ok_samples: list[tuple[str, str]] = []
+        training_ng_samples: list[tuple[str, str]] = []
+        for path in candidate_paths:
+            for roi_label in label_names:
+                if not self.owner._path_has_roi_geometry(path, roi_label):
+                    continue
+                status = self.owner._sample_roi_status_for_path(path, camera_id, roi_label)
+                if status == "OK":
+                    training_ok_files.append(path)
+                    training_ok_samples.append((path, roi_label))
+                elif status == "NG":
+                    training_ng_files.append(path)
+                    training_ng_samples.append((path, roi_label))
+
+        training_ok_files = list(dict.fromkeys(training_ok_files))
+        training_ng_files = list(dict.fromkeys(training_ng_files))
         missing_groups: List[str] = []
-        if not training_ok_files:
+        if not training_ok_samples:
             missing_groups.append("OK")
-        if not training_ng_files:
+        if not training_ng_samples:
             missing_groups.append("NG")
         if missing_groups:
-            camera_id = normalize_camera_role(inspection_item.camera_id) or "cam1"
-            raise RuntimeError(f"missing {'/'.join(missing_groups)} images for {camera_id}")
-
-        missing_paths = self.missing_training_roi_paths(
-            roi_label,
-            candidate_paths,
-            camera_role=inspection_item.camera_id,
-        )
-        if missing_paths:
-            missing = [os.path.basename(path) for path in missing_paths[:50]]
             raise RuntimeError(
-                f"missing ROI label '{roi_label}' in some training sample jsons:\n" + "\n".join(missing)
+                tr(
+                    "debug.training_missing_required_groups",
+                    roi=str(inspection_item.task_group or "").strip() or "/".join(label_names),
+                    groups="/".join(missing_groups),
+                )
             )
 
         embedding_cache_dir = ""
@@ -169,8 +196,10 @@ class TrainingTaskBuilder:
             "algorithm": algorithm,
             "ok_files": list(training_ok_files),
             "ng_files": list(training_ng_files),
-            "label_names": [roi_label],
-            "model_key": inspection_item.model_key,
+            "label_names": label_names,
+            "model_key": self.effective_model_key(inspection_item),
+            "ok_samples": training_ok_samples,
+            "ng_samples": training_ng_samples,
             "embedding_cache_dir": embedding_cache_dir,
         }
 

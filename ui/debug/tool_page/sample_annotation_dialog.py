@@ -50,6 +50,9 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         left_layout.setSpacing(6)
         left_layout.addWidget(QtWidgets.QLabel(tr("sample.image_list")))
         self.sample_list = QtWidgets.QListWidget()
+        self.sample_list.setUniformItemSizes(True)
+        self.sample_list.setLayoutMode(QtWidgets.QListView.LayoutMode.Batched)
+        self.sample_list.setBatchSize(100)
         self.sample_list.setStyleSheet(
             "QListWidget{background:#333333;color:#e0e0e0;border:1px solid #404040;}"
             "QListWidget::item:selected{background:#6ec0ff;color:#1a1a1a;}"
@@ -151,6 +154,15 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         if not normalized:
             normalized = ["cam1"]
         current_role = str(self.cmb_camera.currentData() or "cam1")
+        existing_roles = [
+            str(self.cmb_camera.itemData(index) or "")
+            for index in range(self.cmb_camera.count())
+        ]
+        if existing_roles == normalized and current_role in normalized:
+            self.cmb_camera.setEnabled(len(normalized) > 1)
+            if hasattr(self, "cmb_sample_kind"):
+                self._reload_samples()
+            return
         blocker = QtCore.QSignalBlocker(self.cmb_camera)
         self.cmb_camera.clear()
         for role in normalized:
@@ -174,16 +186,20 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         )
         paths = tool_page._sample_paths_for_kind(sample_kind, camera_role)
         blocker = QtCore.QSignalBlocker(self.sample_list)
-        self.sample_list.clear()
-        selected_row = -1
-        for index, path in enumerate(paths):
-            item = QtWidgets.QListWidgetItem(tool_page._sample_item_display_text(path, sample_kind, camera_role))
-            item.setToolTip(path)
-            item.setData(QtCore.Qt.UserRole, path)
-            self.sample_list.addItem(item)
-            if current_path and path == current_path:
-                selected_row = index
-        del blocker
+        self.sample_list.setUpdatesEnabled(False)
+        try:
+            self.sample_list.clear()
+            selected_row = -1
+            for index, path in enumerate(paths):
+                item = QtWidgets.QListWidgetItem(tool_page._sample_item_display_text(path, sample_kind, camera_role))
+                item.setToolTip(path)
+                item.setData(QtCore.Qt.UserRole, path)
+                self.sample_list.addItem(item)
+                if current_path and path == current_path:
+                    selected_row = index
+        finally:
+            self.sample_list.setUpdatesEnabled(True)
+            del blocker
         if self.sample_list.count() == 0:
             self.preview_canvas.clear_image()
             self.lbl_image_status.setText(tr("sample.list_empty"))
@@ -217,37 +233,41 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
     def _populate_roi_table(self, path: str, camera_role: str) -> None:
         tool_page = self._tool_page
         labels = tool_page._inspection_label_names_for_role(camera_role)
-        self.roi_table.setRowCount(0)
-        for row_index, label in enumerate(labels):
-            self.roi_table.insertRow(row_index)
-            self.roi_table.setItem(row_index, 0, QtWidgets.QTableWidgetItem(label))
-            has_geometry = tool_page._path_has_roi_geometry(path, label)
-            geometry_item = QtWidgets.QTableWidgetItem(tr("sample.generated") if has_geometry else tr("sample.missing_roi"))
-            self.roi_table.setItem(row_index, 1, geometry_item)
-            combo = QtWidgets.QComboBox()
-            combo.addItem(tr("sample.unset"), "")
-            combo.addItem("OK", "OK")
-            combo.addItem("NG", "NG")
-            current_status = tool_page._sample_roi_status_for_path(path, camera_role, label)
-            combo_index = combo.findData(current_status)
-            if combo_index < 0:
-                combo_index = 0
-            combo.setCurrentIndex(combo_index)
-            combo.setEnabled(has_geometry)
-            combo.currentIndexChanged.connect(
-                lambda _index, image_path=path, role=camera_role, roi_label=label, widget=combo: self._on_roi_status_changed(
-                    image_path,
-                    role,
-                    roi_label,
-                    str(widget.currentData() or ""),
+        geometry_labels = tool_page.roi_annotations.geometry_labels_for_path(path)
+        self.roi_table.setUpdatesEnabled(False)
+        try:
+            self.roi_table.setRowCount(len(labels))
+            for row_index, label in enumerate(labels):
+                self.roi_table.setItem(row_index, 0, QtWidgets.QTableWidgetItem(label))
+                has_geometry = label in geometry_labels
+                geometry_item = QtWidgets.QTableWidgetItem(tr("sample.generated") if has_geometry else tr("sample.missing_roi"))
+                self.roi_table.setItem(row_index, 1, geometry_item)
+                combo = QtWidgets.QComboBox()
+                combo.addItem(tr("sample.unset"), "")
+                combo.addItem("OK", "OK")
+                combo.addItem("NG", "NG")
+                current_status = tool_page._sample_roi_status_for_path(path, camera_role, label)
+                combo_index = combo.findData(current_status)
+                if combo_index < 0:
+                    combo_index = 0
+                combo.setCurrentIndex(combo_index)
+                combo.setEnabled(has_geometry)
+                combo.currentIndexChanged.connect(
+                    lambda _index, image_path=path, role=camera_role, roi_label=label, widget=combo: self._on_roi_status_changed(
+                        image_path,
+                        role,
+                        roi_label,
+                        str(widget.currentData() or ""),
+                    )
                 )
-            )
-            self.roi_table.setCellWidget(row_index, 2, combo)
+                self.roi_table.setCellWidget(row_index, 2, combo)
+        finally:
+            self.roi_table.setUpdatesEnabled(True)
 
     def _on_roi_status_changed(self, path: str, camera_role: str, label: str, status: str) -> None:
         self._tool_page._set_sample_roi_status_for_path(path, camera_role, label, status)
         self._refresh_current_row_text(path, camera_role)
-        self._tool_page._refresh_lists()
+        self._refresh_tool_page_row_text(path, camera_role)
         self._tool_page._update_sample_panel_widgets()
         self._active_roi_label = label
         self._refresh_canvas_overlays(path, camera_role)
@@ -265,6 +285,19 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
             return
         sample_kind = str(self.cmb_sample_kind.currentData() or "train")
         current_item.setText(self._tool_page._sample_item_display_text(path, sample_kind, camera_role))
+
+    def _refresh_tool_page_row_text(self, path: str, camera_role: str) -> None:
+        """Update one mirrored row without rebuilding every sample item."""
+        sample_kind = str(self.cmb_sample_kind.currentData() or "train")
+        list_widget = self._tool_page.ok_list if sample_kind == "train" else self._tool_page.test_list
+        for row in range(list_widget.count()):
+            item = list_widget.item(row)
+            if item is None:
+                continue
+            item_path = str(item.data(QtCore.Qt.UserRole) or item.toolTip() or "")
+            if item_path == path:
+                item.setText(self._tool_page._sample_item_display_text(path, sample_kind, camera_role))
+                break
 
     def _current_path_and_role(self) -> tuple[str, str]:
         item = self.sample_list.currentItem()
@@ -285,10 +318,11 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
             return
         camera_role = str(self.cmb_camera.currentData() or "cam1")
         sample_kind = str(self.cmb_sample_kind.currentData() or "train")
-        try:
-            self._tool_page._set_current_camera_role(camera_role, sync_debug_role=True)
-        except Exception:
-            pass
+        if self._tool_page.current_camera_role() != camera_role:
+            try:
+                self._tool_page._set_current_camera_role(camera_role, sync_debug_role=True)
+            except Exception:
+                pass
         target_index = 0 if sample_kind == "train" else 1
         tabs = getattr(self._tool_page, "tabs", None)
         if tabs is not None and tabs.currentIndex() != target_index:
@@ -297,7 +331,10 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         if not path:
             return
         try:
-            self._tool_page._select_path_in_current_tab(path)
+            self._tool_page._select_path_in_current_tab(
+                path,
+                pixmap=self.preview_canvas.image_pixmap(),
+            )
         except Exception:
             pass
 
@@ -380,7 +417,7 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
 
     def _refresh_after_annotation_change(self, path: str, camera_role: str) -> None:
         self._refresh_current_row_text(path, camera_role)
-        self._tool_page._refresh_lists()
+        self._refresh_tool_page_row_text(path, camera_role)
         self._tool_page._update_sample_panel_widgets()
         self._populate_roi_table(path, camera_role)
         self._refresh_canvas_overlays(path, camera_role)

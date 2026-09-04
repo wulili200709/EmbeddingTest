@@ -1,0 +1,46 @@
+2026-09-03 09:17:34 [camera-diagnostic] detailed=enabled duration_seconds=1800
+2026-09-03 09:17:36 [conveyor] inspection pipeline ready; precheck_and_warmup_ms=114.8
+2026-09-03 09:17:36 [conveyor] production started
+2026-09-03 09:17:40 [DI-sample] logical=camera_trigger_sensor; physical=DI0; state=ON; raw_word=0x022A; active_high=False; sample_time=09:17:40.622; sample_epoch_ms=1788398260623.0; ui_delay_ms=1.0
+2026-09-03 09:17:40 [conveyor] camera sensor created item=1, fifo=1
+2026-09-03 09:17:40 [DI-sample] logical=camera_trigger_sensor; physical=DI0; state=OFF; raw_word=0x022B; active_high=False; sample_time=09:17:40.678; sample_epoch_ms=1788398260678.8; ui_delay_ms=1.0
+2026-09-03 09:17:40 [conveyor] capture completed: item=1, epoch=1, roles=['cam1']
+2026-09-03 09:17:40 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=conveyor-1-1 shape=(2048, 2448, 3) dtype=uint8 ui_thread=True
+2026-09-03 09:17:40 [preview-render] target=cam1 trigger=conveyor-1-1 pixmap=2448x2048 ui_thread=True view_visible=True view_size=980x464 slot_bound=True render_ms=20.9
+2026-09-03 09:17:41 [DI-sample] logical=reject_position_sensor; physical=DI1; state=ON; raw_word=0x0229; active_high=False; sample_time=09:17:41.391; sample_epoch_ms=1788398261391.9; ui_delay_ms=1.0
+2026-09-03 09:17:41 [conveyor] item=1 stopped at DI1 awaiting inspection result
+2026-09-03 09:17:41 [trigger-summary] trigger=pending_20260903_091741_798857 result=OK duration_ms=1047 channels=cam1:OK/physical=cam1/serial=DB1938378/frame=1
+2026-09-03 09:17:41 [runtime] result=OK detail=cam1=OK；capture 120.8 ms；match 445.8 ms；infer 162.5 ms；耗时 1047 ms
+2026-09-03 09:17:41 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=conveyor-1-1 shape=(2048, 2448, 3) dtype=uint8 ui_thread=True
+2026-09-03 09:17:41 [preview-render] target=cam1 trigger=conveyor-1-1 pixmap=2448x2048 ui_thread=True view_visible=True view_size=980x441 slot_bound=True render_ms=21.8
+2026-09-03 09:17:41 [conveyor] inspection completed: item=1, result=OK
+2026-09-03 09:17:41 [conveyor] inspection completed: item=1, result=GOOD
+2026-09-03 09:17:41 [conveyor] GOOD item=1 passed DI1 and awaits DI7 confirmation; di1_motion_ms=4703.0; window_ms=500.0..1600.0
+2026-09-03 09:17:41 [conveyor] item=1 inspection ready at DI1; inspection_wait_ms=531.0; production resumed
+2026-09-03 09:17:42 [DI-sample] logical=reject_position_sensor; physical=DI1; state=OFF; raw_word=0x022B; active_high=False; sample_time=09:17:42.037; sample_epoch_ms=1788398262037.2; ui_delay_ms=1.0
+2026-09-03 09:17:42 [DI-sample] logical=good_outlet_sensor; physical=DI6; state=ON; raw_word=0x026B; active_high=True; sample_time=09:17:42.665; sample_epoch_ms=1788398262665.5; ui_delay_ms=1.0
+2026-09-03 09:17:42 [conveyor] DI7 signal ON: motion_ms=5468.0; low_wall_ms=9422.0; low_motion_ms=5468.0; debounce_ms=20
+2026-09-03 09:17:42 [conveyor] DI7 edge: motion_ms=5468.0; active_candidates=[item=1/result=GOOD/expected=DI7/elapsed_ms=765.0]
+2026-09-03 09:17:42 [conveyor] outlet confirmed: item=1, outlet=DI7, travel_ms=765.0; di1_motion_ms=4703.0; window_ms=500.0..1600.0
+2026-09-03 09:17:42 [DI-sample] logical=end_test_sensor; physical=DI7; state=ON; raw_word=0x02AB; active_high=True; sample_time=09:17:42.951; sample_epoch_ms=1788398262951.8; ui_delay_ms=1.0
+2026-09-03 09:17:42 [DI-sample] logical=good_outlet_sensor; physical=DI6; state=OFF; raw_word=0x02AB; active_high=True; sample_time=09:17:42.951; sample_epoch_ms=1788398262951.8; ui_delay_ms=2.3
+2026-09-03 09:17:42 [conveyor] DI7 signal OFF: motion_ms=5750.0; high_wall_ms=282.0; high_motion_ms=282.0; debounce_ms=20
+2026-09-03 09:17:42 [DI-sample] logical=end_test_sensor; physical=DI7; state=OFF; raw_word=0x022B; active_high=True; sample_time=09:17:42.985; sample_epoch_ms=1788398262985.7; ui_delay_ms=1.0
+2026-09-03 09:17:45 [DI-sample] logical=camera_trigger_sensor; physical=DI0; state=ON; raw_word=0x022A; active_high=False; sample_time=09:17:45.418; sample_epoch_ms=1788398265418.2; ui_delay_ms=1.0
+2026-09-03 09:17:45 [conveyor] camera sensor created item=2, fifo=1
+2026-09-03 09:17:45 [DI-sample] logical=good_outlet_sensor; physical=DI6; state=ON; raw_word=0x026A; active_high=True; sample_time=09:17:45.451; sample_epoch_ms=1788398265451.1; ui_delay_ms=1.0
+2026-09-03 09:17:45 [conveyor] DI7 signal ON: motion_ms=8250.0; low_wall_ms=2500.0; low_motion_ms=2500.0; debounce_ms=20
+2026-09-03 09:17:45 [conveyor] DI7 edge: motion_ms=8250.0; active_candidates=none
+2026-09-03 09:17:45 [conveyor] fault UNEXPECTED_GOOD_OUTLET: DI7 triggered without an eligible outlet expectation
+2026-09-03 09:17:45 [DI-sample] logical=camera_trigger_sensor; physical=DI0; state=OFF; raw_word=0x026B; active_high=False; sample_time=09:17:45.494; sample_epoch_ms=1788398265495.0; ui_delay_ms=1.0
+2026-09-03 09:17:45 [conveyor] capture completed: item=2, epoch=1, roles=['cam1']
+2026-09-03 09:17:45 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=conveyor-1-2 shape=(2048, 2448, 3) dtype=uint8 ui_thread=True
+2026-09-03 09:17:45 [preview-render] target=cam1 trigger=conveyor-1-2 pixmap=2448x2048 ui_thread=True view_visible=True view_size=980x441 slot_bound=True render_ms=23.8
+2026-09-03 09:17:45 [DI-sample] logical=good_outlet_sensor; physical=DI6; state=OFF; raw_word=0x022B; active_high=True; sample_time=09:17:45.645; sample_epoch_ms=1788398265645.6; ui_delay_ms=1.0
+2026-09-03 09:17:45 [conveyor] DI7 signal OFF: motion_ms=8250.0; high_wall_ms=187.0; high_motion_ms=0.0; debounce_ms=20
+2026-09-03 09:17:45 [trigger-summary] trigger=pending_20260903_091745_816122 result=OK duration_ms=304 channels=cam1:OK/physical=cam1/serial=DB1938378/frame=2
+2026-09-03 09:17:45 [runtime] result=OK detail=cam1=OK；capture 84.9 ms；match 173.8 ms；infer 107.2 ms；耗时 304 ms
+2026-09-03 09:17:45 [preview-route] signal_role=cam1 frame_role=cam1 target=cam1 canvas=1 trigger=conveyor-1-2 shape=(2048, 2448, 3) dtype=uint8 ui_thread=True
+2026-09-03 09:17:45 [preview-render] target=cam1 trigger=conveyor-1-2 pixmap=2448x2048 ui_thread=True view_visible=True view_size=980x441 slot_bound=True render_ms=20.1
+2026-09-03 09:17:45 [conveyor] inspection completed: item=2, result=OK
+2026-09-03 09:17:45 [conveyor] inspection completed: item=2, result=GOOD

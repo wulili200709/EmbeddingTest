@@ -55,6 +55,18 @@ def _inspection_item_labels(tool_page) -> List[str]:
     return [str(item.roi_label).strip() for item in tool_page.inspection_items if str(item.roi_label).strip()]
 
 
+def _task_groups_from_display_names(display_names_by_label: dict[str, str]) -> dict[str, str]:
+    """Keep the legacy convention where a reference ROI name is its shared task group."""
+    groups: dict[str, str] = {}
+    for label, name in dict(display_names_by_label or {}).items():
+        roi_label = str(label or "").strip()
+        group_name = str(name or "").strip()
+        if not roi_label or not group_name or group_name == roi_label:
+            continue
+        groups[roi_label] = group_name
+    return groups
+
+
 def _reload_inspection_items(tool_page) -> None:
     path = tool_page.session.inspection_items_path
     current_role_getter = getattr(tool_page, "current_camera_role", None)
@@ -100,6 +112,7 @@ def _reload_inspection_items(tool_page) -> None:
             labels,
             default_camera_id=current_role,
             display_names_by_label=display_names_by_label,
+            task_groups_by_label=_task_groups_from_display_names(display_names_by_label),
         )
     tool_page.inspection_items = other_role_items + synced_current_role_items
     save_inspection_items(tool_page.inspection_items, path)

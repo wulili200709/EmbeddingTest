@@ -21,6 +21,19 @@ class _Predictor:
         }
 
 
+class _FrameBatchPredictor(_Predictor):
+    def predict_items_batch_from_frame(self, *_args, **_kwargs):
+        return type(
+            "BatchPrediction",
+            (),
+            {
+                "rows": [{"pred": "OK", "detected_product_count": 2}],
+                "roi_shapes": (),
+                "timing_breakdown": {},
+            },
+        )()
+
+
 class InspectionExecutorTests(unittest.TestCase):
     def test_plan_separates_primary_distance_and_disabled_items(self) -> None:
         items = [
@@ -50,6 +63,22 @@ class InspectionExecutorTests(unittest.TestCase):
         self.assertEqual(
             [item.result for item in response.item_results],
             ["OK", "NG", "DISABLED"],
+        )
+
+    def test_frame_batch_preserves_shape_product_count_for_conveyor_alarm(self) -> None:
+        item = InspectionItem("first", "First", "cam1", "roi1", "meanintensity")
+
+        response = InspectionExecutor(_FrameBatchPredictor()).execute(
+            InspectionExecutionRequest(
+                camera_id="cam1",
+                image_bgr=object(),
+                items=[item],
+            )
+        )
+
+        self.assertEqual(
+            response.raw_row["item_rows"][0]["detected_product_count"],
+            2,
         )
 
 

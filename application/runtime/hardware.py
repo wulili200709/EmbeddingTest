@@ -283,7 +283,17 @@ def _on_conveyor_di_change(runtime, event) -> None:
             except Exception as exc:
                 runtime._conveyorIoError.emit(name, str(exc))
         return
-    runtime._conveyorDiEvent.emit(name, state)
+    sample_wall_s = float(getattr(event, "timestamp", 0.0) or 0.0)
+    sample_monotonic_s = float(getattr(event, "monotonic_timestamp", 0.0) or 0.0)
+    event_raw_word = getattr(event, "raw_word", None)
+    raw_word = -1 if event_raw_word is None else int(event_raw_word)
+    runtime._conveyorDiEvent.emit(
+        name,
+        state,
+        sample_wall_s,
+        sample_monotonic_s,
+        raw_word,
+    )
 
 
 def _on_conveyor_io_error(runtime, name: str, error: Exception) -> None:

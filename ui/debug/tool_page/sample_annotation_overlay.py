@@ -65,9 +65,33 @@ def _refresh_canvas_overlays(self, path: str, camera_role: str) -> None:
         self._canvas_shapes = []
         self.preview_canvas.set_overlays([])
         return
+    # Parse the sidecar once.  The previous two helper calls inside this loop
+    # each reopened the same JSON file for every ROI.
+    shapes_by_label: dict[str, dict] = {}
+    for shape in labelme_io.list_shapes_from_labelme(jpath):
+        label_name = str(shape.get("label", "") or "").strip()
+        if label_name and label_name not in shapes_by_label:
+            shapes_by_label[label_name] = shape
+
     for label in labels:
-        poly_points = labelme_io.try_read_polygon_points_from_labelme(jpath, label)
-        xywh = labelme_io.try_read_xywh_from_labelme(jpath, label)
+        shape = shapes_by_label.get(label)
+        if not shape:
+            continue
+        try:
+            points = [(float(x), float(y)) for x, y in list(shape.get("points") or [])]
+        except (TypeError, ValueError):
+            continue
+        poly_points = points if shape.get("shape_type") == "polygon" and len(points) >= 3 else None
+        xywh = None
+        if not poly_points and points:
+            xs = [point[0] for point in points]
+            ys = [point[1] for point in points]
+            x_min, x_max = min(xs), max(xs)
+            y_min, y_max = min(ys), max(ys)
+            width = int(round(x_max - x_min))
+            height = int(round(y_max - y_min))
+            if width > 0 and height > 0:
+                xywh = (int(round(x_min)), int(round(y_min)), width, height)
         if poly_points and len(poly_points) >= 3:
             status = self._tool_page._sample_roi_status_for_path(path, camera_role, label).lower()
             color, width, dash = overlay_style_for_label(label, status=status)

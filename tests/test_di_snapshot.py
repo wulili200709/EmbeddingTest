@@ -41,6 +41,11 @@ class DiSnapshotTests(unittest.TestCase):
         )
         self.assertEqual(board.read_count, 1)
 
+        detailed, raw_word = controller.snapshot_inputs_with_raw_word()
+        self.assertEqual(detailed, snapshot)
+        self.assertEqual(raw_word, 0b0101)
+        self.assertEqual(board.read_count, 2)
+
     def test_one_poller_scan_uses_one_snapshot_and_emits_debounced_changes(self) -> None:
         class FakeIo:
             is_open = True
@@ -66,6 +71,36 @@ class DiSnapshotTests(unittest.TestCase):
 
         self.assertEqual(io.read_count, 3)
         self.assertEqual([(event.name, event.state) for event in events], [("a", True), ("b", True)])
+        self.assertEqual([event.monotonic_timestamp for event in events], [1.0, 1.0])
+        self.assertEqual([event.raw_word for event in events], [None, None])
+
+    def test_poller_event_keeps_source_di_word(self) -> None:
+        board = _FakeBoard(0)
+        mapping = IoMapping.from_dict(
+            {
+                "di": {"good_outlet_sensor": {"channel": 6, "active_high": True}},
+                "do": {},
+            }
+        )
+        controller = IoController(board=board, mapping=mapping)  # type: ignore[arg-type]
+        poller = DiPoller(
+            controller,
+            input_names=["good_outlet_sensor"],
+            debounce_ms=0,
+        )
+        events = []
+        poller.add_change_callback(events.append)
+        poller._initialize_states()
+
+        board.word = 1 << 6
+        poller._scan_once(12.5)
+        poller._scan_once(12.5)
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].name, "good_outlet_sensor")
+        self.assertTrue(events[0].state)
+        self.assertEqual(events[0].raw_word, 0x0040)
+        self.assertEqual(events[0].monotonic_timestamp, 12.5)
 
 
 if __name__ == "__main__":

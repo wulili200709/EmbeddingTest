@@ -32,11 +32,13 @@ def _inspection_item_status(tool_page, inspection_item):
         backbone = tool_page.algo.current_learning_backbone(inspection_item.camera_id)
         if not backbone:
             return tr("debug.status.not_selected"), "Select a subtype for the learning tool first.", "#d98c8c"
-        model_path = tool_page.algo.embedding_model_path(
+        model_key = inspection_item.effective_model_key
+        storage_paths = tool_page.algo.embedding_model_storage_paths(
             backbone,
             tool_page.session.product_dir,
-            model_key=inspection_item.model_key,
+            model_key=model_key,
         )
+        model_path = storage_paths[0]
         if os.path.exists(model_path):
             tooltip = tr(
                 "debug.tooltip.learning_trained",
@@ -48,7 +50,7 @@ def _inspection_item_status(tool_page, inspection_item):
         legacy_path = next(
             (
                 path
-                for path in tool_page.algo.embedding_model_storage_paths(backbone, tool_page.session.product_dir)
+                for path in storage_paths
                 if path != model_path and os.path.exists(path)
             ),
             "",
@@ -130,10 +132,22 @@ def _inspection_item_status(tool_page, inspection_item):
         inspection_item.algorithm_code,
         inspection_item.camera_id,
     )
-    model_dict = tool_page.algo.get_traditional_model_dict(algorithm, model_key=inspection_item.model_key)
+    model_key = inspection_item.effective_model_key
+    model_dict = tool_page.algo.get_traditional_model_dict(algorithm, model_key=model_key)
     if isinstance(model_dict, dict):
-        storage_key = tool_page.algo.traditional_model_storage_key(algorithm, model_key=inspection_item.model_key)
-        actual_key = storage_key if storage_key in tool_page.algo.product_params.traditional_models else algorithm
+        storage_key = tool_page.algo.traditional_model_storage_key(algorithm, model_key=model_key)
+        candidate_keys = [
+            tool_page.algo.traditional_model_storage_key(algorithm, model_key=candidate_model_key)
+            for candidate_model_key in tool_page.algo.tool_model_storage_keys(model_key)
+        ]
+        actual_key = next(
+            (
+                candidate_key
+                for candidate_key in candidate_keys
+                if candidate_key in tool_page.algo.product_params.traditional_models
+            ),
+            algorithm,
+        )
         threshold = model_dict.get("threshold")
         ok_when = str(model_dict.get("ok_when", "")).strip() or "-"
         accuracy = model_dict.get("accuracy")
@@ -152,7 +166,7 @@ def _inspection_item_status(tool_page, inspection_item):
     tooltip = tr(
         "debug.tooltip.traditional_untrained",
         algorithm=tool_page.algo.algorithm_display_name(algorithm) or algorithm,
-        storage_key=tool_page.algo.traditional_model_storage_key(algorithm, model_key=inspection_item.model_key),
+        storage_key=tool_page.algo.traditional_model_storage_key(algorithm, model_key=model_key),
     )
     return tr("debug.status.uncalibrated"), tooltip, "#d98c8c"
 

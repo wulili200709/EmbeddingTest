@@ -53,8 +53,20 @@ class TrainingController:
     def cancel_pending_action(self, action_key: str | None = None) -> None:
         self.roi_review.cancel_pending_action(action_key)
 
-    def ensure_roi_reviewed(self, camera_role: object, *, action_name: str, action_key: str) -> bool:
-        return self.roi_review.ensure_roi_reviewed(camera_role, action_name=action_name, action_key=action_key)
+    def ensure_roi_reviewed(
+        self,
+        camera_role: object,
+        *,
+        action_name: str,
+        action_key: str,
+        confirmation_token: str = "",
+    ) -> bool:
+        return self.roi_review.ensure_roi_reviewed(
+            camera_role,
+            action_name=action_name,
+            action_key=action_key,
+            confirmation_token=confirmation_token,
+        )
 
     def missing_training_roi_paths(self, roi_label: str, candidate_paths: List[str]) -> List[str]:
         return self.task_builder.missing_training_roi_paths(roi_label, candidate_paths)
@@ -64,6 +76,26 @@ class TrainingController:
 
     def payload(self, mode: str, tasks: List[dict], *, selected_item_id: str = "", failures: List[str] | None = None) -> dict:
         return self.task_builder.payload(mode, tasks, selected_item_id=selected_item_id, failures=failures)
+
+    @staticmethod
+    def confirmation_token(action_key: str, tasks: List[dict]) -> str:
+        parts = [str(action_key or "")]
+        for task in tasks:
+            parts.append(str(task.get("item_id", "") or ""))
+            parts.append(str(task.get("algorithm", "") or ""))
+            parts.append(str(task.get("model_key", "") or ""))
+            parts.extend(f"ROI:{label}" for label in list(task.get("label_names", []) or []))
+            parts.extend(f"OK:{path}" for path in list(task.get("ok_files", []) or []))
+            parts.extend(f"NG:{path}" for path in list(task.get("ng_files", []) or []))
+            parts.extend(
+                f"OKROI:{path}:{label}"
+                for path, label in list(task.get("ok_samples", []) or [])
+            )
+            parts.extend(
+                f"NGROI:{path}:{label}"
+                for path, label in list(task.get("ng_samples", []) or [])
+            )
+        return "|".join(parts)
 
     def set_running(self, running: bool) -> None:
         self.owner._training_in_progress = bool(running)
@@ -227,8 +259,10 @@ class TrainingController:
             list(task.get("ng_files", []) or []),
             algorithm=algorithm,
             product_dir=self.owner.session.product_dir,
-            label_names=[roi_label],
+            label_names=list(task.get("label_names", []) or [roi_label]),
             model_key=str(task.get("model_key", "") or ""),
+            ok_samples=list(task.get("ok_samples", []) or []),
+            ng_samples=list(task.get("ng_samples", []) or []),
         )
 
     def train_all_tools(self) -> None:
@@ -251,52 +285,72 @@ class TrainingController:
             self.owner.lbl_status.setText(message)
             QtWidgets.QMessageBox.information(self.owner, tr("common.info"), message)
             return
-        self.owner.algo.model = None
-        self.owner.table.setRowCount(0)
-        self.owner._current_result_rows = []
         if self.owner._warn_mixed_training_camera_samples(current_role):
             return
-        if not self.owner._ensure_training_roi_reviewed(
-            current_role,
-            action_name=tr("debug.train_all_tools"),
-            action_key="all",
-        ):
-            return
-
         selected_item = self.owner._selected_inspection_item()
         selected_item_id = str(selected_item.item_id or "") if selected_item is not None else ""
         tasks: List[dict] = []
         failure_messages: List[str] = []
+        seen_targets: set[tuple[str, str]] = set()
         for inspection_item in trainable_items:
+            target = (
+                self.task_builder.effective_model_key(inspection_item),
+                self.resolve_algorithm(inspection_item),
+            )
+            if target in seen_targets:
+                continue
+            seen_targets.add(target)
             display_name = self.item_display_name(inspection_item)
             try:
                 tasks.append(self.build_task_for_item(inspection_item))
             except Exception as exc:
                 failure_messages.append(f"{display_name}: {exc}")
 
-        if not tasks:
-            if failure_messages:
-                audit_event = getattr(self.owner.window(), "_audit_event", None)
-                if callable(audit_event):
-                    audit_event(
-                        module="模型训练",
-                        action="重新训练",
-                        target=str(current_role),
-                        after_value=f"mode=all, success=0, failed={len(failure_messages)}",
-                        result="失败",
-                        remark="\n".join(failure_messages[:10]),
-                    )
-                self.owner.lbl_status.setText("Status: train failed")
-                QtWidgets.QMessageBox.warning(
-                    self.owner,
-                    tr("debug.train_result_title"),
-                    "\n".join([f"Failed: {len(failure_messages)} tool(s)", *failure_messages[:20]]),
+        # "Train all" is all-or-nothing. Starting only valid tasks would
+        # silently leave the product with a mixture of old and new models.
+        if failure_messages:
+            self.roi_review.clear_review_state(current_role)
+            audit_event = getattr(self.owner.window(), "_audit_event", None)
+            if callable(audit_event):
+                audit_event(
+                    module="模型训练",
+                    action="重新训练",
+                    target=str(current_role),
+                    after_value=f"mode=all, success=0, failed={len(failure_messages)}",
+                    result="失败",
+                    remark="\n".join(failure_messages[:10]),
                 )
-            else:
-                QtWidgets.QMessageBox.information(self.owner, tr("common.info"), tr("debug.enable_one_tool", role=current_role))
+            self.owner.lbl_status.setText(tr("debug.training_validation_failed_status"))
+            QtWidgets.QMessageBox.warning(
+                self.owner,
+                tr("debug.training_validation_failed_title"),
+                tr(
+                    "debug.training_all_validation_failed",
+                    errors="\n\n".join(failure_messages[:20]),
+                ),
+            )
             return
 
-        self.start_worker(self.payload("all", tasks, selected_item_id=selected_item_id, failures=failure_messages))
+        if not tasks:
+            QtWidgets.QMessageBox.information(
+                self.owner,
+                tr("common.info"),
+                tr("debug.enable_one_tool", role=current_role),
+            )
+            return
+
+        if not self.owner._ensure_training_roi_reviewed(
+            current_role,
+            action_name=tr("debug.train_all_tools"),
+            action_key="all",
+            confirmation_token=self.confirmation_token("all", tasks),
+        ):
+            return
+
+        self.owner.algo.model = None
+        self.owner.table.setRowCount(0)
+        self.owner._current_result_rows = []
+        self.start_worker(self.payload("all", tasks, selected_item_id=selected_item_id))
 
     def train_current(self) -> None:
         if getattr(self.owner, "_training_in_progress", False):
@@ -314,20 +368,12 @@ class TrainingController:
             self.owner.lbl_status.setText(message)
             QtWidgets.QMessageBox.information(self.owner, tr("common.info"), message)
             return
-        self.owner.algo.model = None
-        self.owner.table.setRowCount(0)
-        self.owner._current_result_rows = []
         if self.owner._warn_mixed_training_camera_samples(inspection_item.camera_id):
-            return
-        if not self.owner._ensure_training_roi_reviewed(
-            inspection_item.camera_id,
-            action_name=tr("debug.calibrate_current_tool"),
-            action_key="current",
-        ):
             return
         try:
             task = self.build_task_for_item(inspection_item)
         except Exception as exc:
+            self.roi_review.clear_review_state(inspection_item.camera_id)
             audit_event = getattr(self.owner.window(), "_audit_event", None)
             if callable(audit_event):
                 audit_event(
@@ -341,5 +387,16 @@ class TrainingController:
             QtWidgets.QMessageBox.warning(self.owner, tr("debug.train_failed_title"), str(exc))
             return
 
+        if not self.owner._ensure_training_roi_reviewed(
+            inspection_item.camera_id,
+            action_name=tr("debug.calibrate_current_tool"),
+            action_key="current",
+            confirmation_token=self.confirmation_token("current", [task]),
+        ):
+            return
+
+        self.owner.algo.model = None
+        self.owner.table.setRowCount(0)
+        self.owner._current_result_rows = []
         selected_item_id = str(inspection_item.item_id or "")
         self.start_worker(self.payload("current", [task], selected_item_id=selected_item_id))

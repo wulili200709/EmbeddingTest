@@ -318,7 +318,6 @@ def _finalize_trigger_outcome(
     detail_text = runtime._last_runtime_result.summary_text()
 
     runtime.recordPathChanged.emit(runtime._last_record_path or "-")
-    runtime.triggerResultReady.emit(outcome.final_result, detail_text)
     runtime.logAppended.emit(
         _trigger_summary_message(
             trigger_id=trigger_id,
@@ -328,7 +327,13 @@ def _finalize_trigger_outcome(
         )
     )
     runtime.logAppended.emit(f"[runtime] result={outcome.final_result} detail={detail_text}")
+    # Runtime context emission can reload the daily counters when the product
+    # or record path is initialized for the first result of the day.  Do that
+    # before publishing the result; otherwise an asynchronous record write
+    # leaves the CSV temporarily stale and the reload can overwrite the
+    # just-incremented OK/NG counter with zero.
     runtime._update_status(detail_text or f"result={outcome.final_result}")
+    runtime.triggerResultReady.emit(outcome.final_result, detail_text)
 
     # Publish the frame only after final item statuses have reached the UI. The
     # preview renderer can then color the ROI overlays correctly in one pass.
@@ -459,14 +464,24 @@ def _warm_runtime_models(runtime, enabled_items: list[object]) -> None:
                 learning_groups.setdefault(algorithm, []).append(item)
         for algorithm, group in learning_groups.items():
             try:
+                models: list[object] = []
                 for item in group:
                     runtime._runtime_context.load_embedding_model(
                         algorithm,
-                        model_key=item.model_key,
+                        model_key=item.effective_model_key,
                     )
-                runtime._algo.get_feat_net(algorithm)
-            except Exception:
-                pass
+                    model = getattr(runtime._algo, "model", None)
+                    if model is None:
+                        raise RuntimeError(f"model is not ready: {algorithm}")
+                    models.append(model)
+                device = getattr(models[0], "device", None) if models else None
+                runtime._algo.warmup_feat_net(
+                    algorithm,
+                    device,
+                    batch_size=len(group),
+                )
+            except Exception as exc:
+                raise RuntimeError(f"model warm-up failed ({algorithm}): {exc}") from exc
 
     traditional_items = [
         item
@@ -476,9 +491,12 @@ def _warm_runtime_models(runtime, enabled_items: list[object]) -> None:
     for item in traditional_items:
         try:
             algorithm = runtime._algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
-            runtime._algo.get_traditional_model_dict(algorithm, model_key=item.model_key)
-        except Exception:
-            pass
+            runtime._algo.get_traditional_model_dict(
+                algorithm,
+                model_key=item.effective_model_key,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"model warm-up failed ({algorithm}): {exc}") from exc
 
 
 def _unsupported_localization_roles(runtime, roles) -> list[str]:
@@ -540,7 +558,10 @@ def _precheck_for_capture_channels(runtime, channels: list[dict]) -> tuple[bool,
             "runtime currently only supports shape/NCC localization for "
             + ", ".join(unsupported_roles),
         )
-    _warm_runtime_models(runtime, enabled_items)
+    try:
+        _warm_runtime_models(runtime, enabled_items)
+    except Exception as exc:
+        return False, str(exc)
 
     if runtime_controller_module.frame_to_bgr_image is None:
         return False, "camera frame conversion service is unavailable"
@@ -742,7 +763,10 @@ def _precheck_for_roles(runtime, roles) -> tuple[bool, str]:
             + ", ".join(unsupported_roles),
         )
 
-    _warm_runtime_models(runtime, enabled_items)
+    try:
+        _warm_runtime_models(runtime, enabled_items)
+    except Exception as exc:
+        return False, str(exc)
 
     if runtime_controller_module.frame_to_bgr_image is None:
         return False, "camera frame conversion service is unavailable"

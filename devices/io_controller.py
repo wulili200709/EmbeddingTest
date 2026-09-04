@@ -81,15 +81,24 @@ class IoController:
         self.set_outputs({name: False for name in target_names})
 
     def snapshot_inputs(self, names: Iterable[str] | None = None) -> dict[str, bool]:
+        snapshot, _raw_word = self.snapshot_inputs_with_raw_word(names)
+        return snapshot
+
+    def snapshot_inputs_with_raw_word(
+        self,
+        names: Iterable[str] | None = None,
+    ) -> tuple[dict[str, bool], int]:
+        """Return one atomically decoded DI snapshot and its source word."""
         target_names = list(names) if names is not None else self.mapping.di_names()
         raw_word = self.board.read_di_word()
-        return {
+        snapshot = {
             name: level_to_business(
                 get_bit(raw_word, self.mapping.get_input(name).channel),
                 self.mapping.get_input(name).active_high,
             )
             for name in target_names
         }
+        return snapshot, int(raw_word)
 
     def snapshot_outputs(self) -> dict[str, bool]:
         return {name: self.read_output(name) for name in self.mapping.do_names()}

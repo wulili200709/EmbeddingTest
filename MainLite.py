@@ -210,6 +210,7 @@ class LiteDebugMainWindow(DebugMainWindow):
         page = self.tool_page
         product_dir = str(page.session.product_dir or "").strip()
         targets: list[dict[str, str]] = []
+        seen_targets: set[tuple[str, str]] = set()
         signature_parts = [os.path.normcase(os.path.abspath(product_dir))] if product_dir else []
         for item in list(getattr(page, "inspection_items", []) or []):
             if not bool(getattr(item, "enabled", True)):
@@ -218,13 +219,27 @@ class LiteDebugMainWindow(DebugMainWindow):
                 continue
             role = normalize_camera_role(getattr(item, "camera_id", ""), default="cam1")
             algorithm = page.algo.resolve_tool_algorithm(getattr(item, "algorithm_code", ""), role)
-            model_key = str(getattr(item, "model_key", "") or "").strip()
-            model_path = page.algo.embedding_model_path(
-                algorithm,
-                product_dir,
-                model_key=model_key,
+            model_key = str(
+                getattr(item, "effective_model_key", getattr(item, "model_key", ""))
+                or ""
+            ).strip()
+            target_key = (str(algorithm), model_key)
+            if target_key in seen_targets:
+                continue
+            seen_targets.add(target_key)
+            model_path = next(
+                (
+                    path
+                    for path in page.algo.embedding_model_storage_paths(
+                        algorithm,
+                        product_dir,
+                        model_key=model_key,
+                    )
+                    if os.path.exists(path)
+                ),
+                "",
             )
-            if not os.path.exists(model_path):
+            if not model_path:
                 continue
             stat = os.stat(model_path)
             targets.append({
@@ -1092,13 +1107,13 @@ class LiteDebugMainWindow(DebugMainWindow):
                         if page.algo.is_embedding_algorithm(resolved_algorithm):
                             page.load_embedding_model(
                                 resolved_algorithm,
-                                model_key=getattr(item, "model_key", ""),
+                                model_key=getattr(item, "effective_model_key", item.model_key),
                             )
                             if page.algo.model is None:
                                 expected_model = page.algo.embedding_model_path(
                                     resolved_algorithm,
                                     page.session.product_dir,
-                                    model_key=getattr(item, "model_key", ""),
+                                    model_key=getattr(item, "effective_model_key", item.model_key),
                                 )
                                 raise RuntimeError(
                                     _lite_text(
@@ -1118,7 +1133,7 @@ class LiteDebugMainWindow(DebugMainWindow):
                                     roi=(0, 0, int(width), int(height)),
                                     match_ms=0.0,
                                     algorithm_override=resolved_algorithm,
-                                    model_key_override=getattr(item, "model_key", ""),
+                                    model_key_override=getattr(item, "effective_model_key", item.model_key),
                                     params_override=dict(getattr(item, "params", {}) or {}),
                                 )
                             except BaseException as exc:
@@ -1277,7 +1292,7 @@ class LiteDebugMainWindow(DebugMainWindow):
                     name_edit.clear()
                     name_edit.setEnabled(False)
                 else:
-                    configured = load_names().get(item.model_key, "")
+                    configured = load_names().get(item.effective_model_key, "")
                     default_name = str(getattr(item, "display_name", "") or item.roi_label or item.item_id)
                     name_edit.setText(configured or default_name)
                     name_edit.setEnabled(page.algo.is_learning_tool(item.algorithm_code))
@@ -1291,13 +1306,13 @@ class LiteDebugMainWindow(DebugMainWindow):
             custom_name = _safe_export_stem(name_edit.text(), str(item.display_name or "model"))
             name_edit.setText(custom_name)
             names = load_names()
-            names[item.model_key] = custom_name
+            names[item.effective_model_key] = custom_name
             atomic_write_json(names_path(), names, ensure_ascii=False, indent=2)
 
         def ask_model_name(item) -> bool:
             names = load_names()
             default_name = names.get(
-                item.model_key,
+                item.effective_model_key,
                 str(getattr(item, "display_name", "") or item.roi_label or item.item_id or "model"),
             )
             entered, accepted = QtWidgets.QInputDialog.getText(
@@ -1320,7 +1335,7 @@ class LiteDebugMainWindow(DebugMainWindow):
                     _lite_text("模型名称不能为空。", "The model name cannot be empty."),
                 )
                 return False
-            names[item.model_key] = custom_name
+            names[item.effective_model_key] = custom_name
             atomic_write_json(names_path(), names, ensure_ascii=False, indent=2)
             if selected_item() is item:
                 name_edit.setText(custom_name)
@@ -1595,7 +1610,7 @@ class LiteDebugMainWindow(DebugMainWindow):
             )
             if isinstance(configured_names, dict) and selected_item is not None:
                 item_name = _safe_export_stem(
-                    configured_names.get(selected_item.model_key, item_name),
+                    configured_names.get(selected_item.effective_model_key, item_name),
                     item_name,
                 )
             default_filename = f"{product_name}_{item_name}.onnx"

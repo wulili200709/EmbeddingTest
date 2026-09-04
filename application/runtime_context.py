@@ -51,6 +51,16 @@ def _camera_role_from_path(path: str) -> str:
     return camera_role_from_text(os.path.basename(str(path or "")), default=DEFAULT_CAMERA_ROLE)
 
 
+def _task_groups_from_display_names(display_names_by_label: Dict[str, str]) -> Dict[str, str]:
+    groups: Dict[str, str] = {}
+    for label, name in dict(display_names_by_label or {}).items():
+        roi_label = str(label or "").strip()
+        group_name = str(name or "").strip()
+        if roi_label and group_name and group_name != roi_label:
+            groups[roi_label] = group_name
+    return groups
+
+
 def _normalize_loc_method(method: object, *, default: str = "shape") -> str:
     value = str(method or "").strip().lower()
     if value == "line2dup":
@@ -201,7 +211,7 @@ def _predict_learning_items_batch_rows(
         group_infer_t0 = time.perf_counter()
         models: List[Any] = []
         for item in group:
-            load_embedding_model(algorithm, model_key=item.model_key)
+            load_embedding_model(algorithm, model_key=item.effective_model_key)
             if algo.model is None:
                 raise RuntimeError(f"algorithm model not loaded: {learning_backbone_storage_code(algorithm)}")
             algo.apply_params_to_model()
@@ -269,7 +279,7 @@ def _predict_grouped_items_from_path(
             feat_net=feat_net,
             labels_override=[roi_label] if roi_label else None,
             algorithm_override=item.algorithm_code,
-            model_key_override=item.model_key,
+            model_key_override=item.effective_model_key,
         )
     for item in groups.measurement:
         roi_label = str(item.roi_label or "").strip()
@@ -336,7 +346,7 @@ def _predict_learning_items_batch_rows_from_frame(
         model_load_t0 = time.perf_counter()
         models: List[Any] = []
         for item in group:
-            load_embedding_model(algorithm, model_key=item.model_key)
+            load_embedding_model(algorithm, model_key=item.effective_model_key)
             if algo.model is None:
                 raise RuntimeError(f"algorithm model not loaded: {learning_backbone_storage_code(algorithm)}")
             algo.apply_params_to_model()
@@ -568,6 +578,7 @@ class ProductRuntimeContext:
 
         total_t0 = time.perf_counter()
         match_ms = None
+        detected_product_count = None
         camera_role = _camera_role_from_path(path)
         method = self.loc_method_for_role(camera_role)
         if method == "shape":
@@ -581,6 +592,7 @@ class ProductRuntimeContext:
                     camera_role=camera_role,
                 )
                 match_ms = float(run.total_ms)
+                detected_product_count = int(run.result.detected_product_count)
                 self._shape_match_ms_by_image[path] = match_ms
         elif method == "ncc":
             run = ncc_locator.autogen_roi_json_from_ncc_timed(
@@ -589,6 +601,7 @@ class ProductRuntimeContext:
                 camera_role=camera_role,
             )
             match_ms = float(run.total_ms)
+            detected_product_count = int(run.detected_product_count)
             self._shape_match_ms_by_image[path] = match_ms
 
         labels = list(labels_override or [])
@@ -625,6 +638,8 @@ class ProductRuntimeContext:
             else None
         )
         payload["total_ms"] = float((time.perf_counter() - total_t0) * 1000.0)
+        if detected_product_count is not None:
+            payload["detected_product_count"] = detected_product_count
         return payload
 
     def predict_items_batch(
@@ -640,6 +655,7 @@ class ProductRuntimeContext:
         groups = _group_inspection_items(items, self.algo)
 
         match_ms = None
+        detected_product_count = None
         camera_role = (
             normalize_camera_role(groups.enabled[0].camera_id, default=DEFAULT_CAMERA_ROLE)
             if groups.enabled
@@ -657,6 +673,7 @@ class ProductRuntimeContext:
                     camera_role=camera_role,
                 )
                 match_ms = float(run.total_ms)
+                detected_product_count = int(run.result.detected_product_count)
                 self._shape_match_ms_by_image[path] = match_ms
         elif method == "ncc":
             run = ncc_locator.autogen_roi_json_from_ncc_timed(
@@ -665,9 +682,10 @@ class ProductRuntimeContext:
                 camera_role=camera_role,
             )
             match_ms = float(run.total_ms)
+            detected_product_count = int(run.detected_product_count)
             self._shape_match_ms_by_image[path] = match_ms
 
-        return _predict_grouped_items_from_path(
+        rows = _predict_grouped_items_from_path(
             path=path,
             groups=groups,
             match_ms=match_ms,
@@ -676,6 +694,10 @@ class ProductRuntimeContext:
             load_embedding_model=self.load_embedding_model,
             feat_net=feat_net,
         )
+        if detected_product_count is not None:
+            for row in rows:
+                row["detected_product_count"] = detected_product_count
+        return rows
 
     def predict_items_batch_from_frame(
         self,
@@ -696,6 +718,7 @@ class ProductRuntimeContext:
 
         role = normalize_camera_role(camera_role, default=DEFAULT_CAMERA_ROLE)
         match_ms = 0.0
+        detected_product_count = None
         roi_shapes: tuple[RuntimePreviewShape, ...] = ()
         method = self.loc_method_for_role(role)
         if method == "shape":
@@ -709,6 +732,7 @@ class ProductRuntimeContext:
                     camera_role=role,
                 )
                 match_ms = float(run.locate_ms)
+                detected_product_count = int(run.result.detected_product_count)
                 roi_shapes = tuple(
                     RuntimePreviewShape(
                         label=str(shape.label_name or "").strip() or "roi",
@@ -724,6 +748,7 @@ class ProductRuntimeContext:
                 camera_role=role,
             )
             match_ms = float(run.locate_ms)
+            detected_product_count = int(run.detected_product_count)
             roi_shapes = tuple(
                 RuntimePreviewShape(
                     label=str(shape.label_name or "").strip() or "roi",
@@ -731,6 +756,25 @@ class ProductRuntimeContext:
                     points=tuple((float(x), float(y)) for x, y in tuple(shape.points or ())),
                 )
                 for shape in tuple(run.roi_shapes or ())
+            )
+
+        if detected_product_count is not None and detected_product_count > 1:
+            rows = [
+                {
+                    "pred": "NG",
+                    "detail": f"multiple products detected: {detected_product_count}",
+                    "match_ms": float(match_ms),
+                    "infer_ms": 0.0,
+                    "total_ms": float(match_ms),
+                    "detected_product_count": detected_product_count,
+                }
+                for _item in enabled_items
+            ]
+            return RuntimeFrameBatchPrediction(
+                rows=rows,
+                match_ms=float(match_ms),
+                roi_shapes=roi_shapes,
+                timing_breakdown={},
             )
 
         inference_timing: Dict[str, object] = {}
@@ -748,14 +792,17 @@ class ProductRuntimeContext:
         for item in traditional_items:
             item_infer_t0 = time.perf_counter()
             algorithm = self.algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
-            model_dict = self.algo.get_traditional_model_dict(algorithm, model_key=item.model_key)
+            model_dict = self.algo.get_traditional_model_dict(
+                algorithm,
+                model_key=item.effective_model_key,
+            )
             if not isinstance(model_dict, dict):
                 raise RuntimeError(f"traditional algorithm {algorithm} is not trained yet")
             threshold_model = TraditionalThresholdModel.from_dict(model_dict)
             metrics = compute_roi_metrics_from_array(
                 image,
                 shape_by_label=shape_by_label,
-                preferred_label=threshold_model.roi_label or str(item.roi_label or "").strip() or "roi",
+                preferred_label=str(item.roi_label or "").strip() or threshold_model.roi_label or "roi",
             )
             value = metric_value(metrics, algorithm)
             pred, diff = threshold_model.predict(value)
@@ -904,8 +951,12 @@ class ProductRuntimeContext:
                 measurement_payload.update({"pred": pred})
             rows_by_key[item.model_key]["measurement"] = measurement_payload
 
+        rows = [dict(rows_by_key[item.model_key]) for item in enabled_items]
+        if detected_product_count is not None:
+            for row in rows:
+                row["detected_product_count"] = detected_product_count
         return RuntimeFrameBatchPrediction(
-            rows=[dict(rows_by_key[item.model_key]) for item in enabled_items],
+            rows=rows,
             match_ms=float(match_ms),
             roi_shapes=roi_shapes,
             timing_breakdown=inference_timing,
@@ -941,7 +992,9 @@ class ProductRuntimeContext:
                     continue
                 specs = ncc_locator.inspection_item_specs_for_product(self.session.product_dir, role)
             else:
-                if recipe is None and not role_items:
+                if recipe is None:
+                    if role_items:
+                        synced_items.extend(role_items)
                     continue
                 specs = inspection_item_specs_from_shape_recipe(recipe)
             labels = [
@@ -960,6 +1013,7 @@ class ProductRuntimeContext:
                     labels,
                     default_camera_id=role,
                     display_names_by_label=display_names_by_label,
+                    task_groups_by_label=_task_groups_from_display_names(display_names_by_label),
                 )
             )
         remaining_items = [

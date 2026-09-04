@@ -112,7 +112,7 @@ def list_available_embedding_models(product_dir: str) -> List[EmbeddingModelEntr
 
     inspection_items_path = os.path.join(product_dir, "inspection_items.json")
     items_by_key = {
-        item.model_key: item
+        item.effective_model_key: item
         for item in load_inspection_items(inspection_items_path)
     }
     shared_model_name = tr("debug.embedding.shared_model")

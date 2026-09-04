@@ -42,7 +42,7 @@ _CONVEYOR_STATE_OPERATOR_KEYS = {
     state: f"conveyor.state.{state}"
     for state in (
         "BOOTING", "SAFETY_LOCKED", "DOOR_OPEN_STOPPED", "READY_STOPPED",
-        "RUNNING", "CONTROLLED_STOPPING", "SAFETY_PAUSED", "DOOR_PAUSED",
+        "RUNNING", "WAITING_INSPECTION", "CONTROLLED_STOPPING", "SAFETY_PAUSED", "DOOR_PAUSED",
         "READY_TO_RESUME", "PURGE_PREPARING", "PURGE_RUNNING", "PURGE_PAUSED",
         "FAULT_STOPPED",
     )
@@ -145,6 +145,8 @@ def _status_badge_width(label: QtWidgets.QLabel, text: str, *, minimum: int = 56
     return max(minimum, min(maximum, width))
 
 class RuntimeImageView(QtWidgets.QLabel):
+    _LAYOUT_SIZE = QtCore.QSize(160, 120)
+
     def __init__(self, title: str) -> None:
         super().__init__(title)
         self._pixmap: QtGui.QPixmap | None = None
@@ -168,6 +170,15 @@ class RuntimeImageView(QtWidgets.QLabel):
             QtWidgets.QSizePolicy.Policy.Ignored,
         )
         self.setStyleSheet(f"background:{_DARK_BG};color:{_TEXT_DIM};font-size:14px;")
+
+    def sizeHint(self) -> QtCore.QSize:  # type: ignore[override]
+        # QLabel normally derives this from its current pixmap.  Returning a
+        # stable hint prevents a newly rendered OK/NG frame from changing the
+        # page or top-level window geometry.
+        return QtCore.QSize(self._LAYOUT_SIZE)
+
+    def minimumSizeHint(self) -> QtCore.QSize:  # type: ignore[override]
+        return QtCore.QSize(self._LAYOUT_SIZE)
 
     def set_runtime_pixmap(self, pixmap: QtGui.QPixmap | None, *, placeholder: str | None = None) -> None:
         previous_size = self._pixmap.size() if self._pixmap is not None else QtCore.QSize()
@@ -353,6 +364,14 @@ class _ElidedLabel(QtWidgets.QLabel):
         if width <= 0:
             return self._full_text
         return self.fontMetrics().elidedText(self._full_text, QtCore.Qt.ElideRight, width)
+
+
+class _StableSingleLineLabel(QtWidgets.QLabel):
+    """A single-line label whose text cannot raise a layout's minimum width."""
+
+    def minimumSizeHint(self) -> QtCore.QSize:  # type: ignore[override]
+        hint = super().minimumSizeHint()
+        return QtCore.QSize(0, hint.height())
 
 
 class _ItemIndicator(QtWidgets.QFrame):
@@ -740,7 +759,14 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.btn_trigger_cam3.clicked.connect(lambda: self.triggerCameraRequested.emit(3))
         header_layout.addWidget(self.btn_trigger_cam3)
 
-        self.lbl_conveyor_state = QtWidgets.QLabel(tr("conveyor.disconnected"))
+        self.lbl_conveyor_state = _StableSingleLineLabel(tr("conveyor.disconnected"))
+        self.lbl_conveyor_state.setMinimumWidth(0)
+        self.lbl_conveyor_state.setWordWrap(False)
+        self.lbl_conveyor_state.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+        self.lbl_conveyor_state.setMaximumWidth(620)
         self.lbl_conveyor_state.setStyleSheet(
             f"color:{_TEXT_DIM};font-size:12px;border-left:1px solid #555;padding-left:8px;"
         )
@@ -787,6 +813,7 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.btn_conveyor_start.hide()
         self.btn_conveyor_stop.hide()
         self.btn_conveyor_continue.hide()
+        self.btn_conveyor_ack.setEnabled(True)
         self.btn_conveyor_ack.setToolTip(tr("conveyor.ack_tip"))
 
         header_layout.addStretch(1)
@@ -1879,26 +1906,41 @@ class RuntimeModePage(QtWidgets.QWidget):
             good=good_outlet_pending,
             waste=waste_outlet_pending,
         )
-        self.lbl_conveyor_state.setText(summary + (f" | {fault_text}" if fault_text else ""))
+        display_summary = summary + (f" | {fault_text}" if fault_text else "")
+        self.lbl_conveyor_state.setText(display_summary)
         if fault_code:
             engineering_detail = tr("conveyor.engineering_code", code=fault_code)
             if fault_detail:
                 engineering_detail += "\n" + tr(
                     "conveyor.engineering_detail", detail=fault_detail
                 )
-            self.lbl_conveyor_state.setToolTip(engineering_detail)
+            self.lbl_conveyor_state.setToolTip(display_summary + "\n" + engineering_detail)
         else:
             self.lbl_conveyor_state.setToolTip("")
-        color = _NG_RED if fault_code or state in {"SAFETY_LOCKED", "DOOR_OPEN_STOPPED"} else _OK_GREEN
+        if fault_code or state in {"SAFETY_LOCKED", "DOOR_OPEN_STOPPED"}:
+            color = _NG_RED
+        elif state == "WAITING_INSPECTION":
+            color = _RUNNING_YELLOW
+        else:
+            color = _OK_GREEN
         self.lbl_conveyor_state.setStyleSheet(
             f"color:{color};font-size:12px;border-left:1px solid #555;padding-left:8px;"
         )
-        self._refresh_fifo_indicators(payload.get("inflight", payload.get("fifo", [])))
+        # These lamps are explicitly the production FIFO between DI0 and DI1.
+        # Items already consumed at DI1 may remain in ``inflight`` while their
+        # outlet guard is active, but they must no longer keep a FIFO lamp lit.
+        self._refresh_fifo_indicators(payload.get("fifo", []))
         self.btn_conveyor_start.setEnabled(
             permitted and state in {"READY_STOPPED", "READY_TO_RESUME"}
         )
         self.btn_conveyor_stop.setEnabled(
-            state in {"RUNNING", "CONTROLLED_STOPPING", "PURGE_PREPARING", "PURGE_RUNNING"}
+            state in {
+                "RUNNING",
+                "WAITING_INSPECTION",
+                "CONTROLLED_STOPPING",
+                "PURGE_PREPARING",
+                "PURGE_RUNNING",
+            }
         )
         if state in {"PURGE_PREPARING", "PURGE_RUNNING"}:
             self.btn_conveyor_purge.setText(tr("conveyor.purge_running"))
@@ -1916,11 +1958,10 @@ class RuntimeModePage(QtWidgets.QWidget):
                 )
             )
         self.btn_conveyor_continue.setEnabled(hardware_permitted and state == "PURGE_PAUSED")
-        self.btn_conveyor_ack.setEnabled(
-            hardware_permitted
-            and state == "FAULT_STOPPED"
-            and fault_recovery == "ACKNOWLEDGE"
-        )
+        # Alarm reset is always available as a buzzer-silence control.  The
+        # domain controller still decides whether the current fault may also
+        # be cleared or requires purge/IO reconnection.
+        self.btn_conveyor_ack.setEnabled(True)
         self._refresh_trigger_buttons()
 
     def _on_conveyor_purge_button_clicked(self) -> None:

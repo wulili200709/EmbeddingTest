@@ -219,20 +219,22 @@ flowchart TD
     C -->|"DI1有效沿"| I["读取FIFO队头"]
     I --> J{"队头状态"}
     J -->|"FIFO为空"| K["FIFO_UNDERFLOW"]
-    J -->|"PENDING"| L["RESULT_NOT_READY"]
+    J -->|"PENDING"| L["立即关闭DO4，进入WAITING_INSPECTION"]
+    L -->|"结果在等待时间内完成"| J
+    L -->|"超过inspection_result_wait_timeout_ms"| Z["RESULT_NOT_READY"]
     J -->|"GOOD且DO3关闭"| M["移除队头，建立等待DI7记录"]
     J -->|"GOOD且DO3开启"| N["BLOW_WINDOW_CONFLICT"]
-    J -->|"NG"| O["移除队头，提交吹气并建立等待DI8记录"]
+    J -->|"NG"| O["移除队头，提交吹气并建立DI7防错记录"]
     O --> P["等待reject_blow_delay_ms"]
     P --> Q["DO3 ON"]
     Q --> R["保持reject_blow_duration_ms"]
     R --> S["DO3 OFF"]
     M --> T{"规定运行时间内收到DI7？"}
-    S --> U{"规定运行时间内收到DI8？"}
+    S --> U{"防错窗口内是否收到DI7？"}
     T -->|"是"| V["GOOD完整离开设备"]
-    U -->|"是"| W["NG剔除成功"]
+    U -->|"否"| W["NG剔除成功"]
     T -->|"否"| X["GOOD_OUTLET_TIMEOUT"]
-    U -->|"否"| Y["WASTE_OUTLET_TIMEOUT"]
+    U -->|"是"| Y["REJECT_FAILED_WRONG_OUTLET"]
 ```
 
 ### 7.1 启动条件
@@ -385,7 +387,11 @@ if record is None:
     trip_fault("FIFO_UNDERFLOW", recovery="PURGE_REQUIRED")
 
 elif record.inspection_status == PENDING:
-    trip_fault("RESULT_NOT_READY", recovery="PURGE_REQUIRED")
+    conveyor_run = False
+    state = WAITING_INSPECTION
+    # 结果完成后自动按GOOD/NG分流并恢复皮带；只有等待超时才报警
+    if wait_ms >= inspection_result_wait_timeout_ms:
+        trip_fault("RESULT_NOT_READY", recovery="PURGE_REQUIRED")
 
 elif record.inspection_status == GOOD:
     if waste_removal_output_is_on:
@@ -433,6 +439,7 @@ flowchart LR
 advance_motion_clock()
 update_reject_output()
 monitor_jams()
+monitor_inspection_wait()
 monitor_outlet_timeouts()
 monitor_front_sensor_spacing()
 monitor_fifo_timeout()
@@ -601,6 +608,11 @@ DO3 ON
 
 ## 14. DI6堵料与DI7、DI8出口确认/堵料复用
 
+现场当前默认关闭DI8的NG逐件确认（`waste_outlet_confirmation_enabled=false`）：
+NG吹气后在配置时间窗口内监控DI7，DI7按顺序匹配到NG时报告剔除失败；窗口
+结束且DI7无信号则完成NG跟踪。DI6只保留专用堵料检测。此开关不关闭DI8堵料
+检测，也不改变一键清线对DI8废料活动和连续无料时间的使用。
+
 堵料按皮带实际运行时间判断：
 
 ```text
@@ -643,13 +655,13 @@ DI8尚未恢复无料         → 不允许确认堵料报警
 
 ## 15. 故障和恢复方式
 
-状态机通过 `fault_recovery` 明确每种故障允许的恢复操作：
+状态机通过 `fault_recovery` 明确每种故障允许的恢复操作。“报警复位”按钮始终可以关闭蜂鸣器，但只有 `ACKNOWLEDGE` 类型在恢复条件满足时会同时解除故障：
 
 | 恢复类型 | 典型故障 | 恢复操作 |
 |---|---|---|
-| `ACKNOWLEDGE` | 堵料已清除、受控停止超时、清线超时 | 确认报警，回到停止状态 |
-| `PURGE_REQUIRED` | FIFO溢出/下溢、结果未就绪、物料到达或出口确认超时、走错出口、非预期出口产品、多料同视野、产品间距过小、吹气中断、吹气窗口冲突 | 必须一键清线 |
-| `RECONNECT_IO` | IO未就绪、DO写入失败 | 必须重新连接IO |
+| `ACKNOWLEDGE` | 堵料已清除、受控停止超时、清线超时 | 消音并确认报警，回到停止状态 |
+| `PURGE_REQUIRED` | FIFO溢出/下溢、结果未就绪、物料到达或出口确认超时、走错出口、非预期出口产品、多料同视野、产品间距过小、吹气中断、吹气窗口冲突 | 可消音，但仍必须一键清线 |
+| `RECONNECT_IO` | IO未就绪、DO写入失败 | 可尝试消音，但仍必须重新连接IO |
 
 所有恢复方式完成后皮带均保持停止，不自动启动。
 
@@ -788,6 +800,7 @@ stateDiagram-v2
   "poll_interval_ms": 10,
   "debounce_ms": 20,
   "capture_commit_guard_ms": 250,
+  "inspection_result_wait_timeout_ms": 3000,
   "controlled_stop_timeout_ms": 1500,
   "reject_blow_delay_ms": 0,
   "reject_blow_duration_ms": 300,
@@ -800,6 +813,7 @@ stateDiagram-v2
   "waste_outlet_arrival_min_run_ms": 500,
   "waste_outlet_arrival_max_run_ms": 3000,
   "end_test_sensor_enabled": true,
+  "waste_outlet_confirmation_enabled": false,
   "upper_door_sensor_enabled": false,
   "end_test_blocked_timeout_s": 3.0,
   "good_outlet_blocked_timeout_s": 3.0,
@@ -1476,3 +1490,6 @@ ToolPage
 ```
 
 以后修改顶栏、相机主体区、底栏或兼容控件时，不再需要进入一个数百行的单体构建函数。
+
+
+NG吹掉之后界面上的FIFO的红灯过很久才灭和消失吗

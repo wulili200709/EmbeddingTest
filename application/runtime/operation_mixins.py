@@ -25,8 +25,21 @@ class RuntimeConveyorMixin:
     def _tick_conveyor(self) -> None:
         self._conveyor_service.tick()
 
-    def _handle_conveyor_di_event(self, name: str, state: bool) -> None:
-        self._conveyor_service.handle_di_event(name, state)
+    def _handle_conveyor_di_event(
+        self,
+        name: str,
+        state: bool,
+        sample_wall_s: float = 0.0,
+        sample_monotonic_s: float = 0.0,
+        raw_word: int = -1,
+    ) -> None:
+        self._conveyor_service.handle_di_event(
+            name,
+            state,
+            sample_wall_s,
+            sample_monotonic_s,
+            raw_word,
+        )
 
     def _handle_conveyor_io_error(self, name: str, detail: str) -> None:
         self._conveyor_service.handle_io_error(name, detail)

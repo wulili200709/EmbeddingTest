@@ -23,7 +23,7 @@ from ui.algorithm_labels import algorithm_display_name
 from ui.roi_overlay_colors import is_roi_label, overlay_style_for_label, search_region_style
 
 
-_RUNTIME_OVERLAY_WIDTH_MULTIPLIER = 1.5
+_RUNTIME_OVERLAY_WIDTH_MULTIPLIER = 1.0
 _RUNTIME_CENTER_DISTANCE_OK_COLORS = (
     QtGui.QColor("#22c55e"),
     QtGui.QColor("#40c4ff"),

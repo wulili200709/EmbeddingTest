@@ -88,7 +88,7 @@ class ShapeRecipe:
             threshold_sweep_step=int(data.get("threshold_sweep_step", 10)),
             threshold_sweep_min=int(data.get("threshold_sweep_min", 20)),
             nms_iou=float(data.get("nms_iou", 0.3)),
-            topk=int(data.get("topk", 1)),
+            topk=max(1, int(data.get("topk", 1))),
             crop_stride=int(data.get("crop_stride", 0)),
             use_scene_mask=bool(data.get("use_scene_mask", False)),
             follow_mode=normalize_follow_mode(

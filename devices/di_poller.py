@@ -16,6 +16,8 @@ class DiEvent:
     previous_state: bool
     edge: str  # "rising" | "falling" | "change"
     timestamp: float
+    monotonic_timestamp: float = 0.0
+    raw_word: int | None = None
 
 
 DiCallback = Callable[[DiEvent], None]
@@ -97,7 +99,7 @@ class DiPoller:
 
     def _initialize_states(self) -> None:
         now = time.perf_counter()
-        snapshot = self._read_inputs_with_busy_retry()
+        snapshot, _raw_word = self._read_inputs_with_busy_retry()
         with self._lock:
             self._stable_state.clear()
             self._candidate_state.clear()
@@ -122,11 +124,18 @@ class DiPoller:
             self._stop_event.wait(self.poll_interval_s)
 
     def _scan_once(self, now: float) -> None:
-        snapshot = self._read_inputs_with_busy_retry()
+        snapshot, raw_word = self._read_inputs_with_busy_retry()
         for name in self.input_names:
-            self._process_input(name, now, bool(snapshot[name]))
+            self._process_input(name, now, bool(snapshot[name]), raw_word=raw_word)
 
-    def _process_input(self, name: str, now: float, raw_state: bool) -> None:
+    def _process_input(
+        self,
+        name: str,
+        now: float,
+        raw_state: bool,
+        *,
+        raw_word: int | None = None,
+    ) -> None:
         event: DiEvent | None = None
 
         with self._lock:
@@ -153,15 +162,21 @@ class DiPoller:
                 previous_state=stable,
                 edge=edge,
                 timestamp=time.time(),
+                monotonic_timestamp=float(now),
+                raw_word=None if raw_word is None else int(raw_word),
             )
 
         if event is not None:
             self._emit_event(event)
 
-    def _read_inputs_with_busy_retry(self) -> dict[str, bool]:
+    def _read_inputs_with_busy_retry(self) -> tuple[dict[str, bool], int | None]:
         for retry_index in range(self.busy_retry_count + 1):
             try:
-                return self.io.snapshot_inputs(self.input_names)
+                detailed_reader = getattr(self.io, "snapshot_inputs_with_raw_word", None)
+                if callable(detailed_reader):
+                    snapshot, raw_word = detailed_reader(self.input_names)
+                    return dict(snapshot), int(raw_word)
+                return self.io.snapshot_inputs(self.input_names), None
             except NkioBusyError:
                 if retry_index >= self.busy_retry_count:
                     raise

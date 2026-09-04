@@ -37,6 +37,7 @@ class ProductNccPaths:
 class NccAutogenRun:
     jpath: str
     written_labels: tuple[str, ...]
+    detected_product_count: int
     locate_ms: float
     total_ms: float
 
@@ -52,6 +53,7 @@ class NccRuntimeDetectedShape:
 @dataclass(frozen=True)
 class NccRuntimeAutogenRun:
     roi_shapes: tuple[NccRuntimeDetectedShape, ...]
+    detected_product_count: int
     locate_ms: float
     total_ms: float
 
@@ -340,6 +342,7 @@ def autogen_roi_json_from_ncc_timed(
     return NccAutogenRun(
         jpath=jpath,
         written_labels=tuple(written_labels),
+        detected_product_count=len(response.matches),
         locate_ms=locate_ms,
         total_ms=total_ms,
     )
@@ -382,6 +385,7 @@ def autogen_runtime_roi_shapes_timed(
     total_ms = (time.perf_counter() - total_t0) * 1000.0
     return NccRuntimeAutogenRun(
         roi_shapes=_runtime_shapes_from_match(active_model, response.matches[0].quad),
+        detected_product_count=len(response.matches),
         locate_ms=locate_ms,
         total_ms=total_ms,
     )

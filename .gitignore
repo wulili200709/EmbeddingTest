@@ -20,3 +20,4 @@ __pycache__/
 logs/
 records/
 dist-lite/
+dist-without-winring/

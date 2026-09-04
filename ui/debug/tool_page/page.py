@@ -807,8 +807,20 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
     def _cancel_training_pending_action(self, action_key: str | None = None) -> None:
         self.training_controller.cancel_pending_action(action_key)
 
-    def _ensure_training_roi_reviewed(self, camera_role: object, *, action_name: str, action_key: str) -> bool:
-        return self.training_controller.ensure_roi_reviewed(camera_role, action_name=action_name, action_key=action_key)
+    def _ensure_training_roi_reviewed(
+        self,
+        camera_role: object,
+        *,
+        action_name: str,
+        action_key: str,
+        confirmation_token: str = "",
+    ) -> bool:
+        return self.training_controller.ensure_roi_reviewed(
+            camera_role,
+            action_name=action_name,
+            action_key=action_key,
+            confirmation_token=confirmation_token,
+        )
 
     def _set_current_camera_role(self, role: object, *, sync_debug_role: bool = True) -> None:
         normalized = _normalize_camera_role(role) or "cam1"
@@ -1971,8 +1983,6 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
         if not candidate_paths:
             return tr("debug.training_validation_no_samples", role=camera_role)
         _ok_count, _ng_count, missing_count = self._sample_annotation_counts_for_roi(roi_label, camera_role, paths=candidate_paths)
-        if missing_count > 0:
-            return tr("debug.training_validation_missing_annotations", roi=roi_label, count=missing_count)
         if not ok_files or not ng_files:
             missing_groups: List[str] = []
             if not ok_files:
@@ -1980,6 +1990,8 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
             if not ng_files:
                 missing_groups.append("NG")
             return tr("debug.training_validation_missing_groups", roi=roi_label, groups="/".join(missing_groups))
+        if missing_count > 0:
+            return tr("debug.training_validation_ready_with_skipped", roi=roi_label, count=missing_count)
         return tr("debug.training_validation_ready", roi=roi_label)
 
     def _update_sample_panel_widgets(self) -> None:
@@ -2020,8 +2032,8 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
             if button is not None:
                 button.setEnabled(enabled and can_manage_samples)
 
-    def _select_path_in_current_tab(self, path: str) -> None:
-        self.sample_list_controller.select_path_in_current_tab(path)
+    def _select_path_in_current_tab(self, path: str, *, pixmap=None) -> None:
+        self.sample_list_controller.select_path_in_current_tab(path, pixmap=pixmap)
 
     def _move_selected_sample_to(self, target_kind: str) -> None:
         self.sample_list_controller.move_selected_sample_to(target_kind)
@@ -2035,7 +2047,8 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
             dialog = _SampleAnnotationPreviewDialog(self, self)
             self._sample_annotation_preview_dialog = dialog
             dialog.finished.connect(lambda *_: setattr(self, "_sample_annotation_preview_dialog", None))
-        dialog.sync_camera_roles(self.configured_camera_roles())
+        else:
+            dialog.sync_camera_roles(self.configured_camera_roles())
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
@@ -2421,7 +2434,7 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
             _, msg = self.algo.load_model_for_algorithm(
                 algorithm,
                 self.session.product_dir,
-                model_key=selected_item.model_key if selected_item is not None else "",
+                model_key=selected_item.effective_model_key if selected_item is not None else "",
             )
             self.lbl_status.setText(msg)
         except Exception as exc:
@@ -2608,7 +2621,7 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
             )
             labels_override = [str(inspection_item.roi_label or "").strip() or "roi"]
             algorithm_override = inspection_item.algorithm_code
-            model_key_override = inspection_item.model_key
+            model_key_override = inspection_item.effective_model_key
             validation_ok_files, validation_ng_files, _candidate_paths = self._training_sample_groups_for_role(
                 inspection_item.camera_id,
                 roi_label=labels_override[0],
@@ -2723,9 +2736,9 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
         ]
         allowed_model_keys = list(
             dict.fromkeys(
-                str(getattr(item, "model_key", "") or "").strip()
+                str(getattr(item, "effective_model_key", item.model_key) or "").strip()
                 for item in allowed_learning_items
-                if str(getattr(item, "model_key", "") or "").strip()
+                if str(getattr(item, "effective_model_key", item.model_key) or "").strip()
             )
         )
         allowed_backbones = []
@@ -2739,7 +2752,7 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
                 session_root=self.session.session_dir,
                 initial_product=self.session.current_product,
                 initial_backbone=current_backbone,
-                initial_model_key=inspection_item.model_key,
+                initial_model_key=inspection_item.effective_model_key,
                 allowed_model_keys=allowed_model_keys,
                 allowed_backbones=allowed_backbones,
                 parent=self,

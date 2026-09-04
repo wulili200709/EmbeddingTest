@@ -85,6 +85,8 @@ class TrainingJobWorker(QtCore.QObject):
                     product_dir=product_dir,
                     label_names=list(task.get("label_names", []) or []),
                     model_key=task.get("model_key", ""),
+                    ok_samples=list(task.get("ok_samples", []) or []),
+                    ng_samples=list(task.get("ng_samples", []) or []),
                     progress_callback=_progress,
                     embedding_cache_dir=str(task.get("embedding_cache_dir", "") or ""),
                 )
