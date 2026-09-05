@@ -32,7 +32,7 @@ from algorithms.measurement import (
     judge_bright_block_y_distance,
     judge_edge_distance,
     judge_pin_center_distance,
-    judge_multi_pin_tip_height,
+    multi_pin_tip_judgment_payload,
     measure_bright_block_center,
     measure_bright_block_y_distance,
     measure_edge_distance,
@@ -786,51 +786,56 @@ class AlgorithmController:
                         preferred_label=roi_label,
                         params=params,
                     )
-                    pred, distances, lower, upper, unit, in_spec = judge_multi_pin_tip_height(
-                        measurement,
-                        params,
+                    measurement_payload = multi_pin_tip_judgment_payload(measurement, params)
+                    pred = str(measurement_payload["pred"])
+                    distances = tuple(float(item) for item in measurement_payload["distances"])
+                    spacing_values = tuple(
+                        float(item) for item in measurement_payload["spacing_values"]
                     )
+                    lower = measurement_payload.get("lower_limit")
+                    upper = measurement_payload.get("upper_limit")
+                    unit = str(measurement_payload["unit"])
+                    height_enabled = bool(measurement_payload["height_check_enabled"])
+                    spacing_enabled = bool(measurement_payload["spacing_check_enabled"])
                     detected = len(distances)
                     expected = int(measurement.expected_pin_count)
                     minimum = min(distances) if distances else 0.0
                     maximum = max(distances) if distances else 0.0
-                    diff = float(maximum - minimum)
-                    value = float(maximum) if distances else None
-                    threshold = float(upper) if upper is not None else None
-                    failed_indexes = [index + 1 for index, ok in enumerate(in_spec) if not ok]
-                    detail = (
-                        f"multi_pin_count={detected}/{expected}"
-                        f" range={minimum:.3f}..{maximum:.3f}{unit}"
-                        f" values=[{','.join(f'{item:.3f}' for item in distances)}]"
+                    diff = float(maximum - minimum) if height_enabled else 0.0
+                    value = float(maximum) if height_enabled and distances else (
+                        float(max(spacing_values)) if spacing_values else None
                     )
-                    if lower is not None or upper is not None:
+                    threshold = float(upper) if height_enabled and upper is not None else None
+                    failed_indexes = [
+                        int(item["index"])
+                        for item in measurement_payload["pin_results"]
+                        if item["pred"] == "NG"
+                    ]
+                    failed_gaps = [
+                        f"P{item['from_pin']}-P{item['to_pin']}"
+                        for item in measurement_payload["spacing_results"]
+                        if item["pred"] == "NG"
+                    ]
+                    modes = "+".join(
+                        name for name, enabled in (("height", height_enabled), ("spacing", spacing_enabled))
+                        if enabled
+                    )
+                    detail = f"multi_pin_count={detected}/{expected} mode={modes}"
+                    if height_enabled:
+                        detail += (
+                            f" heights={minimum:.3f}..{maximum:.3f}{unit}"
+                            f" values=[{','.join(f'{item:.3f}' for item in distances)}]"
+                        )
+                    if height_enabled and (lower is not None or upper is not None):
                         detail += f" spec={lower if lower is not None else '-'}..{upper if upper is not None else '-'}{unit}"
                     if failed_indexes:
-                        detail += f" out_of_spec={failed_indexes}"
-                    measurement_payload = measurement.to_dict()
-                    pin_results = [
-                        {
-                            "index": index + 1,
-                            "point": [float(point[0]), float(point[1])],
-                            "distance": float(distances[index]),
-                            "unit": unit,
-                            "pred": "OK" if in_spec[index] else "NG",
-                        }
-                        for index, point in enumerate(measurement.tip_points)
-                    ]
-                    measurement_payload.update(
-                        {
-                            "distances": [float(item) for item in distances],
-                            "unit": unit,
-                            "lower_limit": lower,
-                            "upper_limit": upper,
-                            "pin_results": pin_results,
-                            "in_spec_points": [item["point"] for item in pin_results if item["pred"] == "OK"],
-                            "out_of_spec_points": [item["point"] for item in pin_results if item["pred"] == "NG"],
-                            "label": f"{minimum:.3f}..{maximum:.3f}{unit}",
-                            "pred": pred,
-                        }
-                    )
+                        detail += f" height_ng={failed_indexes}"
+                    if spacing_enabled:
+                        detail += f" spacings=[{','.join(f'{item:.3f}' for item in spacing_values)}]{unit}"
+                        if failed_gaps:
+                            detail += f" spacing_ng={failed_gaps}"
+                        if not measurement_payload["spacing_config_ok"]:
+                            detail += " spacing_specs=incomplete"
                 except RuntimeError as exc:
                     pred = "NG"
                     diff = 0.0
@@ -842,7 +847,11 @@ class AlgorithmController:
                         "roi_label": str(roi_label or ""),
                         "expected_pin_count": max(1, int(params.get("expected_pin_count", 20) or 20)),
                         "detected_pin_count": 0,
+                        "height_check_enabled": bool(params.get("height_check_enabled", True)),
+                        "spacing_check_enabled": bool(params.get("spacing_check_enabled", False)),
                         "center_points": [],
+                        "pin_results": [],
+                        "spacing_results": [],
                         "in_spec_points": [],
                         "out_of_spec_points": [],
                         "pred": pred,

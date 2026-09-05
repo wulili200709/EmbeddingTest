@@ -104,6 +104,9 @@ for _code in MEASUREMENT_ALGORITHMS:
             if _code == PIN_TIP_POINT_ALGORITHM
             else {
                 "expected_pin_count": 20,
+                "height_check_enabled": True,
+                "spacing_check_enabled": False,
+                "spacing_specs": [],
                 "reference_line_item_id": "",
                 "limit_unit": "px",
                 "threshold": 0.0,

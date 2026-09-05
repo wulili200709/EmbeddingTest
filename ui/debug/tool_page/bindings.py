@@ -91,6 +91,7 @@ _TOOL_PAGE_BINDINGS = (
             "_update_learning_backbone_hint",
             "_update_measurement_params_panel",
             "_on_measurement_params_changed",
+            "_edit_multi_pin_spacing_specs",
             "_on_inspection_items_table_item_changed",
             "_on_inspection_item_camera_changed",
             "_on_inspection_item_algorithm_changed",

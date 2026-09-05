@@ -569,8 +569,10 @@ def _draw_runtime_measurements(
             has_judged_points = draw_tip_group("out_of_spec_points", QtGui.QColor("#ff4040")) or has_judged_points
             if not has_judged_points:
                 draw_tip_group("center_points", QtGui.QColor("#facc15"))
+            height_enabled = bool(measurement.get("height_check_enabled", True))
+            spacing_enabled = bool(measurement.get("spacing_check_enabled", False))
             raw_pin_results = measurement.get("pin_results")
-            if isinstance(raw_pin_results, list):
+            if height_enabled and isinstance(raw_pin_results, list):
                 for fallback_index, pin_result in enumerate(raw_pin_results, start=1):
                     if not isinstance(pin_result, dict):
                         continue
@@ -592,6 +594,42 @@ def _draw_runtime_measurements(
                         QtGui.QColor("#ff4040" if pin_pred == "NG" else "#facc15"),
                         overlay_scale=overlay_scale,
                         tier=(index - 1) % 2,
+                    )
+            raw_spacing_results = measurement.get("spacing_results")
+            if spacing_enabled and isinstance(raw_spacing_results, list):
+                for fallback_index, spacing_result in enumerate(raw_spacing_results, start=1):
+                    if not isinstance(spacing_result, dict):
+                        continue
+                    point_a = _point_tuple(spacing_result.get("point_a"))
+                    point_b = _point_tuple(spacing_result.get("point_b"))
+                    if point_a is None or point_b is None:
+                        continue
+                    try:
+                        distance = float(spacing_result.get("distance"))
+                    except (TypeError, ValueError):
+                        continue
+                    index = int(spacing_result.get("index", fallback_index) or fallback_index)
+                    unit = str(spacing_result.get("unit", measurement.get("unit", "px")) or "px")
+                    precision = 3 if unit.lower() == "mm" else 1
+                    gap_pred = str(spacing_result.get("pred", "") or "").strip().upper()
+                    gap_color = QtGui.QColor("#ff4040" if gap_pred == "NG" else "#22c55e")
+                    _draw_runtime_segment(
+                        painter,
+                        (point_a, point_b),
+                        gap_color,
+                        overlay_scale=max(1.0, overlay_scale * 0.45),
+                    )
+                    midpoint = (
+                        (float(point_a[0]) + float(point_b[0])) * 0.5,
+                        (float(point_a[1]) + float(point_b[1])) * 0.5,
+                    )
+                    _draw_runtime_pin_label(
+                        painter,
+                        midpoint,
+                        f"P{index}-P{index + 1}: {distance:.{precision}f}{unit}",
+                        gap_color,
+                        overlay_scale=overlay_scale,
+                        tier=((index - 1) % 2) + (2 if height_enabled else 0),
                     )
             continue
         if measurement_type in {"pin_center_distance", "bright_block_y_distance", "bright_block_center", "pin_tip_point"}:

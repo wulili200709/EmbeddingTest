@@ -23,6 +23,7 @@ from ui.debug.tool_page.inspection_items_table import (
     _selected_inspection_item_row,
 )
 from ui.debug.tool_page.measurement_tool_config import (
+    _edit_multi_pin_spacing_specs,
     _on_measurement_params_changed,
     _update_measurement_params_panel,
 )
@@ -532,4 +533,5 @@ __all__ = [
     "_update_learning_backbone_hint",
     "_update_measurement_params_panel",
     "_on_measurement_params_changed",
+    "_edit_multi_pin_spacing_specs",
 ]

@@ -262,6 +262,11 @@ def measure_multi_pin_tip_height_from_array(
             for candidate in candidates
         ),
         distances_px=tuple(float(candidate["distance_px"]) for candidate in candidates),
+        spacings_px=tuple(
+            float(candidates[index + 1]["order_position"])
+            - float(candidates[index]["order_position"])
+            for index in range(max(0, len(candidates) - 1))
+        ),
         reference_line=FittedLine(
             vx=float(local_line.vx),
             vy=float(local_line.vy),
@@ -827,29 +832,166 @@ def judge_multi_pin_tip_height(
     result: MultiPinTipHeightResult,
     params: Mapping[str, Any] | None = None,
 ) -> tuple[str, tuple[float, ...], float | None, float | None, str, tuple[bool, ...]]:
+    evaluation = evaluate_multi_pin_tip_height(result, params)
+    return (
+        str(evaluation["pred"]),
+        tuple(evaluation["height_values"]),
+        evaluation["height_lower_limit"],
+        evaluation["height_upper_limit"],
+        str(evaluation["unit"]),
+        tuple(evaluation["height_in_spec"]),
+    )
+
+
+def evaluate_multi_pin_tip_height(
+    result: MultiPinTipHeightResult,
+    params: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     config = MultiPinTipHeightConfig.from_params(params, roi_label=result.roi_label)
     unit = config.limit_unit
     if unit == "mm":
         if config.pixel_size_mm <= 0.0:
             raise RuntimeError("pixel_size_mm is required when multi-pin limits use mm")
-        values = tuple(float(value) * config.pixel_size_mm for value in result.distances_px)
+        height_values = tuple(float(value) * config.pixel_size_mm for value in result.distances_px)
+        spacing_values = tuple(float(value) * config.pixel_size_mm for value in result.spacings_px)
     else:
         unit = "px"
-        values = tuple(float(value) for value in result.distances_px)
-    in_spec = tuple(
-        (config.lower_limit is None or value >= config.lower_limit)
-        and (config.upper_limit is None or value <= config.upper_limit)
-        for value in values
+        height_values = tuple(float(value) for value in result.distances_px)
+        spacing_values = tuple(float(value) for value in result.spacings_px)
+    height_in_spec = tuple(
+        not config.height_check_enabled
+        or (
+            (config.lower_limit is None or value >= config.lower_limit)
+            and (config.upper_limit is None or value <= config.upper_limit)
+        )
+        for value in height_values
     )
-    count_ok = len(values) == int(config.expected_pin_count)
-    return (
-        "OK" if count_ok and all(in_spec) else "NG",
-        values,
-        config.lower_limit,
-        config.upper_limit,
-        unit,
-        in_spec,
+    spacing_results: list[dict[str, Any]] = []
+    for index, value in enumerate(spacing_values):
+        spec = config.spacing_specs[index] if index < len(config.spacing_specs) else None
+        nominal = float(spec[0]) if spec is not None else None
+        lower_tolerance = float(spec[1]) if spec is not None else None
+        upper_tolerance = float(spec[2]) if spec is not None else None
+        lower_limit = nominal - lower_tolerance if spec is not None else None
+        upper_limit = nominal + upper_tolerance if spec is not None else None
+        configured = spec is not None
+        ok = (
+            not config.spacing_check_enabled
+            or (
+                configured
+                and lower_limit is not None
+                and upper_limit is not None
+                and value >= lower_limit
+                and value <= upper_limit
+            )
+        )
+        spacing_results.append(
+            {
+                "index": index + 1,
+                "from_pin": index + 1,
+                "to_pin": index + 2,
+                "distance": float(value),
+                "nominal": nominal,
+                "lower_tolerance": lower_tolerance,
+                "upper_tolerance": upper_tolerance,
+                "lower_limit": lower_limit,
+                "upper_limit": upper_limit,
+                "unit": unit,
+                "configured": configured,
+                "pred": "OK" if ok else "NG",
+            }
+        )
+    count_ok = len(height_values) == int(config.expected_pin_count)
+    expected_spacing_count = max(0, int(config.expected_pin_count) - 1)
+    spacing_config_ok = len(config.spacing_specs) >= expected_spacing_count
+    spacing_count_ok = len(spacing_values) == expected_spacing_count
+    spacing_ok = (
+        not config.spacing_check_enabled
+        or (
+            spacing_config_ok
+            and spacing_count_ok
+            and all(item["pred"] == "OK" for item in spacing_results)
+        )
     )
+    height_ok = not config.height_check_enabled or all(height_in_spec)
+    pred = "OK" if count_ok and height_ok and spacing_ok else "NG"
+    return {
+        "pred": pred,
+        "unit": unit,
+        "height_check_enabled": bool(config.height_check_enabled),
+        "spacing_check_enabled": bool(config.spacing_check_enabled),
+        "height_values": height_values,
+        "height_in_spec": height_in_spec,
+        "height_lower_limit": config.lower_limit,
+        "height_upper_limit": config.upper_limit,
+        "spacing_values": spacing_values,
+        "spacing_results": tuple(spacing_results),
+        "count_ok": count_ok,
+        "spacing_count_ok": spacing_count_ok,
+        "spacing_config_ok": spacing_config_ok,
+    }
+
+
+def multi_pin_tip_judgment_payload(
+    result: MultiPinTipHeightResult,
+    params: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    evaluation = evaluate_multi_pin_tip_height(result, params)
+    unit = str(evaluation["unit"])
+    height_values = tuple(float(value) for value in evaluation["height_values"])
+    height_in_spec = tuple(bool(value) for value in evaluation["height_in_spec"])
+    height_enabled = bool(evaluation["height_check_enabled"])
+    spacing_enabled = bool(evaluation["spacing_check_enabled"])
+    pin_results = [
+        {
+            "index": index + 1,
+            "point": [float(point[0]), float(point[1])],
+            "distance": float(height_values[index]),
+            "unit": unit,
+            "pred": "OK" if height_in_spec[index] else "NG",
+        }
+        for index, point in enumerate(result.tip_points)
+    ]
+    spacing_results: list[dict[str, Any]] = []
+    for raw in evaluation["spacing_results"]:
+        item = dict(raw)
+        index = int(item["index"]) - 1
+        if 0 <= index < len(result.tip_points) - 1:
+            item["point_a"] = [
+                float(result.tip_points[index][0]), float(result.tip_points[index][1])
+            ]
+            item["point_b"] = [
+                float(result.tip_points[index + 1][0]), float(result.tip_points[index + 1][1])
+            ]
+        spacing_results.append(item)
+    minimum = min(height_values) if height_values else 0.0
+    maximum = max(height_values) if height_values else 0.0
+    spacing_values = tuple(float(value) for value in evaluation["spacing_values"])
+    payload = result.to_dict()
+    payload.update(
+        {
+            "distances": list(height_values),
+            "unit": unit,
+            "lower_limit": evaluation["height_lower_limit"],
+            "upper_limit": evaluation["height_upper_limit"],
+            "height_check_enabled": height_enabled,
+            "spacing_check_enabled": spacing_enabled,
+            "pin_results": pin_results,
+            "spacing_values": list(spacing_values),
+            "spacing_results": spacing_results,
+            "spacing_count_ok": bool(evaluation["spacing_count_ok"]),
+            "spacing_config_ok": bool(evaluation["spacing_config_ok"]),
+            "in_spec_points": [item["point"] for item in pin_results if item["pred"] == "OK"],
+            "out_of_spec_points": [item["point"] for item in pin_results if item["pred"] == "NG"],
+            "label": (
+                f"{minimum:.3f}..{maximum:.3f}{unit}"
+                if height_enabled
+                else f"spacing {min(spacing_values, default=0.0):.3f}..{max(spacing_values, default=0.0):.3f}{unit}"
+            ),
+            "pred": str(evaluation["pred"]),
+        }
+    )
+    return payload
 
 
 def judge_bright_block_y_distance(
@@ -899,6 +1041,8 @@ __all__ = [
     "judge_find_line",
     "judge_pin_center_distance",
     "judge_multi_pin_tip_height",
+    "evaluate_multi_pin_tip_height",
+    "multi_pin_tip_judgment_payload",
     "measure_bright_block_center",
     "measure_bright_block_center_from_array",
     "measure_bright_block_y_distance",

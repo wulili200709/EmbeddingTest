@@ -97,15 +97,46 @@ def build_tool_config_panel(owner, right_vbox: QtWidgets.QVBoxLayout, *, styles:
     owner.spin_measurement_expected_pin_count = QtWidgets.QSpinBox()
     owner.spin_measurement_expected_pin_count.setRange(1, 200)
     owner.spin_measurement_expected_pin_count.setValue(20)
+    owner.spin_measurement_min_arc_points = QtWidgets.QSpinBox()
+    owner.spin_measurement_min_arc_points.setRange(5, 100)
+    owner.spin_measurement_min_arc_points.setValue(8)
+    owner.spin_measurement_min_arc_points.setToolTip(
+        tr("debug.measurement.min_arc_points_tooltip")
+    )
     for spin in (
         owner.spin_measurement_edge_threshold,
         owner.spin_measurement_scan_step,
         owner.spin_measurement_min_points,
         owner.spin_measurement_expected_pin_count,
+        owner.spin_measurement_min_arc_points,
     ):
         spin.setKeyboardTracking(False)
         spin.setStyleSheet(input_style)
         spin.valueChanged.connect(owner._on_measurement_params_changed)
+
+    owner.multi_pin_check_widget = QtWidgets.QWidget()
+    multi_pin_check_layout = QtWidgets.QHBoxLayout(owner.multi_pin_check_widget)
+    multi_pin_check_layout.setContentsMargins(0, 0, 0, 0)
+    multi_pin_check_layout.setSpacing(12)
+    owner.chk_measurement_pin_height = QtWidgets.QCheckBox(
+        tr("debug.measurement.pin_height_check")
+    )
+    owner.chk_measurement_pin_spacing = QtWidgets.QCheckBox(
+        tr("debug.measurement.pin_spacing_check")
+    )
+    for checkbox in (
+        owner.chk_measurement_pin_height,
+        owner.chk_measurement_pin_spacing,
+    ):
+        checkbox.setStyleSheet(f"color:{text_light};font-size:12px;")
+        checkbox.toggled.connect(owner._on_measurement_params_changed)
+        multi_pin_check_layout.addWidget(checkbox)
+    multi_pin_check_layout.addStretch(1)
+    owner.btn_measurement_spacing_specs = QtWidgets.QPushButton(
+        tr("debug.measurement.spacing_configure")
+    )
+    owner.btn_measurement_spacing_specs.setStyleSheet(compact_btn)
+    owner.btn_measurement_spacing_specs.clicked.connect(owner._edit_multi_pin_spacing_specs)
 
     for spin in (owner.spin_measurement_lower, owner.spin_measurement_upper):
         spin.setDecimals(4)
@@ -143,6 +174,18 @@ def build_tool_config_panel(owner, right_vbox: QtWidgets.QVBoxLayout, *, styles:
     measurement_form.addRow(
         tr("debug.measurement.expected_pin_count"),
         owner.spin_measurement_expected_pin_count,
+    )
+    measurement_form.addRow(
+        tr("debug.measurement.min_arc_points"),
+        owner.spin_measurement_min_arc_points,
+    )
+    measurement_form.addRow(
+        tr("debug.measurement.check_content"),
+        owner.multi_pin_check_widget,
+    )
+    measurement_form.addRow(
+        tr("debug.measurement.pin_spacing"),
+        owner.btn_measurement_spacing_specs,
     )
     measurement_form.addRow(owner.chk_measurement_lower, owner.spin_measurement_lower)
     measurement_form.addRow(owner.chk_measurement_upper, owner.spin_measurement_upper)

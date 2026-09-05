@@ -60,6 +60,10 @@ class RoiCanvas(QtWidgets.QLabel):
         self._zoom: float = 1.0
         self._zoom_min: float = 0.2
         self._zoom_max: float = 8.0
+        self._pan_offset = QtCore.QPointF()
+        self._panning = False
+        self._pan_last_pos = QtCore.QPointF()
+        self._space_pressed = False
 
         self._dragging = False
         self._p0 = QtCore.QPoint()
@@ -97,7 +101,11 @@ class RoiCanvas(QtWidgets.QLabel):
         self._mouse_pos = None
         self._overlays = []
         self._zoom = 1.0
+        self._pan_offset = QtCore.QPointF()
+        self._panning = False
+        self._space_pressed = False
         self._update_scaled_pixmap()
+        self._refresh_pan_cursor()
         self.update()
         self.shapesChanged.emit()
 
@@ -108,6 +116,9 @@ class RoiCanvas(QtWidgets.QLabel):
         self._scale = 1.0
         self._offset = QtCore.QPoint(0, 0)
         self._zoom = 1.0
+        self._pan_offset = QtCore.QPointF()
+        self._panning = False
+        self._space_pressed = False
         self.roi = ShapeState()
         self._dragging = False
         self._p0 = QtCore.QPoint()
@@ -116,19 +127,46 @@ class RoiCanvas(QtWidgets.QLabel):
         self._mouse_pos = None
         self._overlays = []
         self.setPixmap(QtGui.QPixmap())
+        self._refresh_pan_cursor()
         self.update()
         self.shapesChanged.emit()
 
     def zoom_factor(self) -> float:
         return float(self._zoom)
 
-    def set_zoom(self, zoom: float) -> None:
-        self._zoom = max(self._zoom_min, min(self._zoom_max, float(zoom)))
+    def set_zoom(self, zoom: float, *, anchor: Optional[QtCore.QPointF] = None) -> None:
+        old_zoom = float(self._zoom)
+        new_zoom = max(self._zoom_min, min(self._zoom_max, float(zoom)))
+        if abs(new_zoom - old_zoom) < 1e-9:
+            return
+        if anchor is None:
+            anchor = QtCore.QPointF(self.width() / 2.0, self.height() / 2.0)
+        center = QtCore.QPointF(self.width() / 2.0, self.height() / 2.0)
+        anchor_from_center = QtCore.QPointF(anchor) - center
+        ratio = new_zoom / max(old_zoom, 1e-9)
+        self._pan_offset = anchor_from_center - (
+            anchor_from_center - self._pan_offset
+        ) * ratio
+        self._zoom = new_zoom
+        if self._zoom <= 1.0:
+            self._pan_offset = QtCore.QPointF()
         self._update_scaled_pixmap()
+        self._refresh_pan_cursor()
         self.update()
 
     def reset_zoom(self) -> None:
-        self.set_zoom(1.0)
+        self.reset_view()
+
+    def reset_view(self) -> None:
+        self._zoom = 1.0
+        self._pan_offset = QtCore.QPointF()
+        self._panning = False
+        self._update_scaled_pixmap()
+        self._refresh_pan_cursor()
+        self.update()
+
+    def pan_offset(self) -> QtCore.QPointF:
+        return QtCore.QPointF(self._pan_offset)
 
     def clear_roi(self, *, emit_signal: bool = True) -> None:
         self.roi.xywh = None
@@ -226,6 +264,7 @@ class RoiCanvas(QtWidgets.QLabel):
             self._scaled_pm = None
             self._scale = 1.0
             self._offset = QtCore.QPoint(0, 0)
+            self._pan_offset = QtCore.QPointF()
             return
 
         label_w = max(1, self.width())
@@ -241,9 +280,58 @@ class RoiCanvas(QtWidgets.QLabel):
         scaled = self._pixmap.scaled(new_w, new_h, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
         self._scaled_pm = scaled
         self._scale = float(scale)
-        self._offset = QtCore.QPoint(int((label_w - new_w) / 2), int((label_h - new_h) / 2))
+        self._clamp_pan_offset(new_w, new_h)
+        self._offset = QtCore.QPoint(
+            int(round((label_w - new_w) / 2.0 + self._pan_offset.x())),
+            int(round((label_h - new_h) / 2.0 + self._pan_offset.y())),
+        )
         self.setPixmap(scaled)
         self.setAlignment(QtCore.Qt.AlignCenter)
+
+    def _clamp_pan_offset(self, scaled_width: int | None = None, scaled_height: int | None = None) -> None:
+        if self._pixmap is None or self._scaled_pm is None and (
+            scaled_width is None or scaled_height is None
+        ):
+            self._pan_offset = QtCore.QPointF()
+            return
+        width = float(
+            scaled_width if scaled_width is not None else self._scaled_pm.width()
+        )
+        height = float(
+            scaled_height if scaled_height is not None else self._scaled_pm.height()
+        )
+        limit_x = max(0.0, (width - max(1, self.width())) / 2.0)
+        limit_y = max(0.0, (height - max(1, self.height())) / 2.0)
+        self._pan_offset = QtCore.QPointF(
+            max(-limit_x, min(limit_x, self._pan_offset.x())),
+            max(-limit_y, min(limit_y, self._pan_offset.y())),
+        )
+
+    def _can_pan(self) -> bool:
+        return bool(
+            self._scaled_pm is not None
+            and (
+                self._scaled_pm.width() > self.width() + 1
+                or self._scaled_pm.height() > self.height() + 1
+            )
+        )
+
+    def _refresh_pan_cursor(self) -> None:
+        if self._panning:
+            self.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
+        elif self._space_pressed and self.has_image():
+            self.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
+        else:
+            self.unsetCursor()
+
+    def _begin_pan(self, position: QtCore.QPointF) -> bool:
+        if not self.has_image() or not self._can_pan():
+            return False
+        self._panning = True
+        self._pan_last_pos = QtCore.QPointF(position)
+        self.setFocus(QtCore.Qt.FocusReason.MouseFocusReason)
+        self._refresh_pan_cursor()
+        return True
 
     def _pos_to_image_xy(self, pos: QtCore.QPoint) -> Optional[Tuple[int, int]]:
         if self._pixmap is None or self._scaled_pm is None:
@@ -267,6 +355,15 @@ class RoiCanvas(QtWidgets.QLabel):
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         if not self.has_image():
+            return
+        wants_pan = event.button() == QtCore.Qt.MouseButton.MiddleButton or (
+            event.button() == QtCore.Qt.MouseButton.LeftButton and self._space_pressed
+        )
+        if wants_pan:
+            if self._begin_pan(event.position()):
+                event.accept()
+            else:
+                event.ignore()
             return
         image_xy = self._pos_to_image_xy(event.position().toPoint())
         signal_xy = image_xy
@@ -301,6 +398,14 @@ class RoiCanvas(QtWidgets.QLabel):
             self.update()
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
+        if self._panning:
+            current_pos = event.position()
+            self._pan_offset += current_pos - self._pan_last_pos
+            self._pan_last_pos = current_pos
+            self._update_scaled_pixmap()
+            self.update()
+            event.accept()
+            return
         image_xy = self._pos_to_image_xy(event.position().toPoint()) if self.has_image() else None
         signal_xy = image_xy
         if signal_xy is None and self.has_image() and self._outside_image_events_enabled:
@@ -318,6 +423,14 @@ class RoiCanvas(QtWidgets.QLabel):
             self.update()
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
+        if self._panning and event.button() in {
+            QtCore.Qt.MouseButton.MiddleButton,
+            QtCore.Qt.MouseButton.LeftButton,
+        }:
+            self._panning = False
+            self._refresh_pan_cursor()
+            event.accept()
+            return
         image_xy = self._pos_to_image_xy(event.position().toPoint()) if self.has_image() else None
         signal_xy = image_xy
         if signal_xy is None and self.has_image() and self._outside_image_events_enabled:
@@ -348,6 +461,11 @@ class RoiCanvas(QtWidgets.QLabel):
             self.shapesChanged.emit()
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        if event.key() == QtCore.Qt.Key.Key_Space and not event.isAutoRepeat():
+            self._space_pressed = True
+            self._refresh_pan_cursor()
+            event.accept()
+            return
         if self.draw_shape == "polygon":
             if event.key() == QtCore.Qt.Key_Escape:
                 self._poly_pts = []
@@ -362,6 +480,23 @@ class RoiCanvas(QtWidgets.QLabel):
                 return
         super().keyPressEvent(event)
 
+    def keyReleaseEvent(self, event: QtGui.QKeyEvent) -> None:
+        if event.key() == QtCore.Qt.Key.Key_Space and not event.isAutoRepeat():
+            self._space_pressed = False
+            if self._panning:
+                self._panning = False
+            self._refresh_pan_cursor()
+            event.accept()
+            return
+        super().keyReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QtGui.QMouseEvent) -> None:
+        if event.button() == QtCore.Qt.MouseButton.MiddleButton and self.has_image():
+            self.reset_view()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
     def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
         if not self.has_image():
             super().wheelEvent(event)
@@ -371,15 +506,26 @@ class RoiCanvas(QtWidgets.QLabel):
             event.ignore()
             return
         factor = 1.15 if delta > 0 else (1.0 / 1.15)
-        self.set_zoom(self._zoom * factor)
+        self.set_zoom(self._zoom * factor, anchor=event.position())
         event.accept()
 
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:
-        super().paintEvent(event)
         if not self.has_image():
+            super().paintEvent(event)
             return
 
         painter = QtGui.QPainter(self)
+        option = QtWidgets.QStyleOption()
+        option.initFrom(self)
+        self.style().drawPrimitive(
+            QtWidgets.QStyle.PrimitiveElement.PE_Widget,
+            option,
+            painter,
+            self,
+        )
+        if self._scaled_pm is not None:
+            painter.setRenderHint(QtGui.QPainter.SmoothPixmapTransform, True)
+            painter.drawPixmap(self._offset, self._scaled_pm)
         painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
 
         def draw_rect(xywh: Tuple[int, int, int, int], color: QtGui.QColor, width: float = 2.0, dash: bool = False) -> None:

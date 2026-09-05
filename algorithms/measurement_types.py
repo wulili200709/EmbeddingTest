@@ -364,6 +364,8 @@ class PinTipPointConfig:
 class MultiPinTipHeightConfig:
     roi_label: str = ""
     expected_pin_count: int = 20
+    height_check_enabled: bool = True
+    spacing_check_enabled: bool = False
     lower_limit: float | None = None
     upper_limit: float | None = None
     limit_unit: str = "px"
@@ -384,6 +386,7 @@ class MultiPinTipHeightConfig:
     reference_min_points: int = 10
     reference_search_ratio: float = 0.65
     reference_cut_margin_px: float = 4.0
+    spacing_specs: tuple[tuple[float, float, float], ...] = ()
 
     @classmethod
     def from_params(
@@ -397,9 +400,36 @@ class MultiPinTipHeightConfig:
         limit_unit = str(payload.get("limit_unit", "px") or "px").strip().lower()
         if limit_unit not in {"px", "mm"}:
             limit_unit = "px"
+        raw_spacing_specs = payload.get("spacing_specs")
+        spacing_specs: list[tuple[float, float, float]] = []
+        if isinstance(raw_spacing_specs, (list, tuple)):
+            for raw_spec in raw_spacing_specs:
+                if not isinstance(raw_spec, Mapping):
+                    continue
+                try:
+                    nominal = float(raw_spec.get("nominal", 0.0) or 0.0)
+                    lower_tolerance = max(
+                        0.0, float(raw_spec.get("lower_tolerance", 0.0) or 0.0)
+                    )
+                    upper_tolerance = max(
+                        0.0, float(raw_spec.get("upper_tolerance", 0.0) or 0.0)
+                    )
+                except (TypeError, ValueError):
+                    continue
+                spacing_specs.append((nominal, lower_tolerance, upper_tolerance))
+        height_check_enabled = _bool_param(
+            payload.get("height_check_enabled"), default=True
+        )
+        spacing_check_enabled = _bool_param(
+            payload.get("spacing_check_enabled"), default=False
+        )
+        if not height_check_enabled and not spacing_check_enabled:
+            height_check_enabled = True
         return cls(
             roi_label=point_config.roi_label,
             expected_pin_count=max(1, min(200, int(payload.get("expected_pin_count", 20) or 20))),
+            height_check_enabled=height_check_enabled,
+            spacing_check_enabled=spacing_check_enabled,
             lower_limit=_optional_float(
                 payload.get("lower_limit", payload.get(f"lower_limit_{limit_unit}"))
             ),
@@ -430,6 +460,7 @@ class MultiPinTipHeightConfig:
             reference_cut_margin_px=max(
                 1.0, float(payload.get("reference_cut_margin_px", 4.0) or 4.0)
             ),
+            spacing_specs=tuple(spacing_specs),
         )
 
 
@@ -643,6 +674,7 @@ class MultiPinTipHeightResult:
     expected_pin_count: int
     tip_points: tuple[tuple[float, float], ...]
     distances_px: tuple[float, ...]
+    spacings_px: tuple[float, ...]
     reference_line: FittedLine
     reference_line_segment: tuple[tuple[float, float], tuple[float, float]]
     threshold: float
@@ -660,6 +692,7 @@ class MultiPinTipHeightResult:
             "center_points": points,
             "tip_points": points,
             "distances_px": [float(value) for value in self.distances_px],
+            "spacings_px": [float(value) for value in self.spacings_px],
             "reference_line": self.reference_line.to_dict(),
             "reference_line_segment": [
                 [float(x), float(y)] for x, y in self.reference_line_segment

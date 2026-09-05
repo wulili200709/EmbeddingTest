@@ -27,7 +27,7 @@ ALGORITHM_GROUPS = [
         [
             ("Find Line", "find_line", True),
             ("Pin Tip Point", "pin_tip_point", True),
-            ("Multi Pin Tip Height", "multi_pin_tip_height", True),
+            ("Multi Pin Measurement", "multi_pin_tip_height", True),
             ("Bright Block Center", "bright_block_center", True),
             ("Center Distance", "center_distance", True),
             ("Find Circle", "find_circle", False),

@@ -147,13 +147,24 @@ def _inspection_item_status(tool_page, inspection_item):
             display_algorithm = public_algorithm_code(algorithm)
             params = dict(getattr(inspection_item, "params", {}) or {})
             expected = max(1, int(params.get("expected_pin_count", 20) or 20))
+            height_enabled = str(params.get("height_check_enabled", True)).strip().lower() not in {
+                "0", "false", "no", "off", "disabled"
+            }
+            spacing_enabled = str(params.get("spacing_check_enabled", False)).strip().lower() in {
+                "1", "true", "yes", "on", "enabled"
+            }
+            mode_text = "+".join(
+                value
+                for value, enabled in (("高度", height_enabled), ("间距", spacing_enabled))
+                if enabled
+            ) or "高度"
             tooltip = (
                 f"Algorithm: {tool_page.algo.algorithm_display_name(display_algorithm) or display_algorithm}\n"
-                "Finds all dark pin tips and measures every perpendicular distance to the shared housing edge."
+                "Finds all dark pin tips and independently checks tip height, adjacent spacing, or both."
             )
             reference_id = str(params.get("reference_line_item_id", "") or "").strip()
             reference_text = f" / [线] {reference_id}" if reference_id else " / auto"
-            return f"Ready / expected {expected}{reference_text}", tooltip, "#79d279"
+            return f"Ready / {mode_text} / expected {expected}{reference_text}", tooltip, "#79d279"
         display_algorithm = public_algorithm_code(algorithm)
         tooltip = (
             f"Algorithm: {tool_page.algo.algorithm_display_name(display_algorithm) or display_algorithm}\n"

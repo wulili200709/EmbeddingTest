@@ -45,7 +45,7 @@ _DEFAULT_DISPLAY_NAMES = {
     "find_line": "Find Line",
     "find_line_subpix": "Subpixel Find Line",
     "pin_tip_point": "Pin Tip Point",
-    "multi_pin_tip_height": "Multi Pin Tip Height",
+    "multi_pin_tip_height": "Multi Pin Measurement",
     "bright_block_center": "Bright Block Center",
     "pin_center_distance": "Pin Center Distance",
     "bright_block_y_distance": "Bright Block Y Distance",

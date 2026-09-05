@@ -177,8 +177,10 @@ def measurement_overlays_for_path(tool_page, img_path: str) -> List[OverlayShape
             if not has_judged_points:
                 add_tip_crosshairs("center_points", "#FFD54F")
 
+            height_enabled = bool(measurement.get("height_check_enabled", True))
+            spacing_enabled = bool(measurement.get("spacing_check_enabled", False))
             raw_pin_results = measurement.get("pin_results")
-            if isinstance(raw_pin_results, list):
+            if height_enabled and isinstance(raw_pin_results, list):
                 for fallback_index, pin_result in enumerate(raw_pin_results, start=1):
                     if not isinstance(pin_result, dict):
                         continue
@@ -201,6 +203,49 @@ def measurement_overlays_for_path(tool_page, img_path: str) -> List[OverlayShape
                             text_pos=point,
                             text_offset=(0.0, 12.0 + 18.0 * float((index - 1) % 2)),
                             color=QtGui.QColor(label_color),
+                            width=10.0,
+                            dash=False,
+                        )
+                    )
+            raw_spacing_results = measurement.get("spacing_results")
+            if spacing_enabled and isinstance(raw_spacing_results, list):
+                for fallback_index, spacing_result in enumerate(raw_spacing_results, start=1):
+                    if not isinstance(spacing_result, dict):
+                        continue
+                    point_a = _point_tuple(spacing_result.get("point_a"))
+                    point_b = _point_tuple(spacing_result.get("point_b"))
+                    if point_a is None or point_b is None:
+                        continue
+                    try:
+                        distance = float(spacing_result.get("distance"))
+                    except (TypeError, ValueError):
+                        continue
+                    index = int(spacing_result.get("index", fallback_index) or fallback_index)
+                    unit = str(spacing_result.get("unit", measurement.get("unit", "px")) or "px")
+                    precision = 3 if unit.lower() == "mm" else 1
+                    gap_pred = str(spacing_result.get("pred", "") or "").strip().upper()
+                    gap_color = "#FF5252" if gap_pred == "NG" else "#00E676"
+                    overlays.append(
+                        OverlayShape(
+                            shape_type="segments",
+                            segments=[(point_a, point_b)],
+                            color=QtGui.QColor(gap_color),
+                            width=1.4,
+                            dash=False,
+                        )
+                    )
+                    midpoint = (
+                        (float(point_a[0]) + float(point_b[0])) * 0.5,
+                        (float(point_a[1]) + float(point_b[1])) * 0.5,
+                    )
+                    base_offset = 48.0 if height_enabled else 14.0
+                    overlays.append(
+                        OverlayShape(
+                            shape_type="point_text",
+                            text=f"P{index}-P{index + 1}: {distance:.{precision}f}{unit}",
+                            text_pos=midpoint,
+                            text_offset=(0.0, base_offset + 18.0 * float((index - 1) % 2)),
+                            color=QtGui.QColor(gap_color),
                             width=10.0,
                             dash=False,
                         )
