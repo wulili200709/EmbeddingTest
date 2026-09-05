@@ -32,6 +32,7 @@ class OverlayShape:
     segments: Optional[List[Tuple[Tuple[float, float], Tuple[float, float]]]] = None
     text: str = ""
     text_pos: Optional[Tuple[float, float]] = None
+    text_offset: Optional[Tuple[float, float]] = None
     color: QtGui.QColor = field(default_factory=lambda: QtGui.QColor(0, 128, 255))
     width: float = 1.0
     dash: bool = True
@@ -422,6 +423,18 @@ class RoiCanvas(QtWidgets.QLabel):
             if qpts:
                 painter.drawPoints(QtGui.QPolygon(qpts))
 
+        def draw_crosshairs(points: List[Tuple[float, float]], color: QtGui.QColor, size: float = 7.0) -> None:
+            pen = QtGui.QPen(color)
+            pen.setWidthF(1.25)
+            pen.setCapStyle(QtCore.Qt.FlatCap)
+            painter.setPen(pen)
+            arm = max(5.0, float(size))
+            for x, y in points:
+                sx = float(x) * self._scale + self._offset.x()
+                sy = float(y) * self._scale + self._offset.y()
+                painter.drawLine(QtCore.QPointF(sx - arm, sy), QtCore.QPointF(sx + arm, sy))
+                painter.drawLine(QtCore.QPointF(sx, sy - arm), QtCore.QPointF(sx, sy + arm))
+
         def draw_segments(
             segments: List[Tuple[Tuple[float, float], Tuple[float, float]]],
             color: QtGui.QColor,
@@ -553,6 +566,51 @@ class RoiCanvas(QtWidgets.QLabel):
                 painter.drawText(QtCore.QPointF(box.left() + padding, baseline), line)
             painter.restore()
 
+        def draw_point_text_overlay(
+            text: str,
+            color: QtGui.QColor,
+            font_size: float = 10.0,
+            text_pos: Optional[Tuple[float, float]] = None,
+            text_offset: Optional[Tuple[float, float]] = None,
+        ) -> None:
+            if not str(text or "").strip() or text_pos is None or self._scaled_pm is None:
+                return
+            painter.save()
+            image_rect = QtCore.QRectF(
+                float(self._offset.x()),
+                float(self._offset.y()),
+                float(self._scaled_pm.width()),
+                float(self._scaled_pm.height()),
+            )
+            painter.setClipRect(image_rect)
+            offset_x, offset_y = text_offset or (0.0, 13.0)
+            anchor_x = float(text_pos[0]) * self._scale + self._offset.x() + float(offset_x)
+            anchor_y = float(text_pos[1]) * self._scale + self._offset.y() + float(offset_y)
+            font = painter.font()
+            font.setPixelSize(max(9, int(round(float(font_size)))))
+            font.setBold(False)
+            painter.setFont(font)
+            metrics = QtGui.QFontMetrics(font)
+            rect = metrics.boundingRect(str(text))
+            box = QtCore.QRectF(
+                anchor_x - rect.width() / 2.0 - 4.0,
+                anchor_y,
+                rect.width() + 8.0,
+                rect.height() + 4.0,
+            )
+            if box.left() < image_rect.left() + 2.0:
+                box.moveLeft(image_rect.left() + 2.0)
+            if box.right() > image_rect.right() - 2.0:
+                box.moveRight(image_rect.right() - 2.0)
+            if box.bottom() > image_rect.bottom() - 2.0:
+                box.moveBottom(anchor_y - 5.0)
+            painter.setPen(QtCore.Qt.NoPen)
+            painter.setBrush(QtGui.QBrush(QtGui.QColor(0, 0, 0, 180)))
+            painter.drawRoundedRect(box, 3.0, 3.0)
+            painter.setPen(QtGui.QPen(color))
+            painter.drawText(box, QtCore.Qt.AlignCenter, str(text))
+            painter.restore()
+
         if self._scaled_pm is not None and self._overlays:
             for overlay in self._overlays:
                 if overlay.shape_type == "rect" and overlay.xywh is not None:
@@ -561,6 +619,8 @@ class RoiCanvas(QtWidgets.QLabel):
                     draw_poly(overlay.points + [overlay.points[0]], overlay.color, width=overlay.width, dash=overlay.dash)
                 elif overlay.shape_type == "points" and overlay.points is not None:
                     draw_points(overlay.points, overlay.color, size=overlay.width)
+                elif overlay.shape_type == "crosshair" and overlay.points is not None:
+                    draw_crosshairs(overlay.points, overlay.color, size=overlay.width)
                 elif overlay.shape_type == "segments" and overlay.segments is not None:
                     draw_segments(overlay.segments, overlay.color, width=overlay.width, dash=overlay.dash)
                 elif overlay.shape_type == "dimension" and overlay.segments:
@@ -577,6 +637,14 @@ class RoiCanvas(QtWidgets.QLabel):
                         overlay.color,
                         font_size=overlay.width,
                         text_pos=overlay.text_pos,
+                    )
+                elif overlay.shape_type == "point_text" and overlay.text:
+                    draw_point_text_overlay(
+                        overlay.text,
+                        overlay.color,
+                        font_size=overlay.width,
+                        text_pos=overlay.text_pos,
+                        text_offset=overlay.text_offset,
                     )
 
         if self._scaled_pm is not None:

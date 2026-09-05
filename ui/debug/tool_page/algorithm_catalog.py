@@ -26,6 +26,8 @@ ALGORITHM_GROUPS = [
         "measurement",
         [
             ("Find Line", "find_line", True),
+            ("Pin Tip Point", "pin_tip_point", True),
+            ("Multi Pin Tip Height", "multi_pin_tip_height", True),
             ("Bright Block Center", "bright_block_center", True),
             ("Center Distance", "center_distance", True),
             ("Find Circle", "find_circle", False),
@@ -58,12 +60,15 @@ ALGORITHM_DISPLAY_KEYS = {
     "find_circle": "debug.algorithm.find_circle",
     "find_line": "debug.algorithm.find_line",
     "find_line_subpix": "debug.algorithm.find_line_subpix",
+    "pin_tip_point": "debug.algorithm.pin_tip_point",
+    "multi_pin_tip_height": "debug.algorithm.multi_pin_tip_height",
     "bright_block_center": "debug.algorithm.bright_block_center",
     "pin_center_distance": "debug.algorithm.pin_center_distance",
     "bright_block_y_distance": "debug.algorithm.bright_block_y_distance",
     "center_distance": "debug.algorithm.center_distance",
     "line_distance": "debug.algorithm.line_distance",
     "line_distance_ref_normal": "debug.algorithm.line_distance_ref_normal",
+    "point_line_distance": "debug.algorithm.point_line_distance",
 }
 
 

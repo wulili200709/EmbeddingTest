@@ -24,16 +24,22 @@ from algorithms.measurement import (
     FIND_LINE_ALGORITHMS,
     LINE_DISTANCE_ALGORITHMS,
     MEASUREMENT_ALGORITHMS,
+    MULTI_PIN_TIP_HEIGHT_ALGORITHM,
     PIN_CENTER_DISTANCE_ALGORITHM,
+    PIN_TIP_POINT_ALGORITHM,
+    POINT_LINE_DISTANCE_ALGORITHM,
     is_measurement_algorithm,
     judge_bright_block_y_distance,
     judge_edge_distance,
     judge_pin_center_distance,
+    judge_multi_pin_tip_height,
     measure_bright_block_center,
     measure_bright_block_y_distance,
     measure_edge_distance,
     measure_find_line,
     measure_pin_center_distance,
+    measure_pin_tip_point,
+    measure_multi_pin_tip_height,
 )
 from common.algorithm_codes import (
     DEFAULT_LEARNING_BACKBONE,
@@ -768,8 +774,112 @@ class AlgorithmController:
                 threshold = None
             elif algorithm in LINE_DISTANCE_ALGORITHMS:
                 raise RuntimeError("Line Distance must be run with paired Find Line tools")
+            elif algorithm == POINT_LINE_DISTANCE_ALGORITHM:
+                raise RuntimeError("Point-Line Distance must be run with a Point tool and a Find Line tool")
             elif algorithm == CENTER_DISTANCE_ALGORITHM:
                 raise RuntimeError("Center Distance must be run with paired Bright Block Center tools")
+            elif algorithm == MULTI_PIN_TIP_HEIGHT_ALGORITHM:
+                roi_label = labels[0] if labels else "roi1"
+                try:
+                    measurement = measure_multi_pin_tip_height(
+                        path,
+                        preferred_label=roi_label,
+                        params=params,
+                    )
+                    pred, distances, lower, upper, unit, in_spec = judge_multi_pin_tip_height(
+                        measurement,
+                        params,
+                    )
+                    detected = len(distances)
+                    expected = int(measurement.expected_pin_count)
+                    minimum = min(distances) if distances else 0.0
+                    maximum = max(distances) if distances else 0.0
+                    diff = float(maximum - minimum)
+                    value = float(maximum) if distances else None
+                    threshold = float(upper) if upper is not None else None
+                    failed_indexes = [index + 1 for index, ok in enumerate(in_spec) if not ok]
+                    detail = (
+                        f"multi_pin_count={detected}/{expected}"
+                        f" range={minimum:.3f}..{maximum:.3f}{unit}"
+                        f" values=[{','.join(f'{item:.3f}' for item in distances)}]"
+                    )
+                    if lower is not None or upper is not None:
+                        detail += f" spec={lower if lower is not None else '-'}..{upper if upper is not None else '-'}{unit}"
+                    if failed_indexes:
+                        detail += f" out_of_spec={failed_indexes}"
+                    measurement_payload = measurement.to_dict()
+                    pin_results = [
+                        {
+                            "index": index + 1,
+                            "point": [float(point[0]), float(point[1])],
+                            "distance": float(distances[index]),
+                            "unit": unit,
+                            "pred": "OK" if in_spec[index] else "NG",
+                        }
+                        for index, point in enumerate(measurement.tip_points)
+                    ]
+                    measurement_payload.update(
+                        {
+                            "distances": [float(item) for item in distances],
+                            "unit": unit,
+                            "lower_limit": lower,
+                            "upper_limit": upper,
+                            "pin_results": pin_results,
+                            "in_spec_points": [item["point"] for item in pin_results if item["pred"] == "OK"],
+                            "out_of_spec_points": [item["point"] for item in pin_results if item["pred"] == "NG"],
+                            "label": f"{minimum:.3f}..{maximum:.3f}{unit}",
+                            "pred": pred,
+                        }
+                    )
+                except RuntimeError as exc:
+                    pred = "NG"
+                    diff = 0.0
+                    value = None
+                    threshold = None
+                    detail = f"multi_pin_tip_failed: {exc}"
+                    measurement_payload = {
+                        "type": MULTI_PIN_TIP_HEIGHT_ALGORITHM,
+                        "roi_label": str(roi_label or ""),
+                        "expected_pin_count": max(1, int(params.get("expected_pin_count", 20) or 20)),
+                        "detected_pin_count": 0,
+                        "center_points": [],
+                        "in_spec_points": [],
+                        "out_of_spec_points": [],
+                        "pred": pred,
+                        "detail": str(exc),
+                    }
+            elif algorithm == PIN_TIP_POINT_ALGORITHM:
+                diff = 0.0
+                roi_label = labels[0] if labels else "roi1"
+                try:
+                    measurement = measure_pin_tip_point(
+                        path,
+                        preferred_label=roi_label,
+                        params=params,
+                    )
+                    pred = "OK"
+                    diff = float(measurement.fit_residual)
+                    detail = (
+                        f"pin_tip=({measurement.point_xy[0]:.3f},"
+                        f"{measurement.point_xy[1]:.3f})px"
+                        f" confidence={measurement.confidence:.3f}"
+                        f" residual={measurement.fit_residual:.3f}px"
+                    )
+                    measurement_payload = measurement.to_dict()
+                    measurement_payload.update({"pred": pred})
+                except RuntimeError as exc:
+                    pred = "NG"
+                    detail = f"pin_tip_missing: {exc}"
+                    measurement_payload = {
+                        "type": PIN_TIP_POINT_ALGORITHM,
+                        "roi_label": str(roi_label or ""),
+                        "center_points": [],
+                        "edge_points": [],
+                        "pred": pred,
+                        "detail": str(exc),
+                    }
+                value = None
+                threshold = None
             elif algorithm == BRIGHT_BLOCK_CENTER_ALGORITHM:
                 diff = 0.0
                 roi_label = labels[0] if labels else "roi1"

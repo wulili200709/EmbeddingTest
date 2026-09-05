@@ -11,6 +11,7 @@ from application import InspectionExecutionRequest, InspectionExecutor, ProductR
 from common.camera_roles import normalize_camera_role
 from domain import InspectionItem
 from ui.debug import OverlayShape
+from ui.debug.tool_page.roi_measurement_overlays import measurement_overlays_for_path
 from ui.i18n import tr
 from ui.roi_overlay_colors import is_roi_label, merge_roi_statuses, overlay_style_for_label
 
@@ -94,6 +95,10 @@ class TestExecutionController:
                         dash=dash,
                     )
                 )
+        # Runtime ROI projection and measurement annotations share the same
+        # canvas overlay list.  Keep the measurement points/segments produced
+        # by the just-finished test instead of replacing them with ROI shapes.
+        overlays.extend(measurement_overlays_for_path(self.owner, path))
         self.owner.canvas.clear_roi()
         self.owner.canvas.set_overlays(overlays)
 

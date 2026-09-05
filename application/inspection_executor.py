@@ -17,6 +17,8 @@ from algorithms.measurement import (
     FittedLine,
     LINE_DISTANCE_ALGORITHMS,
     LINE_DISTANCE_REF_NORMAL_ALGORITHM,
+    MULTI_PIN_TIP_HEIGHT_ALGORITHM,
+    POINT_LINE_DISTANCE_ALGORITHM,
     fit_line_filtered,
 )
 from domain import InspectionItem, InspectionItemResult
@@ -33,8 +35,12 @@ def _is_center_distance_item(item: InspectionItem) -> bool:
     return str(getattr(item, "algorithm_code", "") or "").strip() in CENTER_DISTANCE_ALGORITHMS
 
 
+def _is_point_line_distance_item(item: InspectionItem) -> bool:
+    return str(getattr(item, "algorithm_code", "") or "").strip() == POINT_LINE_DISTANCE_ALGORITHM
+
+
 def _is_post_distance_item(item: InspectionItem) -> bool:
-    return _is_line_distance_item(item) or _is_center_distance_item(item)
+    return _is_line_distance_item(item) or _is_center_distance_item(item) or _is_point_line_distance_item(item)
 
 
 def _distance_helper_item_ids(items: List[InspectionItem]) -> set[str]:
@@ -45,7 +51,9 @@ def _distance_helper_item_ids(items: List[InspectionItem]) -> set[str]:
             continue
         params = dict(item.params or {})
         keys = (
-            ("center_a_item_id", "center_b_item_id")
+            ("point_item_id", "line_item_id")
+            if _is_point_line_distance_item(item)
+            else ("center_a_item_id", "center_b_item_id")
             if _is_center_distance_item(item)
             else ("line_a_item_id", "line_b_item_id")
         )
@@ -223,7 +231,15 @@ class InspectionExecutor:
 
         post_distance_results: List[InspectionItemResult] = []
         for distance_item in distance_items:
-            if _is_center_distance_item(distance_item):
+            if _is_point_line_distance_item(distance_item):
+                distance_row = self._build_point_line_distance_row(
+                    distance_item=distance_item,
+                    source_items=predicted_enabled_items,
+                    rows_by_item_id=rows_by_item_id,
+                    camera_id=request.camera_id,
+                    image_path=request.image_path,
+                )
+            elif _is_center_distance_item(distance_item):
                 distance_row = self._build_center_distance_row(
                     distance_item=distance_item,
                     center_items=predicted_enabled_items,
@@ -241,7 +257,13 @@ class InspectionExecutor:
                 )
             if distance_row is None:
                 distance_algorithm = str(getattr(distance_item, "algorithm_code", "") or "").strip() or "line_distance"
-                pair_detail = "center distance pair missing" if _is_center_distance_item(distance_item) else "line distance pair missing"
+                pair_detail = (
+                    "point-line distance pair missing"
+                    if _is_point_line_distance_item(distance_item)
+                    else "center distance pair missing"
+                    if _is_center_distance_item(distance_item)
+                    else "line distance pair missing"
+                )
                 distance_row = {
                     "file_path": request.image_path,
                     "file_name": str(distance_item.display_name or distance_item.item_id or "Distance"),
@@ -344,6 +366,8 @@ class InspectionExecutor:
             for measurement in raw_measurements
             if str(measurement.get("type", "") or "").strip() in LINE_DISTANCE_ALGORITHMS
             or str(measurement.get("type", "") or "").strip() in CENTER_DISTANCE_ALGORITHMS
+            or str(measurement.get("type", "") or "").strip() == POINT_LINE_DISTANCE_ALGORITHM
+            or str(measurement.get("type", "") or "").strip() == MULTI_PIN_TIP_HEIGHT_ALGORITHM
         )
         measurements = post_distance_measurements or raw_measurements
 
@@ -894,6 +918,51 @@ class InspectionExecutor:
         return None
 
     @classmethod
+    def _resolve_point_line_pair(
+        cls,
+        *,
+        distance_item: InspectionItem,
+        source_items: List[InspectionItem],
+        rows_by_item_id: dict[str, dict],
+    ) -> tuple[InspectionItem, dict, InspectionItem, dict] | None:
+        params = dict(getattr(distance_item, "params", {}) or {})
+        point_item_id = str(params.get("point_item_id", "") or "").strip()
+        line_item_id = str(params.get("line_item_id", "") or "").strip()
+        if not point_item_id or not line_item_id or point_item_id == line_item_id:
+            return None
+        items_by_id = {
+            cls._center_item_ref(item): item
+            for item in source_items
+            if cls._center_item_ref(item)
+        }
+        point_item = items_by_id.get(point_item_id)
+        line_item = items_by_id.get(line_item_id)
+        point_row = rows_by_item_id.get(point_item_id)
+        line_row = rows_by_item_id.get(line_item_id)
+        if point_item is None or line_item is None or point_row is None or line_row is None:
+            return None
+        if cls._center_point_from_row(point_row) is None:
+            return None
+        if not _is_passing_result(line_row.get("pred")) or cls._line_segment_from_row(line_row) is None:
+            return None
+        return point_item, point_row, line_item, line_row
+
+    @staticmethod
+    def _point_to_line_distance(
+        point: tuple[float, float],
+        segment: tuple[tuple[float, float], tuple[float, float]],
+    ) -> tuple[float, tuple[float, float]]:
+        px, py = float(point[0]), float(point[1])
+        (x0, y0), (x1, y1) = segment
+        vx, vy = float(x1) - float(x0), float(y1) - float(y0)
+        denominator = vx * vx + vy * vy
+        if denominator <= 1e-12:
+            raise RuntimeError("reference line segment is too short")
+        factor = ((px - float(x0)) * vx + (py - float(y0)) * vy) / denominator
+        foot = (float(x0) + factor * vx, float(y0) + factor * vy)
+        return float(math.hypot(px - foot[0], py - foot[1])), foot
+
+    @classmethod
     def _resolve_center_distance_pair(
         cls,
         *,
@@ -1165,6 +1234,133 @@ class InspectionExecutor:
                 "line_b_item_id": cls._line_item_ref(item_b),
                 "line_a": dict(row_a.get("measurement", {}) or {}),
                 "line_b": dict(row_b.get("measurement", {}) or {}),
+            },
+        }
+
+    @classmethod
+    def _build_point_line_distance_row(
+        cls,
+        *,
+        distance_item: InspectionItem,
+        source_items: List[InspectionItem],
+        rows_by_item_id: dict[str, dict],
+        camera_id: str,
+        image_path: str,
+    ) -> dict | None:
+        pair = cls._resolve_point_line_pair(
+            distance_item=distance_item,
+            source_items=source_items,
+            rows_by_item_id=rows_by_item_id,
+        )
+        if pair is None:
+            return None
+        point_item, point_row, line_item, line_row = pair
+        point = cls._center_point_from_row(point_row)
+        line_segment = cls._line_segment_from_row(line_row)
+        if point is None or line_segment is None:
+            return None
+        distance_px, foot = cls._point_to_line_distance(point, line_segment)
+
+        params = dict(getattr(distance_item, "params", {}) or {})
+        unit = str(params.get("limit_unit", "px") or "px").strip().lower()
+        if unit not in {"px", "mm"}:
+            unit = "px"
+        value = float(distance_px)
+        pixel_size = cls._optional_float(params.get("pixel_size_mm")) or 0.0
+        if unit == "mm":
+            if pixel_size <= 0.0:
+                pixel_size = cls._item_param_float(point_item, "pixel_size_mm") or 0.0
+            if pixel_size <= 0.0:
+                pixel_size = cls._item_param_float(line_item, "pixel_size_mm") or 0.0
+            if pixel_size <= 0.0:
+                raise RuntimeError("pixel_size_mm is required when point-line limits use mm")
+            value = float(distance_px * pixel_size)
+            value, raw_value, compensation_enabled, compensation_slope, compensation_intercept = cls._compensated_value(
+                value,
+                params,
+            )
+        else:
+            _ignored_value, raw_value, _configured_compensation_enabled, compensation_slope, compensation_intercept = cls._compensated_value(
+                value,
+                params,
+            )
+            value = raw_value
+            compensation_enabled = False
+        reported_value = cls._round_measurement_value(value, unit)
+        lower = cls._optional_float(params.get("lower_limit", params.get(f"lower_limit_{unit}")))
+        upper = cls._optional_float(params.get("upper_limit", params.get(f"upper_limit_{unit}")))
+        ok = True
+        if lower is not None and reported_value < lower:
+            ok = False
+        if upper is not None and reported_value > upper:
+            ok = False
+
+        point_name = str(getattr(point_item, "display_name", "") or getattr(point_item, "roi_label", "") or "Point")
+        line_name = str(getattr(line_item, "display_name", "") or getattr(line_item, "roi_label", "") or "Line")
+        display_name = str(getattr(distance_item, "display_name", "") or getattr(distance_item, "item_id", "") or "Point-Line Distance")
+        detail = (
+            f"point_line_distance={cls._format_measurement_value(reported_value, unit)}"
+            f" point={point_name} line={line_name}"
+            f" raw={distance_px:.3f}px"
+        )
+        if compensation_enabled:
+            detail += f" compensation=k={compensation_slope:.6g},b={compensation_intercept:.6g}"
+        if lower is not None or upper is not None:
+            detail += (
+                f" spec={cls._format_measurement_limit(lower, unit)}"
+                f"..{cls._format_measurement_limit(upper, unit)}"
+            )
+        pred = "OK" if ok else "NG"
+        dimension_segment = (point, foot)
+        return {
+            "file_path": image_path,
+            "file_name": display_name,
+            "gt": "",
+            "pred": pred,
+            "diff": 0.0,
+            "sim_ok": None,
+            "sim_ng": None,
+            "value": reported_value,
+            "unit": unit,
+            "threshold": upper,
+            "match_ms": max(
+                (
+                    float(row.get("match_ms") or 0.0)
+                    for row in (point_row, line_row)
+                    if row.get("match_ms") is not None
+                ),
+                default=0.0,
+            ),
+            "infer_ms": 0.0,
+            "total_ms": 0.0,
+            "json_name": str(point_row.get("json_name", line_row.get("json_name", "")) or ""),
+            "detail": detail,
+            "algorithm": POINT_LINE_DISTANCE_ALGORITHM,
+            "tool_name": display_name,
+            "camera_id": camera_id,
+            "roi_label": str(getattr(distance_item, "roi_label", "") or ""),
+            "params": params,
+            "measurement": {
+                "type": POINT_LINE_DISTANCE_ALGORITHM,
+                "distance_px": float(distance_px),
+                "distance": reported_value,
+                "unit": unit,
+                "pixel_size_mm": pixel_size,
+                "compensation_enabled": compensation_enabled,
+                "compensation_slope": compensation_slope,
+                "compensation_intercept": compensation_intercept,
+                "dimension_segment": [[float(x), float(y)] for x, y in dimension_segment],
+                "line_segment": [[float(x), float(y)] for x, y in line_segment],
+                "line_a_segment": [[float(x), float(y)] for x, y in line_segment],
+                "center_points": [[float(point[0]), float(point[1])]],
+                "projection_point": [float(foot[0]), float(foot[1])],
+                "distance_mode": "point_to_line_normal",
+                "label": cls._format_measurement_value(reported_value, unit),
+                "pred": pred,
+                "point_item_id": cls._center_item_ref(point_item),
+                "line_item_id": cls._line_item_ref(line_item),
+                "point_source": dict(point_row.get("measurement", {}) or {}),
+                "line_source": dict(line_row.get("measurement", {}) or {}),
             },
         }
 

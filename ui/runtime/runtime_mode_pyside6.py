@@ -19,6 +19,8 @@ from algorithms.measurement import (
     CENTER_DISTANCE_ALGORITHMS,
     FIND_LINE_ALGORITHMS,
     LINE_DISTANCE_ALGORITHMS,
+    PIN_TIP_POINT_ALGORITHM,
+    POINT_LINE_DISTANCE_ALGORITHM,
 )
 from application.runtime.preview_frame import RuntimePreviewFrame
 from common.runtime_camera_logging import record_runtime_camera_message
@@ -1555,6 +1557,17 @@ class RuntimeModePage(QtWidgets.QWidget):
                 default_names.add(item_id)
             if name in default_names:
                 return tr("debug.algorithm.center_distance")
+        if algorithm == POINT_LINE_DISTANCE_ALGORITHM:
+            default_names = {
+                "",
+                "Point-Line Distance",
+                "point_line_distance",
+                tr("debug.algorithm.point_line_distance"),
+            }
+            if item_id.startswith("point_line_distance"):
+                default_names.add(item_id)
+            if name in default_names:
+                return tr("debug.algorithm.point_line_distance")
         return name or str(row.get("roi_label", "") or item_id)
 
     @staticmethod
@@ -1562,12 +1575,25 @@ class RuntimeModePage(QtWidgets.QWidget):
         camera_rows = list(rows or [])
         line_helper_ids: set[str] = set()
         center_helper_ids: set[str] = set()
+        point_helper_ids: set[str] = set()
         for row in camera_rows:
             algorithm = str(row.get("algorithm_code", "") or "").strip()
-            if algorithm not in LINE_DISTANCE_ALGORITHMS and algorithm not in CENTER_DISTANCE_ALGORITHMS:
+            if (
+                algorithm not in LINE_DISTANCE_ALGORITHMS
+                and algorithm not in CENTER_DISTANCE_ALGORITHMS
+                and algorithm != POINT_LINE_DISTANCE_ALGORITHM
+            ):
                 continue
             params = row.get("params", {})
             if not isinstance(params, dict):
+                continue
+            if algorithm == POINT_LINE_DISTANCE_ALGORITHM:
+                point_item_id = str(params.get("point_item_id", "") or "").strip()
+                line_item_id = str(params.get("line_item_id", "") or "").strip()
+                if point_item_id:
+                    point_helper_ids.add(point_item_id)
+                if line_item_id:
+                    line_helper_ids.add(line_item_id)
                 continue
             helper_ids = center_helper_ids if algorithm in CENTER_DISTANCE_ALGORITHMS else line_helper_ids
             keys = (
@@ -1579,7 +1605,7 @@ class RuntimeModePage(QtWidgets.QWidget):
                 item_id = str(params.get(key, "") or "").strip()
                 if item_id:
                     helper_ids.add(item_id)
-        if not line_helper_ids and not center_helper_ids:
+        if not line_helper_ids and not center_helper_ids and not point_helper_ids:
             return camera_rows
         return [
             row
@@ -1591,6 +1617,10 @@ class RuntimeModePage(QtWidgets.QWidget):
             and not (
                 str(row.get("algorithm_code", "") or "").strip() == BRIGHT_BLOCK_CENTER_ALGORITHM
                 and str(row.get("item_id", "") or "").strip() in center_helper_ids
+            )
+            and not (
+                str(row.get("algorithm_code", "") or "").strip() == PIN_TIP_POINT_ALGORITHM
+                and str(row.get("item_id", "") or "").strip() in point_helper_ids
             )
         ]
 

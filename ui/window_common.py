@@ -535,7 +535,66 @@ def _draw_runtime_measurements(
         measurement_type = str(measurement.get("type", "") or "").strip()
         pred = str(measurement.get("pred", "") or "").strip().upper()
         color = QtGui.QColor("#22c55e" if pred == "OK" else "#ff4040" if pred == "NG" else "#f97316")
-        if measurement_type in {"pin_center_distance", "bright_block_y_distance", "bright_block_center"}:
+        if measurement_type == "multi_pin_tip_height":
+            reference_segment = _segment_tuple(
+                measurement.get("reference_line_segment", measurement.get("line_segment"))
+            )
+            if reference_segment is not None:
+                _draw_runtime_segment(
+                    painter,
+                    reference_segment,
+                    QtGui.QColor("#40c4ff"),
+                    overlay_scale=max(1.0, overlay_scale * 0.65),
+                )
+
+            def draw_tip_group(key: str, marker_color: QtGui.QColor) -> bool:
+                raw_points = measurement.get(key)
+                points = []
+                if isinstance(raw_points, list):
+                    for raw_point in raw_points:
+                        parsed = _point_tuple(raw_point)
+                        if parsed is not None:
+                            points.append(parsed)
+                if not points:
+                    return False
+                _draw_runtime_crosshairs(
+                    painter,
+                    points,
+                    marker_color,
+                    overlay_scale=overlay_scale,
+                )
+                return True
+
+            has_judged_points = draw_tip_group("in_spec_points", QtGui.QColor("#facc15"))
+            has_judged_points = draw_tip_group("out_of_spec_points", QtGui.QColor("#ff4040")) or has_judged_points
+            if not has_judged_points:
+                draw_tip_group("center_points", QtGui.QColor("#facc15"))
+            raw_pin_results = measurement.get("pin_results")
+            if isinstance(raw_pin_results, list):
+                for fallback_index, pin_result in enumerate(raw_pin_results, start=1):
+                    if not isinstance(pin_result, dict):
+                        continue
+                    point = _point_tuple(pin_result.get("point"))
+                    if point is None:
+                        continue
+                    try:
+                        distance = float(pin_result.get("distance"))
+                    except (TypeError, ValueError):
+                        continue
+                    index = int(pin_result.get("index", fallback_index) or fallback_index)
+                    unit = str(pin_result.get("unit", measurement.get("unit", "px")) or "px")
+                    precision = 3 if unit.lower() == "mm" else 1
+                    pin_pred = str(pin_result.get("pred", "") or "").strip().upper()
+                    _draw_runtime_pin_label(
+                        painter,
+                        point,
+                        f"P{index}: {distance:.{precision}f}{unit}",
+                        QtGui.QColor("#ff4040" if pin_pred == "NG" else "#facc15"),
+                        overlay_scale=overlay_scale,
+                        tier=(index - 1) % 2,
+                    )
+            continue
+        if measurement_type in {"pin_center_distance", "bright_block_y_distance", "bright_block_center", "pin_tip_point"}:
             dimension_segment = _segment_tuple(measurement.get("dimension_segment"))
             if dimension_segment is not None:
                 _draw_runtime_segment(painter, dimension_segment, color, overlay_scale=overlay_scale)
@@ -547,14 +606,22 @@ def _draw_runtime_measurements(
                     if parsed is not None:
                         center_points.append(parsed)
             if center_points:
-                _draw_runtime_points(
-                    painter,
-                    center_points,
-                    QtGui.QColor("#facc15"),
-                    overlay_scale=overlay_scale,
-                )
+                if measurement_type == "pin_tip_point":
+                    _draw_runtime_crosshairs(
+                        painter,
+                        center_points,
+                        QtGui.QColor("#facc15"),
+                        overlay_scale=overlay_scale,
+                    )
+                else:
+                    _draw_runtime_points(
+                        painter,
+                        center_points,
+                        QtGui.QColor("#facc15"),
+                        overlay_scale=overlay_scale,
+                    )
             continue
-        if measurement_type in {"line_distance", "line_distance_ref_normal", "center_distance"}:
+        if measurement_type in {"line_distance", "line_distance_ref_normal", "center_distance", "point_line_distance"}:
             segment_a = _segment_tuple(measurement.get("line_a_segment"))
             if segment_a is None:
                 line_a = measurement.get("line_a")
@@ -595,12 +662,20 @@ def _draw_runtime_measurements(
                 )
             center_points = _center_points_from_measurement(measurement)
             if center_points:
-                _draw_runtime_points(
-                    painter,
-                    center_points,
-                    QtGui.QColor("#facc15"),
-                    overlay_scale=overlay_scale,
-                )
+                if measurement_type == "point_line_distance":
+                    _draw_runtime_crosshairs(
+                        painter,
+                        center_points,
+                        QtGui.QColor("#facc15"),
+                        overlay_scale=overlay_scale,
+                    )
+                else:
+                    _draw_runtime_points(
+                        painter,
+                        center_points,
+                        QtGui.QColor("#facc15"),
+                        overlay_scale=overlay_scale,
+                    )
             continue
         segment = _segment_tuple(measurement.get("line_segment"))
         if segment is not None:
@@ -650,6 +725,60 @@ def _draw_runtime_points(
     painter.setBrush(QtGui.QBrush(color))
     for x, y in points:
         painter.drawEllipse(QtCore.QPointF(float(x), float(y)), radius, radius)
+
+
+def _draw_runtime_crosshairs(
+    painter: QtGui.QPainter,
+    points: list[tuple[float, float]],
+    color: QtGui.QColor,
+    *,
+    overlay_scale: float = 1.0,
+) -> None:
+    scale = max(1.0, float(overlay_scale))
+    arm = 7.0 * scale
+    pen = QtGui.QPen(color)
+    pen.setWidthF(1.25 * scale)
+    pen.setCapStyle(QtCore.Qt.FlatCap)
+    painter.setPen(pen)
+    painter.setBrush(QtCore.Qt.NoBrush)
+    for x, y in points:
+        px = float(x)
+        py = float(y)
+        painter.drawLine(QtCore.QPointF(px - arm, py), QtCore.QPointF(px + arm, py))
+        painter.drawLine(QtCore.QPointF(px, py - arm), QtCore.QPointF(px, py + arm))
+
+
+def _draw_runtime_pin_label(
+    painter: QtGui.QPainter,
+    point: tuple[float, float],
+    text: str,
+    color: QtGui.QColor,
+    *,
+    overlay_scale: float = 1.0,
+    tier: int = 0,
+) -> None:
+    scale = max(1.0, float(overlay_scale))
+    font = painter.font()
+    font.setPixelSize(max(10, int(round(10.0 * scale))))
+    font.setBold(False)
+    painter.setFont(font)
+    metrics = QtGui.QFontMetrics(font)
+    text_rect = metrics.boundingRect(str(text))
+    anchor_x = float(point[0])
+    anchor_y = float(point[1]) + (12.0 + 18.0 * float(tier)) * scale
+    padding_x = 4.0 * scale
+    padding_y = 2.0 * scale
+    box = QtCore.QRectF(
+        anchor_x - text_rect.width() / 2.0 - padding_x,
+        anchor_y,
+        text_rect.width() + padding_x * 2.0,
+        text_rect.height() + padding_y * 2.0,
+    )
+    painter.setPen(QtCore.Qt.NoPen)
+    painter.setBrush(QtGui.QBrush(QtGui.QColor(0, 0, 0, 180)))
+    painter.drawRoundedRect(box, 3.0 * scale, 3.0 * scale)
+    painter.setPen(QtGui.QPen(color))
+    painter.drawText(box, QtCore.Qt.AlignCenter, str(text))
 
 
 def _draw_runtime_dimension(

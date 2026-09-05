@@ -9,20 +9,26 @@ FIND_LINE_SUBPIX_ALGORITHM = "find_line_subpix"
 FIND_LINE_ALGORITHMS = {FIND_LINE_ALGORITHM, FIND_LINE_SUBPIX_ALGORITHM}
 PIN_CENTER_DISTANCE_ALGORITHM = "pin_center_distance"
 BRIGHT_BLOCK_CENTER_ALGORITHM = "bright_block_center"
+PIN_TIP_POINT_ALGORITHM = "pin_tip_point"
+MULTI_PIN_TIP_HEIGHT_ALGORITHM = "multi_pin_tip_height"
 BRIGHT_BLOCK_Y_DISTANCE_ALGORITHM = "bright_block_y_distance"
 LINE_DISTANCE_ALGORITHM = "line_distance"
 LINE_DISTANCE_REF_NORMAL_ALGORITHM = "line_distance_ref_normal"
 LINE_DISTANCE_ALGORITHMS = {LINE_DISTANCE_ALGORITHM, LINE_DISTANCE_REF_NORMAL_ALGORITHM}
+POINT_LINE_DISTANCE_ALGORITHM = "point_line_distance"
 CENTER_DISTANCE_ALGORITHM = "center_distance"
 CENTER_DISTANCE_ALGORITHMS = {CENTER_DISTANCE_ALGORITHM}
 MEASUREMENT_ALGORITHMS = [
     FIND_LINE_ALGORITHM,
     FIND_LINE_SUBPIX_ALGORITHM,
+    PIN_TIP_POINT_ALGORITHM,
+    MULTI_PIN_TIP_HEIGHT_ALGORITHM,
     BRIGHT_BLOCK_CENTER_ALGORITHM,
     PIN_CENTER_DISTANCE_ALGORITHM,
     BRIGHT_BLOCK_Y_DISTANCE_ALGORITHM,
     LINE_DISTANCE_ALGORITHM,
     LINE_DISTANCE_REF_NORMAL_ALGORITHM,
+    POINT_LINE_DISTANCE_ALGORITHM,
     CENTER_DISTANCE_ALGORITHM,
 ]
 
@@ -307,6 +313,127 @@ class PinCenterDistanceConfig:
 
 
 @dataclass(frozen=True)
+class PinTipPointConfig:
+    roi_label: str = ""
+    threshold: float = 0.0
+    blur_ksize: int = 3
+    morph_open_size: int = 0
+    morph_close_size: int = 3
+    min_area_px: float = 80.0
+    min_width_px: float = 4.0
+    min_height_px: float = 20.0
+    border_margin_px: int = 2
+    tip_band_ratio: float = 0.22
+    arc_depth_ratio: float = 0.55
+    min_arc_points: int = 8
+
+    @classmethod
+    def from_params(
+        cls,
+        params: Mapping[str, Any] | None,
+        *,
+        roi_label: str = "",
+    ) -> "PinTipPointConfig":
+        payload = dict(params or {})
+        blur_ksize = max(0, int(payload.get("blur_ksize", 3) or 0))
+        if blur_ksize > 0 and blur_ksize % 2 == 0:
+            blur_ksize += 1
+        morph_open_size = max(0, int(payload.get("morph_open_size", 0) or 0))
+        morph_close_size = max(0, int(payload.get("morph_close_size", 3) or 0))
+        if morph_open_size > 0 and morph_open_size % 2 == 0:
+            morph_open_size += 1
+        if morph_close_size > 0 and morph_close_size % 2 == 0:
+            morph_close_size += 1
+        return cls(
+            roi_label=str(payload.get("roi_label", roi_label) or roi_label or "").strip(),
+            threshold=max(0.0, min(255.0, float(payload.get("threshold", 0.0) or 0.0))),
+            blur_ksize=blur_ksize,
+            morph_open_size=morph_open_size,
+            morph_close_size=morph_close_size,
+            min_area_px=max(1.0, float(payload.get("min_area_px", 80.0) or 1.0)),
+            min_width_px=max(1.0, float(payload.get("min_width_px", 4.0) or 1.0)),
+            min_height_px=max(2.0, float(payload.get("min_height_px", 20.0) or 2.0)),
+            border_margin_px=max(0, int(payload.get("border_margin_px", 2) or 0)),
+            tip_band_ratio=max(0.05, min(0.75, float(payload.get("tip_band_ratio", 0.22) or 0.22))),
+            arc_depth_ratio=max(0.15, min(1.0, float(payload.get("arc_depth_ratio", 0.55) or 0.55))),
+            min_arc_points=max(5, int(payload.get("min_arc_points", 8) or 5)),
+        )
+
+
+@dataclass(frozen=True)
+class MultiPinTipHeightConfig:
+    roi_label: str = ""
+    expected_pin_count: int = 20
+    lower_limit: float | None = None
+    upper_limit: float | None = None
+    limit_unit: str = "px"
+    pixel_size_mm: float = 0.0
+    threshold: float = 0.0
+    blur_ksize: int = 3
+    morph_open_size: int = 0
+    morph_close_size: int = 3
+    min_area_px: float = 80.0
+    min_width_px: float = 4.0
+    min_height_px: float = 20.0
+    border_margin_px: int = 2
+    tip_band_ratio: float = 0.22
+    arc_depth_ratio: float = 0.55
+    min_arc_points: int = 8
+    reference_edge_threshold: float = 18.0
+    reference_scan_step: int = 2
+    reference_min_points: int = 10
+    reference_search_ratio: float = 0.65
+    reference_cut_margin_px: float = 4.0
+
+    @classmethod
+    def from_params(
+        cls,
+        params: Mapping[str, Any] | None,
+        *,
+        roi_label: str = "",
+    ) -> "MultiPinTipHeightConfig":
+        payload = dict(params or {})
+        point_config = PinTipPointConfig.from_params(payload, roi_label=roi_label)
+        limit_unit = str(payload.get("limit_unit", "px") or "px").strip().lower()
+        if limit_unit not in {"px", "mm"}:
+            limit_unit = "px"
+        return cls(
+            roi_label=point_config.roi_label,
+            expected_pin_count=max(1, min(200, int(payload.get("expected_pin_count", 20) or 20))),
+            lower_limit=_optional_float(
+                payload.get("lower_limit", payload.get(f"lower_limit_{limit_unit}"))
+            ),
+            upper_limit=_optional_float(
+                payload.get("upper_limit", payload.get(f"upper_limit_{limit_unit}"))
+            ),
+            limit_unit=limit_unit,
+            pixel_size_mm=max(0.0, float(payload.get("pixel_size_mm", 0.0) or 0.0)),
+            threshold=point_config.threshold,
+            blur_ksize=point_config.blur_ksize,
+            morph_open_size=point_config.morph_open_size,
+            morph_close_size=point_config.morph_close_size,
+            min_area_px=point_config.min_area_px,
+            min_width_px=point_config.min_width_px,
+            min_height_px=point_config.min_height_px,
+            border_margin_px=point_config.border_margin_px,
+            tip_band_ratio=point_config.tip_band_ratio,
+            arc_depth_ratio=point_config.arc_depth_ratio,
+            min_arc_points=point_config.min_arc_points,
+            reference_edge_threshold=max(
+                1.0, float(payload.get("reference_edge_threshold", 18.0) or 18.0)
+            ),
+            reference_scan_step=max(1, int(payload.get("reference_scan_step", 2) or 2)),
+            reference_min_points=max(5, int(payload.get("reference_min_points", 10) or 10)),
+            reference_search_ratio=max(
+                0.2, min(0.9, float(payload.get("reference_search_ratio", 0.65) or 0.65))
+            ),
+            reference_cut_margin_px=max(
+                1.0, float(payload.get("reference_cut_margin_px", 4.0) or 4.0)
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class FittedLine:
     vx: float
     vy: float
@@ -468,6 +595,87 @@ class BrightBlockCenterResult:
         }
 
 
+@dataclass(frozen=True)
+class PinTipPointResult:
+    roi_label: str
+    point_xy: tuple[float, float]
+    axis_direction: tuple[float, float]
+    threshold: float
+    confidence: float
+    fit_residual: float
+    component_area_px: float
+    component_bbox_xywh: tuple[int, int, int, int]
+    edge_points: tuple[tuple[float, float], ...] = ()
+    roi_xywh: tuple[int, int, int, int] = (0, 0, 0, 0)
+
+    def to_dict(self) -> Dict[str, Any]:
+        point = [float(self.point_xy[0]), float(self.point_xy[1])]
+        x, y, width, height = self.component_bbox_xywh
+        box_points = [
+            [float(x), float(y)],
+            [float(x + width), float(y)],
+            [float(x + width), float(y + height)],
+            [float(x), float(y + height)],
+        ]
+        return {
+            "type": PIN_TIP_POINT_ALGORITHM,
+            "roi_label": self.roi_label,
+            "point": point,
+            "point_xy": point,
+            "center": point,
+            "center_xy": point,
+            "center_points": [point],
+            "axis_direction": [float(self.axis_direction[0]), float(self.axis_direction[1])],
+            "threshold": float(self.threshold),
+            "confidence": float(self.confidence),
+            "fit_residual": float(self.fit_residual),
+            "component_area_px": float(self.component_area_px),
+            "component_bbox_xywh": [int(v) for v in self.component_bbox_xywh],
+            "box_points": box_points,
+            "edge_points": [[float(px), float(py)] for px, py in self.edge_points],
+            "roi_xywh": [int(v) for v in self.roi_xywh],
+        }
+
+
+@dataclass(frozen=True)
+class MultiPinTipHeightResult:
+    roi_label: str
+    expected_pin_count: int
+    tip_points: tuple[tuple[float, float], ...]
+    distances_px: tuple[float, ...]
+    reference_line: FittedLine
+    reference_line_segment: tuple[tuple[float, float], tuple[float, float]]
+    threshold: float
+    fit_residuals: tuple[float, ...] = ()
+    component_boxes_xywh: tuple[tuple[int, int, int, int], ...] = ()
+    roi_xywh: tuple[int, int, int, int] = (0, 0, 0, 0)
+
+    def to_dict(self) -> Dict[str, Any]:
+        points = [[float(x), float(y)] for x, y in self.tip_points]
+        return {
+            "type": MULTI_PIN_TIP_HEIGHT_ALGORITHM,
+            "roi_label": self.roi_label,
+            "expected_pin_count": int(self.expected_pin_count),
+            "detected_pin_count": int(len(self.tip_points)),
+            "center_points": points,
+            "tip_points": points,
+            "distances_px": [float(value) for value in self.distances_px],
+            "reference_line": self.reference_line.to_dict(),
+            "reference_line_segment": [
+                [float(x), float(y)] for x, y in self.reference_line_segment
+            ],
+            "line_segment": [
+                [float(x), float(y)] for x, y in self.reference_line_segment
+            ],
+            "threshold": float(self.threshold),
+            "fit_residuals": [float(value) for value in self.fit_residuals],
+            "component_boxes_xywh": [
+                [int(value) for value in box] for box in self.component_boxes_xywh
+            ],
+            "roi_xywh": [int(value) for value in self.roi_xywh],
+        }
+
+
 def _optional_float(value: object) -> float | None:
     if value is None:
         return None
@@ -494,6 +702,8 @@ def is_measurement_algorithm(name: object) -> bool:
 __all__ = [
     "MEASUREMENT_ALGORITHMS",
     "BRIGHT_BLOCK_CENTER_ALGORITHM",
+    "PIN_TIP_POINT_ALGORITHM",
+    "MULTI_PIN_TIP_HEIGHT_ALGORITHM",
     "BRIGHT_BLOCK_Y_DISTANCE_ALGORITHM",
     "CENTER_DISTANCE_ALGORITHM",
     "CENTER_DISTANCE_ALGORITHMS",
@@ -504,7 +714,12 @@ __all__ = [
     "LINE_DISTANCE_ALGORITHM",
     "LINE_DISTANCE_ALGORITHMS",
     "LINE_DISTANCE_REF_NORMAL_ALGORITHM",
+    "POINT_LINE_DISTANCE_ALGORITHM",
     "BrightBlockCenterResult",
+    "PinTipPointConfig",
+    "PinTipPointResult",
+    "MultiPinTipHeightConfig",
+    "MultiPinTipHeightResult",
     "EdgeDistanceConfig",
     "EdgeDistanceResult",
     "FindLineConfig",

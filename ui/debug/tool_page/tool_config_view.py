@@ -94,10 +94,14 @@ def build_tool_config_panel(owner, right_vbox: QtWidgets.QVBoxLayout, *, styles:
     owner.spin_measurement_min_points = QtWidgets.QSpinBox()
     owner.spin_measurement_min_points.setRange(2, 100000)
     owner.spin_measurement_min_points.setValue(10)
+    owner.spin_measurement_expected_pin_count = QtWidgets.QSpinBox()
+    owner.spin_measurement_expected_pin_count.setRange(1, 200)
+    owner.spin_measurement_expected_pin_count.setValue(20)
     for spin in (
         owner.spin_measurement_edge_threshold,
         owner.spin_measurement_scan_step,
         owner.spin_measurement_min_points,
+        owner.spin_measurement_expected_pin_count,
     ):
         spin.setKeyboardTracking(False)
         spin.setStyleSheet(input_style)
@@ -136,6 +140,10 @@ def build_tool_config_panel(owner, right_vbox: QtWidgets.QVBoxLayout, *, styles:
     measurement_form.addRow(tr("debug.measurement.edge_threshold"), owner.spin_measurement_edge_threshold)
     measurement_form.addRow(tr("debug.measurement.scan_step"), owner.spin_measurement_scan_step)
     measurement_form.addRow(tr("debug.measurement.min_points"), owner.spin_measurement_min_points)
+    measurement_form.addRow(
+        tr("debug.measurement.expected_pin_count"),
+        owner.spin_measurement_expected_pin_count,
+    )
     measurement_form.addRow(owner.chk_measurement_lower, owner.spin_measurement_lower)
     measurement_form.addRow(owner.chk_measurement_upper, owner.spin_measurement_upper)
     measurement_form.addRow(tr("debug.measurement.unit"), owner.cmb_measurement_unit)

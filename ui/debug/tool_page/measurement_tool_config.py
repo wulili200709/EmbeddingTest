@@ -15,12 +15,15 @@ from ui.debug.tool_page.measurement_tool_options import (
     _line_item_options,
     _line_params,
     _optional_param_float,
+    _point_item_options,
 )
 from ui.debug.tool_page.measurement_algorithms import (
     is_bright_block_center_algorithm as _is_bright_block_center_algorithm,
     is_center_distance_algorithm as _is_center_distance_algorithm,
     is_find_line_algorithm as _is_find_line_algorithm,
     is_line_distance_algorithm as _is_line_distance_algorithm,
+    is_multi_pin_tip_height_algorithm as _is_multi_pin_tip_height_algorithm,
+    is_point_line_distance_algorithm as _is_point_line_distance_algorithm,
     is_single_roi_distance_algorithm as _is_single_roi_distance_algorithm,
 )
 
@@ -96,9 +99,11 @@ def _update_measurement_params_panel(tool_page) -> None:
     ).strip()
     is_find_line = _is_find_line_algorithm(algorithm)
     is_line_distance = _is_line_distance_algorithm(algorithm)
+    is_point_line_distance = _is_point_line_distance_algorithm(algorithm)
     is_center_distance = _is_center_distance_algorithm(algorithm)
+    is_multi_pin_tip_height = _is_multi_pin_tip_height_algorithm(algorithm)
     is_single_roi_distance = _is_single_roi_distance_algorithm(algorithm)
-    is_direct_distance = is_line_distance or is_center_distance or is_single_roi_distance
+    is_direct_distance = is_line_distance or is_point_line_distance or is_center_distance or is_single_roi_distance or is_multi_pin_tip_height
     unit = str(params.get("limit_unit", "") or "").strip().lower()
     if unit not in {"px", "mm"}:
         unit = "mm" if ("lower_limit_mm" in params or "upper_limit_mm" in params) else "px"
@@ -121,6 +126,7 @@ def _update_measurement_params_panel(tool_page) -> None:
     min_points = int(_optional_param_float(line_a, "min_points") or _optional_param_float(line_b, "min_points") or 10)
     line_options = _line_item_options(tool_page, item)
     center_options = _center_item_options(tool_page, item)
+    point_options = _point_item_options(tool_page, item)
     if _line_distance_should_be_center_distance(
         item,
         line_options=line_options,
@@ -129,33 +135,61 @@ def _update_measurement_params_panel(tool_page) -> None:
         _convert_line_distance_to_center_distance(tool_page, item, center_options=center_options)
         return
     pair_options = center_options if is_center_distance else line_options
+    reference_options = [(tr("debug.measurement.auto_housing_edge"), ""), *line_options]
+    reference_id = str(params.get("reference_line_item_id", "") or "").strip()
+    if reference_id and not any(value == reference_id for _, value in line_options):
+        reference_options.append((f"[?] {reference_id}", reference_id))
     distance_mode = str(params.get("distance_mode", "vertical") or "vertical").strip().lower()
     if distance_mode not in {"vertical", "horizontal", "euclidean"}:
         distance_mode = "vertical"
 
     tool_page._measurement_params_loading = True
     try:
-        _populate_line_tool_combo(tool_page.cmb_measurement_line_a_tool, pair_options)
-        _populate_line_tool_combo(tool_page.cmb_measurement_line_b_tool, pair_options)
+        _populate_line_tool_combo(
+            tool_page.cmb_measurement_line_a_tool,
+            point_options if is_point_line_distance else pair_options,
+        )
+        _populate_line_tool_combo(
+            tool_page.cmb_measurement_line_b_tool,
+            reference_options if is_multi_pin_tip_height else line_options if is_point_line_distance else pair_options,
+        )
         _set_combo_current_data(
             tool_page.cmb_measurement_line_a_tool,
-            params.get("center_a_item_id", "") if is_center_distance else params.get("line_a_item_id", ""),
+            params.get("point_item_id", "")
+            if is_point_line_distance
+            else params.get("center_a_item_id", "")
+            if is_center_distance
+            else params.get("line_a_item_id", ""),
         )
         _set_combo_current_data(
             tool_page.cmb_measurement_line_b_tool,
-            params.get("center_b_item_id", "") if is_center_distance else params.get("line_b_item_id", ""),
+            reference_id
+            if is_multi_pin_tip_height
+            else params.get("line_item_id", "")
+            if is_point_line_distance
+            else params.get("center_b_item_id", "")
+            if is_center_distance
+            else params.get("line_b_item_id", ""),
         )
-        _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_line_a_tool, is_line_distance or is_center_distance)
-        _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_line_b_tool, is_line_distance or is_center_distance)
+        _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_line_a_tool, is_line_distance or is_point_line_distance or is_center_distance)
+        _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_line_b_tool, is_line_distance or is_point_line_distance or is_center_distance or is_multi_pin_tip_height)
         _set_measurement_row_label(
             tool_page,
             tool_page.cmb_measurement_line_a_tool,
-            tr("debug.measurement.center_a_tool") if is_center_distance else tr("debug.measurement.line_a_tool"),
+            tr("debug.measurement.point_tool")
+            if is_point_line_distance
+            else tr("debug.measurement.center_a_tool")
+            if is_center_distance
+            else tr("debug.measurement.line_a_tool"),
         )
         _set_measurement_row_label(
             tool_page,
             tool_page.cmb_measurement_line_b_tool,
-            tr("debug.measurement.center_b_tool") if is_center_distance else tr("debug.measurement.line_b_tool"),
+            tr("debug.measurement.reference_line_tool")
+            if is_point_line_distance or is_multi_pin_tip_height
+            else tr("debug.measurement.center_b_tool")
+            if is_center_distance
+            else tr("debug.measurement.line_b_tool"),
         )
         _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_distance_mode, is_center_distance)
         _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_line_a_direction, is_find_line)
@@ -164,19 +198,24 @@ def _update_measurement_params_panel(tool_page) -> None:
         _set_measurement_row_visible(tool_page, tool_page.spin_measurement_edge_threshold, is_find_line)
         _set_measurement_row_visible(tool_page, tool_page.spin_measurement_scan_step, is_find_line)
         _set_measurement_row_visible(tool_page, tool_page.spin_measurement_min_points, is_find_line)
+        _set_measurement_row_visible(
+            tool_page,
+            tool_page.spin_measurement_expected_pin_count,
+            is_multi_pin_tip_height,
+        )
         _set_measurement_row_visible(tool_page, tool_page.spin_measurement_lower, is_direct_distance)
         _set_measurement_row_visible(tool_page, tool_page.spin_measurement_upper, is_direct_distance)
         _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_unit, is_direct_distance)
         _set_measurement_row_visible(tool_page, tool_page.spin_measurement_pixel_size, is_direct_distance)
-        tool_page.cmb_measurement_line_a_tool.setEnabled(is_line_distance or is_center_distance)
-        tool_page.cmb_measurement_line_b_tool.setEnabled(is_line_distance or is_center_distance)
+        tool_page.cmb_measurement_line_a_tool.setEnabled(is_line_distance or is_point_line_distance or is_center_distance)
+        tool_page.cmb_measurement_line_b_tool.setEnabled(is_line_distance or is_point_line_distance or is_center_distance or is_multi_pin_tip_height)
         _set_combo_current_data(tool_page.cmb_measurement_distance_mode, distance_mode)
         tool_page.cmb_measurement_distance_mode.setEnabled(is_center_distance)
         _set_combo_current_data(tool_page.cmb_measurement_line_a_direction, line_a_direction)
         _set_combo_current_data(tool_page.cmb_measurement_line_b_direction, line_b_direction)
         tool_page.cmb_measurement_line_a_direction.setEnabled(is_find_line)
         tool_page.cmb_measurement_line_b_direction.setEnabled(
-            not is_find_line and not is_line_distance and not is_center_distance and not is_single_roi_distance
+            not is_find_line and not is_line_distance and not is_point_line_distance and not is_center_distance and not is_single_roi_distance
         )
         _set_combo_current_data(tool_page.cmb_measurement_polarity, polarity)
         tool_page.cmb_measurement_polarity.setEnabled(is_find_line)
@@ -186,6 +225,10 @@ def _update_measurement_params_panel(tool_page) -> None:
         tool_page.spin_measurement_scan_step.setEnabled(is_find_line)
         tool_page.spin_measurement_min_points.setValue(max(2, int(min_points)))
         tool_page.spin_measurement_min_points.setEnabled(is_find_line)
+        tool_page.spin_measurement_expected_pin_count.setValue(
+            max(1, int(params.get("expected_pin_count", 20) or 20))
+        )
+        tool_page.spin_measurement_expected_pin_count.setEnabled(is_multi_pin_tip_height)
         tool_page.cmb_measurement_unit.setCurrentText(unit)
         tool_page.chk_measurement_lower.setChecked(lower is not None)
         tool_page.chk_measurement_upper.setChecked(upper is not None)
@@ -229,9 +272,11 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
     ).strip()
     is_find_line = _is_find_line_algorithm(algorithm)
     is_line_distance = _is_line_distance_algorithm(algorithm)
+    is_point_line_distance = _is_point_line_distance_algorithm(algorithm)
     is_center_distance = _is_center_distance_algorithm(algorithm)
+    is_multi_pin_tip_height = _is_multi_pin_tip_height_algorithm(algorithm)
     is_single_roi_distance = _is_single_roi_distance_algorithm(algorithm)
-    is_direct_distance = is_line_distance or is_center_distance or is_single_roi_distance
+    is_direct_distance = is_line_distance or is_point_line_distance or is_center_distance or is_single_roi_distance or is_multi_pin_tip_height
     permission_key = "inspection.edit_limits" if is_direct_distance else "template.edit_params"
     action_name = "修改上下限" if is_direct_distance else "修改模板参数"
     if not _require_tool_permission(tool_page, permission_key, action_name):
@@ -272,6 +317,17 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
         params.pop("distance_mode", None)
         params.pop("limit_unit", None)
         params.pop("pixel_size_mm", None)
+    elif is_point_line_distance:
+        params["point_item_id"] = str(tool_page.cmb_measurement_line_a_tool.currentData() or "").strip()
+        params["line_item_id"] = str(tool_page.cmb_measurement_line_b_tool.currentData() or "").strip()
+        params.pop("line", None)
+        params.pop("line_a", None)
+        params.pop("line_b", None)
+        params.pop("line_a_item_id", None)
+        params.pop("line_b_item_id", None)
+        params.pop("center_a_item_id", None)
+        params.pop("center_b_item_id", None)
+        params.pop("distance_mode", None)
     elif is_line_distance:
         params["line_a_item_id"] = str(tool_page.cmb_measurement_line_a_tool.currentData() or "").strip()
         params["line_b_item_id"] = str(tool_page.cmb_measurement_line_b_tool.currentData() or "").strip()
@@ -296,6 +352,18 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
         params.pop("line_b", None)
         params.pop("line_a_item_id", None)
         params.pop("line_b_item_id", None)
+    elif is_multi_pin_tip_height:
+        params["expected_pin_count"] = int(tool_page.spin_measurement_expected_pin_count.value())
+        params["reference_line_item_id"] = str(tool_page.cmb_measurement_line_b_tool.currentData() or "").strip()
+        params.pop("_reference_line_segment", None)
+        params.pop("line", None)
+        params.pop("line_a", None)
+        params.pop("line_b", None)
+        params.pop("line_a_item_id", None)
+        params.pop("line_b_item_id", None)
+        params.pop("center_a_item_id", None)
+        params.pop("center_b_item_id", None)
+        params.pop("distance_mode", None)
     else:
         line_a["direction"] = str(
             tool_page.cmb_measurement_line_a_direction.currentData()

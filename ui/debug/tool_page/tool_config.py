@@ -7,6 +7,7 @@ from PySide6 import QtWidgets
 from algorithms.measurement import (
     CENTER_DISTANCE_ALGORITHM,
     LINE_DISTANCE_ALGORITHMS,
+    POINT_LINE_DISTANCE_ALGORITHM,
 )
 from common.algorithm_codes import normalize_tool_algorithm_code
 from domain import InspectionItem, save_inspection_items
@@ -31,12 +32,15 @@ from ui.debug.tool_page.measurement_tool_options import (
     _line_distance_should_be_center_distance,
     _line_item_options,
     _optional_param_float,
+    _point_item_options,
 )
 from ui.debug.tool_page.measurement_algorithms import (
     is_bright_block_center_algorithm as _is_bright_block_center_algorithm,
     is_center_distance_algorithm as _is_center_distance_algorithm,
     is_find_line_algorithm as _is_find_line_algorithm,
     is_line_distance_algorithm as _is_line_distance_algorithm,
+    is_pin_tip_point_algorithm as _is_pin_tip_point_algorithm,
+    is_point_line_distance_algorithm as _is_point_line_distance_algorithm,
     is_single_roi_distance_algorithm as _is_single_roi_distance_algorithm,
     public_algorithm_code as _public_algorithm_code,
 )
@@ -140,6 +144,27 @@ def _add_line_distance_tool(tool_page) -> None:
             type("_Selected", (), {"camera_id": camera_role, "item_id": ""})(),
         )
     ]
+    point_options = [
+        item_id
+        for _display, item_id in _point_item_options(
+            tool_page,
+            type("_Selected", (), {"camera_id": camera_role, "item_id": ""})(),
+        )
+    ]
+    if (
+        _is_pin_tip_point_algorithm(selected_algorithm)
+        or _is_pin_tip_point_algorithm(picker_algorithm)
+        or (len(line_options) < 2 and bool(line_options) and bool(point_options))
+    ):
+        selected_item_id = str(getattr(selected_item, "item_id", "") or "").strip()
+        selected_point_id = selected_item_id if _is_pin_tip_point_algorithm(selected_algorithm) else ""
+        selected_line_id = selected_item_id if _is_find_line_algorithm(selected_algorithm) else ""
+        _add_point_line_distance_tool(
+            tool_page,
+            point_item_id=(selected_point_id or point_options[0]) if point_options else selected_point_id,
+            line_item_id=(selected_line_id or line_options[0]) if line_options else selected_line_id,
+        )
+        return
     if (
         _is_bright_block_center_algorithm(selected_algorithm)
         or _is_bright_block_center_algorithm(picker_algorithm)
@@ -206,6 +231,48 @@ def _add_line_distance_tool(tool_page) -> None:
         action="新增检测项",
         target=item_id,
         after_value="line_distance",
+    )
+    _refresh_inspection_items_table(tool_page)
+    table = getattr(tool_page, "inspection_items_table", None)
+    if table is not None:
+        for visible_row, actual_index in enumerate(getattr(tool_page, "_visible_inspection_item_indexes", []) or []):
+            item = tool_page.inspection_items[actual_index]
+            if str(getattr(item, "item_id", "") or "") == item_id:
+                table.setCurrentCell(visible_row, 1)
+                break
+
+
+def _add_point_line_distance_tool(
+    tool_page,
+    *,
+    point_item_id: str = "",
+    line_item_id: str = "",
+) -> None:
+    camera_role = _current_camera_role(tool_page)
+    item_id = _unique_item_id(tool_page, "point_line_distance")
+    params = {
+        "point_item_id": str(point_item_id or "").strip(),
+        "line_item_id": str(line_item_id or "").strip(),
+        "limit_unit": "px",
+    }
+    tool_page.inspection_items.append(
+        InspectionItem(
+            item_id=item_id,
+            display_name="Point-Line Distance",
+            camera_id=camera_role,
+            roi_label="",
+            algorithm_code=POINT_LINE_DISTANCE_ALGORITHM,
+            enabled=True,
+            params=params,
+        )
+    )
+    _persist_inspection_items(tool_page)
+    _audit_tool_event(
+        tool_page,
+        module="检测项",
+        action="新增检测项",
+        target=item_id,
+        after_value=POINT_LINE_DISTANCE_ALGORITHM,
     )
     _refresh_inspection_items_table(tool_page)
     table = getattr(tool_page, "inspection_items_table", None)
@@ -298,6 +365,7 @@ def _update_delete_line_distance_button(tool_page) -> None:
         and (
             _is_line_distance_algorithm(normalize_tool_algorithm_code(getattr(item, "algorithm_code", "")))
             or _is_center_distance_algorithm(normalize_tool_algorithm_code(getattr(item, "algorithm_code", "")))
+            or _is_point_line_distance_algorithm(normalize_tool_algorithm_code(getattr(item, "algorithm_code", "")))
         )
     )
     has_permission = getattr(tool_page.window(), "_has_permission", None)
@@ -336,6 +404,17 @@ def _inspection_item_display_name(inspection_item) -> str:
             default_names.add(item_id)
         if raw_name in default_names:
             return tr("debug.algorithm.center_distance")
+    if _is_point_line_distance_algorithm(algorithm):
+        default_names = {
+            "",
+            "Point-Line Distance",
+            "point_line_distance",
+            tr("debug.algorithm.point_line_distance"),
+        }
+        if item_id.startswith("point_line_distance"):
+            default_names.add(item_id)
+        if raw_name in default_names:
+            return tr("debug.algorithm.point_line_distance")
     return raw_name
 
 
@@ -355,6 +434,7 @@ def _delete_selected_line_distance_tool(tool_page) -> None:
     if not (
         _is_line_distance_algorithm(normalize_tool_algorithm_code(getattr(inspection_item, "algorithm_code", "")))
         or _is_center_distance_algorithm(normalize_tool_algorithm_code(getattr(inspection_item, "algorithm_code", "")))
+        or _is_point_line_distance_algorithm(normalize_tool_algorithm_code(getattr(inspection_item, "algorithm_code", "")))
     ):
         QtWidgets.QMessageBox.information(
             tool_page,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from algorithms.measurement import LINE_DISTANCE_ALGORITHMS
+from algorithms.measurement import LINE_DISTANCE_ALGORITHMS, POINT_LINE_DISTANCE_ALGORITHM
 from algorithms.registry import list_tool_algorithm_specs
 from common.algorithm_codes import normalize_tool_algorithm_code
 from domain import SUPPORTED_CAMERA_IDS
@@ -110,8 +110,13 @@ def _refresh_inspection_items_table(tool_page) -> None:
                 algorithm_name = tool_page.algo.algorithm_display_name(spec.code) or spec.display_name or spec.code
                 algorithm_combo.addItem(algorithm_name, spec.code)
             current_algorithm_raw = normalize_tool_algorithm_code(inspection_item.algorithm_code)
-            if current_algorithm_raw in LINE_DISTANCE_ALGORITHMS:
-                algorithm_combo.addItem(tr("debug.algorithm.line_distance"), current_algorithm_raw)
+            if current_algorithm_raw in LINE_DISTANCE_ALGORITHMS or current_algorithm_raw == POINT_LINE_DISTANCE_ALGORITHM:
+                display_key = (
+                    "debug.algorithm.point_line_distance"
+                    if current_algorithm_raw == POINT_LINE_DISTANCE_ALGORITHM
+                    else "debug.algorithm.line_distance"
+                )
+                algorithm_combo.addItem(tr(display_key), current_algorithm_raw)
                 algorithm_combo.setCurrentIndex(algorithm_combo.count() - 1)
                 algorithm_combo.setEnabled(False)
             else:

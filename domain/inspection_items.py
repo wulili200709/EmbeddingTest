@@ -14,7 +14,12 @@ from common.safe_io import atomic_write_json, load_json_with_backup
 
 
 SUPPORTED_CAMERA_IDS = CAMERA_ROLES
-POST_DISTANCE_ALGORITHMS = {"line_distance", "line_distance_ref_normal", "center_distance"}
+POST_DISTANCE_ALGORITHMS = {
+    "line_distance",
+    "line_distance_ref_normal",
+    "center_distance",
+    "point_line_distance",
+}
 
 
 def _slug_token(value: object, fallback: str = "tool") -> str:

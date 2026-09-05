@@ -21,7 +21,10 @@ from .measurement import (
     FIND_LINE_SUBPIX_ALGORITHM,
     LINE_DISTANCE_ALGORITHMS,
     MEASUREMENT_ALGORITHMS,
+    MULTI_PIN_TIP_HEIGHT_ALGORITHM,
     PIN_CENTER_DISTANCE_ALGORITHM,
+    PIN_TIP_POINT_ALGORITHM,
+    POINT_LINE_DISTANCE_ALGORITHM,
 )
 from .traditional import TRADITIONAL_ALGORITHMS
 
@@ -73,12 +76,54 @@ for _code in MEASUREMENT_ALGORITHMS:
             }
             if _code in LINE_DISTANCE_ALGORITHMS
             else {
+                "point_item_id": "",
+                "line_item_id": "",
+                "limit_unit": "px",
+            }
+            if _code == POINT_LINE_DISTANCE_ALGORITHM
+            else {
                 "center_a_item_id": "",
                 "center_b_item_id": "",
                 "distance_mode": "vertical",
                 "limit_unit": "px",
             }
             if _code in CENTER_DISTANCE_ALGORITHMS
+            else {
+                "threshold": 0.0,
+                "blur_ksize": 3,
+                "morph_open_size": 0,
+                "morph_close_size": 3,
+                "min_area_px": 80.0,
+                "min_width_px": 4.0,
+                "min_height_px": 20.0,
+                "border_margin_px": 2,
+                "tip_band_ratio": 0.22,
+                "arc_depth_ratio": 0.55,
+                "min_arc_points": 8,
+            }
+            if _code == PIN_TIP_POINT_ALGORITHM
+            else {
+                "expected_pin_count": 20,
+                "reference_line_item_id": "",
+                "limit_unit": "px",
+                "threshold": 0.0,
+                "blur_ksize": 3,
+                "morph_open_size": 0,
+                "morph_close_size": 3,
+                "min_area_px": 80.0,
+                "min_width_px": 4.0,
+                "min_height_px": 20.0,
+                "border_margin_px": 2,
+                "tip_band_ratio": 0.22,
+                "arc_depth_ratio": 0.55,
+                "min_arc_points": 8,
+                "reference_edge_threshold": 18.0,
+                "reference_scan_step": 2,
+                "reference_min_points": 10,
+                "reference_search_ratio": 0.65,
+                "reference_cut_margin_px": 4.0,
+            }
+            if _code == MULTI_PIN_TIP_HEIGHT_ALGORITHM
             else {
                 "block_orientation": "auto",
                 "limit_unit": "px",
