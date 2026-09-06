@@ -7,6 +7,10 @@ from PySide6 import QtWidgets
 from algorithms.measurement import FIND_LINE_SUBPIX_ALGORITHM
 from ui.i18n import tr
 from ui.debug.tool_page.inspection_items_table import _selected_inspection_item
+from ui.debug.tool_page.multi_pin_spacing_dialog import (
+    MultiPinSpacingDialog,
+    normalized_spacing_specs,
+)
 from ui.debug.tool_page.measurement_tool_options import (
     _center_item_options,
     _convert_line_distance_to_center_distance,
@@ -15,12 +19,15 @@ from ui.debug.tool_page.measurement_tool_options import (
     _line_item_options,
     _line_params,
     _optional_param_float,
+    _point_item_options,
 )
 from ui.debug.tool_page.measurement_algorithms import (
     is_bright_block_center_algorithm as _is_bright_block_center_algorithm,
     is_center_distance_algorithm as _is_center_distance_algorithm,
     is_find_line_algorithm as _is_find_line_algorithm,
     is_line_distance_algorithm as _is_line_distance_algorithm,
+    is_multi_pin_tip_height_algorithm as _is_multi_pin_tip_height_algorithm,
+    is_point_line_distance_algorithm as _is_point_line_distance_algorithm,
     is_single_roi_distance_algorithm as _is_single_roi_distance_algorithm,
 )
 
@@ -77,6 +84,14 @@ def _set_measurement_row_label(tool_page, field_widget: QtWidgets.QWidget, label
             label_widget.setText(label_text)
 
 
+def _param_bool(value: object, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None or not str(value).strip():
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "enabled"}
+
+
 def _update_measurement_params_panel(tool_page) -> None:
     frame = getattr(tool_page, "measurement_params_frame", None)
     if frame is None:
@@ -96,9 +111,19 @@ def _update_measurement_params_panel(tool_page) -> None:
     ).strip()
     is_find_line = _is_find_line_algorithm(algorithm)
     is_line_distance = _is_line_distance_algorithm(algorithm)
+    is_point_line_distance = _is_point_line_distance_algorithm(algorithm)
     is_center_distance = _is_center_distance_algorithm(algorithm)
+    is_multi_pin_tip_height = _is_multi_pin_tip_height_algorithm(algorithm)
     is_single_roi_distance = _is_single_roi_distance_algorithm(algorithm)
-    is_direct_distance = is_line_distance or is_center_distance or is_single_roi_distance
+    is_direct_distance = is_line_distance or is_point_line_distance or is_center_distance or is_single_roi_distance or is_multi_pin_tip_height
+    height_check_enabled = _param_bool(
+        params.get("height_check_enabled"), default=True
+    )
+    spacing_check_enabled = _param_bool(
+        params.get("spacing_check_enabled"), default=False
+    )
+    if not height_check_enabled and not spacing_check_enabled:
+        height_check_enabled = True
     unit = str(params.get("limit_unit", "") or "").strip().lower()
     if unit not in {"px", "mm"}:
         unit = "mm" if ("lower_limit_mm" in params or "upper_limit_mm" in params) else "px"
@@ -121,6 +146,7 @@ def _update_measurement_params_panel(tool_page) -> None:
     min_points = int(_optional_param_float(line_a, "min_points") or _optional_param_float(line_b, "min_points") or 10)
     line_options = _line_item_options(tool_page, item)
     center_options = _center_item_options(tool_page, item)
+    point_options = _point_item_options(tool_page, item)
     if _line_distance_should_be_center_distance(
         item,
         line_options=line_options,
@@ -129,33 +155,61 @@ def _update_measurement_params_panel(tool_page) -> None:
         _convert_line_distance_to_center_distance(tool_page, item, center_options=center_options)
         return
     pair_options = center_options if is_center_distance else line_options
+    reference_options = [(tr("debug.measurement.auto_housing_edge"), ""), *line_options]
+    reference_id = str(params.get("reference_line_item_id", "") or "").strip()
+    if reference_id and not any(value == reference_id for _, value in line_options):
+        reference_options.append((f"[?] {reference_id}", reference_id))
     distance_mode = str(params.get("distance_mode", "vertical") or "vertical").strip().lower()
     if distance_mode not in {"vertical", "horizontal", "euclidean"}:
         distance_mode = "vertical"
 
     tool_page._measurement_params_loading = True
     try:
-        _populate_line_tool_combo(tool_page.cmb_measurement_line_a_tool, pair_options)
-        _populate_line_tool_combo(tool_page.cmb_measurement_line_b_tool, pair_options)
+        _populate_line_tool_combo(
+            tool_page.cmb_measurement_line_a_tool,
+            point_options if is_point_line_distance else pair_options,
+        )
+        _populate_line_tool_combo(
+            tool_page.cmb_measurement_line_b_tool,
+            reference_options if is_multi_pin_tip_height else line_options if is_point_line_distance else pair_options,
+        )
         _set_combo_current_data(
             tool_page.cmb_measurement_line_a_tool,
-            params.get("center_a_item_id", "") if is_center_distance else params.get("line_a_item_id", ""),
+            params.get("point_item_id", "")
+            if is_point_line_distance
+            else params.get("center_a_item_id", "")
+            if is_center_distance
+            else params.get("line_a_item_id", ""),
         )
         _set_combo_current_data(
             tool_page.cmb_measurement_line_b_tool,
-            params.get("center_b_item_id", "") if is_center_distance else params.get("line_b_item_id", ""),
+            reference_id
+            if is_multi_pin_tip_height
+            else params.get("line_item_id", "")
+            if is_point_line_distance
+            else params.get("center_b_item_id", "")
+            if is_center_distance
+            else params.get("line_b_item_id", ""),
         )
-        _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_line_a_tool, is_line_distance or is_center_distance)
-        _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_line_b_tool, is_line_distance or is_center_distance)
+        _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_line_a_tool, is_line_distance or is_point_line_distance or is_center_distance)
+        _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_line_b_tool, is_line_distance or is_point_line_distance or is_center_distance or is_multi_pin_tip_height)
         _set_measurement_row_label(
             tool_page,
             tool_page.cmb_measurement_line_a_tool,
-            tr("debug.measurement.center_a_tool") if is_center_distance else tr("debug.measurement.line_a_tool"),
+            tr("debug.measurement.point_tool")
+            if is_point_line_distance
+            else tr("debug.measurement.center_a_tool")
+            if is_center_distance
+            else tr("debug.measurement.line_a_tool"),
         )
         _set_measurement_row_label(
             tool_page,
             tool_page.cmb_measurement_line_b_tool,
-            tr("debug.measurement.center_b_tool") if is_center_distance else tr("debug.measurement.line_b_tool"),
+            tr("debug.measurement.reference_line_tool")
+            if is_point_line_distance or is_multi_pin_tip_height
+            else tr("debug.measurement.center_b_tool")
+            if is_center_distance
+            else tr("debug.measurement.line_b_tool"),
         )
         _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_distance_mode, is_center_distance)
         _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_line_a_direction, is_find_line)
@@ -164,19 +218,38 @@ def _update_measurement_params_panel(tool_page) -> None:
         _set_measurement_row_visible(tool_page, tool_page.spin_measurement_edge_threshold, is_find_line)
         _set_measurement_row_visible(tool_page, tool_page.spin_measurement_scan_step, is_find_line)
         _set_measurement_row_visible(tool_page, tool_page.spin_measurement_min_points, is_find_line)
-        _set_measurement_row_visible(tool_page, tool_page.spin_measurement_lower, is_direct_distance)
-        _set_measurement_row_visible(tool_page, tool_page.spin_measurement_upper, is_direct_distance)
+        _set_measurement_row_visible(
+            tool_page,
+            tool_page.spin_measurement_expected_pin_count,
+            is_multi_pin_tip_height,
+        )
+        _set_measurement_row_visible(
+            tool_page,
+            tool_page.spin_measurement_min_arc_points,
+            is_multi_pin_tip_height,
+        )
+        _set_measurement_row_visible(
+            tool_page, tool_page.multi_pin_check_widget, is_multi_pin_tip_height
+        )
+        _set_measurement_row_visible(
+            tool_page, tool_page.btn_measurement_spacing_specs, is_multi_pin_tip_height
+        )
+        height_limits_visible = is_direct_distance and (
+            not is_multi_pin_tip_height or height_check_enabled
+        )
+        _set_measurement_row_visible(tool_page, tool_page.spin_measurement_lower, height_limits_visible)
+        _set_measurement_row_visible(tool_page, tool_page.spin_measurement_upper, height_limits_visible)
         _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_unit, is_direct_distance)
         _set_measurement_row_visible(tool_page, tool_page.spin_measurement_pixel_size, is_direct_distance)
-        tool_page.cmb_measurement_line_a_tool.setEnabled(is_line_distance or is_center_distance)
-        tool_page.cmb_measurement_line_b_tool.setEnabled(is_line_distance or is_center_distance)
+        tool_page.cmb_measurement_line_a_tool.setEnabled(is_line_distance or is_point_line_distance or is_center_distance)
+        tool_page.cmb_measurement_line_b_tool.setEnabled(is_line_distance or is_point_line_distance or is_center_distance or is_multi_pin_tip_height)
         _set_combo_current_data(tool_page.cmb_measurement_distance_mode, distance_mode)
         tool_page.cmb_measurement_distance_mode.setEnabled(is_center_distance)
         _set_combo_current_data(tool_page.cmb_measurement_line_a_direction, line_a_direction)
         _set_combo_current_data(tool_page.cmb_measurement_line_b_direction, line_b_direction)
         tool_page.cmb_measurement_line_a_direction.setEnabled(is_find_line)
         tool_page.cmb_measurement_line_b_direction.setEnabled(
-            not is_find_line and not is_line_distance and not is_center_distance and not is_single_roi_distance
+            not is_find_line and not is_line_distance and not is_point_line_distance and not is_center_distance and not is_single_roi_distance
         )
         _set_combo_current_data(tool_page.cmb_measurement_polarity, polarity)
         tool_page.cmb_measurement_polarity.setEnabled(is_find_line)
@@ -186,11 +259,30 @@ def _update_measurement_params_panel(tool_page) -> None:
         tool_page.spin_measurement_scan_step.setEnabled(is_find_line)
         tool_page.spin_measurement_min_points.setValue(max(2, int(min_points)))
         tool_page.spin_measurement_min_points.setEnabled(is_find_line)
+        tool_page.spin_measurement_expected_pin_count.setValue(
+            max(1, int(params.get("expected_pin_count", 20) or 20))
+        )
+        tool_page.spin_measurement_expected_pin_count.setEnabled(is_multi_pin_tip_height)
+        tool_page.spin_measurement_min_arc_points.setValue(
+            max(5, int(params.get("min_arc_points", 8) or 8))
+        )
+        tool_page.spin_measurement_min_arc_points.setEnabled(is_multi_pin_tip_height)
+        tool_page.chk_measurement_pin_height.setChecked(height_check_enabled)
+        tool_page.chk_measurement_pin_spacing.setChecked(spacing_check_enabled)
+        gap_count = max(
+            0, int(tool_page.spin_measurement_expected_pin_count.value()) - 1
+        )
+        tool_page.btn_measurement_spacing_specs.setText(
+            tr("debug.measurement.spacing_configure_count", count=gap_count)
+        )
+        tool_page.btn_measurement_spacing_specs.setEnabled(
+            is_multi_pin_tip_height and spacing_check_enabled
+        )
         tool_page.cmb_measurement_unit.setCurrentText(unit)
         tool_page.chk_measurement_lower.setChecked(lower is not None)
         tool_page.chk_measurement_upper.setChecked(upper is not None)
-        tool_page.spin_measurement_lower.setEnabled(is_direct_distance and lower is not None)
-        tool_page.spin_measurement_upper.setEnabled(is_direct_distance and upper is not None)
+        tool_page.spin_measurement_lower.setEnabled(height_limits_visible and lower is not None)
+        tool_page.spin_measurement_upper.setEnabled(height_limits_visible and upper is not None)
         tool_page.spin_measurement_lower.setValue(float(lower or 0.0))
         tool_page.spin_measurement_upper.setValue(float(upper or 0.0))
         tool_page.spin_measurement_pixel_size.setValue(float(pixel_size))
@@ -229,9 +321,11 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
     ).strip()
     is_find_line = _is_find_line_algorithm(algorithm)
     is_line_distance = _is_line_distance_algorithm(algorithm)
+    is_point_line_distance = _is_point_line_distance_algorithm(algorithm)
     is_center_distance = _is_center_distance_algorithm(algorithm)
+    is_multi_pin_tip_height = _is_multi_pin_tip_height_algorithm(algorithm)
     is_single_roi_distance = _is_single_roi_distance_algorithm(algorithm)
-    is_direct_distance = is_line_distance or is_center_distance or is_single_roi_distance
+    is_direct_distance = is_line_distance or is_point_line_distance or is_center_distance or is_single_roi_distance or is_multi_pin_tip_height
     permission_key = "inspection.edit_limits" if is_direct_distance else "template.edit_params"
     action_name = "修改上下限" if is_direct_distance else "修改模板参数"
     if not _require_tool_permission(tool_page, permission_key, action_name):
@@ -272,6 +366,17 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
         params.pop("distance_mode", None)
         params.pop("limit_unit", None)
         params.pop("pixel_size_mm", None)
+    elif is_point_line_distance:
+        params["point_item_id"] = str(tool_page.cmb_measurement_line_a_tool.currentData() or "").strip()
+        params["line_item_id"] = str(tool_page.cmb_measurement_line_b_tool.currentData() or "").strip()
+        params.pop("line", None)
+        params.pop("line_a", None)
+        params.pop("line_b", None)
+        params.pop("line_a_item_id", None)
+        params.pop("line_b_item_id", None)
+        params.pop("center_a_item_id", None)
+        params.pop("center_b_item_id", None)
+        params.pop("distance_mode", None)
     elif is_line_distance:
         params["line_a_item_id"] = str(tool_page.cmb_measurement_line_a_tool.currentData() or "").strip()
         params["line_b_item_id"] = str(tool_page.cmb_measurement_line_b_tool.currentData() or "").strip()
@@ -296,6 +401,35 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
         params.pop("line_b", None)
         params.pop("line_a_item_id", None)
         params.pop("line_b_item_id", None)
+    elif is_multi_pin_tip_height:
+        expected_pin_count = int(tool_page.spin_measurement_expected_pin_count.value())
+        min_arc_points = int(tool_page.spin_measurement_min_arc_points.value())
+        height_check_enabled = bool(tool_page.chk_measurement_pin_height.isChecked())
+        spacing_check_enabled = bool(tool_page.chk_measurement_pin_spacing.isChecked())
+        if not height_check_enabled and not spacing_check_enabled:
+            height_check_enabled = True
+            tool_page.chk_measurement_pin_height.blockSignals(True)
+            try:
+                tool_page.chk_measurement_pin_height.setChecked(True)
+            finally:
+                tool_page.chk_measurement_pin_height.blockSignals(False)
+        params["expected_pin_count"] = expected_pin_count
+        params["min_arc_points"] = min_arc_points
+        params["height_check_enabled"] = height_check_enabled
+        params["spacing_check_enabled"] = spacing_check_enabled
+        params["spacing_specs"] = normalized_spacing_specs(
+            params.get("spacing_specs"), max(0, expected_pin_count - 1)
+        )
+        params["reference_line_item_id"] = str(tool_page.cmb_measurement_line_b_tool.currentData() or "").strip()
+        params.pop("_reference_line_segment", None)
+        params.pop("line", None)
+        params.pop("line_a", None)
+        params.pop("line_b", None)
+        params.pop("line_a_item_id", None)
+        params.pop("line_b_item_id", None)
+        params.pop("center_a_item_id", None)
+        params.pop("center_b_item_id", None)
+        params.pop("distance_mode", None)
     else:
         line_a["direction"] = str(
             tool_page.cmb_measurement_line_a_direction.currentData()
@@ -329,9 +463,12 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
             params["pixel_size_mm"] = pixel_size
         else:
             params.pop("pixel_size_mm", None)
-        if tool_page.chk_measurement_lower.isChecked():
+        height_limits_enabled = not is_multi_pin_tip_height or bool(
+            tool_page.chk_measurement_pin_height.isChecked()
+        )
+        if height_limits_enabled and tool_page.chk_measurement_lower.isChecked():
             params["lower_limit"] = float(tool_page.spin_measurement_lower.value())
-        if tool_page.chk_measurement_upper.isChecked():
+        if height_limits_enabled and tool_page.chk_measurement_upper.isChecked():
             params["upper_limit"] = float(tool_page.spin_measurement_upper.value())
     else:
         params.pop("limit_unit", None)
@@ -349,5 +486,56 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
             before_value=str(before),
             after_value=str(params),
         )
+    _update_measurement_params_panel(tool_page)
+    _update_learning_backbone_hint(tool_page)
+
+
+def _edit_multi_pin_spacing_specs(tool_page) -> None:
+    from ui.debug.tool_page.tool_config import (
+        _persist_inspection_items,
+        _update_learning_backbone_hint,
+    )
+
+    item = _selected_inspection_item(tool_page)
+    if item is None:
+        return
+    algorithm = str(
+        tool_page.algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id) or ""
+    ).strip()
+    if not _is_multi_pin_tip_height_algorithm(algorithm):
+        return
+    if not _require_tool_permission(
+        tool_page,
+        "inspection.edit_limits",
+        tr("debug.measurement.spacing_configure"),
+    ):
+        return
+    params = dict(item.params or {})
+    expected = max(1, int(params.get("expected_pin_count", 20) or 20))
+    unit = str(params.get("limit_unit", "px") or "px").strip().lower()
+    if unit not in {"px", "mm"}:
+        unit = "px"
+    dialog = MultiPinSpacingDialog(
+        tool_page,
+        expected_pin_count=expected,
+        unit=unit,
+        spacing_specs=params.get("spacing_specs"),
+    )
+    if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+        return
+    before = dict(params)
+    params["spacing_specs"] = dialog.spacing_specs()
+    item.params = params
+    _persist_inspection_items(tool_page)
+    if before != params:
+        _audit_tool_event(
+            tool_page,
+            module="检测项",
+            action=tr("debug.measurement.spacing_configure"),
+            target=str(getattr(item, "item_id", "") or ""),
+            before_value=str(before.get("spacing_specs", [])),
+            after_value=str(params["spacing_specs"]),
+        )
+    _update_measurement_params_panel(tool_page)
     _update_learning_backbone_hint(tool_page)
 

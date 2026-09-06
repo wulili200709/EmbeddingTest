@@ -19,15 +19,21 @@ from algorithms.measurement import (
     BRIGHT_BLOCK_Y_DISTANCE_ALGORITHM,
     FIND_LINE_ALGORITHMS,
     LINE_DISTANCE_ALGORITHMS,
+    MULTI_PIN_TIP_HEIGHT_ALGORITHM,
     PIN_CENTER_DISTANCE_ALGORITHM,
+    PIN_TIP_POINT_ALGORITHM,
+    POINT_LINE_DISTANCE_ALGORITHM,
     judge_bright_block_y_distance,
     judge_edge_distance,
     judge_pin_center_distance,
+    multi_pin_tip_judgment_payload,
     measure_bright_block_y_distance_from_array,
     measure_bright_block_center_from_array,
     measure_edge_distance_from_array,
     measure_find_line_from_array,
+    measure_multi_pin_tip_height_from_array,
     measure_pin_center_distance_from_array,
+    measure_pin_tip_point_from_array,
 )
 from algorithms.traditional import TraditionalThresholdModel, compute_roi_metrics_from_array, metric_value
 from common import labelme_io
@@ -45,6 +51,41 @@ from shape.core.recipe_labels import inspection_item_specs_from_shape_recipe, ou
 if TYPE_CHECKING:
     from application import AlgorithmController, ProductSession
     from ui.debug import ToolPage
+
+
+def _measurement_execution_order(items):
+    # A multi-pin tool may refer to a line listed after it in the UI.
+    return sorted(
+        items,
+        key=lambda item: item.algorithm_code == MULTI_PIN_TIP_HEIGHT_ALGORITHM,
+    )
+
+
+def _measurement_execution_params(item, items, rows_by_key):
+    params = dict(item.params or {})
+    params.pop("_reference_line_segment", None)
+    if item.algorithm_code != MULTI_PIN_TIP_HEIGHT_ALGORITHM:
+        return params
+    reference_id = str(params.get("reference_line_item_id", "") or "").strip()
+    if not reference_id:
+        return params
+    reference = next(
+        (
+            source
+            for source in items
+            if source.item_id == reference_id
+            and source.enabled
+            and source.camera_id == item.camera_id
+            and source.algorithm_code in FIND_LINE_ALGORITHMS
+        ),
+        None,
+    )
+    row = rows_by_key.get(reference.model_key, {}) if reference is not None else {}
+    if str(row.get("pred", "")).upper() in {"OK", "PASS"}:
+        segment = (row.get("measurement") or {}).get("line_segment")
+        if segment is not None:
+            params["_reference_line_segment"] = segment
+    return params
 
 
 def _camera_role_from_path(path: str) -> str:
@@ -164,7 +205,8 @@ def _is_measurement_item(algo, item: InspectionItem) -> bool:
 
 
 def _is_line_distance_item(item: InspectionItem) -> bool:
-    return str(getattr(item, "algorithm_code", "") or "").strip() in LINE_DISTANCE_ALGORITHMS
+    algorithm = str(getattr(item, "algorithm_code", "") or "").strip()
+    return algorithm in LINE_DISTANCE_ALGORITHMS or algorithm == POINT_LINE_DISTANCE_ALGORITHM
 
 
 def _group_inspection_items(items: List[InspectionItem], algo) -> InspectionItemGroups:
@@ -281,7 +323,7 @@ def _predict_grouped_items_from_path(
             algorithm_override=item.algorithm_code,
             model_key_override=item.effective_model_key,
         )
-    for item in groups.measurement:
+    for item in _measurement_execution_order(groups.measurement):
         roi_label = str(item.roi_label or "").strip()
         rows_by_key[item.model_key] = predict_image(
             path,
@@ -289,7 +331,9 @@ def _predict_grouped_items_from_path(
             labels_override=[roi_label] if roi_label else None,
             algorithm_override=item.algorithm_code,
             model_key_override=item.model_key,
-            params_override=dict(item.params or {}),
+            params_override=_measurement_execution_params(
+                item, groups.measurement, rows_by_key
+            ),
         )
     return [dict(rows_by_key[item.model_key]) for item in groups.enabled]
 
@@ -328,6 +372,8 @@ def _predict_learning_items_batch_rows_from_frame(
     feat_net=None,
     timing_breakdown: Dict[str, object] | None = None,
 ) -> Dict[str, Dict[str, object]]:
+    if not items:
+        return {}
     # Import the embedding helper on demand so startup does not pull torch/torchvision
     # before the main window is visible.
     from algorithms.embedding import embed_batch_from_array
@@ -817,9 +863,11 @@ class ProductRuntimeContext:
                 total_ms=item_infer_ms,
                 roi_label=str(metrics.get("roi_label", "") or ""),
             )
-        for item in measurement_items:
+        for item in _measurement_execution_order(measurement_items):
             item_infer_t0 = time.perf_counter()
-            params = dict(item.params or {})
+            params = _measurement_execution_params(
+                item, measurement_items, rows_by_key
+            )
             algorithm = self.algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
             measurement_payload_override = None
             if algorithm in FIND_LINE_ALGORITHMS:
@@ -842,6 +890,146 @@ class ProductRuntimeContext:
                     f" residual={residual:.3f}"
                 )
                 unit = "px"
+            elif algorithm == MULTI_PIN_TIP_HEIGHT_ALGORITHM:
+                roi_label = str(item.roi_label or "").strip() or "roi"
+                try:
+                    measurement = measure_multi_pin_tip_height_from_array(
+                        image,
+                        shape_by_label=shape_by_label,
+                        preferred_label=roi_label,
+                        params=params,
+                    )
+                    measurement_payload_override = multi_pin_tip_judgment_payload(
+                        measurement, params
+                    )
+                    pred = str(measurement_payload_override["pred"])
+                    distances = tuple(
+                        float(value)
+                        for value in measurement_payload_override["distances"]
+                    )
+                    spacing_values = tuple(
+                        float(value)
+                        for value in measurement_payload_override["spacing_values"]
+                    )
+                    lower = measurement_payload_override.get("lower_limit")
+                    upper = measurement_payload_override.get("upper_limit")
+                    unit = str(measurement_payload_override["unit"])
+                    height_enabled = bool(
+                        measurement_payload_override["height_check_enabled"]
+                    )
+                    spacing_enabled = bool(
+                        measurement_payload_override["spacing_check_enabled"]
+                    )
+                    minimum = min(distances) if distances else 0.0
+                    maximum = max(distances) if distances else 0.0
+                    residual = float(maximum - minimum) if height_enabled else 0.0
+                    judged_value = (
+                        float(maximum)
+                        if height_enabled and distances
+                        else float(max(spacing_values))
+                        if spacing_values
+                        else None
+                    )
+                    detected = len(distances)
+                    expected = int(measurement.expected_pin_count)
+                    failed_indexes = [
+                        int(value["index"])
+                        for value in measurement_payload_override["pin_results"]
+                        if value["pred"] == "NG"
+                    ]
+                    failed_gaps = [
+                        f"P{value['from_pin']}-P{value['to_pin']}"
+                        for value in measurement_payload_override["spacing_results"]
+                        if value["pred"] == "NG"
+                    ]
+                    modes = "+".join(
+                        name
+                        for name, enabled in (
+                            ("height", height_enabled),
+                            ("spacing", spacing_enabled),
+                        )
+                        if enabled
+                    )
+                    detail = f"multi_pin_count={detected}/{expected} mode={modes}"
+                    if height_enabled:
+                        detail += (
+                            f" heights={minimum:.3f}..{maximum:.3f}{unit}"
+                            f" values=[{','.join(f'{value:.3f}' for value in distances)}]"
+                        )
+                    if failed_indexes:
+                        detail += f" height_ng={failed_indexes}"
+                    if spacing_enabled:
+                        detail += (
+                            f" spacings=[{','.join(f'{value:.3f}' for value in spacing_values)}]{unit}"
+                        )
+                        if failed_gaps:
+                            detail += f" spacing_ng={failed_gaps}"
+                        if not measurement_payload_override["spacing_config_ok"]:
+                            detail += " spacing_specs=incomplete"
+                except RuntimeError as exc:
+                    measurement = None
+                    pred = "NG"
+                    judged_value = None
+                    lower = None
+                    upper = None
+                    residual = 0.0
+                    unit = str(params.get("limit_unit", "px") or "px")
+                    detail = f"multi_pin_tip_failed: {exc}"
+                    measurement_payload_override = {
+                        "type": MULTI_PIN_TIP_HEIGHT_ALGORITHM,
+                        "roi_label": roi_label,
+                        "expected_pin_count": max(
+                            1, int(params.get("expected_pin_count", 20) or 20)
+                        ),
+                        "detected_pin_count": 0,
+                        "height_check_enabled": bool(
+                            params.get("height_check_enabled", True)
+                        ),
+                        "spacing_check_enabled": bool(
+                            params.get("spacing_check_enabled", False)
+                        ),
+                        "center_points": [],
+                        "pin_results": [],
+                        "spacing_results": [],
+                        "in_spec_points": [],
+                        "out_of_spec_points": [],
+                        "pred": pred,
+                        "detail": str(exc),
+                    }
+            elif algorithm == PIN_TIP_POINT_ALGORITHM:
+                judged_value = None
+                lower = None
+                upper = None
+                residual = 0.0
+                unit = "px"
+                roi_label = str(item.roi_label or "").strip() or "roi"
+                try:
+                    measurement = measure_pin_tip_point_from_array(
+                        image,
+                        shape_by_label=shape_by_label,
+                        preferred_label=roi_label,
+                        params=params,
+                    )
+                    pred = "OK"
+                    detail = (
+                        f"pin_tip=({measurement.point_xy[0]:.3f},"
+                        f"{measurement.point_xy[1]:.3f})px"
+                        f" confidence={measurement.confidence:.3f}"
+                        f" residual={measurement.fit_residual:.3f}px"
+                    )
+                    measurement_payload_override = None
+                except RuntimeError as exc:
+                    pred = "NG"
+                    detail = f"pin_tip_missing: {exc}"
+                    measurement = None
+                    measurement_payload_override = {
+                        "type": PIN_TIP_POINT_ALGORITHM,
+                        "roi_label": roi_label,
+                        "center_points": [],
+                        "edge_points": [],
+                        "pred": pred,
+                        "detail": str(exc),
+                    }
             elif algorithm == BRIGHT_BLOCK_CENTER_ALGORITHM:
                 judged_value = None
                 lower = None
@@ -947,7 +1135,7 @@ class ProductRuntimeContext:
                         "pred": pred,
                     }
                 )
-            elif algorithm == BRIGHT_BLOCK_CENTER_ALGORITHM:
+            elif algorithm in {BRIGHT_BLOCK_CENTER_ALGORITHM, PIN_TIP_POINT_ALGORITHM}:
                 measurement_payload.update({"pred": pred})
             rows_by_key[item.model_key]["measurement"] = measurement_payload
 

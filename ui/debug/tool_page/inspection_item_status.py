@@ -10,6 +10,9 @@ from ui.debug.tool_page.measurement_algorithms import (
     is_bright_block_y_distance_algorithm,
     is_center_distance_algorithm,
     is_line_distance_algorithm,
+    is_multi_pin_tip_height_algorithm,
+    is_pin_tip_point_algorithm,
+    is_point_line_distance_algorithm,
     is_single_roi_distance_algorithm,
     public_algorithm_code,
 )
@@ -86,6 +89,20 @@ def _inspection_item_status(tool_page, inspection_item):
                 f"Measures distance from {line_a} to {line_b} and judges OK/NG from lower/upper limits."
             )
             return (f"{line_a} -> {line_b}" if ready else "Select lines"), tooltip, "#79d279" if ready else "#d98c8c"
+        if is_point_line_distance_algorithm(algorithm):
+            params = dict(getattr(inspection_item, "params", {}) or {})
+            point_item = str(params.get("point_item_id", "") or "").strip() or "-"
+            line_item = str(params.get("line_item_id", "") or "").strip() or "-"
+            ready = point_item != "-" and line_item != "-"
+            tooltip = (
+                f"Algorithm: {tool_page.algo.algorithm_display_name(algorithm) or algorithm}\n"
+                f"Measures the perpendicular distance from point {point_item} to line {line_item}."
+            )
+            return (
+                f"[点] {point_item} -> [线] {line_item}" if ready else "Select point and line",
+                tooltip,
+                "#79d279" if ready else "#d98c8c",
+            )
         if is_center_distance_algorithm(algorithm):
             display_algorithm = public_algorithm_code(algorithm)
             params = dict(getattr(inspection_item, "params", {}) or {})
@@ -121,6 +138,35 @@ def _inspection_item_status(tool_page, inspection_item):
                 "Finds one bright block center inside the ROI for downstream center distance measurement."
             )
             return "Ready", tooltip, "#79d279"
+        if is_pin_tip_point_algorithm(algorithm):
+            display_algorithm = public_algorithm_code(algorithm)
+            tooltip = (
+                f"Algorithm: {tool_page.algo.algorithm_display_name(display_algorithm) or display_algorithm}\n"
+                "Finds the lowest point of one dark rounded pin tip inside the ROI."
+            )
+            return "Ready", tooltip, "#79d279"
+        if is_multi_pin_tip_height_algorithm(algorithm):
+            display_algorithm = public_algorithm_code(algorithm)
+            params = dict(getattr(inspection_item, "params", {}) or {})
+            expected = max(1, int(params.get("expected_pin_count", 20) or 20))
+            height_enabled = str(params.get("height_check_enabled", True)).strip().lower() not in {
+                "0", "false", "no", "off", "disabled"
+            }
+            spacing_enabled = str(params.get("spacing_check_enabled", False)).strip().lower() in {
+                "1", "true", "yes", "on", "enabled"
+            }
+            mode_text = "+".join(
+                value
+                for value, enabled in (("高度", height_enabled), ("间距", spacing_enabled))
+                if enabled
+            ) or "高度"
+            tooltip = (
+                f"Algorithm: {tool_page.algo.algorithm_display_name(display_algorithm) or display_algorithm}\n"
+                "Finds all dark pin tips and independently checks tip height, adjacent spacing, or both."
+            )
+            reference_id = str(params.get("reference_line_item_id", "") or "").strip()
+            reference_text = f" / [线] {reference_id}" if reference_id else " / auto"
+            return f"Ready / {mode_text} / expected {expected}{reference_text}", tooltip, "#79d279"
         display_algorithm = public_algorithm_code(algorithm)
         tooltip = (
             f"Algorithm: {tool_page.algo.algorithm_display_name(display_algorithm) or display_algorithm}\n"

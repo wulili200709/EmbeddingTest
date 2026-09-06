@@ -18,7 +18,10 @@ from algorithms.measurement_types import (
     LINE_DISTANCE_ALGORITHMS,
     LINE_DISTANCE_REF_NORMAL_ALGORITHM,
     MEASUREMENT_ALGORITHMS,
+    MULTI_PIN_TIP_HEIGHT_ALGORITHM,
     PIN_CENTER_DISTANCE_ALGORITHM,
+    PIN_TIP_POINT_ALGORITHM,
+    POINT_LINE_DISTANCE_ALGORITHM,
     BrightBlockCenterResult,
     EdgeDistanceConfig,
     EdgeDistanceResult,
@@ -29,6 +32,10 @@ from algorithms.measurement_types import (
     PinCenterCandidate,
     PinCenterDistanceConfig,
     PinCenterDistanceResult,
+    PinTipPointConfig,
+    PinTipPointResult,
+    MultiPinTipHeightConfig,
+    MultiPinTipHeightResult,
     is_measurement_algorithm,
 )
 from algorithms.measurement_lines import (
@@ -54,6 +61,8 @@ from algorithms.measurement_pin_center import (
     _select_bright_block_y_pair,
     _select_pin_center_pair,
 )
+from algorithms.measurement_pin_tip import locate_pin_tip_in_crop
+from algorithms.measurement_multi_pin_tip import locate_multi_pin_tips_in_crop
 
 
 def _shape_from_labels(shape_by_label: Mapping[str, dict], preferred_label: str) -> tuple[str, dict]:
@@ -170,6 +179,117 @@ def measure_bright_block_center_from_array(
         candidates=candidates,
         threshold=float(threshold),
         orientation=orientation,
+        roi_xywh=(int(ox), int(oy), int(crop.shape[1]), int(crop.shape[0])),
+    )
+
+
+def measure_pin_tip_point_from_array(
+    image_bgr: np.ndarray,
+    *,
+    shape_by_label: Mapping[str, dict],
+    preferred_label: str = "roi1",
+    params: Mapping[str, Any] | None = None,
+) -> PinTipPointResult:
+    config = PinTipPointConfig.from_params(params, roi_label=preferred_label)
+    roi_label, shape = _shape_from_labels(shape_by_label, config.roi_label or preferred_label)
+    crop, mask, origin = _crop_from_shape(image_bgr, shape)
+    located = locate_pin_tip_in_crop(crop, mask, config=config)
+    ox, oy = origin
+    local_point = located["point_xy"]
+    local_bbox = located["component_bbox_xywh"]
+    local_edges = located["edge_points"]
+    point_xy = (float(local_point[0]) + ox, float(local_point[1]) + oy)
+    bbox_xywh = (
+        int(local_bbox[0]) + ox,
+        int(local_bbox[1]) + oy,
+        int(local_bbox[2]),
+        int(local_bbox[3]),
+    )
+    edge_points = tuple(
+        (float(point[0]) + ox, float(point[1]) + oy)
+        for point in local_edges
+    )
+    return PinTipPointResult(
+        roi_label=roi_label,
+        point_xy=point_xy,
+        axis_direction=(
+            float(located["axis_direction"][0]),
+            float(located["axis_direction"][1]),
+        ),
+        threshold=float(located["threshold"]),
+        confidence=float(located["confidence"]),
+        fit_residual=float(located["fit_residual"]),
+        component_area_px=float(located["component_area_px"]),
+        component_bbox_xywh=bbox_xywh,
+        edge_points=edge_points,
+        roi_xywh=(int(ox), int(oy), int(crop.shape[1]), int(crop.shape[0])),
+    )
+
+
+def measure_multi_pin_tip_height_from_array(
+    image_bgr: np.ndarray,
+    *,
+    shape_by_label: Mapping[str, dict],
+    preferred_label: str = "roi1",
+    params: Mapping[str, Any] | None = None,
+) -> MultiPinTipHeightResult:
+    config = MultiPinTipHeightConfig.from_params(params, roi_label=preferred_label)
+    roi_label, shape = _shape_from_labels(shape_by_label, config.roi_label or preferred_label)
+    crop, mask, origin = _crop_from_shape(image_bgr, shape)
+    payload = dict(params or {})
+    reference_segment = payload.get("_reference_line_segment")
+    if str(payload.get("reference_line_item_id", "") or "").strip() and reference_segment is None:
+        raise RuntimeError("selected reference line is missing, disabled or failed")
+    if reference_segment is not None:
+        endpoints = np.asarray(reference_segment, dtype=np.float64)
+        if endpoints.shape != (2, 2) or not np.isfinite(endpoints).all():
+            raise RuntimeError("invalid reference line result")
+        reference_segment = tuple(
+            (float(x) - origin[0], float(y) - origin[1]) for x, y in endpoints
+        )
+    located = locate_multi_pin_tips_in_crop(
+        crop, mask, config=config, reference_segment=reference_segment,
+    )
+    ox, oy = origin
+    local_line = located["reference_line"]
+    local_segment = located["reference_line_segment"]
+    candidates = list(located["candidates"])
+    return MultiPinTipHeightResult(
+        roi_label=roi_label,
+        expected_pin_count=config.expected_pin_count,
+        tip_points=tuple(
+            (float(candidate["point_xy"][0]) + ox, float(candidate["point_xy"][1]) + oy)
+            for candidate in candidates
+        ),
+        distances_px=tuple(float(candidate["distance_px"]) for candidate in candidates),
+        spacings_px=tuple(
+            float(candidates[index + 1]["order_position"])
+            - float(candidates[index]["order_position"])
+            for index in range(max(0, len(candidates) - 1))
+        ),
+        reference_line=FittedLine(
+            vx=float(local_line.vx),
+            vy=float(local_line.vy),
+            x0=float(local_line.x0) + ox,
+            y0=float(local_line.y0) + oy,
+            residual=float(local_line.residual),
+            point_count=int(local_line.point_count),
+        ),
+        reference_line_segment=(
+            (float(local_segment[0][0]) + ox, float(local_segment[0][1]) + oy),
+            (float(local_segment[1][0]) + ox, float(local_segment[1][1]) + oy),
+        ),
+        threshold=float(located["threshold"]),
+        fit_residuals=tuple(float(candidate["fit_residual"]) for candidate in candidates),
+        component_boxes_xywh=tuple(
+            (
+                int(candidate["bbox_xywh"][0]) + ox,
+                int(candidate["bbox_xywh"][1]) + oy,
+                int(candidate["bbox_xywh"][2]),
+                int(candidate["bbox_xywh"][3]),
+            )
+            for candidate in candidates
+        ),
         roi_xywh=(int(ox), int(oy), int(crop.shape[1]), int(crop.shape[0])),
     )
 
@@ -478,6 +598,68 @@ def measure_bright_block_center(
     )
 
 
+def measure_pin_tip_point(
+    img_path: str,
+    *,
+    preferred_label: str = "roi1",
+    params: Mapping[str, Any] | None = None,
+) -> PinTipPointResult:
+    if not os.path.exists(img_path):
+        raise FileNotFoundError(img_path)
+    from common.labelme_io import labelme_json_of_image, read_shape_from_labelme
+
+    jpath = labelme_json_of_image(img_path)
+    if not os.path.exists(jpath):
+        raise FileNotFoundError(f"Missing labelme json: {jpath}")
+    label = str(preferred_label or "").strip() or "roi1"
+    shape = read_shape_from_labelme(jpath, label)
+    if shape is None:
+        label = "roi"
+        shape = read_shape_from_labelme(jpath, label)
+    if shape is None:
+        raise RuntimeError(f"{os.path.basename(img_path)} missing {preferred_label}/roi")
+    image = cv2.imread(img_path, cv2.IMREAD_COLOR)
+    if image is None:
+        raise FileNotFoundError(img_path)
+    return measure_pin_tip_point_from_array(
+        image,
+        shape_by_label={label: shape},
+        preferred_label=label,
+        params=params,
+    )
+
+
+def measure_multi_pin_tip_height(
+    img_path: str,
+    *,
+    preferred_label: str = "roi1",
+    params: Mapping[str, Any] | None = None,
+) -> MultiPinTipHeightResult:
+    if not os.path.exists(img_path):
+        raise FileNotFoundError(img_path)
+    from common.labelme_io import labelme_json_of_image, read_shape_from_labelme
+
+    jpath = labelme_json_of_image(img_path)
+    if not os.path.exists(jpath):
+        raise FileNotFoundError(f"Missing labelme json: {jpath}")
+    label = str(preferred_label or "").strip() or "roi1"
+    shape = read_shape_from_labelme(jpath, label)
+    if shape is None:
+        label = "roi"
+        shape = read_shape_from_labelme(jpath, label)
+    if shape is None:
+        raise RuntimeError(f"{os.path.basename(img_path)} missing {preferred_label}/roi")
+    image = cv2.imread(img_path, cv2.IMREAD_COLOR)
+    if image is None:
+        raise FileNotFoundError(img_path)
+    return measure_multi_pin_tip_height_from_array(
+        image,
+        shape_by_label={label: shape},
+        preferred_label=label,
+        params=params,
+    )
+
+
 def measure_bright_block_y_distance(
     img_path: str,
     *,
@@ -543,7 +725,7 @@ def measure_find_line(
 
 
 def measurement_value(
-    result: EdgeDistanceResult | FindLineMeasurementResult | PinCenterDistanceResult | BrightBlockCenterResult,
+    result: EdgeDistanceResult | FindLineMeasurementResult | PinCenterDistanceResult | BrightBlockCenterResult | PinTipPointResult | MultiPinTipHeightResult,
     algorithm: object,
 ) -> float:
     key = str(algorithm or "").strip().lower()
@@ -557,6 +739,10 @@ def measurement_value(
         return float(result.distance_px)
     if key == BRIGHT_BLOCK_CENTER_ALGORITHM and isinstance(result, BrightBlockCenterResult):
         return float(result.center_xy[1])
+    if key == PIN_TIP_POINT_ALGORITHM and isinstance(result, PinTipPointResult):
+        return float(result.point_xy[1])
+    if key == MULTI_PIN_TIP_HEIGHT_ALGORITHM and isinstance(result, MultiPinTipHeightResult):
+        return max((float(value) for value in result.distances_px), default=0.0)
     raise ValueError(f"Unsupported measurement algorithm: {algorithm}")
 
 
@@ -642,6 +828,172 @@ def judge_pin_center_distance(
     return ("OK" if ok else "NG"), value, lower, upper, unit
 
 
+def judge_multi_pin_tip_height(
+    result: MultiPinTipHeightResult,
+    params: Mapping[str, Any] | None = None,
+) -> tuple[str, tuple[float, ...], float | None, float | None, str, tuple[bool, ...]]:
+    evaluation = evaluate_multi_pin_tip_height(result, params)
+    return (
+        str(evaluation["pred"]),
+        tuple(evaluation["height_values"]),
+        evaluation["height_lower_limit"],
+        evaluation["height_upper_limit"],
+        str(evaluation["unit"]),
+        tuple(evaluation["height_in_spec"]),
+    )
+
+
+def evaluate_multi_pin_tip_height(
+    result: MultiPinTipHeightResult,
+    params: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    config = MultiPinTipHeightConfig.from_params(params, roi_label=result.roi_label)
+    unit = config.limit_unit
+    if unit == "mm":
+        if config.pixel_size_mm <= 0.0:
+            raise RuntimeError("pixel_size_mm is required when multi-pin limits use mm")
+        height_values = tuple(float(value) * config.pixel_size_mm for value in result.distances_px)
+        spacing_values = tuple(float(value) * config.pixel_size_mm for value in result.spacings_px)
+    else:
+        unit = "px"
+        height_values = tuple(float(value) for value in result.distances_px)
+        spacing_values = tuple(float(value) for value in result.spacings_px)
+    height_in_spec = tuple(
+        not config.height_check_enabled
+        or (
+            (config.lower_limit is None or value >= config.lower_limit)
+            and (config.upper_limit is None or value <= config.upper_limit)
+        )
+        for value in height_values
+    )
+    spacing_results: list[dict[str, Any]] = []
+    for index, value in enumerate(spacing_values):
+        spec = config.spacing_specs[index] if index < len(config.spacing_specs) else None
+        nominal = float(spec[0]) if spec is not None else None
+        lower_tolerance = float(spec[1]) if spec is not None else None
+        upper_tolerance = float(spec[2]) if spec is not None else None
+        lower_limit = nominal - lower_tolerance if spec is not None else None
+        upper_limit = nominal + upper_tolerance if spec is not None else None
+        configured = spec is not None
+        ok = (
+            not config.spacing_check_enabled
+            or (
+                configured
+                and lower_limit is not None
+                and upper_limit is not None
+                and value >= lower_limit
+                and value <= upper_limit
+            )
+        )
+        spacing_results.append(
+            {
+                "index": index + 1,
+                "from_pin": index + 1,
+                "to_pin": index + 2,
+                "distance": float(value),
+                "nominal": nominal,
+                "lower_tolerance": lower_tolerance,
+                "upper_tolerance": upper_tolerance,
+                "lower_limit": lower_limit,
+                "upper_limit": upper_limit,
+                "unit": unit,
+                "configured": configured,
+                "pred": "OK" if ok else "NG",
+            }
+        )
+    count_ok = len(height_values) == int(config.expected_pin_count)
+    expected_spacing_count = max(0, int(config.expected_pin_count) - 1)
+    spacing_config_ok = len(config.spacing_specs) >= expected_spacing_count
+    spacing_count_ok = len(spacing_values) == expected_spacing_count
+    spacing_ok = (
+        not config.spacing_check_enabled
+        or (
+            spacing_config_ok
+            and spacing_count_ok
+            and all(item["pred"] == "OK" for item in spacing_results)
+        )
+    )
+    height_ok = not config.height_check_enabled or all(height_in_spec)
+    pred = "OK" if count_ok and height_ok and spacing_ok else "NG"
+    return {
+        "pred": pred,
+        "unit": unit,
+        "height_check_enabled": bool(config.height_check_enabled),
+        "spacing_check_enabled": bool(config.spacing_check_enabled),
+        "height_values": height_values,
+        "height_in_spec": height_in_spec,
+        "height_lower_limit": config.lower_limit,
+        "height_upper_limit": config.upper_limit,
+        "spacing_values": spacing_values,
+        "spacing_results": tuple(spacing_results),
+        "count_ok": count_ok,
+        "spacing_count_ok": spacing_count_ok,
+        "spacing_config_ok": spacing_config_ok,
+    }
+
+
+def multi_pin_tip_judgment_payload(
+    result: MultiPinTipHeightResult,
+    params: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    evaluation = evaluate_multi_pin_tip_height(result, params)
+    unit = str(evaluation["unit"])
+    height_values = tuple(float(value) for value in evaluation["height_values"])
+    height_in_spec = tuple(bool(value) for value in evaluation["height_in_spec"])
+    height_enabled = bool(evaluation["height_check_enabled"])
+    spacing_enabled = bool(evaluation["spacing_check_enabled"])
+    pin_results = [
+        {
+            "index": index + 1,
+            "point": [float(point[0]), float(point[1])],
+            "distance": float(height_values[index]),
+            "unit": unit,
+            "pred": "OK" if height_in_spec[index] else "NG",
+        }
+        for index, point in enumerate(result.tip_points)
+    ]
+    spacing_results: list[dict[str, Any]] = []
+    for raw in evaluation["spacing_results"]:
+        item = dict(raw)
+        index = int(item["index"]) - 1
+        if 0 <= index < len(result.tip_points) - 1:
+            item["point_a"] = [
+                float(result.tip_points[index][0]), float(result.tip_points[index][1])
+            ]
+            item["point_b"] = [
+                float(result.tip_points[index + 1][0]), float(result.tip_points[index + 1][1])
+            ]
+        spacing_results.append(item)
+    minimum = min(height_values) if height_values else 0.0
+    maximum = max(height_values) if height_values else 0.0
+    spacing_values = tuple(float(value) for value in evaluation["spacing_values"])
+    payload = result.to_dict()
+    payload.update(
+        {
+            "distances": list(height_values),
+            "unit": unit,
+            "lower_limit": evaluation["height_lower_limit"],
+            "upper_limit": evaluation["height_upper_limit"],
+            "height_check_enabled": height_enabled,
+            "spacing_check_enabled": spacing_enabled,
+            "pin_results": pin_results,
+            "spacing_values": list(spacing_values),
+            "spacing_results": spacing_results,
+            "spacing_count_ok": bool(evaluation["spacing_count_ok"]),
+            "spacing_config_ok": bool(evaluation["spacing_config_ok"]),
+            "in_spec_points": [item["point"] for item in pin_results if item["pred"] == "OK"],
+            "out_of_spec_points": [item["point"] for item in pin_results if item["pred"] == "NG"],
+            "label": (
+                f"{minimum:.3f}..{maximum:.3f}{unit}"
+                if height_enabled
+                else f"spacing {min(spacing_values, default=0.0):.3f}..{max(spacing_values, default=0.0):.3f}{unit}"
+            ),
+            "pred": str(evaluation["pred"]),
+        }
+    )
+    return payload
+
+
 def judge_bright_block_y_distance(
     result: PinCenterDistanceResult,
     params: Mapping[str, Any] | None = None,
@@ -659,6 +1011,9 @@ __all__ = [
     "FIND_LINE_ALGORITHMS",
     "FIND_LINE_SUBPIX_ALGORITHM",
     "PIN_CENTER_DISTANCE_ALGORITHM",
+    "PIN_TIP_POINT_ALGORITHM",
+    "MULTI_PIN_TIP_HEIGHT_ALGORITHM",
+    "POINT_LINE_DISTANCE_ALGORITHM",
     "LINE_DISTANCE_ALGORITHM",
     "LINE_DISTANCE_ALGORITHMS",
     "LINE_DISTANCE_REF_NORMAL_ALGORITHM",
@@ -672,6 +1027,10 @@ __all__ = [
     "PinCenterCandidate",
     "PinCenterDistanceConfig",
     "PinCenterDistanceResult",
+    "PinTipPointConfig",
+    "PinTipPointResult",
+    "MultiPinTipHeightConfig",
+    "MultiPinTipHeightResult",
     "find_edge_points",
     "filter_line_points",
     "fit_line",
@@ -681,6 +1040,9 @@ __all__ = [
     "judge_bright_block_y_distance",
     "judge_find_line",
     "judge_pin_center_distance",
+    "judge_multi_pin_tip_height",
+    "evaluate_multi_pin_tip_height",
+    "multi_pin_tip_judgment_payload",
     "measure_bright_block_center",
     "measure_bright_block_center_from_array",
     "measure_bright_block_y_distance",
@@ -691,5 +1053,9 @@ __all__ = [
     "measure_find_line_from_array",
     "measure_pin_center_distance",
     "measure_pin_center_distance_from_array",
+    "measure_pin_tip_point",
+    "measure_pin_tip_point_from_array",
+    "measure_multi_pin_tip_height",
+    "measure_multi_pin_tip_height_from_array",
     "measurement_value",
 ]

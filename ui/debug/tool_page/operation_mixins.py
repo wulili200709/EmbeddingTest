@@ -74,6 +74,7 @@ class ToolPageOperationsMixin:
     _update_learning_backbone_hint = tool_config._update_learning_backbone_hint
     _update_measurement_params_panel = tool_config._update_measurement_params_panel
     _on_measurement_params_changed = tool_config._on_measurement_params_changed
+    _edit_multi_pin_spacing_specs = tool_config._edit_multi_pin_spacing_specs
     _on_inspection_items_table_item_changed = tool_config._on_inspection_items_table_item_changed
     _on_inspection_item_camera_changed = tool_config._on_inspection_item_camera_changed
     _on_inspection_item_algorithm_changed = tool_config._on_inspection_item_algorithm_changed

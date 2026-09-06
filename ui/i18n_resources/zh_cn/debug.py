@@ -459,4 +459,30 @@ TRANSLATIONS: dict[str, str] = {'debug.algorithm.pin_center_distance': '针尖�
  'debug.lite_no_capture_plan': '轻量版未加载相机采集方案。',
  'debug.lite_no_io': '轻量版未加载DI/DO调试模块。'}
 
+TRANSLATIONS.update({
+    'debug.algorithm.pin_tip_point': '针尖点',
+    'debug.algorithm.multi_pin_tip_height': '多针尖距离检测',
+    'debug.algorithm.point_line_distance': '点到线距离',
+    'debug.measurement.point_tool': '点工具',
+    'debug.measurement.reference_line_tool': '基准线工具',
+    'debug.measurement.expected_pin_count': '预期针数',
+    'debug.measurement.min_arc_points': '最少圆弧点数',
+    'debug.measurement.min_arc_points_tooltip': '针尖轮廓参与拟合所需的最少点数；细针可设为 6～7，数值过低可能增加误检。',
+    'debug.measurement.check_content': '检测内容',
+    'debug.measurement.pin_height_check': '针尖到基准线',
+    'debug.measurement.pin_spacing_check': '相邻针间距',
+    'debug.measurement.pin_spacing': '针间距',
+    'debug.measurement.spacing_configure': '设置各针间距…',
+    'debug.measurement.spacing_configure_count': '设置各针间距（{count}项）…',
+    'debug.measurement.spacing_dialog_title': '相邻针间距设置',
+    'debug.measurement.spacing_dialog_hint': '预期 {pins} 根针，共 {gaps} 个相邻间距。每项范围 = 标准值 - 下公差 ～ 标准值 + 上公差，单位：{unit}。',
+    'debug.measurement.spacing_position': '位置',
+    'debug.measurement.spacing_nominal': '标准值',
+    'debug.measurement.spacing_lower_tolerance': '下公差',
+    'debug.measurement.spacing_upper_tolerance': '上公差',
+    'debug.measurement.spacing_range': '有效范围',
+    'debug.measurement.spacing_apply_all': '应用到全部',
+    'debug.measurement.auto_housing_edge': '自动找壳体下边缘（ROI需包含该边缘）',
+})
+
 __all__ = ["TRANSLATIONS"]

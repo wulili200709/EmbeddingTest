@@ -9,7 +9,10 @@ from algorithms.measurement import (
     FIND_LINE_ALGORITHMS,
     FIND_LINE_SUBPIX_ALGORITHM,
     LINE_DISTANCE_ALGORITHMS,
+    MULTI_PIN_TIP_HEIGHT_ALGORITHM,
     PIN_CENTER_DISTANCE_ALGORITHM,
+    PIN_TIP_POINT_ALGORITHM,
+    POINT_LINE_DISTANCE_ALGORITHM,
 )
 from common.algorithm_codes import normalize_tool_algorithm_code
 
@@ -32,6 +35,18 @@ def is_bright_block_y_distance_algorithm(algorithm: object) -> bool:
 
 def is_bright_block_center_algorithm(algorithm: object) -> bool:
     return str(algorithm or "").strip() == BRIGHT_BLOCK_CENTER_ALGORITHM
+
+
+def is_pin_tip_point_algorithm(algorithm: object) -> bool:
+    return str(algorithm or "").strip() == PIN_TIP_POINT_ALGORITHM
+
+
+def is_multi_pin_tip_height_algorithm(algorithm: object) -> bool:
+    return str(algorithm or "").strip() == MULTI_PIN_TIP_HEIGHT_ALGORITHM
+
+
+def is_point_line_distance_algorithm(algorithm: object) -> bool:
+    return str(algorithm or "").strip() == POINT_LINE_DISTANCE_ALGORITHM
 
 
 def is_center_distance_algorithm(algorithm: object) -> bool:
@@ -57,6 +72,12 @@ def public_algorithm_code(algorithm: object) -> str:
         return normalized
     if normalized == BRIGHT_BLOCK_CENTER_ALGORITHM:
         return normalized
+    if normalized == PIN_TIP_POINT_ALGORITHM:
+        return normalized
+    if normalized == MULTI_PIN_TIP_HEIGHT_ALGORITHM:
+        return normalized
+    if normalized == POINT_LINE_DISTANCE_ALGORITHM:
+        return normalized
     if normalized == BRIGHT_BLOCK_Y_DISTANCE_ALGORITHM:
         return normalized
     if normalized == CENTER_DISTANCE_ALGORITHM:
@@ -70,6 +91,7 @@ def hide_from_algorithm_picker(algorithm: object) -> bool:
     normalized = normalize_tool_algorithm_code(algorithm)
     return (
         normalized == FIND_LINE_SUBPIX_ALGORITHM
+        or normalized == POINT_LINE_DISTANCE_ALGORITHM
         or normalized in LINE_DISTANCE_ALGORITHMS
         or normalized in {
             PIN_CENTER_DISTANCE_ALGORITHM,

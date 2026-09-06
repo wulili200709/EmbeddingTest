@@ -135,7 +135,123 @@ def measurement_overlays_for_path(tool_page, img_path: str) -> List[OverlayShape
             else _MEASUREMENT_LINE_COLOR
         )
         measurement_type = str(measurement.get("type", "") or "")
-        if measurement_type in {"pin_center_distance", "bright_block_y_distance", "bright_block_center"}:
+        if measurement_type == "multi_pin_tip_height":
+            raw_reference = measurement.get("reference_line_segment", measurement.get("line_segment"))
+            if isinstance(raw_reference, (list, tuple)) and len(raw_reference) >= 2:
+                p0 = _point_tuple(raw_reference[0])
+                p1 = _point_tuple(raw_reference[1])
+                if p0 is not None and p1 is not None:
+                    overlays.append(
+                        OverlayShape(
+                            shape_type="segments",
+                            segments=[(p0, p1)],
+                            color=QtGui.QColor("#40C4FF"),
+                            width=2.0,
+                            dash=False,
+                        )
+                    )
+
+            def add_tip_crosshairs(key: str, color: str) -> bool:
+                raw_points = measurement.get(key)
+                parsed_points = []
+                if isinstance(raw_points, list):
+                    for raw_point in raw_points:
+                        parsed = _point_tuple(raw_point)
+                        if parsed is not None:
+                            parsed_points.append(parsed)
+                if not parsed_points:
+                    return False
+                overlays.append(
+                    OverlayShape(
+                        shape_type="crosshair",
+                        points=parsed_points,
+                        color=QtGui.QColor(color),
+                        width=7.0,
+                        dash=False,
+                    )
+                )
+                return True
+
+            has_judged_points = add_tip_crosshairs("in_spec_points", "#FFD54F")
+            has_judged_points = add_tip_crosshairs("out_of_spec_points", "#FF5252") or has_judged_points
+            if not has_judged_points:
+                add_tip_crosshairs("center_points", "#FFD54F")
+
+            height_enabled = bool(measurement.get("height_check_enabled", True))
+            spacing_enabled = bool(measurement.get("spacing_check_enabled", False))
+            raw_pin_results = measurement.get("pin_results")
+            if height_enabled and isinstance(raw_pin_results, list):
+                for fallback_index, pin_result in enumerate(raw_pin_results, start=1):
+                    if not isinstance(pin_result, dict):
+                        continue
+                    point = _point_tuple(pin_result.get("point"))
+                    if point is None:
+                        continue
+                    try:
+                        distance = float(pin_result.get("distance"))
+                    except (TypeError, ValueError):
+                        continue
+                    index = int(pin_result.get("index", fallback_index) or fallback_index)
+                    unit = str(pin_result.get("unit", measurement.get("unit", "px")) or "px")
+                    precision = 3 if unit.lower() == "mm" else 1
+                    pin_pred = str(pin_result.get("pred", "") or "").strip().upper()
+                    label_color = "#FF5252" if pin_pred == "NG" else "#FFD54F"
+                    overlays.append(
+                        OverlayShape(
+                            shape_type="point_text",
+                            text=f"P{index}: {distance:.{precision}f}{unit}",
+                            text_pos=point,
+                            text_offset=(0.0, 12.0 + 18.0 * float((index - 1) % 2)),
+                            color=QtGui.QColor(label_color),
+                            width=10.0,
+                            dash=False,
+                        )
+                    )
+            raw_spacing_results = measurement.get("spacing_results")
+            if spacing_enabled and isinstance(raw_spacing_results, list):
+                for fallback_index, spacing_result in enumerate(raw_spacing_results, start=1):
+                    if not isinstance(spacing_result, dict):
+                        continue
+                    point_a = _point_tuple(spacing_result.get("point_a"))
+                    point_b = _point_tuple(spacing_result.get("point_b"))
+                    if point_a is None or point_b is None:
+                        continue
+                    try:
+                        distance = float(spacing_result.get("distance"))
+                    except (TypeError, ValueError):
+                        continue
+                    index = int(spacing_result.get("index", fallback_index) or fallback_index)
+                    unit = str(spacing_result.get("unit", measurement.get("unit", "px")) or "px")
+                    precision = 3 if unit.lower() == "mm" else 1
+                    gap_pred = str(spacing_result.get("pred", "") or "").strip().upper()
+                    gap_color = "#FF5252" if gap_pred == "NG" else "#00E676"
+                    overlays.append(
+                        OverlayShape(
+                            shape_type="segments",
+                            segments=[(point_a, point_b)],
+                            color=QtGui.QColor(gap_color),
+                            width=1.4,
+                            dash=False,
+                        )
+                    )
+                    midpoint = (
+                        (float(point_a[0]) + float(point_b[0])) * 0.5,
+                        (float(point_a[1]) + float(point_b[1])) * 0.5,
+                    )
+                    base_offset = 48.0 if height_enabled else 14.0
+                    overlays.append(
+                        OverlayShape(
+                            shape_type="point_text",
+                            text=f"P{index}-P{index + 1}: {distance:.{precision}f}{unit}",
+                            text_pos=midpoint,
+                            text_offset=(0.0, base_offset + 18.0 * float((index - 1) % 2)),
+                            color=QtGui.QColor(gap_color),
+                            width=10.0,
+                            dash=False,
+                        )
+                    )
+            continue
+        if measurement_type in {"pin_center_distance", "bright_block_y_distance", "bright_block_center", "pin_tip_point"}:
             raw_dimension = measurement.get("dimension_segment")
             dimension: Optional[Tuple[Tuple[float, float], Tuple[float, float]]] = None
             if isinstance(raw_dimension, (list, tuple)) and len(raw_dimension) >= 2:
@@ -185,15 +301,15 @@ def measurement_overlays_for_path(tool_page, img_path: str) -> List[OverlayShape
             if center_points:
                 overlays.append(
                     OverlayShape(
-                        shape_type="points",
+                        shape_type="crosshair" if measurement_type == "pin_tip_point" else "points",
                         points=center_points,
                         color=QtGui.QColor(_MEASUREMENT_POINT_COLOR),
-                        width=9.0,
+                        width=7.0 if measurement_type == "pin_tip_point" else 9.0,
                         dash=False,
                     )
                 )
             continue
-        if measurement_type in {"line_distance", "line_distance_ref_normal", "center_distance"}:
+        if measurement_type in {"line_distance", "line_distance_ref_normal", "center_distance", "point_line_distance"}:
             raw_dimension = measurement.get("dimension_segment")
             dimension: Optional[Tuple[Tuple[float, float], Tuple[float, float]]] = None
             if isinstance(raw_dimension, (list, tuple)) and len(raw_dimension) >= 2:
@@ -239,10 +355,10 @@ def measurement_overlays_for_path(tool_page, img_path: str) -> List[OverlayShape
             if center_points:
                 overlays.append(
                     OverlayShape(
-                        shape_type="points",
+                        shape_type="crosshair" if measurement_type == "point_line_distance" else "points",
                         points=center_points,
                         color=QtGui.QColor(_MEASUREMENT_POINT_COLOR),
-                        width=9.0,
+                        width=7.0 if measurement_type == "point_line_distance" else 9.0,
                         dash=False,
                     )
                 )

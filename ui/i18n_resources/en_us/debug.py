@@ -491,4 +491,30 @@ TRANSLATIONS: dict[str, str] = {'debug.algorithm.pin_center_distance': 'Pin Cent
  'debug.lite_no_capture_plan': 'The Lite edition does not include the camera capture plan.',
  'debug.lite_no_io': 'The Lite edition does not include the DI/DO debug module.'}
 
+TRANSLATIONS.update({
+    'debug.algorithm.pin_tip_point': 'Pin Tip Point',
+    'debug.algorithm.multi_pin_tip_height': 'Multi Pin Measurement',
+    'debug.algorithm.point_line_distance': 'Point-Line Distance',
+    'debug.measurement.point_tool': 'Point tool',
+    'debug.measurement.reference_line_tool': 'Reference line tool',
+    'debug.measurement.expected_pin_count': 'Expected pin count',
+    'debug.measurement.min_arc_points': 'Minimum arc points',
+    'debug.measurement.min_arc_points_tooltip': 'Minimum contour points used to fit a tip; use 6–7 for thin pins. Values that are too low may increase false detections.',
+    'debug.measurement.check_content': 'Checks',
+    'debug.measurement.pin_height_check': 'Tip to reference',
+    'debug.measurement.pin_spacing_check': 'Adjacent pin spacing',
+    'debug.measurement.pin_spacing': 'Pin spacing',
+    'debug.measurement.spacing_configure': 'Configure pin spacings…',
+    'debug.measurement.spacing_configure_count': 'Configure pin spacings ({count})…',
+    'debug.measurement.spacing_dialog_title': 'Adjacent Pin Spacing',
+    'debug.measurement.spacing_dialog_hint': '{pins} expected pins produce {gaps} adjacent gaps. Each range is nominal - lower tolerance through nominal + upper tolerance, in {unit}.',
+    'debug.measurement.spacing_position': 'Position',
+    'debug.measurement.spacing_nominal': 'Nominal',
+    'debug.measurement.spacing_lower_tolerance': 'Lower tolerance',
+    'debug.measurement.spacing_upper_tolerance': 'Upper tolerance',
+    'debug.measurement.spacing_range': 'Valid range',
+    'debug.measurement.spacing_apply_all': 'Apply to all',
+    'debug.measurement.auto_housing_edge': 'Auto housing lower edge (include edge in ROI)',
+})
+
 __all__ = ["TRANSLATIONS"]

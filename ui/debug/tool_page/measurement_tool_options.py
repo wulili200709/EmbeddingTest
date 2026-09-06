@@ -8,6 +8,7 @@ from ui.debug.tool_page.measurement_algorithms import (
     is_bright_block_center_algorithm as _is_bright_block_center_algorithm,
     is_find_line_algorithm as _is_find_line_algorithm,
     is_line_distance_algorithm as _is_line_distance_algorithm,
+    is_pin_tip_point_algorithm as _is_pin_tip_point_algorithm,
 )
 from ui.i18n import tr
 
@@ -119,7 +120,7 @@ def _line_item_options(tool_page, selected_item) -> list[tuple[str, str]]:
         if not _is_find_line_algorithm(algorithm):
             continue
         display = str(getattr(item, "display_name", "") or getattr(item, "roi_label", "") or item_id).strip()
-        options.append((display, item_id))
+        options.append((f"[线] {display}", item_id))
     return options
 
 
@@ -146,6 +147,32 @@ def _center_item_options(tool_page, selected_item) -> list[tuple[str, str]]:
             continue
         display = str(getattr(item, "display_name", "") or getattr(item, "roi_label", "") or item_id).strip()
         options.append((display, item_id))
+    return options
+
+
+def _point_item_options(tool_page, selected_item) -> list[tuple[str, str]]:
+    from ui.debug.tool_page.tool_config import _current_camera_role
+
+    current_role = str(getattr(selected_item, "camera_id", "") or _current_camera_role(tool_page)).strip() or "cam1"
+    current_id = str(getattr(selected_item, "item_id", "") or "").strip()
+    options: list[tuple[str, str]] = []
+    for item in list(getattr(tool_page, "inspection_items", []) or []):
+        if str(getattr(item, "camera_id", "") or "").strip() != current_role:
+            continue
+        item_id = str(getattr(item, "item_id", "") or "").strip()
+        if not item_id or item_id == current_id:
+            continue
+        algorithm = str(
+            tool_page.algo.resolve_tool_algorithm(
+                getattr(item, "algorithm_code", ""),
+                getattr(item, "camera_id", current_role),
+            )
+            or ""
+        ).strip()
+        if not _is_pin_tip_point_algorithm(algorithm):
+            continue
+        display = str(getattr(item, "display_name", "") or getattr(item, "roi_label", "") or item_id).strip()
+        options.append((f"[点] {display}", item_id))
     return options
 
 

@@ -25,16 +25,22 @@ from algorithms.measurement import (
     FIND_LINE_ALGORITHMS,
     LINE_DISTANCE_ALGORITHMS,
     MEASUREMENT_ALGORITHMS,
+    MULTI_PIN_TIP_HEIGHT_ALGORITHM,
     PIN_CENTER_DISTANCE_ALGORITHM,
+    PIN_TIP_POINT_ALGORITHM,
+    POINT_LINE_DISTANCE_ALGORITHM,
     is_measurement_algorithm,
     judge_bright_block_y_distance,
     judge_edge_distance,
     judge_pin_center_distance,
+    multi_pin_tip_judgment_payload,
     measure_bright_block_center,
     measure_bright_block_y_distance,
     measure_edge_distance,
     measure_find_line,
     measure_pin_center_distance,
+    measure_pin_tip_point,
+    measure_multi_pin_tip_height,
 )
 from common.algorithm_codes import (
     DEFAULT_LEARNING_BACKBONE,
@@ -858,8 +864,121 @@ class AlgorithmController:
                 threshold = None
             elif algorithm in LINE_DISTANCE_ALGORITHMS:
                 raise RuntimeError("Line Distance must be run with paired Find Line tools")
+            elif algorithm == POINT_LINE_DISTANCE_ALGORITHM:
+                raise RuntimeError("Point-Line Distance must be run with a Point tool and a Find Line tool")
             elif algorithm == CENTER_DISTANCE_ALGORITHM:
                 raise RuntimeError("Center Distance must be run with paired Bright Block Center tools")
+            elif algorithm == MULTI_PIN_TIP_HEIGHT_ALGORITHM:
+                roi_label = labels[0] if labels else "roi1"
+                try:
+                    measurement = measure_multi_pin_tip_height(
+                        path,
+                        preferred_label=roi_label,
+                        params=params,
+                    )
+                    measurement_payload = multi_pin_tip_judgment_payload(measurement, params)
+                    pred = str(measurement_payload["pred"])
+                    distances = tuple(float(item) for item in measurement_payload["distances"])
+                    spacing_values = tuple(
+                        float(item) for item in measurement_payload["spacing_values"]
+                    )
+                    lower = measurement_payload.get("lower_limit")
+                    upper = measurement_payload.get("upper_limit")
+                    unit = str(measurement_payload["unit"])
+                    height_enabled = bool(measurement_payload["height_check_enabled"])
+                    spacing_enabled = bool(measurement_payload["spacing_check_enabled"])
+                    detected = len(distances)
+                    expected = int(measurement.expected_pin_count)
+                    minimum = min(distances) if distances else 0.0
+                    maximum = max(distances) if distances else 0.0
+                    diff = float(maximum - minimum) if height_enabled else 0.0
+                    value = float(maximum) if height_enabled and distances else (
+                        float(max(spacing_values)) if spacing_values else None
+                    )
+                    threshold = float(upper) if height_enabled and upper is not None else None
+                    failed_indexes = [
+                        int(item["index"])
+                        for item in measurement_payload["pin_results"]
+                        if item["pred"] == "NG"
+                    ]
+                    failed_gaps = [
+                        f"P{item['from_pin']}-P{item['to_pin']}"
+                        for item in measurement_payload["spacing_results"]
+                        if item["pred"] == "NG"
+                    ]
+                    modes = "+".join(
+                        name for name, enabled in (("height", height_enabled), ("spacing", spacing_enabled))
+                        if enabled
+                    )
+                    detail = f"multi_pin_count={detected}/{expected} mode={modes}"
+                    if height_enabled:
+                        detail += (
+                            f" heights={minimum:.3f}..{maximum:.3f}{unit}"
+                            f" values=[{','.join(f'{item:.3f}' for item in distances)}]"
+                        )
+                    if height_enabled and (lower is not None or upper is not None):
+                        detail += f" spec={lower if lower is not None else '-'}..{upper if upper is not None else '-'}{unit}"
+                    if failed_indexes:
+                        detail += f" height_ng={failed_indexes}"
+                    if spacing_enabled:
+                        detail += f" spacings=[{','.join(f'{item:.3f}' for item in spacing_values)}]{unit}"
+                        if failed_gaps:
+                            detail += f" spacing_ng={failed_gaps}"
+                        if not measurement_payload["spacing_config_ok"]:
+                            detail += " spacing_specs=incomplete"
+                except RuntimeError as exc:
+                    pred = "NG"
+                    diff = 0.0
+                    value = None
+                    threshold = None
+                    detail = f"multi_pin_tip_failed: {exc}"
+                    measurement_payload = {
+                        "type": MULTI_PIN_TIP_HEIGHT_ALGORITHM,
+                        "roi_label": str(roi_label or ""),
+                        "expected_pin_count": max(1, int(params.get("expected_pin_count", 20) or 20)),
+                        "detected_pin_count": 0,
+                        "height_check_enabled": bool(params.get("height_check_enabled", True)),
+                        "spacing_check_enabled": bool(params.get("spacing_check_enabled", False)),
+                        "center_points": [],
+                        "pin_results": [],
+                        "spacing_results": [],
+                        "in_spec_points": [],
+                        "out_of_spec_points": [],
+                        "pred": pred,
+                        "detail": str(exc),
+                    }
+            elif algorithm == PIN_TIP_POINT_ALGORITHM:
+                diff = 0.0
+                roi_label = labels[0] if labels else "roi1"
+                try:
+                    measurement = measure_pin_tip_point(
+                        path,
+                        preferred_label=roi_label,
+                        params=params,
+                    )
+                    pred = "OK"
+                    diff = float(measurement.fit_residual)
+                    detail = (
+                        f"pin_tip=({measurement.point_xy[0]:.3f},"
+                        f"{measurement.point_xy[1]:.3f})px"
+                        f" confidence={measurement.confidence:.3f}"
+                        f" residual={measurement.fit_residual:.3f}px"
+                    )
+                    measurement_payload = measurement.to_dict()
+                    measurement_payload.update({"pred": pred})
+                except RuntimeError as exc:
+                    pred = "NG"
+                    detail = f"pin_tip_missing: {exc}"
+                    measurement_payload = {
+                        "type": PIN_TIP_POINT_ALGORITHM,
+                        "roi_label": str(roi_label or ""),
+                        "center_points": [],
+                        "edge_points": [],
+                        "pred": pred,
+                        "detail": str(exc),
+                    }
+                value = None
+                threshold = None
             elif algorithm == BRIGHT_BLOCK_CENTER_ALGORITHM:
                 diff = 0.0
                 roi_label = labels[0] if labels else "roi1"
