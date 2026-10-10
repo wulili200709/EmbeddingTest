@@ -14,6 +14,7 @@ from common.algorithm_codes import (
 )
 
 from .measurement import (
+    BASELINE_AXIS_WIDTH_ALGORITHM,
     BRIGHT_BLOCK_CENTER_ALGORITHM,
     BRIGHT_BLOCK_Y_DISTANCE_ALGORITHM,
     CENTER_DISTANCE_ALGORITHMS,
@@ -22,6 +23,7 @@ from .measurement import (
     LINE_DISTANCE_ALGORITHMS,
     MEASUREMENT_ALGORITHMS,
     MULTI_PIN_TIP_HEIGHT_ALGORITHM,
+    OPENING_GAP_MEDIAN_ALGORITHM,
     PIN_CENTER_DISTANCE_ALGORITHM,
     PIN_TIP_POINT_ALGORITHM,
     POINT_LINE_DISTANCE_ALGORITHM,
@@ -72,6 +74,15 @@ for _code in MEASUREMENT_ALGORITHMS:
             else {
                 "line_a_item_id": "",
                 "line_b_item_id": "",
+                **(
+                    {
+                        "reference_line_item_id": "",
+                        "axis_position_ratio": 0.5,
+                        "sample_half_width_px": 25.0,
+                    }
+                    if _code == BASELINE_AXIS_WIDTH_ALGORITHM
+                    else {}
+                ),
                 "limit_unit": "px",
             }
             if _code in LINE_DISTANCE_ALGORITHMS
@@ -81,6 +92,14 @@ for _code in MEASUREMENT_ALGORITHMS:
                 "limit_unit": "px",
             }
             if _code == POINT_LINE_DISTANCE_ALGORITHM
+            else {
+                "region": {},
+                "blur_ksize": 5,
+                "min_strength": 5.0,
+                "min_valid_ratio": 0.6,
+                "limit_unit": "px",
+            }
+            if _code == OPENING_GAP_MEDIAN_ALGORITHM
             else {
                 "center_a_item_id": "",
                 "center_b_item_id": "",

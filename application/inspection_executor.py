@@ -11,6 +11,7 @@ from typing import List, Protocol
 import numpy as np
 
 from algorithms.measurement import (
+    BASELINE_AXIS_WIDTH_ALGORITHM,
     BRIGHT_BLOCK_CENTER_ALGORITHM,
     CENTER_DISTANCE_ALGORITHM,
     CENTER_DISTANCE_ALGORITHMS,
@@ -55,6 +56,8 @@ def _distance_helper_item_ids(items: List[InspectionItem]) -> set[str]:
             if _is_point_line_distance_item(item)
             else ("center_a_item_id", "center_b_item_id")
             if _is_center_distance_item(item)
+            else ("line_a_item_id", "line_b_item_id", "reference_line_item_id")
+            if str(getattr(item, "algorithm_code", "") or "").strip() == BASELINE_AXIS_WIDTH_ALGORITHM
             else ("line_a_item_id", "line_b_item_id")
         )
         for key in keys:
@@ -262,6 +265,8 @@ class InspectionExecutor:
                     if _is_point_line_distance_item(distance_item)
                     else "center distance pair missing"
                     if _is_center_distance_item(distance_item)
+                    else "baseline-axis width inputs missing"
+                    if distance_algorithm == BASELINE_AXIS_WIDTH_ALGORITHM
                     else "line distance pair missing"
                 )
                 distance_row = {
@@ -890,6 +895,168 @@ class InspectionExecutor:
             return None
         return candidates[0][0], candidates[0][1], candidates[1][0], candidates[1][1]
 
+    @classmethod
+    def _resolve_baseline_axis_inputs(
+        cls,
+        *,
+        distance_item: InspectionItem,
+        line_items: List[InspectionItem],
+        line_rows_by_item_id: dict[str, dict],
+    ) -> tuple[InspectionItem, dict, InspectionItem, dict, InspectionItem, dict] | None:
+        params = dict(getattr(distance_item, "params", {}) or {})
+        line_a_id = str(params.get("line_a_item_id", "") or "").strip()
+        line_b_id = str(params.get("line_b_item_id", "") or "").strip()
+        reference_id = str(params.get("reference_line_item_id", "") or "").strip()
+        if not line_a_id or not line_b_id or not reference_id:
+            return None
+        if len({line_a_id, line_b_id, reference_id}) != 3:
+            return None
+        items_by_id = {
+            cls._line_item_ref(item): item
+            for item in line_items
+            if cls._line_item_ref(item)
+        }
+        resolved: list[tuple[InspectionItem, dict]] = []
+        for item_id in (line_a_id, line_b_id, reference_id):
+            item = items_by_id.get(item_id)
+            row = line_rows_by_item_id.get(item_id)
+            if item is None or row is None or cls._line_segment_from_row(row) is None:
+                return None
+            resolved.append((item, row))
+        return (
+            resolved[0][0], resolved[0][1],
+            resolved[1][0], resolved[1][1],
+            resolved[2][0], resolved[2][1],
+        )
+
+    @classmethod
+    def _baseline_axis_width_between_rows(
+        cls,
+        *,
+        row_a: dict,
+        row_b: dict,
+        reference_row: dict,
+        segment_a: tuple[tuple[float, float], tuple[float, float]],
+        segment_b: tuple[tuple[float, float], tuple[float, float]],
+        reference_segment: tuple[tuple[float, float], tuple[float, float]],
+        axis_position_ratio: float,
+        sample_half_width_px: float,
+        item_a_id: str,
+        item_b_id: str,
+        reference_item_id: str,
+    ) -> dict:
+        reference_line = cls._line_from_segment(reference_segment)
+        ux, uy = float(reference_line.vx), float(reference_line.vy)
+        if (abs(ux) >= abs(uy) and ux < 0.0) or (abs(uy) > abs(ux) and uy < 0.0):
+            ux, uy = -ux, -uy
+        nx, ny = -uy, ux
+        origin = (float(reference_line.x0), float(reference_line.y0))
+
+        def source_points(row: dict, segment) -> np.ndarray:
+            points = cls._line_points_from_row(row)
+            if len(points) >= 2:
+                return points
+            return np.asarray(segment, dtype=np.float32).reshape(-1, 2)
+
+        points_a = source_points(row_a, segment_a)
+        points_b = source_points(row_b, segment_b)
+
+        def normal_coordinates(points: np.ndarray) -> np.ndarray:
+            shifted = np.asarray(points, dtype=np.float64).reshape(-1, 2) - np.asarray(origin, dtype=np.float64)
+            return shifted[:, 0] * nx + shifted[:, 1] * ny
+
+        normal_a = normal_coordinates(points_a)
+        normal_b = normal_coordinates(points_b)
+        common_lo = max(float(np.min(normal_a)), float(np.min(normal_b)))
+        common_hi = min(float(np.max(normal_a)), float(np.max(normal_b)))
+        if common_hi <= common_lo + 1e-6:
+            raise RuntimeError("baseline-axis side lines have no common measurement height")
+
+        ratio = max(0.0, min(1.0, float(axis_position_ratio)))
+        normal_position = common_lo + (common_hi - common_lo) * ratio
+        half_width = max(1.0, float(sample_half_width_px))
+        band_lo = max(common_lo, normal_position - half_width)
+        band_hi = min(common_hi, normal_position + half_width)
+
+        def fit_local(row: dict, segment, points: np.ndarray, normal_values: np.ndarray, context: str):
+            mask = (normal_values >= band_lo) & (normal_values <= band_hi)
+            local_points = points[mask]
+            if len(local_points) >= 2:
+                min_points = min(10, int(len(local_points)))
+                line, filtered = fit_line_filtered(local_points, min_points=min_points, context=context)
+                return line, int(len(filtered))
+            return cls._line_from_segment(segment), 0
+
+        line_a, count_a = fit_local(
+            row_a, segment_a, points_a, normal_a, f"{item_a_id} baseline-axis band"
+        )
+        line_b, count_b = fit_local(
+            row_b, segment_b, points_b, normal_b, f"{item_b_id} baseline-axis band"
+        )
+
+        axis_origin = (
+            origin[0] + nx * normal_position,
+            origin[1] + ny * normal_position,
+        )
+        point_a = cls._line_intersection(
+            (float(line_a.x0), float(line_a.y0)),
+            (float(line_a.vx), float(line_a.vy)),
+            axis_origin,
+            (ux, uy),
+        )
+        point_b = cls._line_intersection(
+            (float(line_b.x0), float(line_b.y0)),
+            (float(line_b.vx), float(line_b.vy)),
+            axis_origin,
+            (ux, uy),
+        )
+        if point_a is None or point_b is None:
+            raise RuntimeError("baseline-axis intersection failed")
+        signed_width = (
+            (float(point_b[0]) - float(point_a[0])) * ux
+            + (float(point_b[1]) - float(point_a[1])) * uy
+        )
+        distance_px = abs(float(signed_width))
+
+        def local_segment(line: FittedLine):
+            segment_points = []
+            for normal_value in (band_lo, band_hi):
+                band_axis_origin = (
+                    origin[0] + nx * normal_value,
+                    origin[1] + ny * normal_value,
+                )
+                point = cls._line_intersection(
+                    (float(line.x0), float(line.y0)),
+                    (float(line.vx), float(line.vy)),
+                    band_axis_origin,
+                    (ux, uy),
+                )
+                if point is not None:
+                    segment_points.append(point)
+            return tuple(segment_points) if len(segment_points) == 2 else None
+
+        return {
+            "distance_px": distance_px,
+            "angle_delta": cls._angle_delta_from_lines(line_a, line_b),
+            "dimension_segment": (point_a, point_b),
+            "distance_mode": "baseline_axis_width",
+            "reference_line_item_id": reference_item_id,
+            "reference_line_segment": reference_segment,
+            "axis_direction": [ux, uy],
+            "axis_normal": [nx, ny],
+            "axis_position_ratio": ratio,
+            "measurement_normal_position": normal_position,
+            "sample_half_width_px": half_width,
+            "common_normal_interval": [common_lo, common_hi],
+            "sample_normal_interval": [band_lo, band_hi],
+            "line_a_segment": local_segment(line_a),
+            "line_b_segment": local_segment(line_b),
+            "line_a_fit": line_a.to_dict(),
+            "line_b_fit": line_b.to_dict(),
+            "line_a_common_points": count_a,
+            "line_b_common_points": count_b,
+        }
+
     @staticmethod
     def _center_item_ref(item: InspectionItem) -> str:
         return str(getattr(item, "item_id", "") or "").strip()
@@ -1081,20 +1248,56 @@ class InspectionExecutor:
         camera_id: str,
         image_path: str,
     ) -> dict | None:
-        pair = cls._resolve_line_distance_pair(
-            distance_item=distance_item,
-            line_items=line_items,
-            line_rows_by_item_id=line_rows_by_item_id,
-        )
-        if pair is None:
-            return None
-
-        item_a, row_a, item_b, row_b = pair
-        segment_a = cls._line_segment_from_row(row_a)
-        segment_b = cls._line_segment_from_row(row_b)
-        if segment_a is None or segment_b is None:
-            return None
         distance_algorithm = str(getattr(distance_item, "algorithm_code", "") or "").strip() or "line_distance"
+        params = dict(getattr(distance_item, "params", {}) or {})
+        if distance_algorithm == BASELINE_AXIS_WIDTH_ALGORITHM:
+            resolved = cls._resolve_baseline_axis_inputs(
+                distance_item=distance_item,
+                line_items=line_items,
+                line_rows_by_item_id=line_rows_by_item_id,
+            )
+            if resolved is None:
+                return None
+            item_a, row_a, item_b, row_b, reference_item, reference_row = resolved
+            segment_a = cls._line_segment_from_row(row_a)
+            segment_b = cls._line_segment_from_row(row_b)
+            reference_segment = cls._line_segment_from_row(reference_row)
+            if segment_a is None or segment_b is None or reference_segment is None:
+                return None
+            configured_ratio = cls._optional_float(params.get("axis_position_ratio"))
+            configured_half_width = cls._optional_float(params.get("sample_half_width_px"))
+            distance_info = cls._baseline_axis_width_between_rows(
+                row_a=row_a,
+                row_b=row_b,
+                reference_row=reference_row,
+                segment_a=segment_a,
+                segment_b=segment_b,
+                reference_segment=reference_segment,
+                axis_position_ratio=0.5 if configured_ratio is None else configured_ratio,
+                sample_half_width_px=25.0 if configured_half_width is None else configured_half_width,
+                item_a_id=cls._line_item_ref(item_a),
+                item_b_id=cls._line_item_ref(item_b),
+                reference_item_id=cls._line_item_ref(reference_item),
+            )
+            distance_px = float(distance_info["distance_px"])
+            angle_delta = float(distance_info["angle_delta"])
+            dimension_segment = distance_info["dimension_segment"]
+            timing_rows = (row_a, row_b, reference_row)
+        else:
+            pair = cls._resolve_line_distance_pair(
+                distance_item=distance_item,
+                line_items=line_items,
+                line_rows_by_item_id=line_rows_by_item_id,
+            )
+            if pair is None:
+                return None
+            item_a, row_a, item_b, row_b = pair
+            segment_a = cls._line_segment_from_row(row_a)
+            segment_b = cls._line_segment_from_row(row_b)
+            if segment_a is None or segment_b is None:
+                return None
+            timing_rows = (row_a, row_b)
+
         if distance_algorithm == LINE_DISTANCE_REF_NORMAL_ALGORITHM:
             distance_info = cls._reference_normal_distance_between_rows(
                 row_a=row_a,
@@ -1107,7 +1310,7 @@ class InspectionExecutor:
             distance_px = float(distance_info["distance_px"])
             angle_delta = float(distance_info["angle_delta"])
             dimension_segment = distance_info["dimension_segment"]
-        else:
+        elif distance_algorithm != BASELINE_AXIS_WIDTH_ALGORITHM:
             distance_px, angle_delta = cls._distance_between_segments(segment_a, segment_b)
             dimension_segment = cls._dimension_segment(segment_a, segment_b, distance_px)
             distance_info = {
@@ -1115,7 +1318,6 @@ class InspectionExecutor:
                 "dimension_segment": dimension_segment,
             }
 
-        params = dict(getattr(distance_item, "params", {}) or {})
         unit = str(params.get("limit_unit", "px") or "px").strip().lower()
         if unit not in {"px", "mm"}:
             unit = "px"
@@ -1165,6 +1367,11 @@ class InspectionExecutor:
         detail += f" raw={distance_px:.3f}px"
         if distance_algorithm == LINE_DISTANCE_REF_NORMAL_ALGORITHM:
             detail += f" mode=ref_normal ref={distance_info.get('reference_line_item_id', '-') or '-'}"
+        elif distance_algorithm == BASELINE_AXIS_WIDTH_ALGORITHM:
+            detail += (
+                f" mode=baseline_axis ref={distance_info.get('reference_line_item_id', '-') or '-'}"
+                f" band={distance_info.get('sample_half_width_px', 0.0):.1f}px"
+            )
         if lower is not None or upper is not None:
             detail += (
                 f" spec={cls._format_measurement_limit(lower, unit)}"
@@ -1185,7 +1392,7 @@ class InspectionExecutor:
             "match_ms": max(
                 (
                     float(row.get("match_ms") or 0.0)
-                    for row in (row_a, row_b)
+                    for row in timing_rows
                     if row.get("match_ms") is not None
                 ),
                 default=0.0,
@@ -1212,8 +1419,20 @@ class InspectionExecutor:
                 "dimension_segment": [[float(x), float(y)] for x, y in dimension_segment],
                 "distance_mode": str(distance_info.get("distance_mode", "") or ""),
                 "reference_line_item_id": str(distance_info.get("reference_line_item_id", "") or ""),
+                "reference_line_segment": (
+                    [[float(x), float(y)] for x, y in distance_info["reference_line_segment"]]
+                    if distance_info.get("reference_line_segment") is not None
+                    else None
+                ),
                 "common_axis": str(distance_info.get("common_axis", "") or ""),
                 "common_interval": distance_info.get("common_interval"),
+                "axis_direction": distance_info.get("axis_direction"),
+                "axis_normal": distance_info.get("axis_normal"),
+                "axis_position_ratio": distance_info.get("axis_position_ratio"),
+                "measurement_normal_position": distance_info.get("measurement_normal_position"),
+                "sample_half_width_px": distance_info.get("sample_half_width_px"),
+                "common_normal_interval": distance_info.get("common_normal_interval"),
+                "sample_normal_interval": distance_info.get("sample_normal_interval"),
                 "line_a_segment": (
                     [[float(x), float(y)] for x, y in distance_info["line_a_segment"]]
                     if distance_info.get("line_a_segment") is not None

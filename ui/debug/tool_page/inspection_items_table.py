@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from algorithms.measurement import LINE_DISTANCE_ALGORITHMS, POINT_LINE_DISTANCE_ALGORITHM
+from algorithms.measurement import (
+    BASELINE_AXIS_WIDTH_ALGORITHM,
+    LINE_DISTANCE_ALGORITHMS,
+    POINT_LINE_DISTANCE_ALGORITHM,
+)
 from algorithms.registry import list_tool_algorithm_specs
 from common.algorithm_codes import normalize_tool_algorithm_code
 from domain import SUPPORTED_CAMERA_IDS
@@ -114,6 +118,8 @@ def _refresh_inspection_items_table(tool_page) -> None:
                 display_key = (
                     "debug.algorithm.point_line_distance"
                     if current_algorithm_raw == POINT_LINE_DISTANCE_ALGORITHM
+                    else "debug.algorithm.baseline_axis_width"
+                    if current_algorithm_raw == BASELINE_AXIS_WIDTH_ALGORITHM
                     else "debug.algorithm.line_distance"
                 )
                 algorithm_combo.addItem(tr(display_key), current_algorithm_raw)

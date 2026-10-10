@@ -20,6 +20,7 @@ from algorithms.measurement import (
     FIND_LINE_ALGORITHMS,
     LINE_DISTANCE_ALGORITHMS,
     MULTI_PIN_TIP_HEIGHT_ALGORITHM,
+    OPENING_GAP_MEDIAN_ALGORITHM,
     PIN_CENTER_DISTANCE_ALGORITHM,
     PIN_TIP_POINT_ALGORITHM,
     POINT_LINE_DISTANCE_ALGORITHM,
@@ -34,6 +35,8 @@ from algorithms.measurement import (
     measure_pin_center_distance_from_array,
     measure_pin_tip_point_from_array,
     measure_multi_pin_tip_height_from_array,
+    measure_opening_gap_from_array,
+    judge_opening_gap,
 )
 from algorithms.traditional import TraditionalThresholdModel, compute_roi_metrics_from_array, metric_value
 from common import labelme_io
@@ -833,6 +836,29 @@ class ProductRuntimeContext:
                     f" residual={residual:.3f}"
                 )
                 unit = "px"
+            elif algorithm == OPENING_GAP_MEDIAN_ALGORITHM:
+                lower = upper = judged_value = None
+                unit = str(params.get("limit_unit", "px") or "px")
+                residual = 0.0
+                try:
+                    measurement = measure_opening_gap_from_array(
+                        image,
+                        shape_by_label=shape_by_label,
+                        preferred_label=str(item.roi_label or "").strip() or "roi1",
+                        params=params,
+                    )
+                    pred, judged_value, lower, upper, unit = judge_opening_gap(measurement, params)
+                    residual = measurement.mad_px
+                    detail = (
+                        f"opening_gap={judged_value:.3f}{unit}"
+                        f" valid={measurement.valid_columns}/{measurement.total_columns}"
+                        f" mad={measurement.mad_px:.3f}px"
+                    )
+                except (RuntimeError, ValueError, KeyError) as exc:
+                    pred = "NG"
+                    detail = f"opening_gap_missing: {exc}"
+                    measurement = None
+                    measurement_payload_override = {"type": OPENING_GAP_MEDIAN_ALGORITHM, "pred": pred, "detail": str(exc)}
             elif algorithm == MULTI_PIN_TIP_HEIGHT_ALGORITHM:
                 roi_label = str(item.roi_label or "").strip() or "roi"
                 try:
@@ -1046,7 +1072,7 @@ class ProductRuntimeContext:
                 if measurement_payload_override is not None
                 else measurement.to_dict()
             )
-            if algorithm in {PIN_CENTER_DISTANCE_ALGORITHM, BRIGHT_BLOCK_Y_DISTANCE_ALGORITHM}:
+            if algorithm in {PIN_CENTER_DISTANCE_ALGORITHM, BRIGHT_BLOCK_Y_DISTANCE_ALGORITHM, OPENING_GAP_MEDIAN_ALGORITHM} and judged_value is not None:
                 measurement_payload.update(
                     {
                         "distance": float(judged_value),

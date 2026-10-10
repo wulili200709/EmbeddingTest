@@ -1,0 +1,79 @@
+{
+  "images": 50,
+  "measurements_expected": 700,
+  "measurements_valid": 700,
+  "minimum_valid_columns": 47,
+  "errors": [],
+  "regions": {
+    "U1": {
+      "min_px": 100.544,
+      "median_px": 102.239,
+      "max_px": 103.541
+    },
+    "U2": {
+      "min_px": 98.832,
+      "median_px": 99.319,
+      "max_px": 99.781
+    },
+    "U3": {
+      "min_px": 98.162,
+      "median_px": 99.002,
+      "max_px": 100.022
+    },
+    "U4": {
+      "min_px": 98.4,
+      "median_px": 99.381,
+      "max_px": 100.58
+    },
+    "U5": {
+      "min_px": 97.11,
+      "median_px": 97.823,
+      "max_px": 98.747
+    },
+    "U6": {
+      "min_px": 102.3,
+      "median_px": 103.729,
+      "max_px": 105.291
+    },
+    "U7": {
+      "min_px": 100.337,
+      "median_px": 101.353,
+      "max_px": 103.163
+    },
+    "L1": {
+      "min_px": 104.958,
+      "median_px": 105.769,
+      "max_px": 106.747
+    },
+    "L2": {
+      "min_px": 107.659,
+      "median_px": 108.072,
+      "max_px": 108.588
+    },
+    "L3": {
+      "min_px": 91.518,
+      "median_px": 92.09,
+      "max_px": 92.433
+    },
+    "L4": {
+      "min_px": 93.116,
+      "median_px": 93.793,
+      "max_px": 94.222
+    },
+    "L5": {
+      "min_px": 99.033,
+      "median_px": 99.718,
+      "max_px": 100.264
+    },
+    "L6": {
+      "min_px": 101.937,
+      "median_px": 102.416,
+      "max_px": 103.223
+    },
+    "L7": {
+      "min_px": 108.998,
+      "median_px": 109.524,
+      "max_px": 110.438
+    }
+  }
+}

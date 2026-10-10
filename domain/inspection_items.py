@@ -17,6 +17,7 @@ SUPPORTED_CAMERA_IDS = CAMERA_ROLES
 POST_DISTANCE_ALGORITHMS = {
     "line_distance",
     "line_distance_ref_normal",
+    "baseline_axis_width",
     "center_distance",
     "point_line_distance",
 }

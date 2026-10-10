@@ -20,4 +20,9 @@ __pycache__/
 logs/
 records/
 dist-lite/
+dist-opening-gap/
+dist-opening-gap-next/
+dist-opening-gap-red/
 node_modules/
+dist-stage-v305-wheel/
+runtime_camera.log

@@ -55,7 +55,12 @@ def build_tool_config_panel(owner, right_vbox: QtWidgets.QVBoxLayout, *, styles:
     owner.spin_measurement_pixel_size = QtWidgets.QDoubleSpinBox()
     owner.cmb_measurement_line_a_tool = QtWidgets.QComboBox()
     owner.cmb_measurement_line_b_tool = QtWidgets.QComboBox()
-    for combo in (owner.cmb_measurement_line_a_tool, owner.cmb_measurement_line_b_tool):
+    owner.cmb_measurement_reference_line_tool = QtWidgets.QComboBox()
+    for combo in (
+        owner.cmb_measurement_line_a_tool,
+        owner.cmb_measurement_line_b_tool,
+        owner.cmb_measurement_reference_line_tool,
+    ):
         combo.setStyleSheet(input_style)
         combo.currentIndexChanged.connect(owner._on_measurement_params_changed)
 
@@ -103,12 +108,26 @@ def build_tool_config_panel(owner, right_vbox: QtWidgets.QVBoxLayout, *, styles:
     owner.spin_measurement_min_arc_points.setToolTip(
         tr("debug.measurement.min_arc_points_tooltip")
     )
+    owner.spin_measurement_axis_position_percent = QtWidgets.QDoubleSpinBox()
+    owner.spin_measurement_axis_position_percent.setDecimals(1)
+    owner.spin_measurement_axis_position_percent.setRange(0.0, 100.0)
+    owner.spin_measurement_axis_position_percent.setSingleStep(5.0)
+    owner.spin_measurement_axis_position_percent.setValue(50.0)
+    owner.spin_measurement_axis_position_percent.setSuffix(" %")
+    owner.spin_measurement_sample_half_width = QtWidgets.QDoubleSpinBox()
+    owner.spin_measurement_sample_half_width.setDecimals(1)
+    owner.spin_measurement_sample_half_width.setRange(1.0, 1000.0)
+    owner.spin_measurement_sample_half_width.setSingleStep(1.0)
+    owner.spin_measurement_sample_half_width.setValue(25.0)
+    owner.spin_measurement_sample_half_width.setSuffix(" px")
     for spin in (
         owner.spin_measurement_edge_threshold,
         owner.spin_measurement_scan_step,
         owner.spin_measurement_min_points,
         owner.spin_measurement_expected_pin_count,
         owner.spin_measurement_min_arc_points,
+        owner.spin_measurement_axis_position_percent,
+        owner.spin_measurement_sample_half_width,
     ):
         spin.setKeyboardTracking(False)
         spin.setStyleSheet(input_style)
@@ -164,6 +183,9 @@ def build_tool_config_panel(owner, right_vbox: QtWidgets.QVBoxLayout, *, styles:
 
     measurement_form.addRow(tr("debug.measurement.line_a_tool"), owner.cmb_measurement_line_a_tool)
     measurement_form.addRow(tr("debug.measurement.line_b_tool"), owner.cmb_measurement_line_b_tool)
+    measurement_form.addRow(tr("debug.measurement.reference_line_tool"), owner.cmb_measurement_reference_line_tool)
+    measurement_form.addRow(tr("debug.measurement.axis_position"), owner.spin_measurement_axis_position_percent)
+    measurement_form.addRow(tr("debug.measurement.sample_half_width"), owner.spin_measurement_sample_half_width)
     measurement_form.addRow(tr("debug.measurement.distance_mode"), owner.cmb_measurement_distance_mode)
     measurement_form.addRow(tr("debug.measurement.line_a_direction"), owner.cmb_measurement_line_a_direction)
     measurement_form.addRow(tr("debug.measurement.line_b_direction"), owner.cmb_measurement_line_b_direction)
@@ -202,6 +224,13 @@ def build_tool_config_panel(owner, right_vbox: QtWidgets.QVBoxLayout, *, styles:
     owner.btn_add_line_distance_tool.setStyleSheet(compact_btn)
     owner.btn_add_line_distance_tool.clicked.connect(owner._add_line_distance_tool)
     measurement_action_row.addWidget(owner.btn_add_line_distance_tool, 1)
+
+    owner.btn_add_baseline_axis_width_tool = QtWidgets.QPushButton(
+        tr("debug.measurement.add_baseline_axis_width_tool")
+    )
+    owner.btn_add_baseline_axis_width_tool.setStyleSheet(compact_btn)
+    owner.btn_add_baseline_axis_width_tool.clicked.connect(owner._add_baseline_axis_width_tool)
+    measurement_action_row.addWidget(owner.btn_add_baseline_axis_width_tool, 1)
 
     owner.btn_delete_line_distance_tool = QtWidgets.QPushButton(tr("debug.measurement.delete_line_distance_tool"))
     owner.btn_delete_line_distance_tool.setStyleSheet(compact_btn)

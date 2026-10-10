@@ -25,6 +25,7 @@ from algorithms.measurement import (
     LINE_DISTANCE_ALGORITHMS,
     MEASUREMENT_ALGORITHMS,
     MULTI_PIN_TIP_HEIGHT_ALGORITHM,
+    OPENING_GAP_MEDIAN_ALGORITHM,
     PIN_CENTER_DISTANCE_ALGORITHM,
     PIN_TIP_POINT_ALGORITHM,
     POINT_LINE_DISTANCE_ALGORITHM,
@@ -40,6 +41,8 @@ from algorithms.measurement import (
     measure_pin_center_distance,
     measure_pin_tip_point,
     measure_multi_pin_tip_height,
+    measure_opening_gap_from_file,
+    judge_opening_gap,
 )
 from common.algorithm_codes import (
     DEFAULT_LEARNING_BACKBONE,
@@ -778,6 +781,33 @@ class AlgorithmController:
                 raise RuntimeError("Point-Line Distance must be run with a Point tool and a Find Line tool")
             elif algorithm == CENTER_DISTANCE_ALGORITHM:
                 raise RuntimeError("Center Distance must be run with paired Bright Block Center tools")
+            elif algorithm == OPENING_GAP_MEDIAN_ALGORITHM:
+                try:
+                    measurement = measure_opening_gap_from_file(
+                        path,
+                        preferred_label=labels[0] if labels else "roi1",
+                        params=params,
+                    )
+                    pred, judged_value, lower, upper, unit = judge_opening_gap(measurement, params)
+                    diff = measurement.mad_px
+                    detail = (
+                        f"opening_gap={judged_value:.3f}{unit}"
+                        f" valid={measurement.valid_columns}/{measurement.total_columns}"
+                        f" mad={measurement.mad_px:.3f}px"
+                    )
+                    if lower is not None or upper is not None:
+                        detail += f" spec={lower if lower is not None else '-'}..{upper if upper is not None else '-'}{unit}"
+                    measurement_payload = measurement.to_dict()
+                    measurement_payload.update({"distance": judged_value, "unit": unit, "label": f"{judged_value:.3f}{unit}", "pred": pred})
+                    value = judged_value
+                    threshold = upper
+                except (RuntimeError, ValueError, KeyError) as exc:
+                    pred = "NG"
+                    diff = 0.0
+                    detail = f"opening_gap_missing: {exc}"
+                    measurement_payload = {"type": OPENING_GAP_MEDIAN_ALGORITHM, "pred": pred, "detail": str(exc)}
+                    value = None
+                    threshold = None
             elif algorithm == MULTI_PIN_TIP_HEIGHT_ALGORITHM:
                 roi_label = labels[0] if labels else "roi1"
                 try:

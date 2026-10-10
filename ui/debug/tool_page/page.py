@@ -431,6 +431,9 @@ class ToolPage(QtWidgets.QWidget):
             row_labels = {
                 "cmb_measurement_line_a_tool": tr("debug.measurement.line_a_tool"),
                 "cmb_measurement_line_b_tool": tr("debug.measurement.line_b_tool"),
+                "cmb_measurement_reference_line_tool": tr("debug.measurement.reference_line_tool"),
+                "spin_measurement_axis_position_percent": tr("debug.measurement.axis_position"),
+                "spin_measurement_sample_half_width": tr("debug.measurement.sample_half_width"),
                 "cmb_measurement_distance_mode": tr("debug.measurement.distance_mode"),
                 "cmb_measurement_line_a_direction": tr("debug.measurement.line_a_direction"),
                 "cmb_measurement_line_b_direction": tr("debug.measurement.line_b_direction"),
@@ -452,6 +455,10 @@ class ToolPage(QtWidgets.QWidget):
             self.chk_measurement_upper.setText(tr("debug.measurement.use_upper"))
         if hasattr(self, "btn_add_line_distance_tool"):
             self.btn_add_line_distance_tool.setText(tr("debug.measurement.add_line_distance_tool"))
+        if hasattr(self, "btn_add_baseline_axis_width_tool"):
+            self.btn_add_baseline_axis_width_tool.setText(
+                tr("debug.measurement.add_baseline_axis_width_tool")
+            )
         if hasattr(self, "btn_delete_line_distance_tool"):
             self.btn_delete_line_distance_tool.setText(tr("debug.measurement.delete_line_distance_tool"))
         if hasattr(self, "cmb_measurement_line_a_direction"):

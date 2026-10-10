@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from typing import Any, Mapping
 
 import cv2
 import numpy as np
 
 from algorithms.measurement_types import (
+    BASELINE_AXIS_WIDTH_ALGORITHM,
     BRIGHT_BLOCK_CENTER_ALGORITHM,
     BRIGHT_BLOCK_Y_DISTANCE_ALGORITHM,
     CENTER_DISTANCE_ALGORITHM,
@@ -19,6 +21,7 @@ from algorithms.measurement_types import (
     LINE_DISTANCE_REF_NORMAL_ALGORITHM,
     MEASUREMENT_ALGORITHMS,
     MULTI_PIN_TIP_HEIGHT_ALGORITHM,
+    OPENING_GAP_MEDIAN_ALGORITHM,
     PIN_CENTER_DISTANCE_ALGORITHM,
     PIN_TIP_POINT_ALGORITHM,
     POINT_LINE_DISTANCE_ALGORITHM,
@@ -63,6 +66,74 @@ from algorithms.measurement_pin_center import (
 )
 from algorithms.measurement_pin_tip import locate_pin_tip_in_crop
 from algorithms.measurement_multi_pin_tip import locate_multi_pin_tips_in_crop
+from algorithms.measurement_opening_gap import (
+    OpeningGapRegion,
+    OpeningGapResult,
+    judge_opening_gap,
+    measure_opening_gap,
+    measure_opening_gap_from_params,
+)
+
+
+def measure_opening_gap_from_array(
+    image_bgr: np.ndarray,
+    *,
+    shape_by_label: Mapping[str, dict],
+    preferred_label: str = "roi1",
+    params: Mapping[str, Any] | None = None,
+) -> OpeningGapResult:
+    """Measure an explicit full-image region or a tightly drawn opening ROI."""
+    settings = dict(params or {})
+    if isinstance(settings.get("region"), Mapping) and settings["region"]:
+        return measure_opening_gap_from_params(image_bgr, settings)
+    roi_label, shape = _shape_from_labels(shape_by_label, preferred_label)
+    crop, _mask, (ox, oy) = _crop_from_shape(image_bgr, shape)
+    h, w = crop.shape[:2]
+    width = min(int(settings.get("width", 49) or 49), w)
+    if width % 2 == 0:
+        width -= 1
+    if width < 3 or h < 20:
+        raise RuntimeError("opening ROI must be at least 3 pixels wide and 20 pixels high")
+    split = h // 2
+    region = OpeningGapRegion(
+        name=roi_label,
+        center_x=w // 2,
+        upper_y=tuple(settings.get("upper_y", (max(0, int(h * 0.05)), max(2, split - 1)))),
+        lower_y=tuple(settings.get("lower_y", (split + 1, min(h - 2, int(h * 0.95))))),
+        width=width,
+    )
+    local = measure_opening_gap(
+        crop,
+        region,
+        blur_ksize=int(settings.get("blur_ksize", 5)),
+        min_strength=float(settings.get("min_strength", 5.0)),
+        min_valid_ratio=float(settings.get("min_valid_ratio", 0.6)),
+        edge_dark_max_gray=(float(settings["edge_dark_max_gray"]) if settings.get("edge_dark_max_gray") is not None else None),
+        edge_mode=str(settings.get("edge_mode", "peak")),
+        upper_dark_fraction=float(settings.get("upper_dark_fraction", 0.03)),
+        lower_dark_fraction=float(settings.get("lower_dark_fraction", 0.03)),
+    )
+    return replace(local, center_x=local.center_x + ox, measurement_x=local.measurement_x + ox, upper_y=local.upper_y + oy, lower_y=local.lower_y + oy)
+
+
+def measure_opening_gap_from_file(
+    image_path: str,
+    *,
+    preferred_label: str = "roi1",
+    params: Mapping[str, Any] | None = None,
+) -> OpeningGapResult:
+    image = cv2.imdecode(np.fromfile(image_path, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        raise RuntimeError(f"cannot read opening gap image: {image_path}")
+    settings = dict(params or {})
+    if isinstance(settings.get("region"), Mapping) and settings["region"]:
+        return measure_opening_gap_from_params(image, settings)
+    from common.labelme_io import labelme_json_of_image, read_shape_from_labelme
+    shape_path = labelme_json_of_image(image_path)
+    shape = read_shape_from_labelme(shape_path, preferred_label)
+    return measure_opening_gap_from_array(
+        image, shape_by_label={preferred_label: shape}, preferred_label=preferred_label, params=settings,
+    )
 
 
 def _shape_from_labels(shape_by_label: Mapping[str, dict], preferred_label: str) -> tuple[str, dict]:
@@ -1002,6 +1073,7 @@ def judge_bright_block_y_distance(
 
 
 __all__ = [
+    "BASELINE_AXIS_WIDTH_ALGORITHM",
     "MEASUREMENT_ALGORITHMS",
     "BRIGHT_BLOCK_CENTER_ALGORITHM",
     "BRIGHT_BLOCK_Y_DISTANCE_ALGORITHM",
@@ -1013,6 +1085,7 @@ __all__ = [
     "PIN_CENTER_DISTANCE_ALGORITHM",
     "PIN_TIP_POINT_ALGORITHM",
     "MULTI_PIN_TIP_HEIGHT_ALGORITHM",
+    "OPENING_GAP_MEDIAN_ALGORITHM",
     "POINT_LINE_DISTANCE_ALGORITHM",
     "LINE_DISTANCE_ALGORITHM",
     "LINE_DISTANCE_ALGORITHMS",
@@ -1031,6 +1104,8 @@ __all__ = [
     "PinTipPointResult",
     "MultiPinTipHeightConfig",
     "MultiPinTipHeightResult",
+    "OpeningGapRegion",
+    "OpeningGapResult",
     "find_edge_points",
     "filter_line_points",
     "fit_line",
@@ -1041,6 +1116,7 @@ __all__ = [
     "judge_find_line",
     "judge_pin_center_distance",
     "judge_multi_pin_tip_height",
+    "judge_opening_gap",
     "evaluate_multi_pin_tip_height",
     "multi_pin_tip_judgment_payload",
     "measure_bright_block_center",
@@ -1057,5 +1133,7 @@ __all__ = [
     "measure_pin_tip_point_from_array",
     "measure_multi_pin_tip_height",
     "measure_multi_pin_tip_height_from_array",
+    "measure_opening_gap_from_array",
+    "measure_opening_gap_from_file",
     "measurement_value",
 ]

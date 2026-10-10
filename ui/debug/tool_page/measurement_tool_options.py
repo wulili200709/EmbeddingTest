@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from algorithms.measurement import CENTER_DISTANCE_ALGORITHM
+from algorithms.measurement import BASELINE_AXIS_WIDTH_ALGORITHM, CENTER_DISTANCE_ALGORITHM
 from common.algorithm_codes import normalize_tool_algorithm_code
 from ui.debug.tool_page.measurement_algorithms import (
     is_bright_block_center_algorithm as _is_bright_block_center_algorithm,
@@ -20,6 +20,8 @@ def _line_distance_should_be_center_distance(
 ) -> bool:
     algorithm = normalize_tool_algorithm_code(getattr(item, "algorithm_code", ""))
     if not _is_line_distance_algorithm(algorithm):
+        return False
+    if algorithm == BASELINE_AXIS_WIDTH_ALGORITHM:
         return False
     params = dict(getattr(item, "params", {}) or {})
     has_line_refs = bool(

@@ -20,6 +20,7 @@ REFERENCE_ROI_COLOR = QtGui.QColor(255, 165, 0)
 _DISTANCE_HELPER_KEYS = {
     "line_distance": ("line_a_item_id", "line_b_item_id"),
     "line_distance_ref_normal": ("line_a_item_id", "line_b_item_id"),
+    "baseline_axis_width": ("line_a_item_id", "line_b_item_id", "reference_line_item_id"),
     "center_distance": ("center_a_item_id", "center_b_item_id"),
     "point_line_distance": ("point_item_id", "line_item_id"),
 }

@@ -1,0 +1,196 @@
+{
+  "input_dir": "C:\\Users\\goney\\MVS\\Data\\1160079 1818098 1561359\\50-2",
+  "config": "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\config\\examples\\50-2_opening_gaps.json",
+  "filename_glob": "Cam1_20260917*.png",
+  "images": 50,
+  "expected_size": [
+    5472,
+    3648
+  ],
+  "measurement_unit": "px",
+  "warning": "Provisional fixed ROIs; the correct physical edges have not been confirmed.",
+  "modes": {
+    "dark_plateau": {
+      "csv": "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\reports\\50-2_self_test_example\\50-2_dark_plateau.csv",
+      "measurements_valid": 600,
+      "errors": [],
+      "regions": {
+        "T1": {
+          "valid_images": 50,
+          "min_px": 99.309,
+          "median_px": 99.573,
+          "max_px": 99.849,
+          "range_px": 0.54
+        },
+        "T2": {
+          "valid_images": 50,
+          "min_px": 81.292,
+          "median_px": 83.522,
+          "max_px": 85.789,
+          "range_px": 4.496
+        },
+        "T3": {
+          "valid_images": 50,
+          "min_px": 113.813,
+          "median_px": 113.984,
+          "max_px": 114.409,
+          "range_px": 0.596
+        },
+        "T4": {
+          "valid_images": 50,
+          "min_px": 110.718,
+          "median_px": 111.12,
+          "max_px": 111.694,
+          "range_px": 0.976
+        },
+        "T5": {
+          "valid_images": 50,
+          "min_px": 99.283,
+          "median_px": 99.545,
+          "max_px": 99.709,
+          "range_px": 0.426
+        },
+        "T6": {
+          "valid_images": 50,
+          "min_px": 101.019,
+          "median_px": 101.231,
+          "max_px": 101.634,
+          "range_px": 0.614
+        },
+        "B1": {
+          "valid_images": 50,
+          "min_px": 102.804,
+          "median_px": 103.056,
+          "max_px": 103.244,
+          "range_px": 0.441
+        },
+        "B2": {
+          "valid_images": 50,
+          "min_px": 80.911,
+          "median_px": 82.478,
+          "max_px": 83.646,
+          "range_px": 2.735
+        },
+        "B3": {
+          "valid_images": 50,
+          "min_px": 111.36,
+          "median_px": 111.537,
+          "max_px": 111.776,
+          "range_px": 0.416
+        },
+        "B4": {
+          "valid_images": 50,
+          "min_px": 106.546,
+          "median_px": 106.703,
+          "max_px": 106.903,
+          "range_px": 0.357
+        },
+        "B5": {
+          "valid_images": 50,
+          "min_px": 104.497,
+          "median_px": 104.723,
+          "max_px": 104.943,
+          "range_px": 0.446
+        },
+        "B6": {
+          "valid_images": 50,
+          "min_px": 108.903,
+          "median_px": 109.173,
+          "max_px": 109.459,
+          "range_px": 0.556
+        }
+      }
+    },
+    "peak": {
+      "csv": "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\reports\\50-2_self_test_example\\50-2_peak.csv",
+      "measurements_valid": 600,
+      "errors": [],
+      "regions": {
+        "T1": {
+          "valid_images": 50,
+          "min_px": 112.858,
+          "median_px": 114.716,
+          "max_px": 115.743,
+          "range_px": 2.885
+        },
+        "T2": {
+          "valid_images": 50,
+          "min_px": 125.617,
+          "median_px": 126.634,
+          "max_px": 129.193,
+          "range_px": 3.576
+        },
+        "T3": {
+          "valid_images": 50,
+          "min_px": 132.73,
+          "median_px": 135.055,
+          "max_px": 136.082,
+          "range_px": 3.352
+        },
+        "T4": {
+          "valid_images": 50,
+          "min_px": 130.724,
+          "median_px": 131.478,
+          "max_px": 133.463,
+          "range_px": 2.739
+        },
+        "T5": {
+          "valid_images": 50,
+          "min_px": 110.649,
+          "median_px": 110.948,
+          "max_px": 111.445,
+          "range_px": 0.796
+        },
+        "T6": {
+          "valid_images": 50,
+          "min_px": 112.651,
+          "median_px": 113.094,
+          "max_px": 113.404,
+          "range_px": 0.753
+        },
+        "B1": {
+          "valid_images": 50,
+          "min_px": 118.019,
+          "median_px": 118.334,
+          "max_px": 118.557,
+          "range_px": 0.538
+        },
+        "B2": {
+          "valid_images": 50,
+          "min_px": 124.178,
+          "median_px": 125.359,
+          "max_px": 126.242,
+          "range_px": 2.064
+        },
+        "B3": {
+          "valid_images": 50,
+          "min_px": 134.909,
+          "median_px": 138.917,
+          "max_px": 139.363,
+          "range_px": 4.453
+        },
+        "B4": {
+          "valid_images": 50,
+          "min_px": 134.253,
+          "median_px": 136.079,
+          "max_px": 137.437,
+          "range_px": 3.184
+        },
+        "B5": {
+          "valid_images": 50,
+          "min_px": 120.675,
+          "median_px": 121.319,
+          "max_px": 122.135,
+          "range_px": 1.46
+        },
+        "B6": {
+          "valid_images": 50,
+          "min_px": 124.911,
+          "median_px": 125.842,
+          "max_px": 126.856,
+          "range_px": 1.945
+        }
+      }
+    }
+  }
+}

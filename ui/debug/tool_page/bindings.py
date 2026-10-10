@@ -85,6 +85,7 @@ _TOOL_PAGE_BINDINGS = (
             "_on_inspection_items_selection_changed",
             "_persist_inspection_items",
             "_add_line_distance_tool",
+            "_add_baseline_axis_width_tool",
             "_delete_selected_line_distance_tool",
             "_update_delete_line_distance_button",
             "_refresh_inspection_items_table",

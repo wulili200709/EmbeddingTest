@@ -138,6 +138,20 @@ QLabel {
 _DEFAULT_FIND_BACKEND_LABEL = "Fusion V2"
 
 
+class _NoWheelSpinBox(QtWidgets.QSpinBox):
+    """Keep wheel scrolling from changing a numeric value accidentally."""
+
+    def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
+        event.ignore()
+
+
+class _NoWheelDoubleSpinBox(QtWidgets.QDoubleSpinBox):
+    """Keep wheel scrolling from changing a numeric value accidentally."""
+
+    def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
+        event.ignore()
+
+
 class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
     modelSaved = QtCore.Signal(str, str)
     referenceRegionsChanged = QtCore.Signal()
@@ -444,7 +458,7 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         self.chk_edit_points = QtWidgets.QCheckBox(tr("template.edit_points"))
         self.chk_edit_points.toggled.connect(self._on_point_edit_toggled)
         self.chk_edit_points.setText(tr("template.edit_points"))
-        self.spin_point_label = QtWidgets.QSpinBox()
+        self.spin_point_label = _NoWheelSpinBox()
         self.spin_point_label.setRange(0, 7)
         self.spin_point_label.setMinimumWidth(160)
         self.btn_extract_points = QtWidgets.QPushButton(tr("template.extract_points"))
@@ -481,31 +495,31 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         self.edit_class_id.setMinimumWidth(220)
         self.edit_levels = QtWidgets.QLineEdit("4,8")
         self.edit_levels.setMinimumWidth(220)
-        self.spin_num_features = QtWidgets.QSpinBox()
+        self.spin_num_features = _NoWheelSpinBox()
         self.spin_num_features.setRange(16, 4096)
         self.spin_num_features.setValue(128)
-        self.spin_weak = QtWidgets.QDoubleSpinBox()
+        self.spin_weak = _NoWheelDoubleSpinBox()
         self.spin_weak.setRange(0.0, 255.0)
         self.spin_weak.setValue(30.0)
-        self.spin_strong = QtWidgets.QDoubleSpinBox()
+        self.spin_strong = _NoWheelDoubleSpinBox()
         self.spin_strong.setRange(0.0, 255.0)
         self.spin_strong.setValue(60.0)
-        self.spin_angle_start = QtWidgets.QDoubleSpinBox()
+        self.spin_angle_start = _NoWheelDoubleSpinBox()
         self.spin_angle_start.setRange(-360.0, 360.0)
         self.spin_angle_start.setValue(-5.0)
-        self.spin_angle_end = QtWidgets.QDoubleSpinBox()
+        self.spin_angle_end = _NoWheelDoubleSpinBox()
         self.spin_angle_end.setRange(-360.0, 360.0)
         self.spin_angle_end.setValue(10.0)
-        self.spin_angle_step = QtWidgets.QDoubleSpinBox()
+        self.spin_angle_step = _NoWheelDoubleSpinBox()
         self.spin_angle_step.setRange(0.1, 360.0)
         self.spin_angle_step.setValue(1.0)
-        self.spin_scale_start = QtWidgets.QDoubleSpinBox()
+        self.spin_scale_start = _NoWheelDoubleSpinBox()
         self.spin_scale_start.setRange(0.05, 10.0)
         self.spin_scale_start.setValue(1.0)
-        self.spin_scale_end = QtWidgets.QDoubleSpinBox()
+        self.spin_scale_end = _NoWheelDoubleSpinBox()
         self.spin_scale_end.setRange(0.05, 10.0)
         self.spin_scale_end.setValue(1.0)
-        self.spin_scale_step = QtWidgets.QDoubleSpinBox()
+        self.spin_scale_step = _NoWheelDoubleSpinBox()
         self.spin_scale_step.setRange(0.001, 5.0)
         self.spin_scale_step.setDecimals(3)
         self.spin_scale_step.setValue(0.05)
@@ -529,10 +543,10 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         self.cmb_backend_create = QtWidgets.QComboBox()
         self.cmb_backend_create.addItems([label for label, _ in BACKEND_ITEMS])
         self.cmb_backend_create.setCurrentText(_DEFAULT_FIND_BACKEND_LABEL)
-        self.spin_threshold_create = QtWidgets.QDoubleSpinBox()
+        self.spin_threshold_create = _NoWheelDoubleSpinBox()
         self.spin_threshold_create.setRange(0.0, 100.0)
         self.spin_threshold_create.setValue(50.0)
-        self.spin_nms_create = QtWidgets.QDoubleSpinBox()
+        self.spin_nms_create = _NoWheelDoubleSpinBox()
         self.spin_nms_create.setRange(0.0, 1.0)
         self.spin_nms_create.setDecimals(2)
         self.spin_nms_create.setValue(0.3)
@@ -775,10 +789,10 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         self.cmb_backend_find = QtWidgets.QComboBox()
         self.cmb_backend_find.addItems([label for label, _ in BACKEND_ITEMS])
         self.cmb_backend_find.setCurrentText(_DEFAULT_FIND_BACKEND_LABEL)
-        self.spin_threshold_find = QtWidgets.QDoubleSpinBox()
+        self.spin_threshold_find = _NoWheelDoubleSpinBox()
         self.spin_threshold_find.setRange(0.0, 100.0)
         self.spin_threshold_find.setValue(50.0)
-        self.spin_nms_find = QtWidgets.QDoubleSpinBox()
+        self.spin_nms_find = _NoWheelDoubleSpinBox()
         self.spin_nms_find.setRange(0.0, 1.0)
         self.spin_nms_find.setDecimals(2)
         self.spin_nms_find.setValue(0.3)

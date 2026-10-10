@@ -531,6 +531,7 @@ def _draw_runtime_measurements(
 ) -> None:
     overlay_scale = _runtime_measurement_overlay_scale(source_size, display_size)
     center_distance_index = 0
+    occupied_pin_label_boxes: list[QtCore.QRectF] = []
     for measurement in _runtime_source_measurements(source):
         measurement_type = str(measurement.get("type", "") or "").strip()
         pred = str(measurement.get("pred", "") or "").strip().upper()
@@ -593,7 +594,8 @@ def _draw_runtime_measurements(
                         f"P{index}: {distance:.{precision}f}{unit}",
                         QtGui.QColor("#ff4040" if pin_pred == "NG" else "#facc15"),
                         overlay_scale=overlay_scale,
-                        tier=(index - 1) % 2,
+                        source_size=source_size,
+                        occupied_boxes=occupied_pin_label_boxes,
                     )
             raw_spacing_results = measurement.get("spacing_results")
             if spacing_enabled and isinstance(raw_spacing_results, list):
@@ -629,7 +631,8 @@ def _draw_runtime_measurements(
                         f"P{index}-P{index + 1}: {distance:.{precision}f}{unit}",
                         gap_color,
                         overlay_scale=overlay_scale,
-                        tier=((index - 1) % 2) + (2 if height_enabled else 0),
+                        source_size=source_size,
+                        occupied_boxes=occupied_pin_label_boxes,
                     )
             continue
         if measurement_type in {"pin_center_distance", "bright_block_y_distance", "bright_block_center", "pin_tip_point"}:
@@ -659,7 +662,16 @@ def _draw_runtime_measurements(
                         overlay_scale=overlay_scale,
                     )
             continue
-        if measurement_type in {"line_distance", "line_distance_ref_normal", "center_distance", "point_line_distance"}:
+        if measurement_type in {"line_distance", "line_distance_ref_normal", "baseline_axis_width", "center_distance", "point_line_distance"}:
+            if measurement_type == "baseline_axis_width":
+                reference_segment = _segment_tuple(measurement.get("reference_line_segment"))
+                if reference_segment is not None:
+                    _draw_runtime_segment(
+                        painter,
+                        reference_segment,
+                        QtGui.QColor("#40c4ff"),
+                        overlay_scale=max(1.0, overlay_scale * 0.65),
+                    )
             segment_a = _segment_tuple(measurement.get("line_a_segment"))
             if segment_a is None:
                 line_a = measurement.get("line_a")
@@ -793,30 +805,102 @@ def _draw_runtime_pin_label(
     color: QtGui.QColor,
     *,
     overlay_scale: float = 1.0,
-    tier: int = 0,
-) -> None:
+    source_size: QtCore.QSize | None = None,
+    occupied_boxes: list[QtCore.QRectF] | None = None,
+) -> QtCore.QRectF:
     scale = max(1.0, float(overlay_scale))
+    painter.save()
     font = painter.font()
     font.setPixelSize(max(10, int(round(10.0 * scale))))
     font.setBold(False)
     painter.setFont(font)
     metrics = QtGui.QFontMetrics(font)
     text_rect = metrics.boundingRect(str(text))
-    anchor_x = float(point[0])
-    anchor_y = float(point[1]) + (12.0 + 18.0 * float(tier)) * scale
     padding_x = 4.0 * scale
     padding_y = 2.0 * scale
-    box = QtCore.QRectF(
-        anchor_x - text_rect.width() / 2.0 - padding_x,
-        anchor_y,
+    box_size = QtCore.QSizeF(
         text_rect.width() + padding_x * 2.0,
         text_rect.height() + padding_y * 2.0,
+    )
+    if source_size is None:
+        device = painter.device()
+        source_size = QtCore.QSize(
+            int(device.width()) if device is not None else 0,
+            int(device.height()) if device is not None else 0,
+        )
+    box = _runtime_pin_label_box(
+        point,
+        box_size,
+        source_size,
+        overlay_scale=scale,
+        occupied_boxes=occupied_boxes,
     )
     painter.setPen(QtCore.Qt.NoPen)
     painter.setBrush(QtGui.QBrush(QtGui.QColor(0, 0, 0, 180)))
     painter.drawRoundedRect(box, 3.0 * scale, 3.0 * scale)
     painter.setPen(QtGui.QPen(color))
     painter.drawText(box, QtCore.Qt.AlignCenter, str(text))
+    painter.restore()
+    if occupied_boxes is not None:
+        occupied_boxes.append(QtCore.QRectF(box))
+    return box
+
+
+def _runtime_pin_label_box(
+    point: tuple[float, float],
+    box_size: QtCore.QSizeF,
+    source_size: QtCore.QSize,
+    *,
+    overlay_scale: float = 1.0,
+    occupied_boxes: list[QtCore.QRectF] | None = None,
+) -> QtCore.QRectF:
+    """Place a runtime pin label inside the image without covering prior labels."""
+
+    scale = max(1.0, float(overlay_scale))
+    image_width = max(1.0, float(source_size.width()))
+    image_height = max(1.0, float(source_size.height()))
+    margin = min(2.0 * scale, image_width * 0.02, image_height * 0.02)
+    width = min(max(1.0, float(box_size.width())), max(1.0, image_width - margin * 2.0))
+    height = min(max(1.0, float(box_size.height())), max(1.0, image_height - margin * 2.0))
+    anchor_x = float(point[0])
+    anchor_y = float(point[1])
+    left = max(margin, min(anchor_x - width / 2.0, image_width - margin - width))
+    gap = 12.0 * scale
+    row_step = height + 4.0 * scale
+    collision_padding = 2.0 * scale
+    occupied = list(occupied_boxes or [])
+    candidates: list[QtCore.QRectF] = []
+    max_rows = max(1, min(200, int(image_height / max(1.0, row_step)) + 2))
+
+    for row in range(max_rows):
+        below_top = anchor_y + gap + float(row) * row_step
+        above_top = anchor_y - gap - height - float(row) * row_step
+        for top in (below_top, above_top):
+            if top < margin or top + height > image_height - margin:
+                continue
+            candidate = QtCore.QRectF(left, top, width, height)
+            candidates.append(candidate)
+            padded = candidate.adjusted(
+                -collision_padding,
+                -collision_padding,
+                collision_padding,
+                collision_padding,
+            )
+            if not any(padded.intersects(existing) for existing in occupied):
+                return candidate
+
+    if candidates:
+        return min(
+            candidates,
+            key=lambda candidate: sum(
+                max(0.0, candidate.intersected(existing).width())
+                * max(0.0, candidate.intersected(existing).height())
+                for existing in occupied
+            ),
+        )
+
+    top = max(margin, min(anchor_y + gap, image_height - margin - height))
+    return QtCore.QRectF(left, top, width, height)
 
 
 def _draw_runtime_dimension(

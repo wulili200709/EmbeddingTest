@@ -23,12 +23,14 @@ _ALGORITHM_DISPLAY_KEYS = {
     "find_line_subpix": "debug.algorithm.find_line_subpix",
     "pin_tip_point": "debug.algorithm.pin_tip_point",
     "multi_pin_tip_height": "debug.algorithm.multi_pin_tip_height",
+    "opening_gap_median": "debug.algorithm.opening_gap_median",
     "bright_block_center": "debug.algorithm.bright_block_center",
     "pin_center_distance": "debug.algorithm.pin_center_distance",
     "bright_block_y_distance": "debug.algorithm.bright_block_y_distance",
     "center_distance": "debug.algorithm.center_distance",
     "line_distance": "debug.algorithm.line_distance",
     "line_distance_ref_normal": "debug.algorithm.line_distance_ref_normal",
+    "baseline_axis_width": "debug.algorithm.baseline_axis_width",
     "point_line_distance": "debug.algorithm.point_line_distance",
 }
 
@@ -52,6 +54,7 @@ _DEFAULT_DISPLAY_NAMES = {
     "center_distance": "Center Distance",
     "line_distance": "Line Distance",
     "line_distance_ref_normal": "Reference Normal Distance",
+    "baseline_axis_width": "Baseline Axis Width",
     "point_line_distance": "Point-Line Distance",
 }
 

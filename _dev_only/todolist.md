@@ -3211,7 +3211,7 @@ py -3.12 -m PyInstaller --noconfirm --clean --distpath "C:\Users\goney\Desktop\M
 powershell -ExecutionPolicy Bypass -File .\EmbeddingTest\build_py312.ps1
 
 
-.\build_release.bat 3.0.2
+.\build_release.bat 3.0.4
 
 
 

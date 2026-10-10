@@ -1,0 +1,105 @@
+{
+  "input_dir": "C:\\Users\\goney\\MVS\\Data\\1160079 1818098 1561359\\50-2",
+  "config": "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\config\\examples\\50-2_opening_gaps_long_edge_candidate.json",
+  "filename_glob": "Cam1_20260917*.png",
+  "images": 50,
+  "expected_size": [
+    5472,
+    3648
+  ],
+  "measurement_unit": "px",
+  "warning": "Provisional fixed ROIs; the correct physical edges have not been confirmed.",
+  "modes": {
+    "dark_plateau": {
+      "csv": "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\reports\\50-2_long_edge_candidate\\50-2_dark_plateau.csv",
+      "measurements_valid": 600,
+      "errors": [],
+      "regions": {
+        "T1": {
+          "valid_images": 50,
+          "min_px": 99.309,
+          "median_px": 99.573,
+          "max_px": 99.849,
+          "range_px": 0.54
+        },
+        "T2": {
+          "valid_images": 50,
+          "min_px": 115.323,
+          "median_px": 115.521,
+          "max_px": 115.958,
+          "range_px": 0.634
+        },
+        "T3": {
+          "valid_images": 50,
+          "min_px": 113.813,
+          "median_px": 113.984,
+          "max_px": 114.409,
+          "range_px": 0.596
+        },
+        "T4": {
+          "valid_images": 50,
+          "min_px": 110.718,
+          "median_px": 111.12,
+          "max_px": 111.694,
+          "range_px": 0.976
+        },
+        "T5": {
+          "valid_images": 50,
+          "min_px": 99.283,
+          "median_px": 99.545,
+          "max_px": 99.709,
+          "range_px": 0.426
+        },
+        "T6": {
+          "valid_images": 50,
+          "min_px": 101.019,
+          "median_px": 101.231,
+          "max_px": 101.634,
+          "range_px": 0.614
+        },
+        "B1": {
+          "valid_images": 50,
+          "min_px": 102.804,
+          "median_px": 103.056,
+          "max_px": 103.244,
+          "range_px": 0.441
+        },
+        "B2": {
+          "valid_images": 50,
+          "min_px": 113.632,
+          "median_px": 114.007,
+          "max_px": 114.348,
+          "range_px": 0.716
+        },
+        "B3": {
+          "valid_images": 50,
+          "min_px": 111.36,
+          "median_px": 111.537,
+          "max_px": 111.776,
+          "range_px": 0.416
+        },
+        "B4": {
+          "valid_images": 50,
+          "min_px": 106.546,
+          "median_px": 106.703,
+          "max_px": 106.903,
+          "range_px": 0.357
+        },
+        "B5": {
+          "valid_images": 50,
+          "min_px": 104.497,
+          "median_px": 104.723,
+          "max_px": 104.943,
+          "range_px": 0.446
+        },
+        "B6": {
+          "valid_images": 50,
+          "min_px": 108.903,
+          "median_px": 109.173,
+          "max_px": 109.459,
+          "range_px": 0.556
+        }
+      }
+    }
+  }
+}

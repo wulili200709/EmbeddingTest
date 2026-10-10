@@ -1,0 +1,106 @@
+{
+  "images": 50,
+  "measurements_expected": 700,
+  "measurements_valid": 700,
+  "errors": [],
+  "regions": {
+    "U1": {
+      "min_px": 101.185,
+      "median_px": 102.242,
+      "max_px": 103.354,
+      "min_valid_columns": 49,
+      "max_column_mad_px": 5.849
+    },
+    "U2": {
+      "min_px": 98.837,
+      "median_px": 99.302,
+      "max_px": 99.781,
+      "min_valid_columns": 49,
+      "max_column_mad_px": 0.523
+    },
+    "U3": {
+      "min_px": 98.353,
+      "median_px": 99.059,
+      "max_px": 99.888,
+      "min_valid_columns": 49,
+      "max_column_mad_px": 3.068
+    },
+    "U4": {
+      "min_px": 98.148,
+      "median_px": 99.322,
+      "max_px": 100.24,
+      "min_valid_columns": 49,
+      "max_column_mad_px": 2.728
+    },
+    "U5": {
+      "min_px": 97.476,
+      "median_px": 98.106,
+      "max_px": 98.896,
+      "min_valid_columns": 49,
+      "max_column_mad_px": 1.551
+    },
+    "U6": {
+      "min_px": 103.875,
+      "median_px": 104.707,
+      "max_px": 105.458,
+      "min_valid_columns": 49,
+      "max_column_mad_px": 1.604
+    },
+    "U7": {
+      "min_px": 101.253,
+      "median_px": 102.253,
+      "max_px": 103.499,
+      "min_valid_columns": 49,
+      "max_column_mad_px": 2.81
+    },
+    "L1": {
+      "min_px": 105.188,
+      "median_px": 105.871,
+      "max_px": 106.338,
+      "min_valid_columns": 49,
+      "max_column_mad_px": 1.846
+    },
+    "L2": {
+      "min_px": 107.668,
+      "median_px": 108.088,
+      "max_px": 108.598,
+      "min_valid_columns": 49,
+      "max_column_mad_px": 0.555
+    },
+    "L3": {
+      "min_px": 91.518,
+      "median_px": 92.051,
+      "max_px": 92.484,
+      "min_valid_columns": 49,
+      "max_column_mad_px": 0.456
+    },
+    "L4": {
+      "min_px": 93.245,
+      "median_px": 93.741,
+      "max_px": 94.19,
+      "min_valid_columns": 49,
+      "max_column_mad_px": 0.768
+    },
+    "L5": {
+      "min_px": 99.237,
+      "median_px": 99.724,
+      "max_px": 100.294,
+      "min_valid_columns": 49,
+      "max_column_mad_px": 1.118
+    },
+    "L6": {
+      "min_px": 101.584,
+      "median_px": 102.278,
+      "max_px": 102.929,
+      "min_valid_columns": 49,
+      "max_column_mad_px": 2.174
+    },
+    "L7": {
+      "min_px": 109.024,
+      "median_px": 109.472,
+      "max_px": 110.11,
+      "min_valid_columns": 47,
+      "max_column_mad_px": 1.281
+    }
+  }
+}

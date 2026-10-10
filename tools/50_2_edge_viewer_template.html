@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>50-2 开口测量边缘查看</title>
+  <style>
+    :root { color-scheme: dark; font-family: "Microsoft YaHei", "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #171b21; color: #edf2f7; }
+    main { max-width: 1280px; margin: auto; padding: 18px; }
+    h1 { font-size: 21px; margin: 0 0 6px; }
+    .hint { color: #b8c6d5; font-size: 14px; margin: 0 0 16px; }
+    .controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-bottom: 14px; }
+    label { display: grid; gap: 5px; font-size: 13px; color: #b8c6d5; }
+    select, input::file-selector-button { background: #26313d; border: 1px solid #607385; border-radius: 5px; color: #f1f5f9; padding: 8px 10px; font: inherit; }
+    select { min-width: 120px; max-width: 340px; }
+    input[type=file] { max-width: 310px; font-size: 12px; color: #b8c6d5; }
+    .details { min-height: 26px; margin-bottom: 8px; font-variant-numeric: tabular-nums; }
+    .details strong { color: #9cf4d8; }
+    .viewer { position: relative; background: #0b0d10; border: 1px solid #617285; border-radius: 6px; overflow: hidden; }
+    svg { display: block; width: 100%; height: min(68vh, 720px); }
+    .sample { fill: #2ee9b1; fill-opacity: .08; stroke: #2ee9b1; stroke-width: 1.5; }
+    .band { fill: #ffd159; fill-opacity: .07; stroke: #ffd159; stroke-dasharray: 3 3; stroke-width: .8; }
+    .edge { stroke: #da83ff; stroke-width: 2.3; stroke-linecap: round; }
+    .edge-trace { fill: none; stroke: #da83ff; stroke-opacity: .72; stroke-width: 1.1; }
+    .measure { stroke: #2ee9b1; stroke-width: 1.6; }
+    .mark { fill: #da83ff; stroke: #171b21; stroke-width: .7; }
+    .label { fill: #ffffff; stroke: #101820; stroke-width: 3px; paint-order: stroke fill; font-size: 12px; font-weight: 700; }
+    .legend { display: flex; flex-wrap: wrap; gap: 18px; color: #b8c6d5; font-size: 13px; margin-top: 10px; }
+    .legend b { font-weight: 500; }
+    .swatch { display: inline-block; width: 20px; height: 3px; vertical-align: middle; margin-right: 5px; }
+    .warn { color: #ffd159; font-size: 13px; margin-top: 12px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>50-2 开口测量边缘查看</h1>
+  <p class="hint">选择图片、算法和测点；紫色短线是这次计算实际采用的上下边缘位置。图像本身未被修改。</p>
+  <div class="controls">
+    <label>图片<select id="image-select"></select></label>
+    <label>判边方式<select id="mode-select"></select></label>
+    <label>测点<select id="region-select"></select></label>
+    <label>原图未显示时选择 50-2 文件夹<input id="folder-select" type="file" accept="image/png" webkitdirectory multiple></label>
+  </div>
+  <div id="details" class="details" aria-live="polite"></div>
+  <div class="viewer">
+    <svg id="edge-svg" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="原图上的测量边缘">
+      <defs>
+        <marker id="arrow-head" markerWidth="5" markerHeight="5" refX="2.5" refY="2.5" orient="auto-start-reverse"><path d="M0,0 L5,2.5 L0,5 z" fill="#2ee9b1"/></marker>
+      </defs>
+      <image id="source-image" x="0" y="0"></image>
+      <g id="overlays"></g>
+    </svg>
+  </div>
+  <div class="legend">
+    <span><i class="swatch" style="background:#da83ff"></i><b>紫色：各取样列找到的边缘轮廓；短线是最终读数对应的一列</b></span>
+    <span><i class="swatch" style="background:#2ee9b1"></i><b>绿色：取样范围与测量距离</b></span>
+    <span><i class="swatch" style="background:#ffd159"></i><b>黄色：上下边缘搜索范围</b></span>
+  </div>
+  <p class="warn">这些测点与边缘规则尚未按人工标注校准；短线表示算法位置，不代表已经确认的实体边。</p>
+</main>
+<script>
+(() => {
+  "use strict";
+  const data = __MEASUREMENT_DATA__;
+  const svgNS = "http://www.w3.org/2000/svg";
+  const $ = id => document.getElementById(id);
+  const imageSelect = $("image-select");
+  const modeSelect = $("mode-select");
+  const regionSelect = $("region-select");
+  const imageElement = $("source-image");
+  const svg = $("edge-svg");
+  const overlay = $("overlays");
+  const details = $("details");
+  const chosenFiles = new Map();
+  let activeObjectUrl = null;
+
+  function option(parent, value, label) {
+    const element = document.createElement("option");
+    element.value = value;
+    element.textContent = label;
+    parent.appendChild(element);
+  }
+  data.images.forEach((item, index) => option(imageSelect, String(index), `${index + 1}. ${item.name}`));
+  const modes = Object.keys(data.images[0].modes);
+  modes.forEach(mode => option(modeSelect, mode, mode === "dark_plateau" ? "暗侧阈值" : "最大梯度"));
+  option(regionSelect, "all", "全图概览");
+  data.regions.forEach(region => option(regionSelect, region.name, region.name));
+  regionSelect.value = data.regions[0].name;
+  const initial = new URLSearchParams(window.location.search);
+  for (const [select, key] of [[imageSelect, "image"], [modeSelect, "mode"], [regionSelect, "region"]]) {
+    const value = initial.get(key);
+    if (value && Array.from(select.options).some(item => item.value === value)) select.value = value;
+  }
+
+  function append(tag, attributes, className, text) {
+    const element = document.createElementNS(svgNS, tag);
+    for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, String(value));
+    if (className) element.setAttribute("class", className);
+    if (text !== undefined) element.textContent = text;
+    overlay.appendChild(element);
+    return element;
+  }
+  function imageUrl(item) {
+    const file = chosenFiles.get(item.name);
+    if (!file) return item.url;
+    if (activeObjectUrl) URL.revokeObjectURL(activeObjectUrl);
+    activeObjectUrl = URL.createObjectURL(file);
+    return activeObjectUrl;
+  }
+  function drawRegion(region, measurement, overview) {
+    const cx = region.center_x;
+    const half = Math.floor(region.width / 2);
+    const top = region.upper_y[0];
+    const bottom = region.lower_y[1];
+    append("rect", {x: cx - half, y: top, width: region.width, height: bottom - top}, "sample");
+    if (overview) {
+      append("text", {x: cx + half + 14, y: top + 18}, "label", region.name);
+      return;
+    }
+    append("rect", {x: cx - half, y: region.upper_y[0], width: region.width, height: region.upper_y[1] - region.upper_y[0]}, "band");
+    append("rect", {x: cx - half, y: region.lower_y[0], width: region.width, height: region.lower_y[1] - region.lower_y[0]}, "band");
+    if (!measurement) return;
+    const x = measurement.measurement_x;
+    const topY = measurement.upper_y;
+    const bottomY = measurement.lower_y;
+    const edgePoints = measurement.column_edges || [];
+    if (edgePoints.length) {
+      append("polyline", {points: edgePoints.map(point => `${point[0]},${point[1]}`).join(" ")}, "edge-trace");
+      append("polyline", {points: edgePoints.map(point => `${point[0]},${point[2]}`).join(" ")}, "edge-trace");
+    }
+    append("line", {x1: x, y1: topY + 7, x2: x, y2: bottomY - 7, "marker-start": "url(#arrow-head)", "marker-end": "url(#arrow-head)"}, "measure");
+    append("line", {x1: x - 12, y1: topY, x2: x + 12, y2: topY}, "edge");
+    append("line", {x1: x - 12, y1: bottomY, x2: x + 12, y2: bottomY}, "edge");
+    append("circle", {cx: x, cy: topY, r: 2.4}, "mark");
+    append("circle", {cx: x, cy: bottomY, r: 2.4}, "mark");
+    append("text", {x: x + 20, y: (topY + bottomY) / 2 + 4}, "label", `${measurement.distance_px.toFixed(3)} px`);
+  }
+  function render() {
+    const item = data.images[Number(imageSelect.value)];
+    const mode = modeSelect.value;
+    const selected = regionSelect.value;
+    const [width, height] = data.image_size;
+    imageElement.setAttribute("width", width);
+    imageElement.setAttribute("height", height);
+    imageElement.setAttribute("href", imageUrl(item));
+    overlay.replaceChildren();
+    if (selected === "all") {
+      svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+      data.regions.forEach(region => drawRegion(region, item.modes[mode][region.name], true));
+      details.textContent = `${item.name} · ${mode === "peak" ? "最大梯度" : "暗侧阈值"} · 12 处位置概览`;
+    } else {
+      const region = data.regions.find(entry => entry.name === selected);
+      const measurement = item.modes[mode][selected];
+      svg.setAttribute("viewBox", `${region.center_x - 150} ${region.upper_y[0] - 55} 300 ${region.lower_y[1] - region.upper_y[0] + 110}`);
+      drawRegion(region, measurement, false);
+      details.textContent = measurement
+        ? `${item.name} · ${selected} · ${measurement.distance_px.toFixed(3)} px · 有效列 ${measurement.valid_columns}/${measurement.total_columns} · 列间 MAD ${measurement.mad_px.toFixed(3)} px · 上边 y=${measurement.upper_y.toFixed(3)} · 下边 y=${measurement.lower_y.toFixed(3)}${mode === "dark_plateau" ? ` · 上/下暗侧比例 ${(region.upper_dark_fraction * 100).toFixed(0)}%/${(region.lower_dark_fraction * 100).toFixed(0)}%` : ""}`
+        : `${item.name} · ${selected} · 无有效读数`;
+    }
+  }
+  [imageSelect, modeSelect, regionSelect].forEach(element => element.addEventListener("change", render));
+  $("folder-select").addEventListener("change", event => {
+    chosenFiles.clear();
+    for (const file of event.target.files) chosenFiles.set(file.name, file);
+    render();
+  });
+  imageElement.addEventListener("error", () => {
+    details.textContent += " · 原图加载失败，请用上方按钮选择 50-2 文件夹";
+  });
+  render();
+})();
+</script>
+</body>
+</html>

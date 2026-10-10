@@ -5,6 +5,7 @@ from __future__ import annotations
 from PySide6 import QtWidgets
 
 from algorithms.measurement import (
+    BASELINE_AXIS_WIDTH_ALGORITHM,
     CENTER_DISTANCE_ALGORITHM,
     LINE_DISTANCE_ALGORITHMS,
     POINT_LINE_DISTANCE_ALGORITHM,
@@ -243,6 +244,74 @@ def _add_line_distance_tool(tool_page) -> None:
                 break
 
 
+def _add_baseline_axis_width_tool(tool_page) -> None:
+    if not _require_tool_permission(tool_page, "inspection.edit_items", "新增检测项"):
+        return
+    camera_role = _current_camera_role(tool_page)
+    option_owner = type("_Selected", (), {"camera_id": camera_role, "item_id": ""})()
+    line_options = [
+        item_id
+        for _display, item_id in _line_item_options(tool_page, option_owner)
+    ]
+    if len(line_options) < 3:
+        QtWidgets.QMessageBox.information(
+            tool_page,
+            tr("debug.algorithm.baseline_axis_width"),
+            tr("debug.measurement.baseline_axis_width_requires_three_lines"),
+        )
+        return
+    selected_item = _selected_inspection_item(tool_page)
+    selected_params = dict(getattr(selected_item, "params", {}) or {}) if selected_item is not None else {}
+    unit = str(selected_params.get("limit_unit", "px") or "px").strip().lower()
+    if unit not in {"px", "mm"}:
+        unit = "px"
+    item_id = _unique_item_id(tool_page, BASELINE_AXIS_WIDTH_ALGORITHM)
+    params = {
+        "line_a_item_id": line_options[0] if len(line_options) >= 1 else "",
+        "line_b_item_id": line_options[1] if len(line_options) >= 2 else "",
+        "reference_line_item_id": line_options[2] if len(line_options) >= 3 else "",
+        "axis_position_ratio": 0.5,
+        "sample_half_width_px": 25.0,
+        "limit_unit": unit,
+    }
+    pixel_size = _optional_param_float(selected_params, "pixel_size_mm") or 0.0
+    if pixel_size > 0.0:
+        params["pixel_size_mm"] = pixel_size
+    lower = _optional_param_float(selected_params, "lower_limit", f"lower_limit_{unit}")
+    upper = _optional_param_float(selected_params, "upper_limit", f"upper_limit_{unit}")
+    if lower is not None:
+        params["lower_limit"] = lower
+    if upper is not None:
+        params["upper_limit"] = upper
+    tool_page.inspection_items.append(
+        InspectionItem(
+            item_id=item_id,
+            display_name="Baseline Axis Width",
+            camera_id=camera_role,
+            roi_label="",
+            algorithm_code=BASELINE_AXIS_WIDTH_ALGORITHM,
+            enabled=True,
+            params=params,
+        )
+    )
+    _persist_inspection_items(tool_page)
+    _audit_tool_event(
+        tool_page,
+        module="检测项",
+        action="新增检测项",
+        target=item_id,
+        after_value=BASELINE_AXIS_WIDTH_ALGORITHM,
+    )
+    _refresh_inspection_items_table(tool_page)
+    table = getattr(tool_page, "inspection_items_table", None)
+    if table is not None:
+        for visible_row, actual_index in enumerate(getattr(tool_page, "_visible_inspection_item_indexes", []) or []):
+            item = tool_page.inspection_items[actual_index]
+            if str(getattr(item, "item_id", "") or "") == item_id:
+                table.setCurrentCell(visible_row, 1)
+                break
+
+
 def _add_point_line_distance_tool(
     tool_page,
     *,
@@ -395,6 +464,16 @@ def _inspection_item_display_name(inspection_item) -> str:
                     tr("debug.algorithm.line_distance_ref_normal"),
                 }
             )
+            display_key = "debug.algorithm.line_distance_ref_normal"
+        elif algorithm == BASELINE_AXIS_WIDTH_ALGORITHM:
+            default_names.update(
+                {
+                    "Baseline Axis Width",
+                    BASELINE_AXIS_WIDTH_ALGORITHM,
+                    tr("debug.algorithm.baseline_axis_width"),
+                }
+            )
+            display_key = "debug.algorithm.baseline_axis_width"
         if item_id.startswith("line_distance"):
             default_names.add(item_id)
         if raw_name in default_names:
@@ -525,6 +604,7 @@ __all__ = [
     "_on_inspection_items_table_item_changed",
     "_persist_inspection_items",
     "_add_line_distance_tool",
+    "_add_baseline_axis_width_tool",
     "_delete_selected_line_distance_tool",
     "_update_delete_line_distance_button",
     "_refresh_inspection_items_table",

@@ -1,0 +1,24 @@
+{
+  "description": "50-2 provisional 12 notch gaps, fixed original-image coordinates; not an EXE product recipe",
+  "filename_glob": "Cam1_20260917*.png",
+  "image_size": [5472, 3648],
+  "blur_ksize": 9,
+  "min_strength": 5.0,
+  "min_valid_ratio": 0.6,
+  "upper_dark_fraction": 0.03,
+  "lower_dark_fraction": 0.03,
+  "regions": [
+    {"name": "T1", "center_x": 1210, "upper_y": [930, 1030], "lower_y": [1050, 1150], "width": 49},
+    {"name": "T2", "center_x": 1650, "upper_y": [930, 1030], "lower_y": [1050, 1150], "width": 49},
+    {"name": "T3", "center_x": 2090, "upper_y": [930, 1030], "lower_y": [1050, 1150], "width": 49},
+    {"name": "T4", "center_x": 2990, "upper_y": [930, 1030], "lower_y": [1050, 1150], "width": 49},
+    {"name": "T5", "center_x": 3425, "upper_y": [930, 1030], "lower_y": [1050, 1150], "width": 49},
+    {"name": "T6", "center_x": 3870, "upper_y": [930, 1030], "lower_y": [1050, 1150], "width": 49},
+    {"name": "B1", "center_x": 1210, "upper_y": [2570, 2690], "lower_y": [2710, 2830], "width": 49},
+    {"name": "B2", "center_x": 1650, "upper_y": [2570, 2690], "lower_y": [2710, 2830], "width": 49},
+    {"name": "B3", "center_x": 2090, "upper_y": [2570, 2690], "lower_y": [2710, 2830], "width": 49},
+    {"name": "B4", "center_x": 2990, "upper_y": [2570, 2690], "lower_y": [2710, 2830], "width": 49},
+    {"name": "B5", "center_x": 3425, "upper_y": [2570, 2690], "lower_y": [2710, 2830], "width": 49},
+    {"name": "B6", "center_x": 3870, "upper_y": [2570, 2690], "lower_y": [2710, 2830], "width": 49}
+  ]
+}

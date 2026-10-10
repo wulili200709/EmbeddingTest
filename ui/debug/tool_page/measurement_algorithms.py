@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from algorithms.measurement import (
+    BASELINE_AXIS_WIDTH_ALGORITHM,
     BRIGHT_BLOCK_CENTER_ALGORITHM,
     BRIGHT_BLOCK_Y_DISTANCE_ALGORITHM,
     CENTER_DISTANCE_ALGORITHM,
@@ -10,6 +11,7 @@ from algorithms.measurement import (
     FIND_LINE_SUBPIX_ALGORITHM,
     LINE_DISTANCE_ALGORITHMS,
     MULTI_PIN_TIP_HEIGHT_ALGORITHM,
+    OPENING_GAP_MEDIAN_ALGORITHM,
     PIN_CENTER_DISTANCE_ALGORITHM,
     PIN_TIP_POINT_ALGORITHM,
     POINT_LINE_DISTANCE_ALGORITHM,
@@ -19,6 +21,10 @@ from common.algorithm_codes import normalize_tool_algorithm_code
 
 def is_line_distance_algorithm(algorithm: object) -> bool:
     return str(algorithm or "").strip() in LINE_DISTANCE_ALGORITHMS
+
+
+def is_baseline_axis_width_algorithm(algorithm: object) -> bool:
+    return str(algorithm or "").strip() == BASELINE_AXIS_WIDTH_ALGORITHM
 
 
 def is_find_line_algorithm(algorithm: object) -> bool:
@@ -54,7 +60,7 @@ def is_center_distance_algorithm(algorithm: object) -> bool:
 
 
 def is_single_roi_distance_algorithm(algorithm: object) -> bool:
-    return is_pin_center_distance_algorithm(algorithm) or is_bright_block_y_distance_algorithm(algorithm)
+    return str(algorithm or "").strip() == OPENING_GAP_MEDIAN_ALGORITHM or is_pin_center_distance_algorithm(algorithm) or is_bright_block_y_distance_algorithm(algorithm)
 
 
 def public_algorithm_code(algorithm: object) -> str:
@@ -75,6 +81,8 @@ def public_algorithm_code(algorithm: object) -> str:
     if normalized == PIN_TIP_POINT_ALGORITHM:
         return normalized
     if normalized == MULTI_PIN_TIP_HEIGHT_ALGORITHM:
+        return normalized
+    if normalized == OPENING_GAP_MEDIAN_ALGORITHM:
         return normalized
     if normalized == POINT_LINE_DISTANCE_ALGORITHM:
         return normalized

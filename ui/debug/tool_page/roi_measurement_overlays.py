@@ -309,7 +309,20 @@ def measurement_overlays_for_path(tool_page, img_path: str) -> List[OverlayShape
                     )
                 )
             continue
-        if measurement_type in {"line_distance", "line_distance_ref_normal", "center_distance", "point_line_distance"}:
+        if measurement_type in {"line_distance", "line_distance_ref_normal", "baseline_axis_width", "center_distance", "point_line_distance", "opening_gap_median"}:
+            if measurement_type == "opening_gap_median":
+                edge_segments = []
+                for raw_edge in measurement.get("edge_segments", ()):
+                    if isinstance(raw_edge, (list, tuple)) and len(raw_edge) >= 2:
+                        p0 = _point_tuple(raw_edge[0])
+                        p1 = _point_tuple(raw_edge[1])
+                        if p0 is not None and p1 is not None:
+                            edge_segments.append((p0, p1))
+                if edge_segments:
+                    overlays.append(OverlayShape(
+                        shape_type="segments", segments=edge_segments,
+                        color=QtGui.QColor("#C084FC"), width=2.5, dash=False,
+                    ))
             raw_dimension = measurement.get("dimension_segment")
             dimension: Optional[Tuple[Tuple[float, float], Tuple[float, float]]] = None
             if isinstance(raw_dimension, (list, tuple)) and len(raw_dimension) >= 2:

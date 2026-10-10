@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from PySide6 import QtWidgets
 
-from algorithms.measurement import FIND_LINE_SUBPIX_ALGORITHM
+from algorithms.measurement import (
+    BASELINE_AXIS_WIDTH_ALGORITHM,
+    FIND_LINE_SUBPIX_ALGORITHM,
+    OPENING_GAP_MEDIAN_ALGORITHM,
+)
 from ui.i18n import tr
 from ui.debug.tool_page.inspection_items_table import _selected_inspection_item
 from ui.debug.tool_page.multi_pin_spacing_dialog import (
@@ -111,6 +115,7 @@ def _update_measurement_params_panel(tool_page) -> None:
     ).strip()
     is_find_line = _is_find_line_algorithm(algorithm)
     is_line_distance = _is_line_distance_algorithm(algorithm)
+    is_baseline_axis_width = algorithm == BASELINE_AXIS_WIDTH_ALGORITHM
     is_point_line_distance = _is_point_line_distance_algorithm(algorithm)
     is_center_distance = _is_center_distance_algorithm(algorithm)
     is_multi_pin_tip_height = _is_multi_pin_tip_height_algorithm(algorithm)
@@ -173,6 +178,10 @@ def _update_measurement_params_panel(tool_page) -> None:
             tool_page.cmb_measurement_line_b_tool,
             reference_options if is_multi_pin_tip_height else line_options if is_point_line_distance else pair_options,
         )
+        _populate_line_tool_combo(
+            tool_page.cmb_measurement_reference_line_tool,
+            line_options,
+        )
         _set_combo_current_data(
             tool_page.cmb_measurement_line_a_tool,
             params.get("point_item_id", "")
@@ -191,8 +200,27 @@ def _update_measurement_params_panel(tool_page) -> None:
             if is_center_distance
             else params.get("line_b_item_id", ""),
         )
+        _set_combo_current_data(
+            tool_page.cmb_measurement_reference_line_tool,
+            reference_id,
+        )
         _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_line_a_tool, is_line_distance or is_point_line_distance or is_center_distance)
         _set_measurement_row_visible(tool_page, tool_page.cmb_measurement_line_b_tool, is_line_distance or is_point_line_distance or is_center_distance or is_multi_pin_tip_height)
+        _set_measurement_row_visible(
+            tool_page,
+            tool_page.cmb_measurement_reference_line_tool,
+            is_baseline_axis_width,
+        )
+        _set_measurement_row_visible(
+            tool_page,
+            tool_page.spin_measurement_axis_position_percent,
+            is_baseline_axis_width,
+        )
+        _set_measurement_row_visible(
+            tool_page,
+            tool_page.spin_measurement_sample_half_width,
+            is_baseline_axis_width,
+        )
         _set_measurement_row_label(
             tool_page,
             tool_page.cmb_measurement_line_a_tool,
@@ -243,6 +271,15 @@ def _update_measurement_params_panel(tool_page) -> None:
         _set_measurement_row_visible(tool_page, tool_page.spin_measurement_pixel_size, is_direct_distance)
         tool_page.cmb_measurement_line_a_tool.setEnabled(is_line_distance or is_point_line_distance or is_center_distance)
         tool_page.cmb_measurement_line_b_tool.setEnabled(is_line_distance or is_point_line_distance or is_center_distance or is_multi_pin_tip_height)
+        tool_page.cmb_measurement_reference_line_tool.setEnabled(is_baseline_axis_width)
+        tool_page.spin_measurement_axis_position_percent.setValue(
+            max(0.0, min(100.0, float(params.get("axis_position_ratio", 0.5) or 0.0) * 100.0))
+        )
+        tool_page.spin_measurement_axis_position_percent.setEnabled(is_baseline_axis_width)
+        tool_page.spin_measurement_sample_half_width.setValue(
+            max(1.0, float(params.get("sample_half_width_px", 25.0) or 25.0))
+        )
+        tool_page.spin_measurement_sample_half_width.setEnabled(is_baseline_axis_width)
         _set_combo_current_data(tool_page.cmb_measurement_distance_mode, distance_mode)
         tool_page.cmb_measurement_distance_mode.setEnabled(is_center_distance)
         _set_combo_current_data(tool_page.cmb_measurement_line_a_direction, line_a_direction)
@@ -321,6 +358,7 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
     ).strip()
     is_find_line = _is_find_line_algorithm(algorithm)
     is_line_distance = _is_line_distance_algorithm(algorithm)
+    is_baseline_axis_width = algorithm == BASELINE_AXIS_WIDTH_ALGORITHM
     is_point_line_distance = _is_point_line_distance_algorithm(algorithm)
     is_center_distance = _is_center_distance_algorithm(algorithm)
     is_multi_pin_tip_height = _is_multi_pin_tip_height_algorithm(algorithm)
@@ -380,6 +418,20 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
     elif is_line_distance:
         params["line_a_item_id"] = str(tool_page.cmb_measurement_line_a_tool.currentData() or "").strip()
         params["line_b_item_id"] = str(tool_page.cmb_measurement_line_b_tool.currentData() or "").strip()
+        if is_baseline_axis_width:
+            params["reference_line_item_id"] = str(
+                tool_page.cmb_measurement_reference_line_tool.currentData() or ""
+            ).strip()
+            params["axis_position_ratio"] = float(
+                tool_page.spin_measurement_axis_position_percent.value()
+            ) / 100.0
+            params["sample_half_width_px"] = float(
+                tool_page.spin_measurement_sample_half_width.value()
+            )
+        else:
+            params.pop("reference_line_item_id", None)
+            params.pop("axis_position_ratio", None)
+            params.pop("sample_half_width_px", None)
         params.pop("line", None)
         params.pop("line_a", None)
         params.pop("line_b", None)
@@ -430,6 +482,10 @@ def _on_measurement_params_changed(tool_page, *args) -> None:
         params.pop("center_a_item_id", None)
         params.pop("center_b_item_id", None)
         params.pop("distance_mode", None)
+    elif algorithm == OPENING_GAP_MEDIAN_ALGORITHM:
+        params.pop("line", None)
+        params.pop("line_a", None)
+        params.pop("line_b", None)
     else:
         line_a["direction"] = str(
             tool_page.cmb_measurement_line_a_direction.currentData()

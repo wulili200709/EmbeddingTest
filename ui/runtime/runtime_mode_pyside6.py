@@ -15,6 +15,7 @@ from common.camera_roles import (
     normalize_camera_role,
 )
 from algorithms.measurement import (
+    BASELINE_AXIS_WIDTH_ALGORITHM,
     BRIGHT_BLOCK_CENTER_ALGORITHM,
     CENTER_DISTANCE_ALGORITHMS,
     FIND_LINE_ALGORITHMS,
@@ -1547,6 +1548,15 @@ class RuntimeModePage(QtWidgets.QWidget):
                     }
                 )
                 display_key = "debug.algorithm.line_distance_ref_normal"
+            elif algorithm == BASELINE_AXIS_WIDTH_ALGORITHM:
+                default_names.update(
+                    {
+                        "Baseline Axis Width",
+                        BASELINE_AXIS_WIDTH_ALGORITHM,
+                        tr("debug.algorithm.baseline_axis_width"),
+                    }
+                )
+                display_key = "debug.algorithm.baseline_axis_width"
             if item_id.startswith("line_distance"):
                 default_names.add(item_id)
             if name in default_names:
@@ -1605,6 +1615,10 @@ class RuntimeModePage(QtWidgets.QWidget):
                 item_id = str(params.get(key, "") or "").strip()
                 if item_id:
                     helper_ids.add(item_id)
+            if algorithm == BASELINE_AXIS_WIDTH_ALGORITHM:
+                reference_id = str(params.get("reference_line_item_id", "") or "").strip()
+                if reference_id:
+                    line_helper_ids.add(reference_id)
         if not line_helper_ids and not center_helper_ids and not point_helper_ids:
             return camera_rows
         return [
