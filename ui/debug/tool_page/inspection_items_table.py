@@ -138,6 +138,8 @@ def _refresh_inspection_items_table(tool_page) -> None:
                 )
             )
             table.setCellWidget(row, 3, algorithm_combo)
+            if getattr(inspection_item, "model_source", "independent") in {"group", "library"}:
+                algorithm_combo.setToolTip(tr("debug.model_source.tool_change_tip"))
 
             status_text, status_tooltip, status_color = _inspection_item_status(tool_page, inspection_item)
             status_item = QtWidgets.QTableWidgetItem(status_text)
@@ -214,6 +216,9 @@ def _on_inspection_items_selection_changed(tool_page) -> None:
         return
     _sync_inspection_items_row_highlight(tool_page)
     item = _selected_inspection_item(tool_page)
+    source_panel = getattr(tool_page, "model_source_panel", None)
+    if source_panel is not None:
+        source_panel.refresh()
     if item is None:
         tool_page._refresh_lists()
         tool_page._update_runtime_widgets()
@@ -221,7 +226,12 @@ def _on_inspection_items_selection_changed(tool_page) -> None:
         _update_delete_line_distance_button(tool_page)
         tool_page._update_measurement_params_panel()
         return
-    if tool_page.algo.is_learning_tool(item.algorithm_code):
+    if hasattr(tool_page.algo, "resolve_item_algorithm"):
+        try:
+            algorithm = tool_page.algo.resolve_item_algorithm(item)
+        except Exception:
+            algorithm = ""
+    elif tool_page.algo.is_learning_tool(item.algorithm_code):
         algorithm = tool_page.algo.current_learning_backbone(item.camera_id)
     else:
         algorithm = tool_page.algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
@@ -334,6 +344,9 @@ def _on_inspection_item_algorithm_changed(tool_page, row: int, algorithm_code: o
         return
     normalized = normalize_tool_algorithm_code(algorithm_code)
     before = str(getattr(tool_page.inspection_items[row], "algorithm_code", "") or "")
+    from ui.debug.tool_page.model_source_changes import detach_for_tool_change
+    target_algorithm = tool_page.algo.resolve_tool_algorithm(normalized, tool_page.inspection_items[row].camera_id)
+    detach_for_tool_change(tool_page, tool_page.inspection_items[row], target_algorithm)
     tool_page.inspection_items[row].algorithm_code = normalized
     spec = tool_page.algo.tool_algorithm_spec(normalized)
     if spec is not None and not dict(tool_page.inspection_items[row].params or {}):
@@ -356,6 +369,9 @@ def _on_inspection_item_algorithm_changed(tool_page, row: int, algorithm_code: o
             finally:
                 tool_page._updating_runtime_params = False
         tool_page._update_runtime_widgets()
+    # Runtime listeners reload the same algorithm controller when items change.
+    # Write the selected tool parameters before notifying those listeners.
+    tool_page._save_runtime_params()
     _persist_inspection_items(tool_page)
     if before != normalized:
         _audit_tool_event(

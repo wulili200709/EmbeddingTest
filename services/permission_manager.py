@@ -50,10 +50,19 @@ class PermissionManager:
     def try_release_once(self, password: str) -> bool:
         if str(password) != self._run_password:
             return False
+        self._grant_release_once()
+        return True
+
+    def release_after_ng_box_confirmation(self) -> bool:
+        if not self._locked:
+            return False
+        self._grant_release_once()
+        return True
+
+    def _grant_release_once(self) -> None:
         self._locked = False
         self._has_pending_release = True
         self._release_consumed = False
-        return True
 
     def consume_release_if_needed(self) -> bool:
         if not self._has_pending_release:

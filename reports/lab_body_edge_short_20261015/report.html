@@ -1,0 +1,37 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>按指定主体边优化的开口测量</title>
+<style>body{font:16px/1.7 "Microsoft YaHei",sans-serif;background:#f4f8fa;color:#193441;max-width:1480px;margin:24px auto;padding:0 20px}h1{font-size:28px}h2{font-size:21px}a{color:#006d91}img{max-width:100%;height:auto}table{border-collapse:collapse;background:white}th,td{padding:7px 10px;border:1px solid #c7d5df;text-align:right;white-space:nowrap}th{background:#e5edf2}.scroll{overflow:auto}.notice{background:#fff1cf;padding:12px 16px}.links{display:flex;flex-wrap:wrap;gap:20px}</style>
+<h1>按指定的主体外轮廓优化取边</h1>
+<p>图片上排从左到右 <b>L7 → L1</b>，下排 <b>U7 → U1</b>。共6张图、84个位置；数据表顺序为U1～U7、L1～L7。</p>
+<p>自动取边已改到金属唇边朝向开口的外轮廓：先定位亮面，再根据局部开口背景寻找轮廓变化；用左右稳定段确定直线，中间突起或凹口保留为诊断点。上下线独立拟合，不强制水平或平行，不利用实验室数值挑选边。</p>
+<div class="links"><a href="four_point_review.html">交互查看取边：新版与上版叠加</a><a href="measurement_comparison.csv">84处完整数据 CSV</a><a href="auto_pixels.csv">新版像素表</a><a href="measurements.json">全部原图坐标和诊断</a></div>
+<p>本轮：通过内部图像诊断 8 处、输出候选并提示复核 67 处、无有效输出 9 处。“通过”仅指图像诊断；还没有独立的毫米精度验证。手动选点是可选检查功能，自动结果无需重新手动点击。</p>
+<p class="notice">本轮实际采样宽度为 <b>101 列（中心左右各 50 px）</b>，显示线段的横向跨度为 100 px。左右定线区也同步缩到距中心 29～46 px；中心凸点不参与定线。缩短的是取边与拟合范围，未将斜率强制设为水平。</p>
+<h2>2号图：U2、U4、U5 修改前后</h2><p><b>上行橙线：上一版取边范围；下行青线：本轮取边范围。</b>两行使用相同原图裁剪和相同放大倍率。图中 lower 是下线相对图像水平方向的倾角，负号表示向右上方倾斜。</p><img src="target_comparison_2.png" alt="2号图三个位置缩短范围的原像素前后对照">
+<div class="scroll"><table><tr><th>位置</th><th>上版夹角</th><th>新版夹角</th><th>新版垂距 px</th><th>状态</th></tr>
+<tr><th>U2</th><td>1.03416°</td><td>1.50359°</td><td>58.44299</td><td>review</td></tr>
+<tr><th>U4</th><td>0.18884°</td><td>0.95343°</td><td>70.56305</td><td>review</td></tr>
+<tr><th>U5</th><td>1.41460°</td><td>0.30790°</td><td>61.17246</td><td>review</td></tr>
+</table></div><p>夹角用于检查取线方向，不是把两条线拉成平行的目标。用户截图用于确定测量对象，未把截图中的手画线当成精确原图坐标或毫米真值。</p>
+<h2>6张图的完整取边结果</h2><p>青色：主体外轮廓拟合候选；绿色小点：左右定线采样；绿色连线：垂距。failed位置仅保留诊断线、不输出有效尺寸。交互页面可展开全部真实候选点、中央偏差及背景拟合质量。</p>
+<h2>1.png</h2><a href="annotated/1.png">完整原尺寸标注</a><p><img src="details/1.png" alt="1.png 上下两排的14处取边"></p>
+<h2>2.png</h2><a href="annotated/2.png">完整原尺寸标注</a><p><img src="details/2.png" alt="2.png 上下两排的14处取边"></p>
+<h2>3.png</h2><a href="annotated/3.png">完整原尺寸标注</a><p><img src="details/3.png" alt="3.png 上下两排的14处取边"></p>
+<h2>4.png</h2><a href="annotated/4.png">完整原尺寸标注</a><p><img src="details/4.png" alt="4.png 上下两排的14处取边"></p>
+<h2>5.png</h2><a href="annotated/5.png">完整原尺寸标注</a><p><img src="details/5.png" alt="5.png 上下两排的14处取边"></p>
+<h2>6.png</h2><a href="annotated/6.png">完整原尺寸标注</a><p><img src="details/6.png" alt="6.png 上下两排的14处取边"></p>
+<h2>全部原始像素尺寸</h2><div class="scroll"><table><tr><th>图片</th><th>U1</th><th>U2</th><th>U3</th><th>U4</th><th>U5</th><th>U6</th><th>U7</th><th>L1</th><th>L2</th><th>L3</th><th>L4</th><th>L5</th><th>L6</th><th>L7</th></tr>
+<tr><th>1.png</th><td>66.73256</td><td>59.32201</td><td>63.76224</td><td>66.40309</td><td>62.47980</td><td>64.90947</td><td>68.64000</td><td>67.77411</td><td>—</td><td>59.73588</td><td>60.74278</td><td>61.39237</td><td>58.26352</td><td>62.09839</td></tr>
+<tr><th>2.png</th><td>63.66224</td><td>58.44299</td><td>—</td><td>70.56305</td><td>61.17246</td><td>61.57355</td><td>68.80111</td><td>72.51205</td><td>66.95055</td><td>61.34026</td><td>63.07161</td><td>—</td><td>61.77030</td><td>64.38340</td></tr>
+<tr><th>3.png</th><td>—</td><td>63.41419</td><td>64.41502</td><td>67.37899</td><td>62.50203</td><td>65.35588</td><td>71.67612</td><td>—</td><td>64.89034</td><td>62.95680</td><td>62.53365</td><td>—</td><td>59.33600</td><td>—</td></tr>
+<tr><th>4.png</th><td>—</td><td>59.95932</td><td>62.77957</td><td>67.41091</td><td>63.92319</td><td>66.83881</td><td>73.78413</td><td>70.06385</td><td>68.80525</td><td>68.43806</td><td>65.30929</td><td>—</td><td>62.40917</td><td>69.91199</td></tr>
+<tr><th>5.png</th><td>67.68114</td><td>60.93847</td><td>63.73307</td><td>67.04133</td><td>60.79127</td><td>63.34006</td><td>68.38361</td><td>67.56859</td><td>65.26664</td><td>62.40607</td><td>61.93415</td><td>62.03392</td><td>60.64702</td><td>63.89056</td></tr>
+<tr><th>6.png</th><td>68.37683</td><td>61.17890</td><td>62.21791</td><td>63.54135</td><td>61.43346</td><td>63.90894</td><td>54.31060</td><td>68.31379</td><td>66.62257</td><td>69.59983</td><td>66.17919</td><td>62.36734</td><td>60.41642</td><td>64.28628</td></tr>
+</table></div>
+<p class="notice">当前垂距规则：下线段中点到上直线的垂距（待与实验室确认）。mm/px仍是现有样本拟合比例，并非物理标定。先确认主体边定义与图像重复性，再确定补偿；本次原Excel、原图及上一版报告均未修改。</p>
+<details><summary>实验室数值的探索性对照</summary><p>取边算法没有使用实验室数值。以下每种方法分别拟合比例和逐位置偏移；整件留一每次用5件拟合、1件预测，6件已参与算法开发，因此仍不属于独立验收。覆盖不同的结果不能直接解释为精度改善。</p><table><tr><th>方法</th><th>评估方式</th><th>覆盖</th><th>MAE mm</th><th>最大绝对误差 mm</th></tr>
+<tr><td>原49列法</td><td>同批拟合</td><td>84/84</td><td>0.01915</td><td>0.09019</td></tr>
+<tr><td>原49列法</td><td>整件留一</td><td>84/84</td><td>0.02299</td><td>0.10873</td></tr>
+<tr><td>主体外轮廓法</td><td>同批拟合</td><td>75/84</td><td>0.01438</td><td>0.05024</td></tr>
+<tr><td>主体外轮廓法</td><td>整件留一</td><td>75/84</td><td>0.01768</td><td>0.06037</td></tr>
+</table>
+<a href="validation.json">完整对照参数及每件预测</a></details></html>

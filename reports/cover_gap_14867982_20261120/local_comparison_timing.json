@@ -1,0 +1,67 @@
+{
+  "scope": "Prototype CPU compute for two local ROIs per product. Detection accuracy NOT validated. Excludes camera exposure, IO, file reading, whole-product localization, model preparation, UI, other inspection items.",
+  "opencv_version": "5.0.0",
+  "opencv_threads": 1,
+  "padding_px": 8,
+  "model_preparation_including_disk_ms": 3794.1858999984106,
+  "normal_counts": {
+    "roi33_180": 1,
+    "roi34_180": 1,
+    "roi33_0": 7,
+    "roi34_0": 7
+  },
+  "cases": {
+    "cam1_debug_cam_20261119_134622_249531": {
+      "roi_sizes": {
+        "roi33": [
+          472,
+          81
+        ],
+        "roi34": [
+          365,
+          84
+        ]
+      },
+      "repetitions": 80,
+      "median_ms": 21.88395,
+      "p95_ms": 33.32676,
+      "min_ms": 14.3673,
+      "max_ms": 43.3705,
+      "median_stages_ms": {
+        "crop_and_gray": 2.5299500000000004,
+        "local_alignment": 16.06785,
+        "brightness": 0.6142,
+        "difference_and_regions": 2.2267
+      }
+    },
+    "cam1_debug_cam_20261119_163833_081283": {
+      "roi_sizes": {
+        "roi33": [
+          472,
+          81
+        ],
+        "roi34": [
+          365,
+          84
+        ]
+      },
+      "repetitions": 80,
+      "median_ms": 21.845399999999998,
+      "p95_ms": 33.602335,
+      "min_ms": 15.7262,
+      "max_ms": 38.5551,
+      "median_stages_ms": {
+        "crop_and_gray": 2.4747500000000002,
+        "local_alignment": 16.96375,
+        "brightness": 0.63425,
+        "difference_and_regions": 2.0657500000000004
+      }
+    }
+  },
+  "combined": {
+    "median_ms": 21.88395,
+    "p95_ms": 33.56625499999999,
+    "min_ms": 14.3673,
+    "max_ms": 43.3705
+  }
+}

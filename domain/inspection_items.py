@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any, Iterable, List, Mapping
 
 from common.algorithm_codes import (
@@ -11,6 +12,8 @@ from common.algorithm_codes import (
 )
 from common.camera_roles import CAMERA_ROLES, DEFAULT_CAMERA_ROLE, normalize_camera_role
 from common.safe_io import atomic_write_json, load_json_with_backup
+from common.model_library import make_library_model_key
+from common.model_groups import OrderModelGroups, group_slug as _group_slug, make_group_model_key
 
 
 SUPPORTED_CAMERA_IDS = CAMERA_ROLES
@@ -37,6 +40,10 @@ class InspectionItem:
     algorithm_code: str = SHARED_BACKBONE_ALGORITHM_CODE
     enabled: bool = True
     params: dict[str, Any] = field(default_factory=dict)
+    model_source: str = "independent"
+    task_group: str = ""
+    library_model_id: str = ""
+    library_version: str = ""
 
     def __init__(
         self,
@@ -49,6 +56,10 @@ class InspectionItem:
         params: Mapping[str, Any] | None = None,
         *,
         algorithm_type: str | None = None,
+        model_source: str = "independent",
+        task_group: str = "",
+        library_model_id: str = "",
+        library_version: str = "",
     ) -> None:
         normalized_camera_id = normalize_camera_role(camera_id, default=DEFAULT_CAMERA_ROLE)
         resolved_algorithm = normalize_tool_algorithm_code(
@@ -61,6 +72,21 @@ class InspectionItem:
         self.algorithm_code = resolved_algorithm
         self.enabled = bool(enabled)
         self.params = dict(params or {})
+        self.model_source = str(model_source or "independent").strip()
+        self.task_group = str(task_group or "").strip()
+        self.library_model_id = str(library_model_id or "").strip()
+        self.library_version = str(library_version or "").strip()
+        self.validate_model_binding()
+
+    def validate_model_binding(self) -> None:
+        if self.model_source not in {"independent", "group", "library"}:
+            raise ValueError(f"Unsupported model source: {self.model_source}")
+        if self.model_source == "group" and not _group_slug(self.task_group):
+            raise ValueError("A shared model group is required")
+        if self.model_source == "group" and "__library__" in _group_slug(self.task_group):
+            raise ValueError("Shared group names cannot contain the reserved library marker")
+        if self.model_source == "library":
+            make_library_model_key(self.camera_id, self.library_model_id, self.library_version)
 
     @property
     def algorithm_type(self) -> str:
@@ -75,6 +101,23 @@ class InspectionItem:
         camera = _slug_token(self.camera_id, DEFAULT_CAMERA_ROLE)
         item = _slug_token(self.item_id or self.roi_label or self.display_name, "roi")
         return f"{camera}__{item}"
+
+    @property
+    def effective_task_group(self) -> str:
+        return self.task_group or self.item_id or self.roi_label or "roi"
+
+    @property
+    def task_model_key(self) -> str:
+        return make_group_model_key(self.camera_id, self.effective_task_group)
+
+    @property
+    def effective_model_key(self) -> str:
+        self.validate_model_binding()
+        if self.model_source == "group":
+            return self.task_model_key
+        if self.model_source == "library":
+            return make_library_model_key(self.camera_id, self.library_model_id, self.library_version)
+        return self.model_key
 
     @classmethod
     def from_dict(cls, data: dict) -> "InspectionItem":
@@ -95,9 +138,14 @@ class InspectionItem:
             algorithm_code=algorithm_code or algorithm_type or SHARED_BACKBONE_ALGORITHM_CODE,
             enabled=bool(data.get("enabled", True)),
             params=params,
+            model_source=data.get("model_source", "independent"),
+            task_group=data.get("task_group", ""),
+            library_model_id=data.get("library_model_id", ""),
+            library_version=data.get("library_version", ""),
         )
 
     def to_dict(self) -> dict:
+        self.validate_model_binding()
         payload = asdict(self)
         payload["algorithm_type"] = self.algorithm_code
         return payload
@@ -123,6 +171,12 @@ def load_inspection_items(path: str) -> List[InspectionItem]:
 
 def save_inspection_items(items: Iterable[InspectionItem], path: str) -> None:
     payload = [item.to_dict() for item in items]
+    # Keep the old and new groups before a source change removes the last ROI
+    # reference. Models remain stored under their original group keys.
+    previous = load_json_with_backup(path, default=[])
+    OrderModelGroups(Path(path).parent).remember_items(
+        previous if isinstance(previous, list) else [], payload,
+    )
     atomic_write_json(path, payload, ensure_ascii=False, indent=2)
 
 
@@ -184,6 +238,10 @@ def sync_items_with_labels(
                     algorithm_code=existing.algorithm_code or SHARED_BACKBONE_ALGORITHM_CODE,
                     enabled=bool(existing.enabled),
                     params=dict(existing.params or {}),
+                    model_source=existing.model_source,
+                    task_group=existing.task_group,
+                    library_model_id=existing.library_model_id,
+                    library_version=existing.library_version,
                 )
             )
         else:
@@ -212,6 +270,10 @@ def sync_items_with_labels(
                 algorithm_code=existing.algorithm_code,
                 enabled=bool(existing.enabled),
                 params=dict(existing.params or {}),
+                model_source=existing.model_source,
+                task_group=existing.task_group,
+                library_model_id=existing.library_model_id,
+                library_version=existing.library_version,
             )
         )
     return synced

@@ -1,0 +1,1089 @@
+{
+  "templates": {
+    "U": [
+      1100,
+      830,
+      3850,
+      1140
+    ],
+    "L": [
+      1180,
+      2470,
+      3880,
+      2800
+    ]
+  },
+  "sample_indices": [
+    1,
+    13,
+    25,
+    38,
+    50
+  ],
+  "results": [
+    {
+      "image": "Cam1_20260916140502970.png",
+      "index": 1,
+      "rows": {
+        "U": {
+          "dx": 0,
+          "dy": 0,
+          "score": 0.9999994039535522
+        },
+        "L": {
+          "dx": 0,
+          "dy": 0,
+          "score": 1.0
+        }
+      },
+      "points": [
+        {
+          "original_roi": "U1",
+          "physical_label": "L7",
+          "center_x": 1250,
+          "px": 103.04576293160908,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_departs_from_body_line",
+            "upper:side_contour_outliers",
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:side_contour_outliers",
+            "lower:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U2",
+          "physical_label": "L6",
+          "center_x": 1650,
+          "px": 92.05189388621142,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_departs_from_body_line",
+            "upper:side_contour_outliers",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:full_contour_variation"
+          ]
+        },
+        {
+          "original_roi": "U3",
+          "physical_label": "L5",
+          "center_x": 2040,
+          "px": null,
+          "status": "failed",
+          "reasons": [
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:side_contour_outliers",
+            "upper:full_contour_variation",
+            "lower:insufficient_two_sided_inlier_support",
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:side_contour_outliers",
+            "lower:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U4",
+          "physical_label": "L4",
+          "center_x": 2440,
+          "px": 111.11680602348277,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_not_observable",
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:side_contour_outliers",
+            "upper:full_contour_variation",
+            "lower:middle_contour_departs_from_body_line",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U5",
+          "physical_label": "L3",
+          "center_x": 2880,
+          "px": 104.00553438548276,
+          "status": "review",
+          "reasons": [
+            "lower:side_contour_outliers",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U6",
+          "physical_label": "L2",
+          "center_x": 3155,
+          "px": 103.23860967444266,
+          "status": "review",
+          "reasons": [
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:side_contour_outliers",
+            "upper:full_contour_variation",
+            "lower:partial_side_anchor_support",
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U7",
+          "physical_label": "L1",
+          "center_x": 3660,
+          "px": 112.55073009992827,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_not_observable",
+            "upper:partial_side_anchor_support",
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:full_contour_variation",
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L1",
+          "physical_label": "U7",
+          "center_x": 1335,
+          "px": 112.11347438904627,
+          "status": "review",
+          "reasons": [
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:side_contour_outliers",
+            "upper:full_contour_variation",
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:side_contour_outliers",
+            "lower:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L2",
+          "physical_label": "U6",
+          "center_x": 1725,
+          "px": 98.90446813020333,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_departs_from_body_line",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L3",
+          "physical_label": "U5",
+          "center_x": 2115,
+          "px": 103.52648359427747,
+          "status": "review",
+          "reasons": [
+            "lower:middle_contour_not_observable",
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:middle_contour_departs_from_body_line",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L4",
+          "physical_label": "U4",
+          "center_x": 2520,
+          "px": 104.36087352211226,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_not_observable",
+            "upper:partial_side_anchor_support",
+            "lower:side_contour_not_straight_or_ambiguous",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L5",
+          "physical_label": "U3",
+          "center_x": 2920,
+          "px": 99.02600641895317,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_not_observable",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:full_contour_variation",
+            "lower:middle_contour_departs_from_body_line",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L6",
+          "physical_label": "U2",
+          "center_x": 3315,
+          "px": 95.9388071028965,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_departs_from_body_line",
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:full_contour_variation"
+          ]
+        },
+        {
+          "original_roi": "L7",
+          "physical_label": "U1",
+          "center_x": 3690,
+          "px": null,
+          "status": "failed",
+          "reasons": [
+            "upper:no_coherent_lip_seed",
+            "upper:no_two_sided_coherent_body_transition",
+            "upper:insufficient_two_sided_contour_anchors"
+          ]
+        }
+      ]
+    },
+    {
+      "image": "Cam1_20260916140623797.png",
+      "index": 13,
+      "rows": {
+        "U": {
+          "dx": 0,
+          "dy": 0,
+          "score": 0.9969037771224976
+        },
+        "L": {
+          "dx": -1,
+          "dy": 0,
+          "score": 0.9966849684715271
+        }
+      },
+      "points": [
+        {
+          "original_roi": "U1",
+          "physical_label": "L7",
+          "center_x": 1250,
+          "px": 101.28002771080595,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_departs_from_body_line",
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:side_contour_outliers",
+            "lower:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U2",
+          "physical_label": "L6",
+          "center_x": 1650,
+          "px": 92.51420369893144,
+          "status": "review",
+          "reasons": [
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U3",
+          "physical_label": "L5",
+          "center_x": 2040,
+          "px": 104.73032720993059,
+          "status": "review",
+          "reasons": [
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:side_contour_outliers",
+            "upper:full_contour_variation",
+            "lower:middle_contour_not_observable",
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:side_contour_outliers",
+            "lower:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U4",
+          "physical_label": "L4",
+          "center_x": 2440,
+          "px": 108.47497803845401,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_departs_from_body_line",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:side_contour_outliers",
+            "lower:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U5",
+          "physical_label": "L3",
+          "center_x": 2880,
+          "px": 104.26113698060449,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_departs_from_body_line",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U6",
+          "physical_label": "L2",
+          "center_x": 3155,
+          "px": 108.58576745385707,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_not_observable",
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:full_contour_variation",
+            "lower:middle_contour_not_observable",
+            "lower:middle_contour_departs_from_body_line",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U7",
+          "physical_label": "L1",
+          "center_x": 3660,
+          "px": 111.7972629520334,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_not_observable",
+            "upper:middle_contour_departs_from_body_line",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L1",
+          "physical_label": "U7",
+          "center_x": 1334,
+          "px": 113.01220254527601,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_not_observable",
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:side_contour_outliers",
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:side_contour_outliers",
+            "lower:full_contour_variation"
+          ]
+        },
+        {
+          "original_roi": "L2",
+          "physical_label": "U6",
+          "center_x": 1724,
+          "px": 99.64432119900827,
+          "status": "review",
+          "reasons": [
+            "upper:side_contour_not_straight_or_ambiguous",
+            "lower:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L3",
+          "physical_label": "U5",
+          "center_x": 2114,
+          "px": 104.39562106516155,
+          "status": "review",
+          "reasons": [
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:middle_contour_departs_from_body_line",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L4",
+          "physical_label": "U4",
+          "center_x": 2519,
+          "px": 104.98309208702857,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_not_observable",
+            "lower:middle_contour_departs_from_body_line",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L5",
+          "physical_label": "U3",
+          "center_x": 2919,
+          "px": 99.97899119232163,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_not_observable",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:full_contour_variation",
+            "lower:middle_contour_departs_from_body_line",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L6",
+          "physical_label": "U2",
+          "center_x": 3314,
+          "px": 96.4159421166078,
+          "status": "review",
+          "reasons": [
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:full_contour_variation"
+          ]
+        },
+        {
+          "original_roi": "L7",
+          "physical_label": "U1",
+          "center_x": 3689,
+          "px": 102.23129419893803,
+          "status": "review",
+          "reasons": [
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:side_contour_outliers",
+            "upper:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        }
+      ]
+    },
+    {
+      "image": "Cam1_20260916140716497.png",
+      "index": 25,
+      "rows": {
+        "U": {
+          "dx": 0,
+          "dy": -1,
+          "score": 0.9968068599700928
+        },
+        "L": {
+          "dx": 0,
+          "dy": -1,
+          "score": 0.9973452091217041
+        }
+      },
+      "points": [
+        {
+          "original_roi": "U1",
+          "physical_label": "L7",
+          "center_x": 1250,
+          "px": 104.13791389832195,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_departs_from_body_line",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U2",
+          "physical_label": "L6",
+          "center_x": 1650,
+          "px": 92.31468989547456,
+          "status": "review",
+          "reasons": [
+            "upper:side_contour_outliers"
+          ]
+        },
+        {
+          "original_roi": "U3",
+          "physical_label": "L5",
+          "center_x": 2040,
+          "px": 106.00467698777429,
+          "status": "review",
+          "reasons": [
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:side_contour_outliers",
+            "upper:full_contour_variation",
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:side_contour_outliers",
+            "lower:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U4",
+          "physical_label": "L4",
+          "center_x": 2440,
+          "px": 110.84472785268503,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_not_observable",
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:side_contour_outliers",
+            "upper:full_contour_variation",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:side_contour_outliers",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U5",
+          "physical_label": "L3",
+          "center_x": 2880,
+          "px": 104.88283806214264,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_departs_from_body_line",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U6",
+          "physical_label": "L2",
+          "center_x": 3155,
+          "px": 104.2852013173843,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_not_observable",
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:full_contour_variation",
+            "lower:partial_side_anchor_support",
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U7",
+          "physical_label": "L1",
+          "center_x": 3660,
+          "px": 111.9953444698856,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_departs_from_body_line",
+            "upper:full_contour_variation",
+            "lower:middle_contour_not_observable",
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L1",
+          "physical_label": "U7",
+          "center_x": 1335,
+          "px": 111.68606139579353,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_not_observable",
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:side_contour_outliers",
+            "upper:full_contour_variation",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:full_contour_variation"
+          ]
+        },
+        {
+          "original_roi": "L2",
+          "physical_label": "U6",
+          "center_x": 1725,
+          "px": 99.30588739823146,
+          "status": "review",
+          "reasons": [
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L3",
+          "physical_label": "U5",
+          "center_x": 2115,
+          "px": 104.04987737665695,
+          "status": "review",
+          "reasons": [
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:middle_contour_departs_from_body_line",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L4",
+          "physical_label": "U4",
+          "center_x": 2520,
+          "px": 103.99498687199069,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_not_observable",
+            "upper:side_contour_outliers",
+            "lower:middle_contour_departs_from_body_line",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L5",
+          "physical_label": "U3",
+          "center_x": 2920,
+          "px": 99.23901264045168,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_not_observable",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:full_contour_variation",
+            "lower:middle_contour_departs_from_body_line",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L6",
+          "physical_label": "U2",
+          "center_x": 3315,
+          "px": 96.09764432938552,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_departs_from_body_line",
+            "upper:full_contour_variation"
+          ]
+        },
+        {
+          "original_roi": "L7",
+          "physical_label": "U1",
+          "center_x": 3690,
+          "px": 103.09167045700845,
+          "status": "review",
+          "reasons": [
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:side_contour_outliers",
+            "upper:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        }
+      ]
+    },
+    {
+      "image": "Cam1_20260916140817171.png",
+      "index": 38,
+      "rows": {
+        "U": {
+          "dx": 0,
+          "dy": -1,
+          "score": 0.9967437982559204
+        },
+        "L": {
+          "dx": 0,
+          "dy": -1,
+          "score": 0.9970865845680237
+        }
+      },
+      "points": [
+        {
+          "original_roi": "U1",
+          "physical_label": "L7",
+          "center_x": 1250,
+          "px": null,
+          "status": "failed",
+          "reasons": [
+            "upper:middle_contour_departs_from_body_line",
+            "lower:spatial_recovery_conflicts_with_observed_side_contour",
+            "lower:middle_contour_not_observable",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U2",
+          "physical_label": "L6",
+          "center_x": 1650,
+          "px": 91.68805523793446,
+          "status": "review",
+          "reasons": [
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:side_contour_outliers"
+          ]
+        },
+        {
+          "original_roi": "U3",
+          "physical_label": "L5",
+          "center_x": 2040,
+          "px": 103.74686921423671,
+          "status": "review",
+          "reasons": [
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:side_contour_outliers",
+            "upper:full_contour_variation",
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:side_contour_outliers",
+            "lower:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U4",
+          "physical_label": "L4",
+          "center_x": 2440,
+          "px": null,
+          "status": "failed",
+          "reasons": [
+            "upper:middle_contour_not_observable",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:side_contour_outliers",
+            "lower:insufficient_two_sided_inlier_support",
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:side_contour_outliers",
+            "lower:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U5",
+          "physical_label": "L3",
+          "center_x": 2880,
+          "px": 103.74552457716047,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_departs_from_body_line",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U6",
+          "physical_label": "L2",
+          "center_x": 3155,
+          "px": null,
+          "status": "failed",
+          "reasons": [
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:side_contour_outliers",
+            "upper:full_contour_variation",
+            "lower:no_coherent_lip_seed",
+            "lower:no_two_sided_coherent_body_transition",
+            "lower:insufficient_two_sided_contour_anchors"
+          ]
+        },
+        {
+          "original_roi": "U7",
+          "physical_label": "L1",
+          "center_x": 3660,
+          "px": 112.17609850598127,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_departs_from_body_line",
+            "lower:middle_contour_not_observable",
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L1",
+          "physical_label": "U7",
+          "center_x": 1335,
+          "px": null,
+          "status": "failed",
+          "reasons": [
+            "upper:middle_contour_not_observable",
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:side_contour_outliers",
+            "lower:insufficient_two_sided_inlier_support",
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:side_contour_outliers",
+            "lower:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L2",
+          "physical_label": "U6",
+          "center_x": 1725,
+          "px": 99.49420249697386,
+          "status": "review",
+          "reasons": [
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:side_contour_outliers",
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:side_contour_outliers",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L3",
+          "physical_label": "U5",
+          "center_x": 2115,
+          "px": 103.9950754273854,
+          "status": "review",
+          "reasons": [
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:middle_contour_departs_from_body_line",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L4",
+          "physical_label": "U4",
+          "center_x": 2520,
+          "px": 104.34643176750814,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_not_observable",
+            "upper:side_contour_outliers",
+            "lower:middle_contour_departs_from_body_line",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L5",
+          "physical_label": "U3",
+          "center_x": 2920,
+          "px": 99.88823715956951,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_not_observable",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:full_contour_variation",
+            "lower:middle_contour_departs_from_body_line",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L6",
+          "physical_label": "U2",
+          "center_x": 3315,
+          "px": 96.38268840830011,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_departs_from_body_line"
+          ]
+        },
+        {
+          "original_roi": "L7",
+          "physical_label": "U1",
+          "center_x": 3690,
+          "px": null,
+          "status": "failed",
+          "reasons": [
+            "upper:insufficient_two_sided_inlier_support",
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:side_contour_outliers",
+            "upper:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        }
+      ]
+    },
+    {
+      "image": "Cam1_20260916140908194.png",
+      "index": 50,
+      "rows": {
+        "U": {
+          "dx": 0,
+          "dy": 0,
+          "score": 0.9970585703849792
+        },
+        "L": {
+          "dx": -1,
+          "dy": -1,
+          "score": 0.9970468878746033
+        }
+      },
+      "points": [
+        {
+          "original_roi": "U1",
+          "physical_label": "L7",
+          "center_x": 1250,
+          "px": null,
+          "status": "failed",
+          "reasons": [
+            "upper:middle_contour_departs_from_body_line",
+            "lower:spatial_recovery_conflicts_with_observed_side_contour",
+            "lower:middle_contour_departs_from_body_line",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U2",
+          "physical_label": "L6",
+          "center_x": 1650,
+          "px": 92.57787251765122,
+          "status": "review",
+          "reasons": [
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U3",
+          "physical_label": "L5",
+          "center_x": 2040,
+          "px": 103.6935904477329,
+          "status": "review",
+          "reasons": [
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:side_contour_outliers",
+            "upper:full_contour_variation",
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:side_contour_outliers",
+            "lower:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U4",
+          "physical_label": "L4",
+          "center_x": 2440,
+          "px": 110.87759057928986,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_not_observable",
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:side_contour_outliers",
+            "upper:full_contour_variation",
+            "lower:middle_contour_departs_from_body_line",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U5",
+          "physical_label": "L3",
+          "center_x": 2880,
+          "px": 103.50141717447408,
+          "status": "review",
+          "reasons": [
+            "upper:side_contour_not_straight_or_ambiguous"
+          ]
+        },
+        {
+          "original_roi": "U6",
+          "physical_label": "L2",
+          "center_x": 3155,
+          "px": null,
+          "status": "failed",
+          "reasons": [
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:middle_contour_departs_from_body_line",
+            "upper:side_contour_outliers",
+            "upper:full_contour_variation",
+            "lower:insufficient_two_sided_inlier_support",
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:side_contour_outliers",
+            "lower:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "U7",
+          "physical_label": "L1",
+          "center_x": 3660,
+          "px": 113.30058203566149,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_not_observable",
+            "upper:middle_contour_departs_from_body_line",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:full_contour_variation",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L1",
+          "physical_label": "U7",
+          "center_x": 1334,
+          "px": 113.03928110160713,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_not_observable",
+            "upper:side_contour_not_straight_or_ambiguous",
+            "upper:side_contour_outliers",
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:side_contour_outliers",
+            "lower:full_contour_variation"
+          ]
+        },
+        {
+          "original_roi": "L2",
+          "physical_label": "U6",
+          "center_x": 1724,
+          "px": 99.06816643810099,
+          "status": "review",
+          "reasons": [
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L3",
+          "physical_label": "U5",
+          "center_x": 2114,
+          "px": 104.18529192543473,
+          "status": "review",
+          "reasons": [
+            "lower:side_contour_not_straight_or_ambiguous",
+            "lower:middle_contour_departs_from_body_line",
+            "lower:side_contour_outliers",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L4",
+          "physical_label": "U4",
+          "center_x": 2519,
+          "px": 104.36672618680937,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_not_observable",
+            "lower:middle_contour_departs_from_body_line"
+          ]
+        },
+        {
+          "original_roi": "L5",
+          "physical_label": "U3",
+          "center_x": 2919,
+          "px": 99.97732157495565,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_departs_from_body_line",
+            "upper:full_contour_variation",
+            "lower:middle_contour_departs_from_body_line",
+            "upper_lower_lines_not_parallel"
+          ]
+        },
+        {
+          "original_roi": "L6",
+          "physical_label": "U2",
+          "center_x": 3314,
+          "px": 96.35987954444815,
+          "status": "review",
+          "reasons": [
+            "upper:middle_contour_departs_from_body_line",
+            "lower:middle_contour_departs_from_body_line"
+          ]
+        },
+        {
+          "original_roi": "L7",
+          "physical_label": "U1",
+          "center_x": 3689,
+          "px": null,
+          "status": "failed",
+          "reasons": [
+            "upper:no_coherent_lip_seed",
+            "upper:no_two_sided_coherent_body_transition",
+            "upper:insufficient_two_sided_contour_anchors"
+          ]
+        }
+      ]
+    }
+  ]
+}

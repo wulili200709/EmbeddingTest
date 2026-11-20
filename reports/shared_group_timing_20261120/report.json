@@ -1,0 +1,1998 @@
+{
+  "scope": "ROI inference only; excludes image decoding, alignment, camera, UI, IO",
+  "order": "test",
+  "image": "cam1_Image_20260806132529892_cam1  (1).bmp",
+  "roi_count": 2,
+  "backbone": "mobilenet_v3_large",
+  "score_mode": "proto",
+  "cpu_torch_threads": 4,
+  "gpu_available": false,
+  "models": {
+    "independent": [
+      {
+        "roi": "roi1",
+        "file": "cam1__roi1_register_model_b2.npz",
+        "bytes": 16518,
+        "ok_bank_shape": [
+          1,
+          960
+        ],
+        "ng_bank_shape": [
+          1,
+          960
+        ]
+      },
+      {
+        "roi": "roi2",
+        "file": "cam1__roi2_register_model_b2.npz",
+        "bytes": 16549,
+        "ok_bank_shape": [
+          1,
+          960
+        ],
+        "ng_bank_shape": [
+          1,
+          960
+        ]
+      }
+    ],
+    "group": [
+      {
+        "roi": "roi1",
+        "file": "cam1__group__PIN_709e58acb6_register_model_b2.npz",
+        "bytes": 16549,
+        "ok_bank_shape": [
+          1,
+          960
+        ],
+        "ng_bank_shape": [
+          1,
+          960
+        ]
+      },
+      {
+        "roi": "roi2",
+        "file": "cam1__group__PIN_709e58acb6_register_model_b2.npz",
+        "bytes": 16549,
+        "ok_bank_shape": [
+          1,
+          960
+        ],
+        "ng_bank_shape": [
+          1,
+          960
+        ]
+      }
+    ]
+  },
+  "summary": {
+    "independent": {
+      "initialization_ms": 153.81030000571627,
+      "first": {
+        "total_ms": 452.9543999960879,
+        "model_load_ms": 26.21039999939967,
+        "roi_preprocess_ms": 281.45120000408497,
+        "backbone_ms": 139.2768000077922,
+        "classify_ms": 0.22480000916402787
+      },
+      "warm": {
+        "total_ms": 363.8183500006562,
+        "model_load_ms": 0.8929000032367185,
+        "roi_preprocess_ms": 287.0822000040789,
+        "backbone_ms": 46.74950000480749,
+        "classify_ms": 0.20560000120894983
+      },
+      "after_parameter_reload": {
+        "total_ms": 729.2825000040466,
+        "model_load_ms": 48.42560000543017,
+        "roi_preprocess_ms": 532.5802000006661,
+        "backbone_ms": 66.88080000458285,
+        "classify_ms": 0.1984999980777502
+      }
+    },
+    "group": {
+      "initialization_ms": 136.0879000130808,
+      "first": {
+        "total_ms": 317.28170000133105,
+        "model_load_ms": 8.081199994194321,
+        "roi_preprocess_ms": 257.71410000743344,
+        "backbone_ms": 41.46829999808688,
+        "classify_ms": 0.18950000230688602
+      },
+      "warm": {
+        "total_ms": 498.2254999995348,
+        "model_load_ms": 1.0456499949214049,
+        "roi_preprocess_ms": 363.83740000019316,
+        "backbone_ms": 75.04679999692598,
+        "classify_ms": 0.2062499988824129
+      },
+      "after_parameter_reload": {
+        "total_ms": 501.7686000064714,
+        "model_load_ms": 9.125500000664033,
+        "roi_preprocess_ms": 425.74510000122245,
+        "backbone_ms": 53.20719999144785,
+        "classify_ms": 0.2300000051036477
+      }
+    }
+  },
+  "runs": [
+    {
+      "mode": "independent",
+      "initialization_ms": 201.3137000030838,
+      "runner": {
+        "backend": "ort",
+        "model_format": "ort",
+        "model_path": "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.cache\\ort_backbones\\b2_cpu_v1.ort",
+        "providers": [
+          "CPUExecutionProvider"
+        ],
+        "cpu_inference_chunk_size": 2
+      },
+      "input_shape": [
+        "batch_size",
+        3,
+        224,
+        224
+      ],
+      "first": {
+        "model_load_ms": 27.695299999322742,
+        "roi_preprocess_ms": 274.4527000031667,
+        "backbone_ms": 139.2768000077922,
+        "backbone_batch_size": 2,
+        "backbone_chunk_count": 1,
+        "backbone_chunk_size": 2,
+        "backbone_backend": "ort",
+        "backbone_provider": "CPUExecutionProvider",
+        "classify_ms": 0.3735999925993383,
+        "total_ms": 452.9543999960879,
+        "npz_cache_entries": 2,
+        "predictions": {
+          "cam1__roi1": "OK",
+          "cam1__roi2": "OK"
+        }
+      },
+      "warm": [
+        {
+          "model_load_ms": 0.7692999934079126,
+          "roi_preprocess_ms": 338.043399999151,
+          "backbone_ms": 70.63000000198372,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.4182999982731417,
+          "total_ms": 427.75659999460913,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 2.0736000005854294,
+          "roi_preprocess_ms": 322.19289999920875,
+          "backbone_ms": 34.30590000061784,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.23330000112764537,
+          "total_ms": 369.8830000066664,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.974599999608472,
+          "roi_preprocess_ms": 297.76030000357423,
+          "backbone_ms": 48.36210000212304,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.18950000230688602,
+          "total_ms": 357.753699994646,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.0765000042738393,
+          "roi_preprocess_ms": 261.362300007022,
+          "backbone_ms": 27.88529999088496,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.20169999334029853,
+          "total_ms": 299.4425000069896,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.6730000022798777,
+          "roi_preprocess_ms": 257.62269999540877,
+          "backbone_ms": 42.165499995462596,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.4734999965876341,
+          "total_ms": 325.9933000081219,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 2.014400000916794,
+          "roi_preprocess_ms": 338.0089999991469,
+          "backbone_ms": 52.68199999409262,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.17939999816007912,
+          "total_ms": 404.9634999973932,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.905399996554479,
+          "roi_preprocess_ms": 264.2257999978028,
+          "backbone_ms": 36.06919999583624,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.20549999317154288,
+          "total_ms": 310.73890000698157,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.8489000028930604,
+          "roi_preprocess_ms": 240.62950001098216,
+          "backbone_ms": 32.20429999055341,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.16179999511223286,
+          "total_ms": 283.9996999973664,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.6815000087954104,
+          "roi_preprocess_ms": 253.47070000134408,
+          "backbone_ms": 118.53910000354517,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.22570000146515667,
+          "total_ms": 498.27559999539517,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.8423999970545992,
+          "roi_preprocess_ms": 584.8535999975866,
+          "backbone_ms": 109.56100000475999,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.23160000273492187,
+          "total_ms": 711.4063000044553,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        }
+      ],
+      "after_parameter_reload": {
+        "model_load_ms": 115.38240000663791,
+        "roi_preprocess_ms": 532.5802000006661,
+        "backbone_ms": 66.88080000458285,
+        "backbone_batch_size": 2,
+        "backbone_chunk_count": 1,
+        "backbone_chunk_size": 2,
+        "backbone_backend": "ort",
+        "backbone_provider": "CPUExecutionProvider",
+        "classify_ms": 0.1984999980777502,
+        "total_ms": 729.2825000040466,
+        "npz_cache_entries": 2,
+        "predictions": {
+          "cam1__roi1": "OK",
+          "cam1__roi2": "OK"
+        }
+      },
+      "after_reload_warm": [
+        {
+          "model_load_ms": 0.906000001123175,
+          "roi_preprocess_ms": 431.3381000101799,
+          "backbone_ms": 69.02640000043903,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.19040000915993005,
+          "total_ms": 512.9261000111001,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.7557999924756587,
+          "roi_preprocess_ms": 354.3236999976216,
+          "backbone_ms": 79.28499999979977,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.2393000031588599,
+          "total_ms": 476.81870000087656,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 3.0553999968105927,
+          "roi_preprocess_ms": 448.5504000040237,
+          "backbone_ms": 72.31849999516271,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.1860999909695238,
+          "total_ms": 541.7444000049727,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.8802000083960593,
+          "roi_preprocess_ms": 345.6078000017442,
+          "backbone_ms": 71.73849998798687,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.2393000031588599,
+          "total_ms": 430.03560000215657,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.8685999928275123,
+          "roi_preprocess_ms": 307.9015000112122,
+          "backbone_ms": 47.972000000299886,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.18180000188294798,
+          "total_ms": 367.1436000004178,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        }
+      ],
+      "repetition": 0
+    },
+    {
+      "mode": "group",
+      "initialization_ms": 136.0879000130808,
+      "runner": {
+        "backend": "ort",
+        "model_format": "ort",
+        "model_path": "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.cache\\ort_backbones\\b2_cpu_v1.ort",
+        "providers": [
+          "CPUExecutionProvider"
+        ],
+        "cpu_inference_chunk_size": 2
+      },
+      "input_shape": [
+        "batch_size",
+        3,
+        224,
+        224
+      ],
+      "first": {
+        "model_load_ms": 8.081199994194321,
+        "roi_preprocess_ms": 257.71410000743344,
+        "backbone_ms": 41.46829999808688,
+        "backbone_batch_size": 2,
+        "backbone_chunk_count": 1,
+        "backbone_chunk_size": 2,
+        "backbone_backend": "ort",
+        "backbone_provider": "CPUExecutionProvider",
+        "classify_ms": 0.18950000230688602,
+        "total_ms": 317.28170000133105,
+        "npz_cache_entries": 1,
+        "predictions": {
+          "cam1__roi1": "OK",
+          "cam1__roi2": "OK"
+        }
+      },
+      "warm": [
+        {
+          "model_load_ms": 0.8922999986680225,
+          "roi_preprocess_ms": 265.013900003396,
+          "backbone_ms": 31.224399994243868,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.16929999401327223,
+          "total_ms": 306.3659000035841,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.8006999996723607,
+          "roi_preprocess_ms": 241.28079999354668,
+          "backbone_ms": 31.68329999607522,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.487299999804236,
+          "total_ms": 288.9666999981273,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.6516000032424927,
+          "roi_preprocess_ms": 340.9298000042327,
+          "backbone_ms": 47.562600011588074,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.1846000086516142,
+          "total_ms": 400.9725000069011,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.8554999949410558,
+          "roi_preprocess_ms": 643.0545000039274,
+          "backbone_ms": 115.39940000511706,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.22869999520480633,
+          "total_ms": 780.2530000044499,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.0882000060519204,
+          "roi_preprocess_ms": 439.74609998986125,
+          "backbone_ms": 95.96389999205712,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.23530000180471689,
+          "total_ms": 555.462999996962,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.9804000001167879,
+          "roi_preprocess_ms": 342.05930000462104,
+          "backbone_ms": 68.0209999991348,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.19890000112354755,
+          "total_ms": 423.40149999654386,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.0744000028353184,
+          "roi_preprocess_ms": 643.4478000010131,
+          "backbone_ms": 189.52559999888763,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.22440000611823052,
+          "total_ms": 846.1771000002045,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.1220000014873222,
+          "roi_preprocess_ms": 389.1424999892479,
+          "backbone_ms": 157.86910000315402,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.20219999714754522,
+          "total_ms": 560.9029000042938,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.9518000006210059,
+          "roi_preprocess_ms": 364.769099993282,
+          "backbone_ms": 74.00700000289362,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.2528999903006479,
+          "total_ms": 453.42819999495987,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.2082999892299995,
+          "roi_preprocess_ms": 516.7925999994623,
+          "backbone_ms": 136.29740000760648,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.23770000552758574,
+          "total_ms": 672.0081999956165,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        }
+      ],
+      "after_parameter_reload": {
+        "model_load_ms": 11.82169999810867,
+        "roi_preprocess_ms": 425.74510000122245,
+        "backbone_ms": 53.20719999144785,
+        "backbone_batch_size": 2,
+        "backbone_chunk_count": 1,
+        "backbone_chunk_size": 2,
+        "backbone_backend": "ort",
+        "backbone_provider": "CPUExecutionProvider",
+        "classify_ms": 0.39260000630747527,
+        "total_ms": 501.7686000064714,
+        "npz_cache_entries": 1,
+        "predictions": {
+          "cam1__roi1": "OK",
+          "cam1__roi2": "OK"
+        }
+      },
+      "after_reload_warm": [
+        {
+          "model_load_ms": 1.4401999942492694,
+          "roi_preprocess_ms": 647.3369000013918,
+          "backbone_ms": 97.06780000124127,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.34410000080242753,
+          "total_ms": 769.6313000051305,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.2231000000610948,
+          "roi_preprocess_ms": 476.3844999979483,
+          "backbone_ms": 185.5274000117788,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.2390000008745119,
+          "total_ms": 679.590100000496,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.1279000027570873,
+          "roi_preprocess_ms": 548.3206000062637,
+          "backbone_ms": 193.20670000161044,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.24389999452978373,
+          "total_ms": 753.9206000074046,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.4825999969616532,
+          "roi_preprocess_ms": 762.4283000041032,
+          "backbone_ms": 113.6487999901874,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.37560000782832503,
+          "total_ms": 892.5214999908349,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.1626000050455332,
+          "roi_preprocess_ms": 479.1471000062302,
+          "backbone_ms": 156.22499999881256,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.21809998725075275,
+          "total_ms": 651.2167000037152,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        }
+      ],
+      "repetition": 0
+    },
+    {
+      "mode": "group",
+      "initialization_ms": 189.55039999855217,
+      "runner": {
+        "backend": "ort",
+        "model_format": "ort",
+        "model_path": "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.cache\\ort_backbones\\b2_cpu_v1.ort",
+        "providers": [
+          "CPUExecutionProvider"
+        ],
+        "cpu_inference_chunk_size": 2
+      },
+      "input_shape": [
+        "batch_size",
+        3,
+        224,
+        224
+      ],
+      "first": {
+        "model_load_ms": 13.975499998196028,
+        "roi_preprocess_ms": 491.25909998838324,
+        "backbone_ms": 164.388000004692,
+        "backbone_batch_size": 2,
+        "backbone_chunk_count": 1,
+        "backbone_chunk_size": 2,
+        "backbone_backend": "ort",
+        "backbone_provider": "CPUExecutionProvider",
+        "classify_ms": 0.27230000705458224,
+        "total_ms": 684.0937999950256,
+        "npz_cache_entries": 1,
+        "predictions": {
+          "cam1__roi1": "OK",
+          "cam1__roi2": "OK"
+        }
+      },
+      "warm": [
+        {
+          "model_load_ms": 1.3404999917838722,
+          "roi_preprocess_ms": 952.7118999976665,
+          "backbone_ms": 212.71959999285173,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.2612000098451972,
+          "total_ms": 1184.0163999877404,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.3038999895798042,
+          "roi_preprocess_ms": 848.6851000052411,
+          "backbone_ms": 222.56010001001414,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.2792000013869256,
+          "total_ms": 1115.8662999951048,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.4165000029606745,
+          "roi_preprocess_ms": 1230.498200005968,
+          "backbone_ms": 264.40939999883994,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.33629999961704016,
+          "total_ms": 1524.6973000030266,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 4.5178999862400815,
+          "roi_preprocess_ms": 1536.6663000022527,
+          "backbone_ms": 221.72560000035446,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.22090000857133418,
+          "total_ms": 1783.4129999973811,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.772600007825531,
+          "roi_preprocess_ms": 654.2059999919729,
+          "backbone_ms": 314.3820999976015,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.28110000130254775,
+          "total_ms": 1000.5332000000635,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 3.486500005237758,
+          "roi_preprocess_ms": 834.735999989789,
+          "backbone_ms": 229.3749999953434,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.20209999638609588,
+          "total_ms": 1081.0602999990806,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.9227000118698925,
+          "roi_preprocess_ms": 901.1731999926269,
+          "backbone_ms": 179.50480000581592,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.3440000000409782,
+          "total_ms": 1096.3582999975188,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.025699995807372,
+          "roi_preprocess_ms": 776.1878999881446,
+          "backbone_ms": 300.9855999989668,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.2103000006172806,
+          "total_ms": 1091.6820999991614,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.1248999944655225,
+          "roi_preprocess_ms": 728.3734999946319,
+          "backbone_ms": 74.21259999682661,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.19999999494757503,
+          "total_ms": 816.5467000071658,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.0655999940354377,
+          "roi_preprocess_ms": 362.9057000071043,
+          "backbone_ms": 168.23350000777282,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.1804000057745725,
+          "total_ms": 543.0228000041097,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        }
+      ],
+      "after_parameter_reload": {
+        "model_load_ms": 7.980099995620549,
+        "roi_preprocess_ms": 522.3885999876074,
+        "backbone_ms": 136.8378000042867,
+        "backbone_batch_size": 2,
+        "backbone_chunk_count": 1,
+        "backbone_chunk_size": 2,
+        "backbone_backend": "ort",
+        "backbone_provider": "CPUExecutionProvider",
+        "classify_ms": 0.1888000115286559,
+        "total_ms": 677.6946000027237,
+        "npz_cache_entries": 1,
+        "predictions": {
+          "cam1__roi1": "OK",
+          "cam1__roi2": "OK"
+        }
+      },
+      "after_reload_warm": [
+        {
+          "model_load_ms": 0.9028999920701608,
+          "roi_preprocess_ms": 368.75559999316465,
+          "backbone_ms": 149.5749000023352,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.20199999562464654,
+          "total_ms": 530.4260999982944,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.9857999975793064,
+          "roi_preprocess_ms": 686.3736999948742,
+          "backbone_ms": 140.48419999016915,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.23190000501926988,
+          "total_ms": 848.0508999928134,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 4.141799989156425,
+          "roi_preprocess_ms": 459.8783000110416,
+          "backbone_ms": 239.57289999816567,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.2249000099254772,
+          "total_ms": 716.1059999925783,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.1085000005550683,
+          "roi_preprocess_ms": 343.11560000060126,
+          "backbone_ms": 68.56070000503678,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.22450000687967986,
+          "total_ms": 425.82730000140145,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.1463999981060624,
+          "roi_preprocess_ms": 434.63530000008177,
+          "backbone_ms": 260.08990000991616,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.2435000060359016,
+          "total_ms": 708.535000012489,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        }
+      ],
+      "repetition": 1
+    },
+    {
+      "mode": "independent",
+      "initialization_ms": 150.5297999974573,
+      "runner": {
+        "backend": "ort",
+        "model_format": "ort",
+        "model_path": "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.cache\\ort_backbones\\b2_cpu_v1.ort",
+        "providers": [
+          "CPUExecutionProvider"
+        ],
+        "cpu_inference_chunk_size": 2
+      },
+      "input_shape": [
+        "batch_size",
+        3,
+        224,
+        224
+      ],
+      "first": {
+        "model_load_ms": 26.21039999939967,
+        "roi_preprocess_ms": 774.8719999945024,
+        "backbone_ms": 157.75319999374915,
+        "backbone_batch_size": 2,
+        "backbone_chunk_count": 1,
+        "backbone_chunk_size": 2,
+        "backbone_backend": "ort",
+        "backbone_provider": "CPUExecutionProvider",
+        "classify_ms": 0.22480000916402787,
+        "total_ms": 975.8391000068514,
+        "npz_cache_entries": 2,
+        "predictions": {
+          "cam1__roi1": "OK",
+          "cam1__roi2": "OK"
+        }
+      },
+      "warm": [
+        {
+          "model_load_ms": 0.7619000098202378,
+          "roi_preprocess_ms": 404.4359999970766,
+          "backbone_ms": 71.23149999824818,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.20330000552348793,
+          "total_ms": 490.4850000020815,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.9164000075543299,
+          "roi_preprocess_ms": 492.3535999987507,
+          "backbone_ms": 121.80780000926461,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.21320000814739615,
+          "total_ms": 627.4133999977494,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.8713999995961785,
+          "roi_preprocess_ms": 364.3222999962745,
+          "backbone_ms": 77.19310000538826,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.185500000952743,
+          "total_ms": 456.7938999971375,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.7423999923048541,
+          "roi_preprocess_ms": 384.54749999800697,
+          "backbone_ms": 159.90529999544378,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.2452000044286251,
+          "total_ms": 570.0933000043733,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.0859000030905008,
+          "roi_preprocess_ms": 571.2066999985836,
+          "backbone_ms": 93.75909999653231,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.26300000899937004,
+          "total_ms": 683.8377000094624,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.2352000048849732,
+          "roi_preprocess_ms": 354.0142000128981,
+          "backbone_ms": 78.82779999636114,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.22329999774228781,
+          "total_ms": 450.2331000112463,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 2.4365999997826293,
+          "roi_preprocess_ms": 495.8598999946844,
+          "backbone_ms": 81.98100001027342,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.199099988094531,
+          "total_ms": 595.7257999980357,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 3.0700000061187893,
+          "roi_preprocess_ms": 379.0329000039492,
+          "backbone_ms": 66.46589998854324,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.24850000045262277,
+          "total_ms": 464.60449999722186,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.992499990388751,
+          "roi_preprocess_ms": 376.2655000027735,
+          "backbone_ms": 88.98460000636987,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.21559999731834978,
+          "total_ms": 481.14209999039304,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.8976000099210069,
+          "roi_preprocess_ms": 967.4164000025485,
+          "backbone_ms": 210.4086999897845,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 3.643699994427152,
+          "total_ms": 1209.398200007854,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        }
+      ],
+      "after_parameter_reload": {
+        "model_load_ms": 48.42560000543017,
+        "roi_preprocess_ms": 586.472800001502,
+        "backbone_ms": 125.38040000072215,
+        "backbone_batch_size": 2,
+        "backbone_chunk_count": 1,
+        "backbone_chunk_size": 2,
+        "backbone_backend": "ort",
+        "backbone_provider": "CPUExecutionProvider",
+        "classify_ms": 0.23260001034941524,
+        "total_ms": 784.392100002151,
+        "npz_cache_entries": 2,
+        "predictions": {
+          "cam1__roi1": "OK",
+          "cam1__roi2": "OK"
+        }
+      },
+      "after_reload_warm": [
+        {
+          "model_load_ms": 5.5632000003242865,
+          "roi_preprocess_ms": 525.6519999966258,
+          "backbone_ms": 69.29410000157077,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.18149999959859997,
+          "total_ms": 611.5951999963727,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.7877999887568876,
+          "roi_preprocess_ms": 291.9696000026306,
+          "backbone_ms": 85.33430000534281,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.35260000731796026,
+          "total_ms": 396.4661000063643,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.4488000015262514,
+          "roi_preprocess_ms": 295.1869000098668,
+          "backbone_ms": 41.21389999636449,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.19920000340789557,
+          "total_ms": 349.27930000412744,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.9028000058606267,
+          "roi_preprocess_ms": 283.16640001139604,
+          "backbone_ms": 31.50090000417549,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.21710000874008983,
+          "total_ms": 324.93539999995846,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.9771000040927902,
+          "roi_preprocess_ms": 296.9192999880761,
+          "backbone_ms": 42.22740000113845,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.19579999207053334,
+          "total_ms": 349.5034000079613,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        }
+      ],
+      "repetition": 1
+    },
+    {
+      "mode": "independent",
+      "initialization_ms": 153.81030000571627,
+      "runner": {
+        "backend": "ort",
+        "model_format": "ort",
+        "model_path": "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.cache\\ort_backbones\\b2_cpu_v1.ort",
+        "providers": [
+          "CPUExecutionProvider"
+        ],
+        "cpu_inference_chunk_size": 2
+      },
+      "input_shape": [
+        "batch_size",
+        3,
+        224,
+        224
+      ],
+      "first": {
+        "model_load_ms": 14.532999994116835,
+        "roi_preprocess_ms": 281.45120000408497,
+        "backbone_ms": 64.71789999341127,
+        "backbone_batch_size": 2,
+        "backbone_chunk_count": 1,
+        "backbone_chunk_size": 2,
+        "backbone_backend": "ort",
+        "backbone_provider": "CPUExecutionProvider",
+        "classify_ms": 0.18029999046120793,
+        "total_ms": 367.0586999942316,
+        "npz_cache_entries": 2,
+        "predictions": {
+          "cam1__roi1": "OK",
+          "cam1__roi2": "OK"
+        }
+      },
+      "warm": [
+        {
+          "model_load_ms": 0.7316999981412664,
+          "roi_preprocess_ms": 234.08249999920372,
+          "backbone_ms": 32.514699996681884,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.18309999722987413,
+          "total_ms": 274.5658000058029,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.7886999956099316,
+          "roi_preprocess_ms": 228.21520001161844,
+          "backbone_ms": 30.953400011640042,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.17780000052880496,
+          "total_ms": 268.4961999912048,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.7573999901069328,
+          "roi_preprocess_ms": 272.0703999948455,
+          "backbone_ms": 36.81019999203272,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.185500000952743,
+          "total_ms": 316.8264999985695,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.745099998312071,
+          "roi_preprocess_ms": 228.45300000335556,
+          "backbone_ms": 29.37640000891406,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.17040000238921493,
+          "total_ms": 264.6262999915052,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.6946000066818669,
+          "roi_preprocess_ms": 235.21539999637753,
+          "backbone_ms": 33.1949999963399,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.2212999970652163,
+          "total_ms": 275.92379999987315,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.131500001065433,
+          "roi_preprocess_ms": 248.65580000914633,
+          "backbone_ms": 45.13690000749193,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.258100000792183,
+          "total_ms": 303.33819999941625,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 2.4575999996159226,
+          "roi_preprocess_ms": 276.4041000045836,
+          "backbone_ms": 28.428499994333833,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.1588000013725832,
+          "total_ms": 313.41620000603143,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.6752000044798478,
+          "roi_preprocess_ms": 224.81169999809936,
+          "backbone_ms": 28.234500001417473,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.19660001271404326,
+          "total_ms": 261.2797999900067,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.8881999965524301,
+          "roi_preprocess_ms": 238.03410000982694,
+          "backbone_ms": 27.86819999164436,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.18540000019129366,
+          "total_ms": 273.9071999967564,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.9140999900409952,
+          "roi_preprocess_ms": 257.457700005034,
+          "backbone_ms": 24.53550000791438,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.20570000924635679,
+          "total_ms": 290.02369999943767,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        }
+      ],
+      "after_parameter_reload": {
+        "model_load_ms": 14.124399996944703,
+        "roi_preprocess_ms": 213.94929999951273,
+        "backbone_ms": 33.239800002775155,
+        "backbone_batch_size": 2,
+        "backbone_chunk_count": 1,
+        "backbone_chunk_size": 2,
+        "backbone_backend": "ort",
+        "backbone_provider": "CPUExecutionProvider",
+        "classify_ms": 0.16999999934341758,
+        "total_ms": 267.8409000072861,
+        "npz_cache_entries": 2,
+        "predictions": {
+          "cam1__roi1": "OK",
+          "cam1__roi2": "OK"
+        }
+      },
+      "after_reload_warm": [
+        {
+          "model_load_ms": 0.7074000022839755,
+          "roi_preprocess_ms": 225.59379998710938,
+          "backbone_ms": 26.55980001145508,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.1799000019673258,
+          "total_ms": 259.10539999313187,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.6730999884894118,
+          "roi_preprocess_ms": 214.65080000052694,
+          "backbone_ms": 26.18889999575913,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.19779999274760485,
+          "total_ms": 251.72690000908915,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 2.2655000066151842,
+          "roi_preprocess_ms": 197.80500000342727,
+          "backbone_ms": 26.521299994783476,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.1576999929966405,
+          "total_ms": 232.34200000297278,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.8503000135533512,
+          "roi_preprocess_ms": 194.92119998903945,
+          "backbone_ms": 28.61809999740217,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.32240001019090414,
+          "total_ms": 231.6292000032263,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.8502999990014359,
+          "roi_preprocess_ms": 223.94330000679474,
+          "backbone_ms": 27.199599993764423,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.1573999907122925,
+          "total_ms": 258.1083999975817,
+          "npz_cache_entries": 2,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        }
+      ],
+      "repetition": 2
+    },
+    {
+      "mode": "group",
+      "initialization_ms": 95.43630000553094,
+      "runner": {
+        "backend": "ort",
+        "model_format": "ort",
+        "model_path": "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\.cache\\ort_backbones\\b2_cpu_v1.ort",
+        "providers": [
+          "CPUExecutionProvider"
+        ],
+        "cpu_inference_chunk_size": 2
+      },
+      "input_shape": [
+        "batch_size",
+        3,
+        224,
+        224
+      ],
+      "first": {
+        "model_load_ms": 5.370500002754852,
+        "roi_preprocess_ms": 188.96719999611378,
+        "backbone_ms": 31.560000003082678,
+        "backbone_batch_size": 2,
+        "backbone_chunk_count": 1,
+        "backbone_chunk_size": 2,
+        "backbone_backend": "ort",
+        "backbone_provider": "CPUExecutionProvider",
+        "classify_ms": 0.16929999401327223,
+        "total_ms": 231.962999998359,
+        "npz_cache_entries": 1,
+        "predictions": {
+          "cam1__roi1": "OK",
+          "cam1__roi2": "OK"
+        }
+      },
+      "warm": [
+        {
+          "model_load_ms": 1.335199995082803,
+          "roi_preprocess_ms": 235.97639999934472,
+          "backbone_ms": 44.502200005808845,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.17069999012164772,
+          "total_ms": 288.08240000216756,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.8051000040723011,
+          "roi_preprocess_ms": 214.14729999378324,
+          "backbone_ms": 27.721399994334206,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.22050000552553684,
+          "total_ms": 249.8353999981191,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.9963999909814447,
+          "roi_preprocess_ms": 226.77599999587983,
+          "backbone_ms": 37.437699997099116,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.19530000281520188,
+          "total_ms": 271.0704000055557,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.7629000028828159,
+          "roi_preprocess_ms": 214.63660000881646,
+          "backbone_ms": 27.67640000092797,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.17010000010486692,
+          "total_ms": 249.09280000429135,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.8042999979807064,
+          "roi_preprocess_ms": 224.81759999936912,
+          "backbone_ms": 27.74110001337249,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.16320000577252358,
+          "total_ms": 259.83320000523236,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.2354000064078718,
+          "roi_preprocess_ms": 211.0945000022184,
+          "backbone_ms": 28.34019999136217,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.16399999731220305,
+          "total_ms": 246.54110000119545,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.8197999995900318,
+          "roi_preprocess_ms": 212.29049999965355,
+          "backbone_ms": 30.84199999284465,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.16820000018924475,
+          "total_ms": 249.79060000623576,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.7713999948464334,
+          "roi_preprocess_ms": 219.64900000602938,
+          "backbone_ms": 31.53310000197962,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.19150000298395753,
+          "total_ms": 259.74210001004394,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.9288000001106411,
+          "roi_preprocess_ms": 244.15869999211282,
+          "backbone_ms": 44.54270000860561,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.17050000315066427,
+          "total_ms": 295.98700000497047,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 0.8604000031482428,
+          "roi_preprocess_ms": 228.49020001012832,
+          "backbone_ms": 75.88099999702536,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.21479999122675508,
+          "total_ms": 312.81279999529943,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        }
+      ],
+      "after_parameter_reload": {
+        "model_load_ms": 9.125500000664033,
+        "roi_preprocess_ms": 307.80730000697076,
+        "backbone_ms": 47.39609999523964,
+        "backbone_batch_size": 2,
+        "backbone_chunk_count": 1,
+        "backbone_chunk_size": 2,
+        "backbone_backend": "ort",
+        "backbone_provider": "CPUExecutionProvider",
+        "classify_ms": 0.2300000051036477,
+        "total_ms": 371.2367000116501,
+        "npz_cache_entries": 1,
+        "predictions": {
+          "cam1__roi1": "OK",
+          "cam1__roi2": "OK"
+        }
+      },
+      "after_reload_warm": [
+        {
+          "model_load_ms": 0.8649999945191666,
+          "roi_preprocess_ms": 341.1506999982521,
+          "backbone_ms": 84.19059999869205,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.26529999740887433,
+          "total_ms": 434.25189999106806,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.1875000054715201,
+          "roi_preprocess_ms": 323.5244999959832,
+          "backbone_ms": 72.33540000743233,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.24839999969117343,
+          "total_ms": 404.8800000018673,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.0233999928459525,
+          "roi_preprocess_ms": 287.5643000006676,
+          "backbone_ms": 67.1503999910783,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.9469999931752682,
+          "total_ms": 368.2000999979209,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.0421000042697415,
+          "roi_preprocess_ms": 368.63839998841286,
+          "backbone_ms": 55.40139999357052,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.24589999520685524,
+          "total_ms": 433.87099998653866,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        },
+        {
+          "model_load_ms": 1.1794000020017847,
+          "roi_preprocess_ms": 277.74020000651944,
+          "backbone_ms": 29.511800006730482,
+          "backbone_batch_size": 2,
+          "backbone_chunk_count": 1,
+          "backbone_chunk_size": 2,
+          "backbone_backend": "ort",
+          "backbone_provider": "CPUExecutionProvider",
+          "classify_ms": 0.22950000129640102,
+          "total_ms": 316.8080000032205,
+          "npz_cache_entries": 1,
+          "predictions": {
+            "cam1__roi1": "OK",
+            "cam1__roi2": "OK"
+          }
+        }
+      ],
+      "repetition": 2
+    }
+  ]
+}

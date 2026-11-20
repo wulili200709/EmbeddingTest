@@ -74,6 +74,8 @@ class TrainingJobWorker(QtCore.QObject):
                 self.progressChanged.emit(f"training {_index}/{_total} {_name}: {message}")
 
             try:
+                if str(task.get("model_source", "")) == "library" or "__library__" in str(task.get("model_key", "")):
+                    raise RuntimeError("published model references cannot be trained or overwritten")
                 self._algo.product_params.algorithm = algorithm
                 self._algo.product_params.score_mode = score_mode
                 self._algo.product_params.margin = margin
@@ -85,6 +87,8 @@ class TrainingJobWorker(QtCore.QObject):
                     product_dir=product_dir,
                     label_names=list(task.get("label_names", []) or []),
                     model_key=task.get("model_key", ""),
+                    ok_samples=list(task.get("ok_samples", []) or []),
+                    ng_samples=list(task.get("ng_samples", []) or []),
                     progress_callback=_progress,
                     embedding_cache_dir=str(task.get("embedding_cache_dir", "") or ""),
                 )

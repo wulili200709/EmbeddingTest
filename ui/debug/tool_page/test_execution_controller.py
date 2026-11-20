@@ -33,6 +33,21 @@ class TestExecutionController:
             if item.enabled and _normalize_camera_role(getattr(item, "camera_id", "")) == current_role
         ]
 
+    def _validate_model_bindings(self, items: List[InspectionItem]) -> None:
+        from ui.debug.tool_page.model_source_panel import binding_description
+
+        for item in items:
+            if getattr(item, "model_source", "independent") not in {"group", "library"}:
+                continue
+            description = binding_description(self.owner, item)
+            if not description.get("ready"):
+                self.owner._refresh_inspection_items_table()
+                raise RuntimeError(tr(
+                    "debug.model_source.test_unavailable",
+                    name=item.display_name or item.roi_label or item.item_id,
+                    detail=description.get("message") or tr("debug.status.untrained"),
+                ))
+
     def record_roi_result(self, path: str, label_name: str, status: object) -> None:
         if not path:
             return
@@ -106,11 +121,11 @@ class TestExecutionController:
         p = str(path or "").strip()
         if p is None or not os.path.exists(p):
             raise FileNotFoundError(p or tr("debug.open_test_image_first"))
-        self.owner.canvas.set_overlays([])
-
         target_items = self.target_inspection_items()
         if not target_items:
             raise RuntimeError(tr("debug.enable_one_tool", role=self.owner.current_camera_role()))
+        self._validate_model_bindings(target_items)
+        self.owner.canvas.set_overlays([])
         camera_id = (
             str(target_items[0].camera_id or "").strip()
             if target_items
@@ -251,6 +266,12 @@ class TestExecutionController:
         paths = list(self.owner._sample_paths_for_kind("test", current_role))
         if not paths:
             QtWidgets.QMessageBox.information(self.owner, tr("common.info"), tr("debug.test_all_test_samples_empty"))
+            return
+
+        try:
+            self._validate_model_bindings(self.target_inspection_items())
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self.owner, tr("debug.test_failed_title"), str(exc))
             return
 
         total = len(paths)

@@ -60,6 +60,7 @@ class IoMapping:
             {
                 "di": {
                     "foot_switch": {"channel": 0, "active_high": True},
+                    "ng_box": {"channel": 2, "active_high": True},
                 },
                 "do": {
                     "tower_red": {"channel": 0, "active_high": True},

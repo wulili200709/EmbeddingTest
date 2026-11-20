@@ -1,0 +1,23 @@
+{
+  "train_files": [],
+  "ok_files": [],
+  "ng_files": [],
+  "test_files": [],
+  "ref_image": "",
+  "loc_method": "shape",
+  "loc_methods": {
+    "cam1": "shape",
+    "cam2": "shape",
+    "cam3": "shape"
+  },
+  "runtime_cam1_serial": "",
+  "runtime_cam2_serial": "",
+  "runtime_cam3_serial": "",
+  "runtime_camera_serials": {},
+  "runtime_camera_roles": [
+    "cam1",
+    "cam2",
+    "cam3"
+  ],
+  "runtime_capture_policy": "ng_only"
+}

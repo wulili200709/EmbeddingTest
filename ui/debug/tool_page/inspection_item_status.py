@@ -31,6 +31,10 @@ def _inspection_item_status(tool_page, inspection_item):
     if not getattr(inspection_item, "enabled", True):
         return tr("debug.status.disabled"), "Current tool is disabled and will not join training or runtime.", "#8a8a8a"
 
+    if getattr(inspection_item, "model_source", "independent") in {"group", "library"}:
+        from ui.debug.tool_page.model_source_panel import binding_status
+        return binding_status(tool_page, inspection_item)
+
     if tool_page.algo.is_learning_tool(inspection_item.algorithm_code):
         backbone = tool_page.algo.current_learning_backbone(inspection_item.camera_id)
         if not backbone:

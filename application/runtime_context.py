@@ -174,6 +174,13 @@ def _runtime_prediction_row(
     return row
 
 
+def _resolve_item_algorithm(algo, item: InspectionItem) -> str:
+    resolver = getattr(algo, "resolve_item_algorithm", None)
+    if callable(resolver):
+        return resolver(item)
+    return algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
+
+
 def _is_measurement_item(algo, item: InspectionItem) -> bool:
     checker = getattr(algo, "is_measurement_tool", None)
     return bool(callable(checker) and checker(item.algorithm_code))
@@ -196,7 +203,7 @@ def _predict_learning_items_batch_rows(
     rows_by_key: Dict[str, Dict[str, object]] = {}
     learning_groups: Dict[str, List[InspectionItem]] = {}
     for item in items:
-        algorithm = algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
+        algorithm = _resolve_item_algorithm(algo, item)
         learning_groups.setdefault(algorithm, []).append(item)
 
     json_name = os.path.basename(labelme_io.labelme_json_of_image(path))
@@ -206,7 +213,7 @@ def _predict_learning_items_batch_rows(
         group_infer_t0 = time.perf_counter()
         models: List[Any] = []
         for item in group:
-            load_embedding_model(algorithm, model_key=item.model_key)
+            load_embedding_model(algorithm, model_key=item.effective_model_key)
             if algo.model is None:
                 raise RuntimeError(f"algorithm model not loaded: {learning_backbone_storage_code(algorithm)}")
             algo.apply_params_to_model()
@@ -293,7 +300,7 @@ def _predict_learning_items_batch_rows_from_frame(
     learning_groups: Dict[str, List[InspectionItem]] = {}
     shape_by_label = _runtime_shape_by_label(roi_shapes)
     for item in items:
-        algorithm = algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
+        algorithm = _resolve_item_algorithm(algo, item)
         learning_groups.setdefault(algorithm, []).append(item)
 
     for algorithm, group in learning_groups.items():
@@ -303,7 +310,7 @@ def _predict_learning_items_batch_rows_from_frame(
         model_load_t0 = time.perf_counter()
         models: List[Any] = []
         for item in group:
-            load_embedding_model(algorithm, model_key=item.model_key)
+            load_embedding_model(algorithm, model_key=item.effective_model_key)
             if algo.model is None:
                 raise RuntimeError(f"algorithm model not loaded: {learning_backbone_storage_code(algorithm)}")
             algo.apply_params_to_model()
@@ -498,7 +505,7 @@ class ToolPageRuntimeContext:
                 feat_net=feat_net,
                 labels_override=labels_override,
                 algorithm_override=item.algorithm_code,
-                model_key_override=item.model_key,
+                model_key_override=item.effective_model_key,
             )
         for item in _measurement_execution_order(measurement_items):
             roi_label = str(item.roi_label or "").strip()
@@ -507,7 +514,7 @@ class ToolPageRuntimeContext:
                 feat_net=feat_net,
                 labels_override=[roi_label] if roi_label else None,
                 algorithm_override=item.algorithm_code,
-                model_key_override=item.model_key,
+                model_key_override=item.effective_model_key,
                 params_override=_measurement_execution_params(item, measurement_items, rows_by_key),
             )
 
@@ -695,7 +702,7 @@ class ProductRuntimeContext:
                 feat_net=feat_net,
                 labels_override=labels_override,
                 algorithm_override=item.algorithm_code,
-                model_key_override=item.model_key,
+                model_key_override=item.effective_model_key,
             )
         for item in _measurement_execution_order(measurement_items):
             roi_label = str(item.roi_label or "").strip()
@@ -704,7 +711,7 @@ class ProductRuntimeContext:
                 feat_net=feat_net,
                 labels_override=[roi_label] if roi_label else None,
                 algorithm_override=item.algorithm_code,
-                model_key_override=item.model_key,
+                model_key_override=item.effective_model_key,
                 params_override=_measurement_execution_params(item, measurement_items, rows_by_key),
             )
 
@@ -788,15 +795,15 @@ class ProductRuntimeContext:
         shape_by_label = _runtime_shape_by_label(roi_shapes)
         for item in traditional_items:
             item_infer_t0 = time.perf_counter()
-            algorithm = self.algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
-            model_dict = self.algo.get_traditional_model_dict(algorithm, model_key=item.model_key)
+            algorithm = _resolve_item_algorithm(self.algo, item)
+            model_dict = self.algo.get_traditional_model_dict(algorithm, model_key=item.effective_model_key)
             if not isinstance(model_dict, dict):
                 raise RuntimeError(f"traditional algorithm {algorithm} is not trained yet")
             threshold_model = TraditionalThresholdModel.from_dict(model_dict)
             metrics = compute_roi_metrics_from_array(
                 image,
                 shape_by_label=shape_by_label,
-                preferred_label=threshold_model.roi_label or str(item.roi_label or "").strip() or "roi",
+                preferred_label=str(item.roi_label or "").strip() or threshold_model.roi_label or "roi",
             )
             value = metric_value(metrics, algorithm)
             pred, diff = threshold_model.predict(value)
@@ -814,7 +821,7 @@ class ProductRuntimeContext:
         for item in _measurement_execution_order(measurement_items):
             item_infer_t0 = time.perf_counter()
             params = _measurement_execution_params(item, measurement_items, rows_by_key)
-            algorithm = self.algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
+            algorithm = _resolve_item_algorithm(self.algo, item)
             measurement_payload_override = None
             if algorithm in FIND_LINE_ALGORITHMS:
                 measurement = measure_find_line_from_array(

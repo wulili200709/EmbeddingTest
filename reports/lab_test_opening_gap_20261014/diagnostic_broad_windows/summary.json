@@ -1,0 +1,273 @@
+{
+  "input_dir": "C:\\Users\\goney\\Desktop\\DC尺寸数据测试\\Lab Test",
+  "image_count": 6,
+  "measurement_unit": "px",
+  "measurements_expected_per_mode": 84,
+  "config": "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\config\\examples\\lab_test_opening_gaps.json",
+  "algorithm": "algorithms.measurement_opening_gap.measure_opening_gap",
+  "measurement_definition": "Vertical distance between opposing bright tabs; median of 49 paired columns",
+  "limitations": [
+    "No mm calibration or dimensional acceptance limits",
+    "New ROIs; no manual ground truth",
+    "Variation across images is not established repeatability"
+  ],
+  "errors": [],
+  "modes": {
+    "dark_plateau": {
+      "U1": {
+        "valid_images": 6,
+        "min_px": 67.05587768554688,
+        "median_px": 68.6473617553711,
+        "max_px": 75.2342300415039,
+        "range_px": 8.178352355957031,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 3.083648681640625
+      },
+      "U2": {
+        "valid_images": 6,
+        "min_px": 69.42539978027344,
+        "median_px": 70.78242111206055,
+        "max_px": 72.53959655761719,
+        "range_px": 3.11419677734375,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 1.002349853515625
+      },
+      "U3": {
+        "valid_images": 6,
+        "min_px": 65.56067657470703,
+        "median_px": 67.70709609985352,
+        "max_px": 70.83009338378906,
+        "range_px": 5.269416809082031,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 6.278160095214844
+      },
+      "U4": {
+        "valid_images": 6,
+        "min_px": 58.977027893066406,
+        "median_px": 59.917476654052734,
+        "max_px": 64.6129379272461,
+        "range_px": 5.6359100341796875,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 3.0357894897460938
+      },
+      "U5": {
+        "valid_images": 6,
+        "min_px": 58.97541427612305,
+        "median_px": 61.0540771484375,
+        "max_px": 71.22832489013672,
+        "range_px": 12.252910614013672,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 2.0237808227539062
+      },
+      "U6": {
+        "valid_images": 6,
+        "min_px": 71.41841125488281,
+        "median_px": 72.92223358154297,
+        "max_px": 75.51980590820312,
+        "range_px": 4.1013946533203125,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 0.7486724853515625
+      },
+      "U7": {
+        "valid_images": 6,
+        "min_px": 53.88164520263672,
+        "median_px": 65.47376823425293,
+        "max_px": 71.06182098388672,
+        "range_px": 17.18017578125,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 5.927219390869141
+      },
+      "L1": {
+        "valid_images": 6,
+        "min_px": 52.28733444213867,
+        "median_px": 71.14579010009766,
+        "max_px": 73.8191146850586,
+        "range_px": 21.531780242919922,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 4.1644439697265625
+      },
+      "L2": {
+        "valid_images": 6,
+        "min_px": 72.71263122558594,
+        "median_px": 74.12094497680664,
+        "max_px": 76.58087158203125,
+        "range_px": 3.8682403564453125,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 0.6476058959960938
+      },
+      "L3": {
+        "valid_images": 6,
+        "min_px": 57.85566329956055,
+        "median_px": 60.326942443847656,
+        "max_px": 70.52789306640625,
+        "range_px": 12.672229766845703,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 1.9479255676269531
+      },
+      "L4": {
+        "valid_images": 6,
+        "min_px": 59.06831741333008,
+        "median_px": 64.71658325195312,
+        "max_px": 73.02117919921875,
+        "range_px": 13.952861785888672,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 3.3549270629882812
+      },
+      "L5": {
+        "valid_images": 6,
+        "min_px": 64.44503021240234,
+        "median_px": 66.84329986572266,
+        "max_px": 69.84979248046875,
+        "range_px": 5.404762268066406,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 9.114761352539062
+      },
+      "L6": {
+        "valid_images": 6,
+        "min_px": 40.91167449951172,
+        "median_px": 69.02732467651367,
+        "max_px": 69.76983642578125,
+        "range_px": 28.85816192626953,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 8.796440124511719
+      },
+      "L7": {
+        "valid_images": 6,
+        "min_px": 65.85707092285156,
+        "median_px": 69.16511154174805,
+        "max_px": 71.62016296386719,
+        "range_px": 5.763092041015625,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 3.0327682495117188
+      }
+    },
+    "peak": {
+      "U1": {
+        "valid_images": 6,
+        "min_px": 81.76333618164062,
+        "median_px": 87.54932403564453,
+        "max_px": 102.24688720703125,
+        "range_px": 20.483551025390625,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 6.832389831542969
+      },
+      "U2": {
+        "valid_images": 6,
+        "min_px": 77.56682586669922,
+        "median_px": 79.67094802856445,
+        "max_px": 81.57172393798828,
+        "range_px": 4.0048980712890625,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 2.8277053833007812
+      },
+      "U3": {
+        "valid_images": 6,
+        "min_px": 78.83070373535156,
+        "median_px": 80.8306999206543,
+        "max_px": 82.99711608886719,
+        "range_px": 4.166412353515625,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 2.8692245483398438
+      },
+      "U4": {
+        "valid_images": 6,
+        "min_px": 73.43024444580078,
+        "median_px": 76.50972366333008,
+        "max_px": 79.70733642578125,
+        "range_px": 6.277091979980469,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 1.8623886108398438
+      },
+      "U5": {
+        "valid_images": 6,
+        "min_px": 75.51360321044922,
+        "median_px": 76.3938980102539,
+        "max_px": 80.64472198486328,
+        "range_px": 5.1311187744140625,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 3.0540618896484375
+      },
+      "U6": {
+        "valid_images": 6,
+        "min_px": 79.85812377929688,
+        "median_px": 81.35548782348633,
+        "max_px": 84.76603698730469,
+        "range_px": 4.9079132080078125,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 1.9459915161132812
+      },
+      "U7": {
+        "valid_images": 6,
+        "min_px": 83.7175521850586,
+        "median_px": 89.88412857055664,
+        "max_px": 95.94105529785156,
+        "range_px": 12.223503112792969,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 9.580818176269531
+      },
+      "L1": {
+        "valid_images": 6,
+        "min_px": 70.89569854736328,
+        "median_px": 87.07336044311523,
+        "max_px": 90.56593322753906,
+        "range_px": 19.67023468017578,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 3.6212921142578125
+      },
+      "L2": {
+        "valid_images": 6,
+        "min_px": 82.43079376220703,
+        "median_px": 84.17334747314453,
+        "max_px": 84.99250793457031,
+        "range_px": 2.5617141723632812,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 1.5912551879882812
+      },
+      "L3": {
+        "valid_images": 6,
+        "min_px": 75.26350402832031,
+        "median_px": 77.22037887573242,
+        "max_px": 80.87088775634766,
+        "range_px": 5.607383728027344,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 5.1362152099609375
+      },
+      "L4": {
+        "valid_images": 6,
+        "min_px": 76.10466766357422,
+        "median_px": 78.86804962158203,
+        "max_px": 84.82056427001953,
+        "range_px": 8.715896606445312,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 1.9717330932617188
+      },
+      "L5": {
+        "valid_images": 6,
+        "min_px": 76.74137115478516,
+        "median_px": 80.75082778930664,
+        "max_px": 85.86111450195312,
+        "range_px": 9.119743347167969,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 3.1443328857421875
+      },
+      "L6": {
+        "valid_images": 6,
+        "min_px": 76.03905487060547,
+        "median_px": 78.86827850341797,
+        "max_px": 82.51486206054688,
+        "range_px": 6.475807189941406,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 2.8836441040039062
+      },
+      "L7": {
+        "valid_images": 6,
+        "min_px": 83.37353515625,
+        "median_px": 88.51079940795898,
+        "max_px": 94.68030548095703,
+        "range_px": 11.306770324707031,
+        "min_valid_columns": 49,
+        "max_column_mad_px": 4.398490905761719
+      }
+    }
+  }
+}

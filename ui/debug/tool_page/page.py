@@ -332,6 +332,8 @@ class ToolPage(QtWidgets.QWidget):
                 tr("debug.tools_table.status"),
             ])
             self._refresh_inspection_items_table()
+        if hasattr(self, "model_source_panel"):
+            self.model_source_panel.retranslate()
         if hasattr(self, "template_match_box"):
             self.template_match_box.setTitle(tr("debug.auto_roi"))
         if hasattr(self, "cmb_loc"):
@@ -1400,13 +1402,13 @@ class ToolPage(QtWidgets.QWidget):
         right_panel = QtWidgets.QFrame()
         self._main_right_panel = right_panel
         right_panel.setStyleSheet(f"background:{_PANEL_BG};border-left:1px solid #505050;")
-        right_vbox = QtWidgets.QVBoxLayout(right_panel)
-        right_vbox.setContentsMargins(0, 0, 0, 0)
-        right_vbox.setSpacing(0)
+        sidebar_vbox = QtWidgets.QVBoxLayout(right_panel)
+        sidebar_vbox.setContentsMargins(0, 0, 0, 0)
+        sidebar_vbox.setSpacing(0)
 
         build_sample_panel(
             self,
-            right_vbox,
+            sidebar_vbox,
             styles={
                 "text_light": _TEXT_LIGHT,
                 "text_dim": _TEXT_DIM,
@@ -1414,6 +1416,31 @@ class ToolPage(QtWidgets.QWidget):
                 "compact_btn": _compact_btn,
             },
         )
+
+        # Expanding configuration must not increase the main window's minimum
+        # height. Keep it scrollable, while the action buttons stay outside.
+        self.sidebar_config_scroll = QtWidgets.QScrollArea()
+        self.sidebar_config_scroll.setObjectName("debug_sidebar_config_scroll")
+        self.sidebar_config_scroll.setWidgetResizable(True)
+        self.sidebar_config_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.sidebar_config_scroll.setSizeAdjustPolicy(QtWidgets.QAbstractScrollArea.SizeAdjustPolicy.AdjustIgnored)
+        self.sidebar_config_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.sidebar_config_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.sidebar_config_scroll.setMinimumHeight(120)
+        self.sidebar_config_scroll.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
+        self.sidebar_config_scroll.setStyleSheet(
+            f"QScrollArea{{background:{_PANEL_BG};border:none;}}"
+            "QScrollBar:vertical{background:#2f2f2f;width:12px;margin:0;}"
+            "QScrollBar::handle:vertical{background:#6a6a6a;min-height:28px;border-radius:4px;}"
+            "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}"
+        )
+        self.sidebar_config_content = QtWidgets.QWidget()
+        self.sidebar_config_content.setObjectName("debug_sidebar_config_content")
+        right_vbox = QtWidgets.QVBoxLayout(self.sidebar_config_content)
+        right_vbox.setContentsMargins(0, 0, 0, 0)
+        right_vbox.setSpacing(0)
+        self.sidebar_config_scroll.setWidget(self.sidebar_config_content)
+        sidebar_vbox.addWidget(self.sidebar_config_scroll, 2)
 
         # --- 绠楁硶鍙傛暟 ---
         self.btn_toggle_algo = QtWidgets.QToolButton()
@@ -1513,7 +1540,7 @@ class ToolPage(QtWidgets.QWidget):
 
         build_action_panel(
             self,
-            right_vbox,
+            sidebar_vbox,
             styles={
                 "text_light": _TEXT_LIGHT,
                 "text_dim": _TEXT_DIM,
@@ -1924,9 +1951,14 @@ class ToolPage(QtWidgets.QWidget):
             return tr("debug.current_tool_stats_select")
         if self.algo.is_measurement_tool(getattr(inspection_item, "algorithm_code", "")):
             return tr("debug.measurement.no_training")
-        camera_role = _normalize_camera_role(getattr(inspection_item, "camera_id", "")) or self.current_camera_role()
-        roi_label = str(getattr(inspection_item, "roi_label", "") or "").strip() or "roi"
-        ok_count, ng_count, unset_count = self._sample_annotation_counts_for_roi(roi_label, camera_role)
+        from ui.debug.tool_page.model_source_panel import binding_status, model_source, training_sample_summary
+        if model_source(inspection_item) == "library":
+            status, _detail, _color = binding_status(self, inspection_item)
+            return tr("debug.model_source.reference_samples", model=status)
+        try:
+            roi_label, _ok, _ng, _paths, ok_count, ng_count, unset_count = training_sample_summary(self, inspection_item)
+        except Exception as exc:
+            return tr("debug.model_source.training_unavailable", detail=str(exc))
         return tr("debug.current_tool_samples", roi=roi_label, ok=ok_count, ng=ng_count, unset=unset_count)
 
     def _training_validation_text(self) -> str:
@@ -1935,12 +1967,19 @@ class ToolPage(QtWidgets.QWidget):
             return tr("debug.training_validation_select")
         if self.algo.is_measurement_tool(getattr(inspection_item, "algorithm_code", "")):
             return tr("debug.measurement.no_training")
+        from ui.debug.tool_page.model_source_panel import binding_description, model_source, training_sample_summary
+        if model_source(inspection_item) == "library":
+            description = binding_description(self, inspection_item)
+            if description.get("ready"):
+                return tr("debug.model_source.reference_ready")
+            return tr("debug.model_source.reference_unavailable", detail=description.get("message", ""))
         camera_role = _normalize_camera_role(getattr(inspection_item, "camera_id", "")) or self.current_camera_role()
-        roi_label = str(getattr(inspection_item, "roi_label", "") or "").strip() or "roi"
-        ok_files, ng_files, candidate_paths = self._training_sample_groups_for_role(camera_role, roi_label=roi_label)
+        try:
+            roi_label, ok_files, ng_files, candidate_paths, _ok, _ng, missing_count = training_sample_summary(self, inspection_item)
+        except Exception as exc:
+            return tr("debug.model_source.training_unavailable", detail=str(exc))
         if not candidate_paths:
             return tr("debug.training_validation_no_samples", role=camera_role)
-        _ok_count, _ng_count, missing_count = self._sample_annotation_counts_for_roi(roi_label, camera_role, paths=candidate_paths)
         if not ok_files or not ng_files:
             missing_groups: List[str] = []
             if not ok_files:
@@ -2255,6 +2294,7 @@ class ToolPage(QtWidgets.QWidget):
             getattr(item, "enabled", False)
             and _normalize_camera_role(getattr(item, "camera_id", "")) == current_role
             and not self.algo.is_measurement_tool(getattr(item, "algorithm_code", ""))
+            and getattr(item, "model_source", "independent") != "library"
             for item in inspection_items
         )
         selected_item_fn = getattr(self, "_selected_inspection_item", None)
@@ -2264,7 +2304,9 @@ class ToolPage(QtWidgets.QWidget):
             and selected_item is not None
             and selected_item.enabled
             and not self.algo.is_measurement_tool(getattr(selected_item, "algorithm_code", ""))
+            and getattr(selected_item, "model_source", "independent") != "library"
         )
+        library_selected = selected_item is not None and getattr(selected_item, "model_source", "independent") == "library"
         top_level = self.window()
         has_permission = getattr(top_level, "_has_permission", None)
         can_train = True
@@ -2272,9 +2314,15 @@ class ToolPage(QtWidgets.QWidget):
         if callable(has_permission):
             can_train = bool(has_permission("model.train"))
             can_edit_template_params = bool(has_permission("template.edit_params"))
-        self.cmb_mode.setEnabled(embedding and can_edit_template_params)
-        self.spin_margin.setEnabled(embedding and can_edit_template_params)
-        self.spin_topk.setEnabled(topk_enabled and can_edit_template_params)
+        for name in ("cmb_algorithm", "btn_algorithm_picker"):
+            picker = getattr(self, name, None)
+            if picker is not None:
+                picker.setEnabled(can_edit_template_params and not getattr(self, "_training_in_progress", False))
+                shared_source = selected_item is not None and getattr(selected_item, "model_source", "independent") in {"group", "library"}
+                picker.setToolTip(tr("debug.model_source.tool_change_tip") if shared_source else self.current_algorithm_display_name())
+        self.cmb_mode.setEnabled(embedding and can_edit_template_params and not library_selected)
+        self.spin_margin.setEnabled(embedding and can_edit_template_params and not library_selected)
+        self.spin_topk.setEnabled(topk_enabled and can_edit_template_params and not library_selected)
         topk_label = getattr(self, "lbl_topk", None)
         if topk_label is not None:
             enabled_style = getattr(self, "_algo_param_label_style", "")
@@ -2288,10 +2336,14 @@ class ToolPage(QtWidgets.QWidget):
         self.btn_test.setEnabled(has_testable_items)
         margin_button = getattr(self, "btn_validate_margin", None)
         if margin_button is not None:
-            margin_button.setEnabled(embedding and can_edit_template_params)
+            margin_button.setEnabled(embedding and can_edit_template_params and not library_selected)
         embedding_button = getattr(self, "btn_embedding_analysis", None)
         if embedding_button is not None:
-            embedding_button.setEnabled(embedding and can_edit_template_params)
+            embedding_button.setEnabled(embedding and can_edit_template_params and not library_selected)
+            embedding_button.setToolTip(tr("debug.model_source.analysis_unavailable") if library_selected else "")
+        source_panel = getattr(self, "model_source_panel", None)
+        if source_panel is not None:
+            source_panel.refresh()
         if getattr(self, "_training_in_progress", False):
             self._set_training_running(True)
         self._sync_training_action_buttons()
@@ -2357,6 +2409,8 @@ class ToolPage(QtWidgets.QWidget):
             else self.current_camera_role()
         )
         before = str(getattr(selected_item, "algorithm_code", "") if selected_item is not None else self.algo.product_params.algorithm)
+        from ui.debug.tool_page.model_source_changes import detach_for_tool_change
+        detached = bool(algorithm and detach_for_tool_change(self, selected_item, algorithm))
         if algorithm in SUPPORTED_EMBEDDING_ALGORITHMS:
             self.algo.set_learning_backbone(algorithm, camera_role)
         if not algorithm:
@@ -2372,10 +2426,16 @@ class ToolPage(QtWidgets.QWidget):
                 if algorithm in SUPPORTED_EMBEDDING_ALGORITHMS
                 else algorithm
             )
-            self._persist_inspection_items()
-            self._refresh_inspection_items_table()
+        # inspectionItemsChanged synchronously reloads runtime parameters through
+        # the shared controller. Persist the new backbone before that signal so
+        # the table refresh cannot restore the previous tool selection.
         self.algo.product_params.algorithm = algorithm
         self._save_runtime_params()
+        if selected_item is not None:
+            self._persist_inspection_items()
+        # A camera-wide subtype change also affects shared ROIs when no row is
+        # selected. Recompute their readiness against the new backbone now.
+        self._refresh_inspection_items_table()
         self._update_runtime_widgets()
         self._update_learning_backbone_hint()
         audit_event = getattr(top_level, "_audit_event", None)
@@ -2391,9 +2451,11 @@ class ToolPage(QtWidgets.QWidget):
             _, msg = self.algo.load_model_for_algorithm(
                 algorithm,
                 self.session.product_dir,
-                model_key=selected_item.model_key if selected_item is not None else "",
+                model_key=selected_item.effective_model_key if selected_item is not None else "",
             )
             self.lbl_status.setText(msg)
+            if detached:
+                self.lbl_status.setText(f"{msg}  {tr('debug.model_source.tool_changed_independent')}")
         except Exception as exc:
             self.algo.model = None
             display_name = self.algo.algorithm_display_name(algorithm) or algorithm
@@ -2568,17 +2630,10 @@ class ToolPage(QtWidgets.QWidget):
     def _run_margin_validation(self) -> None:
         inspection_item = self._selected_inspection_item()
         if inspection_item is not None and inspection_item.enabled:
-            algorithm = (
-                self.algo.current_learning_backbone(inspection_item.camera_id)
-                if self.algo.is_learning_tool(inspection_item.algorithm_code)
-                else self.algo.resolve_tool_algorithm(
-                    inspection_item.algorithm_code,
-                    inspection_item.camera_id,
-                )
-            )
+            algorithm = self.algo.resolve_item_algorithm(inspection_item)
             labels_override = [str(inspection_item.roi_label or "").strip() or "roi"]
             algorithm_override = inspection_item.algorithm_code
-            model_key_override = inspection_item.model_key
+            model_key_override = inspection_item.effective_model_key
             validation_ok_files, validation_ng_files, _candidate_paths = self._training_sample_groups_for_role(
                 inspection_item.camera_id,
                 roi_label=labels_override[0],
@@ -2677,6 +2732,9 @@ class ToolPage(QtWidgets.QWidget):
         if inspection_item is None:
             QtWidgets.QMessageBox.information(self, tr("common.info"), tr("debug.select_learning_tool_first"))
             return
+        if getattr(inspection_item, "model_source", "independent") == "library":
+            QtWidgets.QMessageBox.information(self, tr("common.info"), tr("debug.model_source.analysis_unavailable"))
+            return
         if not inspection_item.enabled:
             QtWidgets.QMessageBox.information(self, tr("common.info"), tr("debug.tool_disabled"))
             return
@@ -2693,14 +2751,14 @@ class ToolPage(QtWidgets.QWidget):
         ]
         allowed_model_keys = list(
             dict.fromkeys(
-                str(getattr(item, "model_key", "") or "").strip()
+                str(getattr(item, "effective_model_key", "") or "").strip()
                 for item in allowed_learning_items
-                if str(getattr(item, "model_key", "") or "").strip()
+                if str(getattr(item, "effective_model_key", "") or "").strip()
             )
         )
         allowed_backbones = []
         current_backbone = str(
-            self.algo.current_learning_backbone(inspection_item.camera_id) or ""
+            self.algo.resolve_item_algorithm(inspection_item) or ""
         ).strip()
         if current_backbone:
             allowed_backbones.append(current_backbone)
@@ -2709,7 +2767,7 @@ class ToolPage(QtWidgets.QWidget):
                 session_root=self.session.session_dir,
                 initial_product=self.session.current_product,
                 initial_backbone=current_backbone,
-                initial_model_key=inspection_item.model_key,
+                initial_model_key=inspection_item.effective_model_key,
                 allowed_model_keys=allowed_model_keys,
                 allowed_backbones=allowed_backbones,
                 parent=self,

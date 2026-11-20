@@ -1,0 +1,370 @@
+{
+  "notice": "Independent visible-event audit with fixed y window for evidence only; not a detector rule or ground-truth labels.",
+  "summary": {
+    "left": {
+      "count": 18,
+      "count_ge3": 18,
+      "count_ge4": 18,
+      "count_ge5": 18,
+      "min_median_max_strength": [
+        5.0234375,
+        7.611328125,
+        10.05078125
+      ],
+      "peak_y_min_max": [
+        1643.6617431640625,
+        1645.046875
+      ]
+    },
+    "right": {
+      "count": 18,
+      "count_ge3": 10,
+      "count_ge4": 10,
+      "count_ge5": 9,
+      "min_median_max_strength": [
+        -0.53515625,
+        5.884765625,
+        9.84765625
+      ],
+      "peak_y_min_max": [
+        1644.8892822265625,
+        1648.0
+      ]
+    },
+    "outer_audit_fit": {
+      "center_y": 1644.5729821152318,
+      "coefficients": [
+        0.00991079735739866,
+        1632.8584196387865
+      ],
+      "support_count": 28,
+      "rmse_px": 0.3402949423582913
+    }
+  },
+  "rows": [
+    {
+      "x": 1136,
+      "side": "left",
+      "outer_peak_y": 1644.3681640625,
+      "positive_gradient_strength": 5.0234375,
+      "lip_valley_y": 1643,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.6787420634994
+    },
+    {
+      "x": 1137,
+      "side": "left",
+      "outer_peak_y": 1645.046875,
+      "positive_gradient_strength": 5.3515625,
+      "lip_valley_y": 1643,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.6726771869262
+    },
+    {
+      "x": 1138,
+      "side": "left",
+      "outer_peak_y": 1644.8653564453125,
+      "positive_gradient_strength": 6.23828125,
+      "lip_valley_y": 1643,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.666612310353
+    },
+    {
+      "x": 1139,
+      "side": "left",
+      "outer_peak_y": 1644.589111328125,
+      "positive_gradient_strength": 7.06640625,
+      "lip_valley_y": 1643,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.66054743378
+    },
+    {
+      "x": 1140,
+      "side": "left",
+      "outer_peak_y": 1644.3226318359375,
+      "positive_gradient_strength": 7.30859375,
+      "lip_valley_y": 1643,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.6544825572068
+    },
+    {
+      "x": 1141,
+      "side": "left",
+      "outer_peak_y": 1644.2088623046875,
+      "positive_gradient_strength": 7.546875,
+      "lip_valley_y": 1643,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.6484176806339
+    },
+    {
+      "x": 1142,
+      "side": "left",
+      "outer_peak_y": 1644.2537841796875,
+      "positive_gradient_strength": 8.234375,
+      "lip_valley_y": 1643,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.6423528040607
+    },
+    {
+      "x": 1143,
+      "side": "left",
+      "outer_peak_y": 1644.2850341796875,
+      "positive_gradient_strength": 8.5390625,
+      "lip_valley_y": 1643,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.6362879274875
+    },
+    {
+      "x": 1144,
+      "side": "left",
+      "outer_peak_y": 1644.2664794921875,
+      "positive_gradient_strength": 7.67578125,
+      "lip_valley_y": 1643,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.6302230509145
+    },
+    {
+      "x": 1145,
+      "side": "left",
+      "outer_peak_y": 1644.15283203125,
+      "positive_gradient_strength": 6.18359375,
+      "lip_valley_y": 1643,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.6241581743413
+    },
+    {
+      "x": 1146,
+      "side": "left",
+      "outer_peak_y": 1643.976318359375,
+      "positive_gradient_strength": 5.9296875,
+      "lip_valley_y": 1643,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.6180932977684
+    },
+    {
+      "x": 1147,
+      "side": "left",
+      "outer_peak_y": 1643.98388671875,
+      "positive_gradient_strength": 6.73046875,
+      "lip_valley_y": 1643,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.6120284211952
+    },
+    {
+      "x": 1148,
+      "side": "left",
+      "outer_peak_y": 1643.99169921875,
+      "positive_gradient_strength": 7.74609375,
+      "lip_valley_y": 1643,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.6059635446222
+    },
+    {
+      "x": 1149,
+      "side": "left",
+      "outer_peak_y": 1643.91796875,
+      "positive_gradient_strength": 8.82421875,
+      "lip_valley_y": 1643,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.599898668049
+    },
+    {
+      "x": 1150,
+      "side": "left",
+      "outer_peak_y": 1643.787353515625,
+      "positive_gradient_strength": 9.6640625,
+      "lip_valley_y": 1643,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.5938337914758
+    },
+    {
+      "x": 1151,
+      "side": "left",
+      "outer_peak_y": 1643.68115234375,
+      "positive_gradient_strength": 10.05078125,
+      "lip_valley_y": 1642,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.5877689149029
+    },
+    {
+      "x": 1152,
+      "side": "left",
+      "outer_peak_y": 1643.6617431640625,
+      "positive_gradient_strength": 9.69140625,
+      "lip_valley_y": 1642,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.5817040383297
+    },
+    {
+      "x": 1153,
+      "side": "left",
+      "outer_peak_y": 1643.7718505859375,
+      "positive_gradient_strength": 8.73828125,
+      "lip_valley_y": 1643,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.5756391617567
+    },
+    {
+      "x": 1211,
+      "side": "right",
+      "outer_peak_y": 1644.9176025390625,
+      "positive_gradient_strength": 9.17578125,
+      "lip_valley_y": 1643,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.223876320517
+    },
+    {
+      "x": 1212,
+      "side": "right",
+      "outer_peak_y": 1644.89111328125,
+      "positive_gradient_strength": 8.79296875,
+      "lip_valley_y": 1644,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.217811443944
+    },
+    {
+      "x": 1213,
+      "side": "right",
+      "outer_peak_y": 1644.8892822265625,
+      "positive_gradient_strength": 8.9453125,
+      "lip_valley_y": 1644,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.211746567371
+    },
+    {
+      "x": 1214,
+      "side": "right",
+      "outer_peak_y": 1644.90087890625,
+      "positive_gradient_strength": 9.1953125,
+      "lip_valley_y": 1644,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.2056816907977
+    },
+    {
+      "x": 1215,
+      "side": "right",
+      "outer_peak_y": 1644.90771484375,
+      "positive_gradient_strength": 9.4609375,
+      "lip_valley_y": 1644,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.1996168142248
+    },
+    {
+      "x": 1216,
+      "side": "right",
+      "outer_peak_y": 1644.9071044921875,
+      "positive_gradient_strength": 9.84765625,
+      "lip_valley_y": 1644,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.1935519376516
+    },
+    {
+      "x": 1217,
+      "side": "right",
+      "outer_peak_y": 1644.9263916015625,
+      "positive_gradient_strength": 9.84375,
+      "lip_valley_y": 1644,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.1874870610784
+    },
+    {
+      "x": 1218,
+      "side": "right",
+      "outer_peak_y": 1644.9754638671875,
+      "positive_gradient_strength": 8.95703125,
+      "lip_valley_y": 1644,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.1814221845054
+    },
+    {
+      "x": 1219,
+      "side": "right",
+      "outer_peak_y": 1645.05615234375,
+      "positive_gradient_strength": 7.26171875,
+      "lip_valley_y": 1644,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.1753573079322
+    },
+    {
+      "x": 1220,
+      "side": "right",
+      "outer_peak_y": 1645.1710205078125,
+      "positive_gradient_strength": 4.5078125,
+      "lip_valley_y": 1644,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.1692924313593
+    },
+    {
+      "x": 1221,
+      "side": "right",
+      "outer_peak_y": 1645.478759765625,
+      "positive_gradient_strength": 1.5234375,
+      "lip_valley_y": 1645,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.163227554786
+    },
+    {
+      "x": 1222,
+      "side": "right",
+      "outer_peak_y": 1645.7823486328125,
+      "positive_gradient_strength": -0.27734375,
+      "lip_valley_y": 1645,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.1571626782131
+    },
+    {
+      "x": 1223,
+      "side": "right",
+      "outer_peak_y": 1645.7108154296875,
+      "positive_gradient_strength": -0.53515625,
+      "lip_valley_y": 1645,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.15109780164
+    },
+    {
+      "x": 1224,
+      "side": "right",
+      "outer_peak_y": 1645.5269775390625,
+      "positive_gradient_strength": -0.31640625,
+      "lip_valley_y": 1645,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.1450329250667
+    },
+    {
+      "x": 1225,
+      "side": "right",
+      "outer_peak_y": 1647.0,
+      "positive_gradient_strength": -0.36328125,
+      "lip_valley_y": 1645,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.1389680484938
+    },
+    {
+      "x": 1226,
+      "side": "right",
+      "outer_peak_y": 1648.0,
+      "positive_gradient_strength": 0.3359375,
+      "lip_valley_y": 1645,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.1329031719206
+    },
+    {
+      "x": 1227,
+      "side": "right",
+      "outer_peak_y": 1648.0,
+      "positive_gradient_strength": 0.671875,
+      "lip_valley_y": 1645,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.1268382953476
+    },
+    {
+      "x": 1228,
+      "side": "right",
+      "outer_peak_y": 1648.0,
+      "positive_gradient_strength": 0.58984375,
+      "lip_valley_y": 1645,
+      "peak_polarity": "positive dI/dy (dark lip to opening background)",
+      "new_line_y": 1639.1207734187744
+    }
+  ]
+}

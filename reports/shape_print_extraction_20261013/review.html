@@ -1,0 +1,17 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>ShapeModel 印字提取验证</title>
+<style>body{font-family:'Microsoft YaHei',sans-serif;max-width:1450px;margin:30px auto;padding:0 24px;background:#f5f7fa;color:#172435;line-height:1.8}table{border-collapse:collapse;width:100%;background:white}td,th{padding:10px;border:1px solid #d5deea}img{max-width:100%}a{color:#175ec2}</style>
+<h1>ShapeModel 定位与印字提取验证</h1>
+<p>实际调用本工程 shape.core.template_core、ShapeRunner 和 affine_roi 跟随功能，使用原生 Original 后端。只建立一个下部壳体轮廓模板，屏蔽圆孔内部变化；印字、橙色拨片不参加模板建立。模板搜索平移、旋转与缩放，随后将紧凑印字 ROI 映射到各张图片并矫正为相同尺寸。</p>
+<p>本次仅验证定位和笔画提取。没有重新训练 PatchCore、没有 OCR 识别，也没有根据定位相似度判 OK/NG。白色笔画图包含字符与分隔线；其二值化仍受浅印、模糊和反光影响，应保留原始灰度图用于后续检查。位置偏移仍保留在壳体坐标中。</p>
+<table><tr><th>文件</th><th>壳体定位分数</th><th>白色像素</th><th>定位复核</th></tr><tr><td>20260924084452875-印字错误</td><td>95.51</td><td>8454</td><td><a href='samples/00/overlay.png'>原图定位框</a></td></tr>
+<tr><td>20260924085901993-正面合格</td><td>95.49</td><td>8436</td><td><a href='samples/01/overlay.png'>原图定位框</a></td></tr>
+<tr><td>20260924110630963-正面合格</td><td>93.89</td><td>8875</td><td><a href='samples/02/overlay.png'>原图定位框</a></td></tr>
+<tr><td>20261012084900715_合格品</td><td>100.00</td><td>7994</td><td><a href='samples/03/overlay.png'>原图定位框</a></td></tr>
+<tr><td>20261012085002232_印字不清楚（N断字）</td><td>95.90</td><td>8348</td><td><a href='samples/04/overlay.png'>原图定位框</a></td></tr>
+<tr><td>20261012105924180-印字不全</td><td>95.86</td><td>8015</td><td><a href='samples/05/overlay.png'>原图定位框</a></td></tr>
+<tr><td>20261012110011473-断字</td><td>92.58</td><td>7796</td><td><a href='samples/06/overlay.png'>原图定位框</a></td></tr>
+<tr><td>20261012110052130-印字上移</td><td>94.36</td><td>7304</td><td><a href='samples/07/overlay.png'>原图定位框</a></td></tr>
+<tr><td>20261012110130372-印字偏</td><td>95.70</td><td>7947</td><td><a href='samples/08/overlay.png'>原图定位框</a></td></tr>
+<tr><td>20261012110208111-漏印</td><td>93.75</td><td>0</td><td><a href='samples/09/overlay.png'>原图定位框</a></td></tr></table>
+<p><a href="template_selection.png">定位模板及印字区域设置</a> · <a href="report.json">详细记录</a> · <a href="model.json">ShapeModel</a> · <a href="recipe.json">ROI 跟随配方</a></p>
+<a href="overview.png"><img src="overview.png"></a></html>

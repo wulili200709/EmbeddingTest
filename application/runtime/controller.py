@@ -203,6 +203,8 @@ class RuntimeController(QtCore.QObject):
     warningOccurred = QtCore.Signal(str)           # → QMessageBox.warning
     errorOccurred   = QtCore.Signal(str)           # → QMessageBox.critical
     infoOccurred    = QtCore.Signal(str)           # → QMessageBox.information
+    ngBoxSignalChanged = QtCore.Signal(bool)
+    _ngBoxEvent = QtCore.Signal(object)
     _triggerTaskFinished = QtCore.Signal(object, str)
 
     def __init__(
@@ -222,6 +224,7 @@ class RuntimeController(QtCore.QObject):
         self._import_error = import_error
         self._release_password = release_password
         self._lock_on_ng = bool(lock_on_ng)
+        self._ngBoxEvent.connect(self._on_ng_box_event, QtCore.Qt.QueuedConnection)
 
         self._frame_lock = threading.RLock()
         self._inspect_lock = threading.RLock()
@@ -890,7 +893,21 @@ class RuntimeController(QtCore.QObject):
             active_roles=required_roles,
         )
 
+    @QtCore.Slot(object)
+    def _on_ng_box_event(self, event) -> None:
+        self.ngBoxSignalChanged.emit(bool(event.state))
+        if event.edge != "rising" or self._scheduler is None:
+            return
+        if self._scheduler.release_from_ng_box(event.timestamp):
+            self.logAppended.emit("[NG盒] DI2 上升沿有效，已自动解锁")
+            self._write_release_log(event_type="ng_box_release", result="granted",
+                                    message="DI2 上升沿确认 NG 产品入盒，自动解锁")
+            self._update_status("NG 产品已入盒，等待下一次检测")
+
     def release(self, password: str) -> None:
+        if self._lock_on_ng:
+            self.infoOccurred.emit("请将 NG 产品放入 NG 盒，等待 DI2 上升沿自动解锁")
+            return
         """尝试放行 NG 锁定。"""
         if self._scheduler is None or self._permission_manager is None:
             self.infoOccurred.emit("请先连接相机并初始化运行链路")

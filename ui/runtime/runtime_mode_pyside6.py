@@ -900,6 +900,10 @@ class RuntimeModePage(QtWidgets.QWidget):
         self.lbl_footer_connection.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
         footer_status_layout.addWidget(self.lbl_footer_connection)
 
+        self.lbl_ng_box_signal = QtWidgets.QLabel("● DI2 / NG 盒：无信号")
+        self.lbl_ng_box_signal.setStyleSheet("color:#666666;font-size:12px;")
+        footer_status_layout.addWidget(self.lbl_ng_box_signal)
+
         self.lbl_footer_permission = QtWidgets.QLabel("")
         self.lbl_footer_permission.setStyleSheet(f"color:{_TEXT_DIM};font-size:12px;")
         footer_status_layout.addWidget(self.lbl_footer_permission)
@@ -1232,6 +1236,12 @@ class RuntimeModePage(QtWidgets.QWidget):
         editor = getattr(self, f"edit_{role_text}_serial", None)
         if editor is not None:
             editor.setText(str(serial or "").strip())
+
+    @QtCore.Slot(bool)
+    def set_ng_box_signal(self, active: bool) -> None:
+        color = "#00dd66" if active else "#666666"
+        self.lbl_ng_box_signal.setStyleSheet(f"color:{color};font-size:12px;")
+        self.lbl_ng_box_signal.setText("● DI2 / NG 盒：" + ("有信号" if active else "无信号"))
 
     def release_password(self) -> str:
         return self.edit_release_password.text()

@@ -30,7 +30,10 @@ class TrainingController:
     @staticmethod
     def requires_training(inspection_item: InspectionItem) -> bool:
         """Measurement tools run from configured parameters and never train."""
-        return not is_measurement_tool_algorithm(inspection_item.algorithm_code)
+        return (
+            str(getattr(inspection_item, "model_source", "independent")) != "library"
+            and not is_measurement_tool_algorithm(inspection_item.algorithm_code)
+        )
 
     def train_sample_paths_for_role(self, camera_role: object = None) -> List[str]:
         return self.task_builder.train_sample_paths_for_role(camera_role)
@@ -84,9 +87,12 @@ class TrainingController:
             parts.append(str(task.get("item_id", "") or ""))
             parts.append(str(task.get("algorithm", "") or ""))
             parts.append(str(task.get("model_key", "") or ""))
+            parts.append(str(task.get("model_source", "") or ""))
             parts.extend(f"ROI:{label}" for label in list(task.get("label_names", []) or []))
             parts.extend(f"OK:{path}" for path in list(task.get("ok_files", []) or []))
             parts.extend(f"NG:{path}" for path in list(task.get("ng_files", []) or []))
+            parts.extend(f"OK-ROI:{path}:{label}" for path, label in task.get("ok_samples", []))
+            parts.extend(f"NG-ROI:{path}:{label}" for path, label in task.get("ng_samples", []))
         return "|".join(parts)
 
     def set_running(self, running: bool) -> None:
@@ -105,6 +111,10 @@ class TrainingController:
                 progress_bar.setRange(0, 100)
                 progress_bar.setValue(0)
                 progress_bar.setFormat("")
+        if not running:
+            update_widgets = getattr(self.owner, "_update_runtime_widgets", None)
+            if callable(update_widgets):
+                update_widgets()
 
     def on_progress(self, message: str) -> None:
         text = str(message or "").strip()
@@ -241,7 +251,6 @@ class TrainingController:
     def train_inspection_item(self, inspection_item: InspectionItem):
         task = self.build_task_for_item(inspection_item)
         algorithm = str(task.get("algorithm", "") or "")
-        roi_label = str((task.get("label_names") or ["roi"])[0] or "roi")
         self.owner.algo.product_params.algorithm = algorithm
         self.owner.algo.product_params.score_mode = self.owner.cmb_mode.currentText()
         self.owner.algo.product_params.margin = float(self.owner.spin_margin.value())
@@ -251,13 +260,35 @@ class TrainingController:
             list(task.get("ng_files", []) or []),
             algorithm=algorithm,
             product_dir=self.owner.session.product_dir,
-            label_names=[roi_label],
+            label_names=list(task.get("label_names", []) or []),
             model_key=str(task.get("model_key", "") or ""),
+            ok_samples=list(task.get("ok_samples", []) or []),
+            ng_samples=list(task.get("ng_samples", []) or []),
         )
+
+    def validate_library_references(self, items: List[InspectionItem]) -> List[str]:
+        failures: List[str] = []
+        for item in items:
+            if str(getattr(item, "model_source", "independent")) != "library":
+                continue
+            try:
+                binding = self.owner.algo.describe_model_binding(item, self.owner.session.product_dir)
+                if not binding.get("ready", False):
+                    raise RuntimeError(binding.get("message") or "published model is unavailable")
+            except Exception as exc:
+                failures.append(f"{self.item_display_name(item)}: {exc}")
+        return failures
+
+    def _apply_pending_model_source(self) -> bool:
+        panel = getattr(self.owner, "model_source_panel", None)
+        apply_pending = getattr(panel, "apply_pending", None)
+        return bool(apply_pending()) if callable(apply_pending) else True
 
     def train_all_tools(self) -> None:
         if getattr(self.owner, "_training_in_progress", False):
             QtWidgets.QMessageBox.information(self.owner, tr("common.info"), "Training is already running.")
+            return
+        if not self._apply_pending_model_source():
             return
 
         current_role = self.owner.current_camera_role()
@@ -270,20 +301,29 @@ class TrainingController:
             QtWidgets.QMessageBox.information(self.owner, tr("common.info"), tr("debug.enable_one_tool", role=current_role))
             return
         trainable_items = [item for item in enabled_items if self.requires_training(item)]
-        if not trainable_items:
-            message = tr("debug.measurement.no_training")
+        failure_messages = self.validate_library_references(enabled_items)
+        if not trainable_items and not failure_messages:
+            has_references = any(str(getattr(item, "model_source", "independent")) == "library" for item in enabled_items)
+            message = (
+                tr("debug.model_source.reference_ready")
+                if has_references else tr("debug.measurement.no_training")
+            )
             self.owner.lbl_status.setText(message)
             QtWidgets.QMessageBox.information(self.owner, tr("common.info"), message)
             return
-        if self.owner._warn_mixed_training_camera_samples(current_role):
+        if trainable_items and self.owner._warn_mixed_training_camera_samples(current_role):
             return
         selected_item = self.owner._selected_inspection_item()
         selected_item_id = str(selected_item.item_id or "") if selected_item is not None else ""
         tasks: List[dict] = []
-        failure_messages: List[str] = []
+        seen_targets: set[tuple[str, str]] = set()
         for inspection_item in trainable_items:
             display_name = self.item_display_name(inspection_item)
             try:
+                target = (self.task_builder.effective_model_key(inspection_item), self.resolve_algorithm(inspection_item))
+                if target in seen_targets:
+                    continue
+                seen_targets.add(target)
                 tasks.append(self.build_task_for_item(inspection_item))
             except Exception as exc:
                 failure_messages.append(f"{display_name}: {exc}")
@@ -338,12 +378,23 @@ class TrainingController:
         if getattr(self.owner, "_training_in_progress", False):
             QtWidgets.QMessageBox.information(self.owner, tr("common.info"), "Training is already running.")
             return
+        if not self._apply_pending_model_source():
+            return
         inspection_item = self.owner._selected_inspection_item()
         if inspection_item is None:
             QtWidgets.QMessageBox.information(self.owner, tr("common.info"), tr("debug.select_inspection_tool_in_table"))
             return
         if not inspection_item.enabled:
             QtWidgets.QMessageBox.information(self.owner, tr("common.info"), tr("debug.tool_disabled"))
+            return
+        if str(getattr(inspection_item, "model_source", "independent")) == "library":
+            failures = self.validate_library_references([inspection_item])
+            if failures:
+                QtWidgets.QMessageBox.warning(self.owner, tr("debug.train_failed_title"), "\n".join(failures))
+            else:
+                message = tr("debug.model_source.reference_no_training")
+                self.owner.lbl_status.setText(message)
+                QtWidgets.QMessageBox.information(self.owner, tr("common.info"), message)
             return
         if not self.requires_training(inspection_item):
             message = tr("debug.measurement.no_training")

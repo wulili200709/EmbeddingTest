@@ -1,0 +1,20 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>ShapeModel + PatchCore 检测实测</title>
+<style>body{font-family:'Microsoft YaHei',sans-serif;max-width:1550px;margin:30px auto;padding:0 24px;background:#f5f7fa;color:#172435;line-height:1.8}table{border-collapse:collapse;width:100%;background:white}td,th{padding:10px;border:1px solid #d5deea}img{max-width:100%}a{color:#175ec2}.note{padding:16px;background:#e6edf5}</style>
+<h1>ShapeModel 定位后的 PatchCore 检测</h1>
+<p>使用已验证的 10 张 ShapeModel 跟随裁切结果，每张 680 × 205 像素；逐张重新计算源图变换并验证与保存的裁切一致。两套 PatchCore 都按新的输入区域重新建立特征库，仅使用原参考良品，新增两张 OK 未参与训练。输入补边至 704 × 224，保持原始像素尺度。ResNet18、layer1/layer2、10% coreset、5 邻居，与上一试验一致。</p>
+<p>原图模型输入为紧凑的彩色印字区域，并未宣称所有壳体像素都被清除；差分模型使用灰度差、边缘差及笔画掩膜差。印字位置始终保留在壳体坐标中，没有按文字再次对齐。二值化沿用 ShapeModel 提取阶段的亮度/对比度参数。</p>
+<h2>实测分数对照</h2><p><b>字符区域原图模型：</b>两张独立 OK 分数为 15.09、16.70；7 张 NG 中，有 1 张高于这两张 OK 的最高分。全部已知 OK/NG 是否可用单一分数阈值分开：否，分数存在重叠。</p>
+<p><b>参考差分模型：</b>两张独立 OK 分数为 39.80、38.35；7 张 NG 中，有 2 张高于这两张 OK 的最高分。全部已知 OK/NG 是否可用单一分数阈值分开：否，分数存在重叠。</p>
+<div class="note">“高于两张 OK 的最高分”仅为事后对照，不能当作经过独立校准的检出率。当前只有两张独立良品，不设置生产阈值。差分模型的唯一训练输入仍是参考图与自身的全零差分，没有学到真实良品的差分波动。模型高分不等于识别出了错误字符或精确定位到了断笔。</div>
+<table><tr><th>图片</th><th>字符区域原图模型</th><th>参考差分模型</th><th>状态</th></tr><tr><td>20260924084452875-印字错误</td><td>17.5018</td><td>38.4066</td><td>独立于训练图；未标定判定阈值</td></tr>
+<tr><td>20260924085901993-正面合格</td><td>15.0908</td><td>39.7986</td><td>独立于训练图；未标定判定阈值</td></tr>
+<tr><td>20260924110630963-正面合格</td><td>16.6958</td><td>38.3464</td><td>独立于训练图；未标定判定阈值</td></tr>
+<tr><td>20261012084900715_合格品</td><td>9.1801</td><td>0.0315</td><td>参考自检</td></tr>
+<tr><td>20261012085002232_印字不清楚（N断字）</td><td>14.1309</td><td>36.9698</td><td>独立于训练图；未标定判定阈值</td></tr>
+<tr><td>20261012105924180-印字不全</td><td>12.1590</td><td>38.8761</td><td>独立于训练图；未标定判定阈值</td></tr>
+<tr><td>20261012110011473-断字</td><td>15.9387</td><td>40.8301</td><td>独立于训练图；未标定判定阈值</td></tr>
+<tr><td>20261012110052130-印字上移</td><td>14.5519</td><td>38.2314</td><td>独立于训练图；未标定判定阈值</td></tr>
+<tr><td>20261012110130372-印字偏</td><td>15.0514</td><td>39.8583</td><td>独立于训练图；未标定判定阈值</td></tr>
+<tr><td>20261012110208111-漏印</td><td>12.1727</td><td>39.6600</td><td>独立于训练图；未标定判定阈值</td></tr></table>
+<h2>统一色标热力图</h2><a href="overview.png"><img src="overview.png"></a>
+<p><a href="results.csv">结果 CSV</a> · <a href="report.json">参数及详细记录</a>。rgb/residual 目录各自保存模型、输入、原始浮点热力图、彩色热力图和叠加图。</p></html>

@@ -202,17 +202,23 @@ def _start_di_poller_if_available(runtime) -> None:
     try:
         poller = runtime_controller_module.DiMonitor(
             runtime._io_controller,
-            input_names=["foot_switch"],
+            input_names=["foot_switch", "ng_box"],
             poll_interval_ms=20,
             debounce_ms=50,
         )
-        poller.add_rising_callback(runtime._on_foot_switch_rising)
+        poller.add_rising_callback(
+            lambda event: runtime._on_foot_switch_rising(event) if event.name == "foot_switch" else None
+        )
+        poller.add_change_callback(
+            lambda event: runtime._ngBoxEvent.emit(event) if event.name == "ng_box" else None
+        )
         poller.start()
+        runtime.ngBoxSignalChanged.emit(bool(poller.snapshot().get("ng_box", False)))
     except Exception as exc:
-        runtime.logAppended.emit(f"[IO] failed to start foot-switch DI monitor: {exc}")
+        runtime.logAppended.emit(f"[IO] failed to start foot-switch / NG-box DI monitor: {exc}")
         return
     runtime._di_poller = poller
-    runtime.logAppended.emit("[IO] foot-switch DI monitor started")
+    runtime.logAppended.emit("[IO] foot-switch / NG-box DI2 monitor started")
 
 
 def _stop_di_poller(runtime) -> None:
@@ -223,6 +229,7 @@ def _stop_di_poller(runtime) -> None:
     except Exception:
         pass
     runtime._di_poller = None
+    runtime.ngBoxSignalChanged.emit(False)
 
 
 def _on_foot_switch_rising(runtime, event) -> None:

@@ -6,6 +6,8 @@ import re
 import sys
 import threading
 import time
+from application.model_binding import ModelBindingMixin
+from common.model_library import ModelLibrary, parse_library_model_key
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -16,6 +18,7 @@ from algorithms.traditional import (
     is_traditional_algorithm,
     metric_value,
     train_threshold_model,
+    train_threshold_model_from_samples,
 )
 from algorithms.measurement import (
     BRIGHT_BLOCK_CENTER_ALGORITHM,
@@ -143,7 +146,7 @@ class PredictResult:
 # AlgorithmController
 # ---------------------------------------------------------------------------
 
-class AlgorithmController:
+class AlgorithmController(ModelBindingMixin):
     """
     算法参数与模型的非 UI 控制器。
 
@@ -154,6 +157,8 @@ class AlgorithmController:
     """
 
     def __init__(self) -> None:
+        self.model_library = ModelLibrary()
+        self._active_library_parameters = None
         self.product_params: ProductRuntimeParams = ProductRuntimeParams()
         self.model: Optional[Any] = None          # qr_core.RegisterModel | None
         self._feat_net_cache: Dict[Tuple[str, str, str], Any] = {}
@@ -171,6 +176,9 @@ class AlgorithmController:
         # Loading a product/session is an explicit cache boundary. Paths
         # already isolate products; clearing here also releases inactive ones.
         self.clear_embedding_model_cache()
+        self.model = None
+        self._loaded_embedding_model_key = ("", "")
+        self._active_library_parameters = None
         self.product_params = load_product_params(path)
         alg = storage_code_backbone(self.product_params.algorithm)
         learning_backbone = storage_code_backbone(self.product_params.learning_backbone)
@@ -297,7 +305,7 @@ class AlgorithmController:
 
     @staticmethod
     def _normalize_model_key(model_key: object) -> str:
-        normalized = re.sub(r"[^0-9A-Za-z._-]+", "_", str(model_key or "").strip()).strip("._-")
+        normalized = re.sub(r"[^\w._-]+", "_", str(model_key or "").strip(), flags=re.UNICODE).strip("._-")
         return normalized
 
     def tool_model_key(self, model_key: object) -> str:
@@ -339,10 +347,17 @@ class AlgorithmController:
         return str(algorithm or "").strip()
 
     def get_traditional_model_dict(self, algorithm: str, *, model_key: object = "") -> Optional[dict]:
+        manifest = self._library_model_for_key(model_key, algorithm=algorithm)
+        if manifest is not None:
+            if manifest["kind"] != "traditional":
+                raise ValueError("公共模型类型与传统工具不兼容")
+            return dict(manifest["traditional_model"])
         storage_key = self.traditional_model_storage_key(algorithm, model_key=model_key)
         model_dict = self.product_params.traditional_models.get(storage_key)
         if isinstance(model_dict, dict):
             return model_dict
+        if "__group__" in str(model_key or ""):
+            return None
         legacy_model_dict = self.product_params.traditional_models.get(str(algorithm or "").strip())
         if isinstance(legacy_model_dict, dict):
             return legacy_model_dict
@@ -373,7 +388,8 @@ class AlgorithmController:
             label_name = str(getattr(self.model, "label_name", "")).strip()
             model_labels = [label_name] if label_name else []
         expected_labels = [str(name).strip() for name in labels if str(name).strip()]
-        if expected_labels and model_labels and expected_labels != model_labels:
+        shared_binding = "__group__" in normalized_key or parse_library_model_key(normalized_key) is not None
+        if expected_labels and model_labels and expected_labels != model_labels and not shared_binding:
             return False
         return True
 
@@ -477,10 +493,12 @@ class AlgorithmController:
         返回 (model_or_None, status_message)。
         调用方负责把 status_message 写进 lbl_status。
         """
-        algorithm = self.resolve_learning_algorithm(algorithm)
+        manifest = self._library_model_for_key(model_key)
+        algorithm = manifest["algorithm"] if manifest is not None else self.resolve_learning_algorithm(algorithm)
         display_name = self.algorithm_display_name(algorithm)
         normalized_model_key = self.tool_model_key(model_key)
         self._active_product_dir = str(product_dir or "").strip()
+        self._active_library_parameters = dict(manifest["parameters"]) if manifest is not None else None
         if not algorithm:
             self.model = None
             self._loaded_embedding_model_key = ("", "")
@@ -490,63 +508,24 @@ class AlgorithmController:
             self._loaded_embedding_model_key = ("", "")
             return None, f"状态：当前工具={display_name or algorithm}，使用传统方法"
 
-        model_file = self.embedding_model_path(algorithm, product_dir, model_key=normalized_model_key)
+        if manifest is not None:
+            if manifest["kind"] != "embedding":
+                raise ValueError("公共模型类型与学习工具不兼容")
+            model_file = manifest["model_file"]
+        else:
+            model_file = self._local_embedding_file(algorithm, product_dir, normalized_model_key)
         source_model_key = normalized_model_key
-        if not os.path.exists(model_file) and normalized_model_key:
-            legacy_model_file = next(
-                (path for path in self.embedding_model_storage_paths(algorithm, product_dir) if os.path.exists(path)),
-                "",
-            )
-            legacy_raw_model_file = next(
-                (
-                    path
-                    for path in self.embedding_model_storage_paths(
-                        algorithm,
-                        product_dir,
-                        model_key=normalized_model_key,
-                    )
-                    if os.path.exists(path)
-                ),
-                "",
-            )
-            if legacy_model_file:
-                model_file = legacy_model_file
-                source_model_key = ""
-            elif legacy_raw_model_file:
-                model_file = legacy_raw_model_file
-        if not os.path.exists(model_file):
-            legacy_model_file = next(
-                (
-                    path
-                    for path in self.embedding_model_storage_paths(
-                        algorithm,
-                        product_dir,
-                        model_key=normalized_model_key,
-                    )
-                    if os.path.exists(path)
-                ),
-                "",
-            )
-            if legacy_model_file:
-                model_file = legacy_model_file
-        if not os.path.exists(model_file) and not normalized_model_key:
-            legacy_shared_model = next(
-                (path for path in self.embedding_model_storage_paths(algorithm, product_dir) if os.path.exists(path)),
-                "",
-            )
-            if legacy_shared_model:
-                model_file = legacy_shared_model
         if not os.path.exists(model_file):
             self.model = None
             self._loaded_embedding_model_key = ("", "")
             return None, f"状态：{display_name or algorithm} 未训练"
 
         model = self._load_register_model_cached(model_file)
-        model.score_mode = self.product_params.score_mode
-        model.margin = float(self.product_params.margin)
-        model.topk = int(self.product_params.topk)
+        if storage_code_backbone(model.backbone) != algorithm or (manifest is not None and not model.is_ready()):
+            raise ValueError("模型未就绪或模型算法不匹配")
         self.model = model
         self._loaded_embedding_model_key = (algorithm, source_model_key)
+        self.apply_params_to_model()
         return model, (
             f"状态：已加载工具  {display_name or algorithm}  mode={model.score_mode}  "
             f"margin={model.margin:.4f}  topk={model.topk}"
@@ -555,9 +534,14 @@ class AlgorithmController:
     def apply_params_to_model(self) -> None:
         """把当前 product_params 的 score_mode/margin/topk 同步到已加载的 model。"""
         if self.model is not None:
-            self.model.score_mode = self.product_params.score_mode
-            self.model.margin = float(self.product_params.margin)
-            self.model.topk = int(self.product_params.topk)
+            parameters = self._active_library_parameters
+            if parameters is None:
+                parameters = {"score_mode": self.product_params.score_mode,
+                              "margin": self.product_params.margin,
+                              "topk": self.product_params.topk}
+            self.model.score_mode = str(parameters["score_mode"])
+            self.model.margin = float(parameters["margin"])
+            self.model.topk = int(parameters["topk"])
 
     # ------------------------------------------------------------------
     # 训练
@@ -572,6 +556,8 @@ class AlgorithmController:
         product_dir: str,
         label_names: List[str],
         model_key: object = "",
+        ok_samples: Optional[List[Tuple[str, str]]] = None,
+        ng_samples: Optional[List[Tuple[str, str]]] = None,
         progress_callback: Optional[Callable[[str], None]] = None,
         embedding_cache_dir: Optional[str] = None,
     ) -> TrainResult:
@@ -580,6 +566,9 @@ class AlgorithmController:
         成功返回 TrainResult；失败抛出异常（调用方负责捕获并弹 QMessageBox）。
         """
         algorithm = self.resolve_learning_algorithm(algorithm)
+        if parse_library_model_key(str(model_key or "")) is not None:
+            raise ValueError("公共模型版本为只读，请训练本地模型后发布新版本")
+        self._active_library_parameters = None
         display_name = self.algorithm_display_name(algorithm)
         normalized_model_key = self.tool_model_key(model_key)
         self._active_product_dir = str(product_dir or "").strip()
@@ -599,9 +588,10 @@ class AlgorithmController:
                 model_path = str(info.get("model_path", "") or "").strip()
                 model_hint = f" {os.path.basename(model_path)}" if model_path else ""
                 progress_callback(f"backbone ready {backend}{model_hint}")
-            model = qr_core.train_register_model(
-                ok_files,
-                ng_files,
+            trainer = qr_core.train_register_model_from_samples if ok_samples or ng_samples else qr_core.train_register_model
+            model = trainer(
+                list(ok_samples or []) if ok_samples or ng_samples else ok_files,
+                list(ng_samples or []) if ok_samples or ng_samples else ng_files,
                 backbone=algorithm,
                 score_mode=mode,
                 margin=margin,
@@ -632,9 +622,10 @@ class AlgorithmController:
                 saved_model_path=saved_path,
             )
         elif is_traditional_algorithm(algorithm):
-            threshold_model, train_rows = train_threshold_model(
-                ok_files,
-                ng_files,
+            trainer = train_threshold_model_from_samples if ok_samples or ng_samples else train_threshold_model
+            threshold_model, train_rows = trainer(
+                list(ok_samples or []) if ok_samples or ng_samples else ok_files,
+                list(ng_samples or []) if ok_samples or ng_samples else ng_files,
                 algorithm,
                 preferred_label=label_names[0],
             )
@@ -699,9 +690,13 @@ class AlgorithmController:
         if not os.path.exists(path):
             raise FileNotFoundError(path)
 
+        model_key = self.tool_model_key(model_key_override)
+        manifest = self._library_model_for_key(model_key)
         override_text = str(algorithm_override or "").strip()
         camera_role = camera_role_from_text(model_key_override)
-        if override_text:
+        if manifest is not None:
+            algorithm = manifest["algorithm"]
+        elif override_text:
             algorithm = self.resolve_tool_algorithm(override_text, camera_role)
             if algorithm not in SUPPORTED_ALGORITHMS:
                 raise RuntimeError(f"unsupported inspection algorithm: {override_text}")
@@ -710,7 +705,6 @@ class AlgorithmController:
                 self.product_params.algorithm,
                 camera_role,
             )
-        model_key = self.tool_model_key(model_key_override)
         if not algorithm.strip():
             raise RuntimeError("请先选择工具")
         total_t0 = time.perf_counter()
@@ -749,7 +743,7 @@ class AlgorithmController:
             if not isinstance(model_dict, dict):
                 raise RuntimeError(f"{self.algorithm_display_name(algorithm) or algorithm} 尚未训练")
             threshold_model = TraditionalThresholdModel.from_dict(model_dict)
-            metrics = compute_roi_metrics(path, preferred_label=threshold_model.roi_label or labels[0])
+            metrics = compute_roi_metrics(path, preferred_label=labels[0] if labels else threshold_model.roi_label)
             value = metric_value(metrics, algorithm)
             pred, diff = threshold_model.predict(value)
             sim_ok = None

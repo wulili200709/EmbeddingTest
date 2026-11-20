@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 from .permission_manager import PermissionManager
@@ -24,6 +25,7 @@ class InspectionScheduler:
         self.state_machine = state_machine
         self.permission_manager = permission_manager
         self._lock_on_ng = bool(lock_on_ng)
+        self._ng_locked_at = float("inf")
 
     @property
     def state(self) -> RunState:
@@ -41,6 +43,14 @@ class InspectionScheduler:
             return False
         if self.state == RunState.LockedByNg:
             self.state_machine.transition_to(RunState.ReleasedPendingConsume)
+        return True
+
+    def release_from_ng_box(self, timestamp: float) -> bool:
+        if (not self._lock_on_ng or self.state != RunState.LockedByNg
+                or not self.permission_manager.is_locked or timestamp <= self._ng_locked_at):
+            return False
+        self.permission_manager.release_after_ng_box_confirmation()
+        self.state_machine.transition_to(RunState.ReleasedPendingConsume)
         return True
 
     def begin_precheck(self) -> StartDecision:
@@ -81,6 +91,7 @@ class InspectionScheduler:
 
         self.state_machine.transition_to(RunState.CompletedNg)
         if self._lock_on_ng:
+            self._ng_locked_at = time.time()
             self.permission_manager.lock_for_ng()
             self.state_machine.transition_to(RunState.LockedByNg)
             return
@@ -92,6 +103,7 @@ class InspectionScheduler:
             self.state_machine.transition_to(RunState.Error)
         should_lock = bool(lock_as_ng and self._lock_on_ng)
         if should_lock:
+            self._ng_locked_at = time.time()
             self.permission_manager.lock_for_ng()
             self.state_machine.transition_to(RunState.LockedByNg)
         else:

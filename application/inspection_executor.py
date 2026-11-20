@@ -208,7 +208,7 @@ class InspectionExecutor:
                     request.image_path,
                     labels_override=labels_override,
                     algorithm_override=item.algorithm_code,
-                    model_key_override=item.model_key,
+                    model_key_override=item.effective_model_key,
                     params_override=dict(item.params or {}),
                 )
             predicted_index += 1

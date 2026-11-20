@@ -26,3 +26,6 @@ dist-opening-gap-red/
 node_modules/
 dist-stage-v305-wheel/
 runtime_camera.log
+model_library/
+.qr_session/
+

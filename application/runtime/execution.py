@@ -441,6 +441,44 @@ def _capture_channels_with_enabled_items(runtime, channels: list[dict]) -> list[
     ]
 
 
+def _runtime_item_algorithm(runtime, item) -> str:
+    resolver = getattr(runtime._algo, "resolve_item_algorithm", None)
+    if callable(resolver):
+        return resolver(item)
+    return runtime._algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
+
+
+def _runtime_item_model_key(item) -> str:
+    return str(getattr(item, "effective_model_key", item.model_key))
+
+
+def _validate_runtime_model_bindings(runtime, enabled_items: list[object]) -> tuple[bool, str]:
+    """References must be usable before acquiring production images."""
+    seen_models: dict[str, str] = {}
+    for item in enabled_items:
+        source = str(getattr(item, "model_source", "independent"))
+        if source not in {"group", "library"}:
+            continue
+        name = str(getattr(item, "display_name", "") or item.roi_label or item.item_id)
+        try:
+            key = _runtime_item_model_key(item)
+            algorithm = _runtime_item_algorithm(runtime, item)
+            if key in seen_models:
+                if seen_models[key] != algorithm:
+                    raise ValueError("shared model group contains incompatible algorithms")
+                continue
+            seen_models[key] = algorithm
+            descriptor = getattr(runtime._algo, "describe_model_binding", None)
+            if not callable(descriptor):
+                raise RuntimeError("shared model validation service is unavailable")
+            binding = descriptor(item, runtime._session.product_dir)
+            if not binding.get("ready", False):
+                raise RuntimeError(binding.get("message") or "shared model is unavailable")
+        except Exception as exc:
+            return False, f"{name}: {exc}"
+    return True, ""
+
+
 def _warm_runtime_models(runtime, enabled_items: list[object]) -> None:
     learning_items = [
         item
@@ -450,22 +488,29 @@ def _warm_runtime_models(runtime, enabled_items: list[object]) -> None:
     if learning_items:
         learning_groups: dict[str, list[object]] = {}
         for item in learning_items:
-            algorithm = runtime._algo.resolve_tool_algorithm(
-                item.algorithm_code,
-                item.camera_id,
-            )
+            algorithm = _runtime_item_algorithm(runtime, item)
             if str(algorithm or "").strip():
                 learning_groups.setdefault(algorithm, []).append(item)
         for algorithm, group in learning_groups.items():
-            try:
-                for item in group:
+            seen_keys: set[str] = set()
+            for item in group:
+                try:
+                    key = _runtime_item_model_key(item)
+                    if key in seen_keys:
+                        continue
+                    seen_keys.add(key)
                     runtime._runtime_context.load_embedding_model(
                         algorithm,
-                        model_key=item.model_key,
+                        model_key=key,
                     )
+                except Exception:
+                    if getattr(item, "model_source", "independent") in {"group", "library"}:
+                        raise
+            try:
                 runtime._algo.get_feat_net(algorithm)
             except Exception:
-                pass
+                if any(getattr(item, "model_source", "independent") in {"group", "library"} for item in group):
+                    raise
 
     traditional_items = [
         item
@@ -474,10 +519,11 @@ def _warm_runtime_models(runtime, enabled_items: list[object]) -> None:
     ]
     for item in traditional_items:
         try:
-            algorithm = runtime._algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
-            runtime._algo.get_traditional_model_dict(algorithm, model_key=item.model_key)
+            algorithm = _runtime_item_algorithm(runtime, item)
+            runtime._algo.get_traditional_model_dict(algorithm, model_key=_runtime_item_model_key(item))
         except Exception:
-            pass
+            if getattr(item, "model_source", "independent") in {"group", "library"}:
+                raise
 
 
 def _unsupported_localization_roles(runtime, roles) -> list[str]:
@@ -539,7 +585,13 @@ def _precheck_for_capture_channels(runtime, channels: list[dict]) -> tuple[bool,
             "runtime currently only supports shape/NCC localization for "
             + ", ".join(unsupported_roles),
         )
-    _warm_runtime_models(runtime, enabled_items)
+    models_ready, model_message = _validate_runtime_model_bindings(runtime, enabled_items)
+    if not models_ready:
+        return False, model_message
+    try:
+        _warm_runtime_models(runtime, enabled_items)
+    except Exception as exc:
+        return False, f"model preparation failed: {exc}"
 
     if runtime_controller_module.frame_to_bgr_image is None:
         return False, "camera frame conversion service is unavailable"
@@ -752,7 +804,13 @@ def _precheck_for_roles(runtime, roles) -> tuple[bool, str]:
             + ", ".join(unsupported_roles),
         )
 
-    _warm_runtime_models(runtime, enabled_items)
+    models_ready, model_message = _validate_runtime_model_bindings(runtime, enabled_items)
+    if not models_ready:
+        return False, model_message
+    try:
+        _warm_runtime_models(runtime, enabled_items)
+    except Exception as exc:
+        return False, f"model preparation failed: {exc}"
 
     if runtime_controller_module.frame_to_bgr_image is None:
         return False, "camera frame conversion service is unavailable"

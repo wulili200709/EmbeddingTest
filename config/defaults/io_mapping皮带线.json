@@ -10,7 +10,7 @@
       "channel": 0,
       "active_high": false
     },
-    "reserved_in_1": {
+    "ng_box": {
       "channel": 2,
       "active_high": true
     },

@@ -107,8 +107,8 @@ from ui.window_common import (
 )
 from ui.i18n import set_language, tr
 # Test-stage switch:
-# False = 测试模式：NG时不自动弹出放行密码框，且不进入NG锁定，可直接继续下一次测试
-# True  = 产线模式：NG时自动弹出放行密码框，并进入NG锁定
+# False = NG 后不锁定，可直接继续下一次测试
+# True  = NG 后锁定，等待 DI2 上升沿确认入盒后自动解锁
 AUTO_SHOW_RELEASE_DIALOG_ON_NG = True  # default; config/runtime_mode_settings.json overrides this at startup
 
 
@@ -699,6 +699,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._runtime_mode_settings = merged
 
     def _connect_signals(self) -> None:
+        self.runtime_ctrl.ngBoxSignalChanged.connect(self.runtime_page.set_ng_box_signal)
         # ToolPage → MainWindow（跨组件协调）
         self.tool_page.productChangeRequested.connect(self._on_product_change_request)
         self.tool_page.productDeleteRequested.connect(self._on_product_delete_request)
@@ -1221,6 +1222,9 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def _show_release_dialog(self) -> None:
+        if self._auto_show_release_dialog_on_ng:
+            self.runtime_ctrl.infoOccurred.emit("请将 NG 产品放入 NG 盒，等待 DI2 上升沿自动解锁")
+            return
         if not self._require_permission("runtime.release_ng", "NG放行"):
             return
         pwd, ok = prompt_password_dialog(
@@ -1237,7 +1241,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if not self._auto_show_release_dialog_on_ng:
             return
-        QtCore.QTimer.singleShot(80, self._show_release_dialog)
+        self._bottom_status_bar.showMessage("NG：请将产品放入 NG 盒，等待 DI2 上升沿解锁")
 
     # ------------------------------------------------------------------
     # 跨组件协调（ToolPage 请求 → 先处理运行链路 → 再委托 ToolPage）
