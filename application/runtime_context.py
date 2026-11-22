@@ -204,6 +204,11 @@ def _is_measurement_item(algo, item: InspectionItem) -> bool:
     return bool(callable(checker) and checker(item.algorithm_code))
 
 
+def _resolve_item_algorithm(algo, item: InspectionItem) -> str:
+    resolver = getattr(algo, "resolve_item_algorithm", None)
+    return resolver(item) if callable(resolver) else algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
+
+
 def _is_line_distance_item(item: InspectionItem) -> bool:
     algorithm = str(getattr(item, "algorithm_code", "") or "").strip()
     return algorithm in LINE_DISTANCE_ALGORITHMS or algorithm == POINT_LINE_DISTANCE_ALGORITHM
@@ -243,13 +248,28 @@ def _predict_learning_items_batch_rows(
     rows_by_key: Dict[str, Dict[str, object]] = {}
     learning_groups: Dict[str, List[InspectionItem]] = {}
     for item in items:
-        algorithm = algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
+        algorithm = _resolve_item_algorithm(algo, item)
         learning_groups.setdefault(algorithm, []).append(item)
 
     json_name = os.path.basename(labelme_io.labelme_json_of_image(path))
     for algorithm, group in learning_groups.items():
         if not str(algorithm or "").strip():
             raise RuntimeError("please choose a learning tool subtype first")
+        if getattr(algo, "is_yolo_algorithm", lambda _code: False)(algorithm):
+            for item in group:
+                load_embedding_model(algorithm, model_key=item.effective_model_key)
+                roi_label = str(item.roi_label or "").strip() or "roi"
+                result = algo.predict_image(
+                    path,
+                    labels=[roi_label],
+                    match_ms=match_ms,
+                    algorithm_override=algorithm,
+                    model_key_override=item.effective_model_key,
+                )
+                row = result.to_dict()
+                row["infer_ms"] = float(result.total_ms)
+                rows_by_key[item.model_key] = row
+            continue
         group_infer_t0 = time.perf_counter()
         models: List[Any] = []
         for item in group:
@@ -382,12 +402,35 @@ def _predict_learning_items_batch_rows_from_frame(
     learning_groups: Dict[str, List[InspectionItem]] = {}
     shape_by_label = _runtime_shape_by_label(roi_shapes)
     for item in items:
-        algorithm = algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
+        algorithm = _resolve_item_algorithm(algo, item)
         learning_groups.setdefault(algorithm, []).append(item)
 
     for algorithm, group in learning_groups.items():
         if not str(algorithm or "").strip():
             raise RuntimeError("please choose a learning tool subtype first")
+        if getattr(algo, "is_yolo_algorithm", lambda _code: False)(algorithm):
+            group_infer_t0 = time.perf_counter()
+            for item in group:
+                roi_label = str(item.roi_label or "").strip() or "roi"
+                shape = shape_by_label.get(roi_label)
+                if shape is None:
+                    raise RuntimeError(f"Label '{roi_label}' not found in runtime ROI shapes")
+                load_embedding_model(algorithm, model_key=item.effective_model_key)
+                result = algo.predict_yolo_from_array(
+                    image_bgr,
+                    shape,
+                    model_key=item.effective_model_key,
+                    match_ms=match_ms,
+                )
+                row = result.to_dict()
+                row["infer_ms"] = float(result.total_ms)
+                rows_by_key[item.model_key] = row
+            if timing_breakdown is not None:
+                timing_breakdown["classifier_onnx_ms"] = (
+                    float(timing_breakdown.get("classifier_onnx_ms", 0.0))
+                    + float((time.perf_counter() - group_infer_t0) * 1000.0)
+                )
+            continue
         group_infer_t0 = time.perf_counter()
         model_load_t0 = time.perf_counter()
         models: List[Any] = []
@@ -654,14 +697,20 @@ class ProductRuntimeContext:
         if not labels:
             labels = self._loc_output_labels(camera_role)
         effective_algorithm = ""
-        if str(algorithm_override or "").strip():
+        library_resolver = getattr(self.algo, "_library_model_for_key", None)
+        publication = library_resolver(model_key_override) if callable(library_resolver) else None
+        if publication is not None:
+            effective_algorithm = publication["algorithm"]
+        elif str(algorithm_override or "").strip():
             effective_algorithm = self.algo.resolve_tool_algorithm(algorithm_override, camera_role)
         elif str(self.algo.product_params.algorithm or "").strip():
             effective_algorithm = self.algo.resolve_learning_algorithm(
                 self.algo.product_params.algorithm,
                 camera_role,
             )
-        if effective_algorithm and self.algo.is_embedding_algorithm(effective_algorithm):
+        if effective_algorithm and self.algo.is_yolo_algorithm(effective_algorithm):
+            self.load_embedding_model(effective_algorithm, model_key=model_key_override)
+        elif effective_algorithm and self.algo.is_embedding_algorithm(effective_algorithm):
             if not self.algo._loaded_embedding_matches(
                 effective_algorithm,
                 labels=labels,
@@ -837,7 +886,7 @@ class ProductRuntimeContext:
         shape_by_label = _runtime_shape_by_label(roi_shapes)
         for item in traditional_items:
             item_infer_t0 = time.perf_counter()
-            algorithm = self.algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
+            algorithm = _resolve_item_algorithm(self.algo, item)
             model_dict = self.algo.get_traditional_model_dict(
                 algorithm,
                 model_key=item.effective_model_key,
@@ -868,7 +917,7 @@ class ProductRuntimeContext:
             params = _measurement_execution_params(
                 item, measurement_items, rows_by_key
             )
-            algorithm = self.algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
+            algorithm = _resolve_item_algorithm(self.algo, item)
             measurement_payload_override = None
             if algorithm in FIND_LINE_ALGORITHMS:
                 measurement = measure_find_line_from_array(
@@ -1211,7 +1260,8 @@ class ProductRuntimeContext:
         synced_items = remaining_items + synced_items
         self._recipe = self._recipes_by_role.get(DEFAULT_CAMERA_ROLE)
         if [item.to_dict() for item in synced_items] != [item.to_dict() for item in items]:
-            save_inspection_items(synced_items, self.session.inspection_items_path)
+            save_inspection_items(synced_items, self.session.inspection_items_path,
+                                  traditional_models=self.algo.product_params.traditional_models)
         self._inspection_items = synced_items
 
     def _load_recipe_if_available(self, camera_role: str = "cam1"):

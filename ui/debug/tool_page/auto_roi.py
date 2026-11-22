@@ -115,7 +115,9 @@ def _reload_inspection_items(tool_page) -> None:
             task_groups_by_label=_task_groups_from_display_names(display_names_by_label),
         )
     tool_page.inspection_items = other_role_items + synced_current_role_items
-    save_inspection_items(tool_page.inspection_items, path)
+    params = getattr(tool_page.algo, "product_params", None)
+    save_inspection_items(tool_page.inspection_items, path,
+                          traditional_models=getattr(params, "traditional_models", None))
     tool_page._refresh_inspection_items_table()
     tool_page.inspectionItemsChanged.emit()
 

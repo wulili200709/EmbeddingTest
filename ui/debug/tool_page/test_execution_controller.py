@@ -44,6 +44,18 @@ class TestExecutionController:
             return
         self.owner._roi_results_by_image.setdefault(path, {})[label] = status_text
 
+    def _validate_model_bindings(self, items) -> None:
+        from ui.debug.tool_page.model_source_panel import binding_description
+        for item in items:
+            if getattr(item, "model_source", "independent") not in {"group", "library"}:
+                continue
+            description = binding_description(self.owner, item)
+            if not description.get("ready"):
+                self.owner._refresh_inspection_items_table()
+                raise RuntimeError(tr("debug.model_source.test_unavailable",
+                                      name=item.display_name or item.roi_label,
+                                      detail=description.get("message") or tr("debug.status.untrained")))
+
     def _show_runtime_roi_shapes(self, path: str, roi_shapes=None) -> None:
         shapes = tuple(
             roi_shapes
@@ -111,6 +123,7 @@ class TestExecutionController:
         target_items = self.target_inspection_items()
         if not target_items:
             raise RuntimeError(tr("debug.enable_one_tool", role=self.owner.current_camera_role()))
+        self._validate_model_bindings(target_items)
         camera_id = (
             str(target_items[0].camera_id or "").strip()
             if target_items
@@ -162,6 +175,11 @@ class TestExecutionController:
                         item_result.camera_id,
                     )
                 )
+                source_item = next((item for item in target_items
+                                    if item.item_id == item_result.item_id and item.camera_id == item_result.camera_id), None)
+                resolver = getattr(self.owner.algo, "resolve_item_algorithm", None)
+                if source_item is not None and callable(resolver):
+                    algorithm = resolver(source_item)
                 if row.get("pred") is not None and str(row.get("pred", "")).strip() != str(item_result.result or "").strip():
                     row.setdefault("raw_pred", row.get("pred"))
                 row["pred"] = item_result.result
@@ -251,6 +269,12 @@ class TestExecutionController:
         paths = list(self.owner._sample_paths_for_kind("test", current_role))
         if not paths:
             QtWidgets.QMessageBox.information(self.owner, tr("common.info"), tr("debug.test_all_test_samples_empty"))
+            return
+
+        try:
+            self._validate_model_bindings(self.target_inspection_items())
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self.owner, tr("debug.test_failed_title"), str(exc))
             return
 
         total = len(paths)

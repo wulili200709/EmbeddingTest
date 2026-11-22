@@ -447,6 +447,34 @@ def _capture_channels_with_enabled_items(runtime, channels: list[dict]) -> list[
     ]
 
 
+def _runtime_item_algorithm(runtime, item) -> str:
+    resolver = getattr(runtime._algo, "resolve_item_algorithm", None)
+    return resolver(item) if callable(resolver) else runtime._algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
+
+
+def _validate_runtime_model_bindings(runtime, enabled_items: list[object]) -> tuple[bool, str]:
+    seen = {}
+    for item in enabled_items:
+        if getattr(item, "model_source", "independent") not in {"group", "library"}:
+            continue
+        try:
+            key = item.effective_model_key
+            algorithm = _runtime_item_algorithm(runtime, item)
+            if getattr(item, "legacy_model_key", ""):
+                key = (key, algorithm)
+            if key in seen:
+                if seen[key] != algorithm:
+                    raise ValueError("shared model group contains incompatible algorithms")
+                continue
+            seen[key] = algorithm
+            binding = runtime._algo.describe_model_binding(item, runtime._session.product_dir)
+            if not binding.get("ready"):
+                raise RuntimeError(binding.get("message") or "shared model is unavailable")
+        except Exception as exc:
+            return False, f"{item.display_name or item.roi_label}: {exc}"
+    return True, ""
+
+
 def _warm_runtime_models(runtime, enabled_items: list[object]) -> None:
     learning_items = [
         item
@@ -456,10 +484,7 @@ def _warm_runtime_models(runtime, enabled_items: list[object]) -> None:
     if learning_items:
         learning_groups: dict[str, list[object]] = {}
         for item in learning_items:
-            algorithm = runtime._algo.resolve_tool_algorithm(
-                item.algorithm_code,
-                item.camera_id,
-            )
+            algorithm = _runtime_item_algorithm(runtime, item)
             if str(algorithm or "").strip():
                 learning_groups.setdefault(algorithm, []).append(item)
         for algorithm, group in learning_groups.items():
@@ -475,6 +500,8 @@ def _warm_runtime_models(runtime, enabled_items: list[object]) -> None:
                         raise RuntimeError(f"model is not ready: {algorithm}")
                     models.append(model)
                 device = getattr(models[0], "device", None) if models else None
+                if getattr(runtime._algo, "is_yolo_algorithm", lambda _code: False)(algorithm):
+                    continue  # The classifier owns an ONNX runner, not an embedding backbone.
                 runtime._algo.warmup_feat_net(
                     algorithm,
                     device,
@@ -490,7 +517,7 @@ def _warm_runtime_models(runtime, enabled_items: list[object]) -> None:
     ]
     for item in traditional_items:
         try:
-            algorithm = runtime._algo.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
+            algorithm = _runtime_item_algorithm(runtime, item)
             runtime._algo.get_traditional_model_dict(
                 algorithm,
                 model_key=item.effective_model_key,
@@ -558,6 +585,9 @@ def _precheck_for_capture_channels(runtime, channels: list[dict]) -> tuple[bool,
             "runtime currently only supports shape/NCC localization for "
             + ", ".join(unsupported_roles),
         )
+    valid, reason = _validate_runtime_model_bindings(runtime, enabled_items)
+    if not valid:
+        return False, reason
     try:
         _warm_runtime_models(runtime, enabled_items)
     except Exception as exc:
@@ -763,6 +793,9 @@ def _precheck_for_roles(runtime, roles) -> tuple[bool, str]:
             + ", ".join(unsupported_roles),
         )
 
+    valid, reason = _validate_runtime_model_bindings(runtime, enabled_items)
+    if not valid:
+        return False, reason
     try:
         _warm_runtime_models(runtime, enabled_items)
     except Exception as exc:

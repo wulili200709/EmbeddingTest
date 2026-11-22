@@ -24,6 +24,9 @@ def build_action_panel(
     right_vbox.addWidget(owner.lbl_action_section)
 
     action_frame = QtWidgets.QWidget()
+    action_frame.setObjectName("debug_sidebar_action_panel")
+    action_frame.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
+    owner.action_panel_frame = action_frame
     action_vbox = QtWidgets.QVBoxLayout(action_frame)
     action_vbox.setContentsMargins(8, 6, 8, 6)
     action_vbox.setSpacing(4)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any, Iterable, List, Mapping
 
 from common.algorithm_codes import (
@@ -11,6 +12,8 @@ from common.algorithm_codes import (
 )
 from common.camera_roles import CAMERA_ROLES, DEFAULT_CAMERA_ROLE, normalize_camera_role
 from common.safe_io import atomic_write_json, load_json_with_backup
+from common.model_library import make_library_model_key
+from common.model_groups import OrderModelGroups, make_group_model_key, legacy_group_model_key
 
 
 SUPPORTED_CAMERA_IDS = CAMERA_ROLES
@@ -42,6 +45,10 @@ class InspectionItem:
     enabled: bool = True
     params: dict[str, Any] = field(default_factory=dict)
     task_group: str = ""
+    model_source: str = "independent"
+    legacy_model_key: str = ""
+    library_model_id: str = ""
+    library_version: str = ""
 
     def __init__(
         self,
@@ -55,6 +62,10 @@ class InspectionItem:
         *,
         task_group: str = "",
         algorithm_type: str | None = None,
+        model_source: str | None = None,
+        legacy_model_key: str = "",
+        library_model_id: str = "",
+        library_version: str = "",
     ) -> None:
         normalized_camera_id = normalize_camera_role(camera_id, default=DEFAULT_CAMERA_ROLE)
         resolved_algorithm = normalize_tool_algorithm_code(
@@ -68,6 +79,28 @@ class InspectionItem:
         self.enabled = bool(enabled)
         self.params = dict(params or {})
         self.task_group = str(task_group or "").strip()
+        self._model_source_explicit = model_source is not None
+        self.model_source = str(model_source or ("group" if self.task_group else "independent")).strip()
+        self.legacy_model_key = str(legacy_model_key or "").strip()
+        if model_source is None and self.task_group and not self.legacy_model_key:
+            self.legacy_model_key = legacy_group_model_key(self.camera_id, self.task_group)
+        self.library_model_id = str(library_model_id or "").strip()
+        self.library_version = str(library_version or "").strip()
+        self.validate_model_binding()
+
+    def validate_model_binding(self) -> None:
+        if self.model_source not in {"independent", "group", "library"}:
+            raise ValueError(f"Unsupported model source: {self.model_source}")
+        if self.model_source == "group":
+            if not self.task_group:
+                raise ValueError("A shared model group is required")
+            if self.legacy_model_key:
+                if self.legacy_model_key != legacy_group_model_key(self.camera_id, self.task_group):
+                    raise ValueError("Legacy group model key does not match its camera and group")
+            else:
+                make_group_model_key(self.camera_id, self.task_group)
+        if self.model_source == "library":
+            make_library_model_key(self.camera_id, self.library_model_id, self.library_version)
 
     @property
     def algorithm_type(self) -> str:
@@ -95,14 +128,15 @@ class InspectionItem:
 
     @property
     def task_model_key(self) -> str:
-        camera = _slug_token(self.camera_id, DEFAULT_CAMERA_ROLE)
-        task_group = _slug_token(self.effective_task_group, "group")
-        return f"{camera}__{task_group}"
+        return self.legacy_model_key or make_group_model_key(self.camera_id, self.effective_task_group)
 
     @property
     def effective_model_key(self) -> str:
-        if self.task_group:
+        self.validate_model_binding()
+        if self.model_source == "group":
             return self.task_model_key
+        if self.model_source == "library":
+            return make_library_model_key(self.camera_id, self.library_model_id, self.library_version)
         return self.model_key
 
     @classmethod
@@ -129,9 +163,14 @@ class InspectionItem:
             enabled=bool(data.get("enabled", True)),
             params=params,
             task_group=task_group,
+            model_source=data.get("model_source"),
+            legacy_model_key=data.get("legacy_model_key", ""),
+            library_model_id=data.get("library_model_id", ""),
+            library_version=data.get("library_version", ""),
         )
 
     def to_dict(self) -> dict:
+        self.validate_model_binding()
         payload = asdict(self)
         payload["algorithm_type"] = self.algorithm_code
         return payload
@@ -155,9 +194,20 @@ def load_inspection_items(path: str) -> List[InspectionItem]:
     return items
 
 
-def save_inspection_items(items: Iterable[InspectionItem], path: str) -> None:
+def save_inspection_items(items: Iterable[InspectionItem], path: str, *, traditional_models: dict | None = None) -> None:
+    items = list(items)
     payload = [item.to_dict() for item in items]
-    atomic_write_json(path, payload, ensure_ascii=False, indent=2)
+    previous = load_json_with_backup(path, default=[])
+    catalog = OrderModelGroups(Path(path).parent)
+    catalog.remember_items(previous if isinstance(previous, list) else [], payload)
+    from common.model_group_migration import separate_legacy_group_assets
+    changed = separate_legacy_group_assets(items, Path(path).parent, catalog, traditional_models=traditional_models)
+    try:
+        atomic_write_json(path, [item.to_dict() for item in items], ensure_ascii=False, indent=2)
+    except Exception:
+        for item, old_key in changed:
+            item.legacy_model_key = old_key
+        raise
 
 
 def build_default_item(
@@ -194,6 +244,7 @@ def sync_items_with_labels(
       - 新标签：生成默认项
       - 不再存在的标签：移除
     """
+    existing_items = list(existing_items)
     normalized_labels = [str(label).strip() for label in labels if str(label).strip()]
     display_names_by_label = {
         str(label).strip(): str(name).strip()
@@ -220,11 +271,15 @@ def sync_items_with_labels(
             if display_name == label and existing_display_name and existing_display_name != label:
                 display_name = existing_display_name
             existing_group = str(existing.task_group or "").strip()
-            if default_group and (
+            source = existing.model_source
+            legacy_key = existing.legacy_model_key
+            if default_group and not getattr(existing, "_model_source_explicit", True) and (
                 not existing_group
                 or re.fullmatch(r"roi(?:\d+)?(?:__\d+)?", existing_group, flags=re.IGNORECASE)
             ):
                 existing_group = default_group
+                source = "group"
+                legacy_key = legacy_group_model_key(existing.camera_id, existing_group)
             synced.append(
                 InspectionItem(
                     item_id=existing.item_id or label,
@@ -235,6 +290,8 @@ def sync_items_with_labels(
                     enabled=bool(existing.enabled),
                     params=dict(existing.params or {}),
                     task_group=existing_group,
+                    model_source=source, legacy_model_key=legacy_key,
+                    library_model_id=existing.library_model_id, library_version=existing.library_version,
                 )
             )
         else:
@@ -244,6 +301,13 @@ def sync_items_with_labels(
                 display_name=display_name or label,
             )
             item.task_group = default_group
+            if default_group:
+                item.model_source = "group"
+                peer = next((peer for peer in existing_items
+                             if peer.model_source == "group" and peer.task_group == default_group
+                             and peer.camera_id == item.camera_id), None)
+                item.legacy_model_key = peer.legacy_model_key if peer is not None else ""
+            item._model_source_explicit = True
             synced.append(item)
     existing_distance_items = [
         item
@@ -264,6 +328,8 @@ def sync_items_with_labels(
                 enabled=bool(existing.enabled),
                 params=dict(existing.params or {}),
                 task_group=str(existing.task_group or "").strip(),
+                model_source=existing.model_source, legacy_model_key=existing.legacy_model_key,
+                library_model_id=existing.library_model_id, library_version=existing.library_version,
             )
         )
     return synced

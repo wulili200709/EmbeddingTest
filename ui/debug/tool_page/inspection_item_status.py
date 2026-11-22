@@ -31,11 +31,34 @@ def _inspection_item_status(tool_page, inspection_item):
     if not getattr(inspection_item, "enabled", True):
         return tr("debug.status.disabled"), "Current tool is disabled and will not join training or runtime.", "#8a8a8a"
 
+    if getattr(inspection_item, "model_source", "independent") in {"group", "library"}:
+        from ui.debug.tool_page.model_source_panel import binding_status
+        return binding_status(tool_page, inspection_item)
+
     if tool_page.algo.is_learning_tool(inspection_item.algorithm_code):
         backbone = tool_page.algo.current_learning_backbone(inspection_item.camera_id)
         if not backbone:
             return tr("debug.status.not_selected"), "Select a subtype for the learning tool first.", "#d98c8c"
         model_key = inspection_item.effective_model_key
+        if getattr(tool_page.algo, "is_yolo_algorithm", lambda _code: False)(backbone):
+            paths = tool_page.algo.yolo_model_paths(
+                tool_page.session.product_dir,
+                model_key=model_key,
+            )
+            if paths.onnx.is_file() and paths.metadata.is_file():
+                tooltip = tr(
+                    "debug.tooltip.learning_trained",
+                    model=paths.onnx.name,
+                    backbone=tool_page.algo.algorithm_display_name(backbone) or backbone,
+                    time=_format_timestamp(str(paths.onnx)),
+                )
+                return tr("debug.status.trained"), tooltip, "#79d279"
+            tooltip = tr(
+                "debug.tooltip.learning_untrained",
+                model=paths.onnx.name,
+                backbone=tool_page.algo.algorithm_display_name(backbone) or backbone,
+            )
+            return tr("debug.status.untrained"), tooltip, "#d98c8c"
         storage_paths = tool_page.algo.embedding_model_storage_paths(
             backbone,
             tool_page.session.product_dir,

@@ -10,6 +10,7 @@ ALGORITHM_GROUPS = [
             ("High-Accuracy Learning Tool", "efficientnet_b0", True),
             ("Lightweight Learning Tool", "mobilenet_v3_small", True),
             ("Balanced Learning Tool", "mobilenet_v3_large", True),
+            ("Standard Learning Tool", "yolov8n_cls", True),
         ],
     ),
     (
@@ -52,6 +53,7 @@ ALGORITHM_DISPLAY_KEYS = {
     "efficientnet_b0": "debug.algorithm.efficientnet_b0",
     "mobilenet_v3_small": "debug.algorithm.mobilenet_v3_small",
     "mobilenet_v3_large": "debug.algorithm.mobilenet_v3_large",
+    "yolov8n_cls": "debug.algorithm.yolov8n_cls",
     "meanhsv_h": "debug.algorithm.meanhsv_h",
     "meanintensity": "debug.algorithm.meanintensity",
     "meanstd": "debug.algorithm.meanstd",

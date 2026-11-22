@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from algorithms.traditional import (
@@ -44,12 +45,14 @@ from algorithms.measurement import (
 )
 from common.algorithm_codes import (
     DEFAULT_LEARNING_BACKBONE,
+    EMBEDDING_BACKBONES,
     LEARNING_BACKBONES,
     SHARED_BACKBONE_ALGORITHM_CODE,
     learning_backbone_storage_code,
     learning_backbone_storage_codes,
     normalize_tool_algorithm_code,
     storage_code_backbone,
+    YOLO_CLASSIFICATION_ALGORITHMS,
 )
 from common.camera_roles import (
     CAMERA_ROLES,
@@ -69,12 +72,24 @@ from infrastructure.product_params import (
     save_product_params,
 )
 import algorithms.lazy_api as qr_core
+from algorithms.yolo_classifier import (
+    YoloOnnxClassifier,
+    YoloClassifierPaths,
+    classifier_paths as yolo_classifier_paths,
+    prepared_roi_from_bgr,
+    prepared_roi_from_path,
+    train_classifier as train_yolo_classifier,
+)
 from common import labelme_io
 from common.algorithm_catalog import default_algorithm_display_name
+from common.model_library import ModelLibrary, parse_library_model_key
+from application.model_binding import ModelBindingMixin
 
 
-SUPPORTED_EMBEDDING_ALGORITHMS = list(LEARNING_BACKBONES)
-SUPPORTED_ALGORITHMS = SUPPORTED_EMBEDDING_ALGORITHMS + TRADITIONAL_ALGORITHMS + MEASUREMENT_ALGORITHMS
+SUPPORTED_EMBEDDING_ALGORITHMS = list(EMBEDDING_BACKBONES)
+SUPPORTED_LEARNING_ALGORITHMS = list(LEARNING_BACKBONES)
+SUPPORTED_YOLO_ALGORITHMS = list(YOLO_CLASSIFICATION_ALGORITHMS)
+SUPPORTED_ALGORITHMS = SUPPORTED_LEARNING_ALGORITHMS + TRADITIONAL_ALGORITHMS + MEASUREMENT_ALGORITHMS
 SUPPORTED_SCORE_MODES = ["proto", "topk"]
 
 
@@ -141,7 +156,7 @@ class PredictResult:
 # AlgorithmController
 # ---------------------------------------------------------------------------
 
-class AlgorithmController:
+class AlgorithmController(ModelBindingMixin):
     """
     算法参数与模型的非 UI 控制器。
 
@@ -156,6 +171,9 @@ class AlgorithmController:
         *,
         display_name_resolver: Callable[[object], str] | None = None,
     ) -> None:
+        self.model_library = ModelLibrary()
+        self._active_library_parameters = None
+        self._known_group_model_keys: set[str] = set()
         self.product_params: ProductRuntimeParams = ProductRuntimeParams()
         self._display_name_resolver = display_name_resolver or default_algorithm_display_name
         self.model: Optional[Any] = None          # qr_core.RegisterModel | None
@@ -164,8 +182,11 @@ class AlgorithmController:
         self._feat_net_warmup_lock = threading.RLock()
         self._embedding_model_cache: Dict[str, Tuple[Tuple[int, int], Any]] = {}
         self._embedding_model_cache_lock = threading.RLock()
+        self._yolo_model_cache: Dict[str, Tuple[Tuple[int, int, int, int], YoloOnnxClassifier]] = {}
+        self._yolo_model_cache_lock = threading.RLock()
         self._active_product_dir: str = ""
         self._loaded_embedding_model_key: Tuple[str, str] = ("", "")
+        self._loaded_yolo_model_key: str = ""
 
     # ------------------------------------------------------------------
     # 参数持久化
@@ -176,11 +197,14 @@ class AlgorithmController:
         # Loading a product/session is an explicit cache boundary. Paths
         # already isolate products; clearing here also releases inactive ones.
         self.clear_embedding_model_cache()
+        self.clear_yolo_model_cache()
+        self._active_library_parameters = None
+        self._known_group_model_keys.clear()
         self.product_params = load_product_params(path)
         alg = storage_code_backbone(self.product_params.algorithm)
         learning_backbone = storage_code_backbone(self.product_params.learning_backbone)
-        if learning_backbone not in SUPPORTED_EMBEDDING_ALGORITHMS:
-            if alg in SUPPORTED_EMBEDDING_ALGORITHMS:
+        if learning_backbone not in SUPPORTED_LEARNING_ALGORITHMS:
+            if alg in SUPPORTED_LEARNING_ALGORITHMS:
                 learning_backbone = alg
             else:
                 learning_backbone = ""
@@ -190,7 +214,7 @@ class AlgorithmController:
                 getattr(self.product_params, "learning_backbones", {}) or {}
             ).items()
             if (role := normalize_camera_role(camera_id))
-            and (normalized := storage_code_backbone(backbone)) in SUPPORTED_EMBEDDING_ALGORITHMS
+            and (normalized := storage_code_backbone(backbone)) in SUPPORTED_LEARNING_ALGORITHMS
         }
         if not learning_backbone and learning_backbones:
             learning_backbone = (
@@ -230,6 +254,10 @@ class AlgorithmController:
             return False
         return normalized in SUPPORTED_EMBEDDING_ALGORITHMS
 
+    def is_yolo_algorithm(self, algorithm: Optional[str] = None) -> bool:
+        normalized = self.resolve_learning_algorithm(algorithm or str(self.product_params.algorithm or ""))
+        return normalized in SUPPORTED_YOLO_ALGORITHMS
+
     def is_measurement_algorithm(self, algorithm: Optional[str] = None) -> bool:
         normalized = str(algorithm or self.product_params.algorithm or "").strip()
         return is_measurement_algorithm(normalized)
@@ -239,19 +267,19 @@ class AlgorithmController:
         backbone = storage_code_backbone(
             dict(getattr(self.product_params, "learning_backbones", {}) or {}).get(role, "")
         )
-        if backbone in SUPPORTED_EMBEDDING_ALGORITHMS:
+        if backbone in SUPPORTED_LEARNING_ALGORITHMS:
             return backbone
         backbone = storage_code_backbone(self.product_params.learning_backbone)
-        if backbone in SUPPORTED_EMBEDDING_ALGORITHMS:
+        if backbone in SUPPORTED_LEARNING_ALGORITHMS:
             return backbone
         algorithm = storage_code_backbone(self.product_params.algorithm)
-        if algorithm in SUPPORTED_EMBEDDING_ALGORITHMS:
+        if algorithm in SUPPORTED_LEARNING_ALGORITHMS:
             return algorithm
         return ""
 
     def set_learning_backbone(self, backbone: str, camera_role: object = None) -> str:
         normalized = storage_code_backbone(backbone)
-        if normalized not in SUPPORTED_EMBEDDING_ALGORITHMS:
+        if normalized not in SUPPORTED_LEARNING_ALGORITHMS:
             normalized = DEFAULT_LEARNING_BACKBONE
         role = normalize_camera_role(camera_role, default=DEFAULT_CAMERA_ROLE)
         previous = self.current_learning_backbone(role)
@@ -262,7 +290,7 @@ class AlgorithmController:
         learning_backbones[role] = normalized
         self.product_params.learning_backbones = learning_backbones
         self.product_params.learning_backbone = learning_backbones[DEFAULT_CAMERA_ROLE]
-        if self.is_embedding_algorithm(self.product_params.algorithm):
+        if self.resolve_learning_algorithm(self.product_params.algorithm) in SUPPORTED_LEARNING_ALGORITHMS:
             self.product_params.algorithm = learning_backbones[DEFAULT_CAMERA_ROLE]
         return normalized
 
@@ -270,7 +298,7 @@ class AlgorithmController:
         normalized = storage_code_backbone(algorithm)
         if not normalized:
             return ""
-        if normalized in SUPPORTED_EMBEDDING_ALGORITHMS:
+        if normalized in SUPPORTED_LEARNING_ALGORITHMS:
             return normalized
         if normalize_tool_algorithm_code(normalized) == SHARED_BACKBONE_ALGORITHM_CODE:
             return self.current_learning_backbone(camera_role)
@@ -278,7 +306,7 @@ class AlgorithmController:
 
     def resolve_tool_algorithm(self, algorithm_code: object, camera_role: object = None) -> str:
         backbone = storage_code_backbone(algorithm_code)
-        if backbone in SUPPORTED_EMBEDDING_ALGORITHMS:
+        if backbone in SUPPORTED_LEARNING_ALGORITHMS:
             return backbone
         normalized = normalize_tool_algorithm_code(algorithm_code)
         if is_learning_tool_algorithm(normalized):
@@ -372,11 +400,19 @@ class AlgorithmController:
         return str(algorithm or "").strip()
 
     def get_traditional_model_dict(self, algorithm: str, *, model_key: object = "") -> Optional[dict]:
+        manifest = self._library_model_for_key(model_key, algorithm)
+        if manifest is not None:
+            if manifest["kind"] != "traditional":
+                raise ValueError("公共模型类型与传统工具不兼容")
+            return manifest["traditional_model"]
         for candidate_key in self.tool_model_storage_keys(model_key):
             storage_key = self.traditional_model_storage_key(algorithm, model_key=candidate_key)
             model_dict = self.product_params.traditional_models.get(storage_key)
             if isinstance(model_dict, dict):
                 return model_dict
+        key = self.tool_model_key(model_key)
+        if "__group__" in key or key in self._known_group_model_keys:
+            return None
         legacy_model_dict = self.product_params.traditional_models.get(str(algorithm or "").strip())
         if isinstance(legacy_model_dict, dict):
             return legacy_model_dict
@@ -518,6 +554,51 @@ class AlgorithmController:
         with self._embedding_model_cache_lock:
             self._embedding_model_cache.clear()
 
+    def clear_yolo_model_cache(self) -> None:
+        with self._yolo_model_cache_lock:
+            self._yolo_model_cache.clear()
+
+    def yolo_model_paths(self, product_dir: str, *, model_key: object = ""):
+        manifest = self._library_model_for_key(model_key)
+        if manifest is not None:
+            if manifest["kind"] != "yolo":
+                raise ValueError("公共模型类型与标准学习工具不兼容")
+            return YoloClassifierPaths(pt=Path(manifest["directory"]) / "model.pt",
+                                       onnx=Path(manifest["model_file"]),
+                                       metadata=Path(manifest["classifier_metadata"]))
+        return yolo_classifier_paths(product_dir, self.tool_model_key(model_key))
+
+    def classifier_ng_threshold(self, model_key: object = "") -> float:
+        manifest = self._library_model_for_key(model_key)
+        if manifest is not None:
+            return float(manifest["parameters"].get("yolo_ng_threshold", .5))
+        return float(self.product_params.yolo_ng_threshold)
+
+    def yolo_model_storage_paths(self, product_dir: str, *, model_key: object = "") -> List[str]:
+        paths = self.yolo_model_paths(product_dir, model_key=model_key)
+        return [str(paths.onnx), str(paths.metadata), str(paths.pt)]
+
+    def _load_yolo_model_cached(self, product_dir: str, *, model_key: object = "") -> YoloOnnxClassifier:
+        paths = self.yolo_model_paths(product_dir, model_key=model_key)
+        if not paths.onnx.is_file() or not paths.metadata.is_file():
+            raise FileNotFoundError(f"Standard Learning Tool is not trained: {paths.onnx}")
+        onnx_stat = paths.onnx.stat()
+        metadata_stat = paths.metadata.stat()
+        signature = (
+            int(onnx_stat.st_mtime_ns),
+            int(onnx_stat.st_size),
+            int(metadata_stat.st_mtime_ns),
+            int(metadata_stat.st_size),
+        )
+        cache_key = os.path.normcase(os.path.abspath(str(paths.onnx)))
+        with self._yolo_model_cache_lock:
+            cached = self._yolo_model_cache.get(cache_key)
+            if cached is not None and cached[0] == signature:
+                return cached[1]
+            model = YoloOnnxClassifier(paths.onnx, paths.metadata)
+            self._yolo_model_cache[cache_key] = (signature, model)
+            return model
+
     def _load_register_model_cached(self, model_file: str) -> Any:
         normalized_path = os.path.normcase(os.path.abspath(str(model_file)))
         stat = os.stat(normalized_path)
@@ -542,76 +623,52 @@ class AlgorithmController:
         返回 (model_or_None, status_message)。
         调用方负责把 status_message 写进 lbl_status。
         """
-        algorithm = self.resolve_learning_algorithm(algorithm)
+        manifest = self._library_model_for_key(model_key)
+        algorithm = manifest["algorithm"] if manifest is not None else self.resolve_learning_algorithm(algorithm)
         display_name = self.algorithm_display_name(algorithm)
         normalized_model_key = self.tool_model_key(model_key)
         self._active_product_dir = str(product_dir or "").strip()
+        self._active_library_parameters = dict(manifest["parameters"]) if manifest is not None else None
         if not algorithm:
             self.model = None
             self._loaded_embedding_model_key = ("", "")
             return None, "状态：请选择工具"
+        if self.is_yolo_algorithm(algorithm):
+            try:
+                model = self._load_yolo_model_cached(
+                    product_dir,
+                    model_key=normalized_model_key,
+                )
+            except FileNotFoundError:
+                self.model = None
+                self._loaded_yolo_model_key = ""
+                paths = self.yolo_model_paths(product_dir, model_key=normalized_model_key)
+                return None, f"Status: {display_name or algorithm} is not trained ({paths.onnx.name})"
+            self.model = model
+            self._loaded_yolo_model_key = normalized_model_key
+            self._loaded_embedding_model_key = ("", "")
+            return model, (
+                f"Status: loaded {display_name or algorithm} ONNX  "
+                f"NG threshold={self.classifier_ng_threshold(normalized_model_key):.3f}"
+            )
         if not self.is_embedding_algorithm(algorithm):
             self.model = None
             self._loaded_embedding_model_key = ("", "")
             return None, f"状态：当前工具={display_name or algorithm}，使用传统方法"
 
-        model_file = self.embedding_model_path(algorithm, product_dir, model_key=normalized_model_key)
+        model_file = manifest["model_file"] if manifest is not None else self._local_embedding_file(algorithm, product_dir, normalized_model_key)
         source_model_key = normalized_model_key
-        if not os.path.exists(model_file) and normalized_model_key:
-            legacy_model_file = next(
-                (path for path in self.embedding_model_storage_paths(algorithm, product_dir) if os.path.exists(path)),
-                "",
-            )
-            legacy_raw_model_file = next(
-                (
-                    path
-                    for path in self.embedding_model_storage_paths(
-                        algorithm,
-                        product_dir,
-                        model_key=normalized_model_key,
-                    )
-                    if os.path.exists(path)
-                ),
-                "",
-            )
-            if legacy_model_file:
-                model_file = legacy_model_file
-                source_model_key = ""
-            elif legacy_raw_model_file:
-                model_file = legacy_raw_model_file
-        if not os.path.exists(model_file):
-            legacy_model_file = next(
-                (
-                    path
-                    for path in self.embedding_model_storage_paths(
-                        algorithm,
-                        product_dir,
-                        model_key=normalized_model_key,
-                    )
-                    if os.path.exists(path)
-                ),
-                "",
-            )
-            if legacy_model_file:
-                model_file = legacy_model_file
-        if not os.path.exists(model_file) and not normalized_model_key:
-            legacy_shared_model = next(
-                (path for path in self.embedding_model_storage_paths(algorithm, product_dir) if os.path.exists(path)),
-                "",
-            )
-            if legacy_shared_model:
-                model_file = legacy_shared_model
         if not os.path.exists(model_file):
             self.model = None
             self._loaded_embedding_model_key = ("", "")
             return None, f"状态：{display_name or algorithm} 未训练"
 
         model = self._load_register_model_cached(model_file)
-        model.score_mode = self.product_params.score_mode
-        model.margin = float(self.product_params.margin)
-        model.topk = int(self.product_params.topk)
+        if storage_code_backbone(model.backbone) != algorithm:
+            raise ValueError("模型算法与当前工具不一致")
         self.model = model
         self._loaded_embedding_model_key = (algorithm, source_model_key)
+        self.apply_params_to_model()
         return model, (
             f"状态：已加载工具  {display_name or algorithm}  mode={model.score_mode}  "
             f"margin={model.margin:.4f}  topk={model.topk}"
@@ -620,9 +677,13 @@ class AlgorithmController:
     def apply_params_to_model(self) -> None:
         """把当前 product_params 的 score_mode/margin/topk 同步到已加载的 model。"""
         if self.model is not None:
-            self.model.score_mode = self.product_params.score_mode
-            self.model.margin = float(self.product_params.margin)
-            self.model.topk = int(self.product_params.topk)
+            parameters = self._active_library_parameters or {
+                "score_mode": self.product_params.score_mode, "margin": self.product_params.margin,
+                "topk": self.product_params.topk,
+            }
+            self.model.score_mode = str(parameters["score_mode"])
+            self.model.margin = float(parameters["margin"])
+            self.model.topk = int(parameters["topk"])
 
     # ------------------------------------------------------------------
     # 训练
@@ -646,6 +707,9 @@ class AlgorithmController:
         训练 embedding 或传统阈值模型。
         成功返回 TrainResult；失败抛出异常（调用方负责捕获并弹 QMessageBox）。
         """
+        if parse_library_model_key(model_key) is not None:
+            raise ValueError("公共模型版本为只读，不能直接训练覆盖")
+        self._active_library_parameters = None
         algorithm = self.resolve_learning_algorithm(algorithm)
         display_name = self.algorithm_display_name(algorithm)
         normalized_model_key = self.tool_model_key(model_key)
@@ -655,6 +719,39 @@ class AlgorithmController:
         topk = int(self.product_params.topk)
         normalized_ok_samples = list(ok_samples or [])
         normalized_ng_samples = list(ng_samples or [])
+
+        if self.is_yolo_algorithm(algorithm):
+            roi_label = str(label_names[0] if label_names else "roi").strip() or "roi"
+            yolo_ok_samples = normalized_ok_samples or [(path, roi_label) for path in ok_files]
+            yolo_ng_samples = normalized_ng_samples or [(path, roi_label) for path in ng_files]
+            model, paths, dataset_dir = train_yolo_classifier(
+                yolo_ok_samples,
+                yolo_ng_samples,
+                product_dir=product_dir,
+                model_key=normalized_model_key,
+                epochs=self.product_params.yolo_epochs,
+                batch=self.product_params.yolo_batch,
+                progress_callback=progress_callback,
+            )
+            self.clear_yolo_model_cache()
+            model = self._load_yolo_model_cached(product_dir, model_key=normalized_model_key)
+            self.model = model
+            self._loaded_yolo_model_key = normalized_model_key
+            self._loaded_embedding_model_key = ("", "")
+            return TrainResult(
+                algorithm=algorithm,
+                is_embedding=True,
+                status_message=(
+                    f"Status: trained {display_name or algorithm}; ONNX={paths.onnx.name}; "
+                    f"NG threshold={self.product_params.yolo_ng_threshold:.3f}"
+                ),
+                dialog_message=(
+                    f"Standard Learning Tool training and ONNX export finished.\n"
+                    f"ONNX: {paths.onnx}\nDataset: {dataset_dir}"
+                ),
+                model=model,
+                saved_model_path=str(paths.onnx),
+            )
 
         if self.is_embedding_algorithm(algorithm):
             device = qr_core.get_device()
@@ -767,6 +864,45 @@ class AlgorithmController:
     # 预测
     # ------------------------------------------------------------------
 
+    def predict_yolo_from_array(
+        self,
+        image_bgr: Any,
+        shape: Dict[str, Any],
+        *,
+        model_key: object = "",
+        match_ms: Optional[float] = None,
+    ) -> PredictResult:
+        if not self._active_product_dir:
+            raise RuntimeError("Standard Learning Tool product directory is not active")
+        normalized_key = self.tool_model_key(model_key)
+        model = self._load_yolo_model_cached(self._active_product_dir, model_key=normalized_key)
+        started = time.perf_counter()
+        prediction = model.predict(
+            prepared_roi_from_bgr(image_bgr, shape),
+            ng_threshold=self.classifier_ng_threshold(normalized_key),
+        )
+        total_ms = (time.perf_counter() - started) * 1000.0
+        self.model = model
+        self._loaded_yolo_model_key = normalized_key
+        return PredictResult(
+            file_path="",
+            file_name="",
+            gt="",
+            pred=str(prediction["pred"]),
+            diff=float(prediction["diff"]),
+            sim_ok=float(prediction["sim_ok"]),
+            sim_ng=float(prediction["sim_ng"]),
+            value=float(prediction["sim_ng"]),
+            threshold=self.classifier_ng_threshold(normalized_key),
+            match_ms=match_ms,
+            total_ms=float(total_ms),
+            json_name="",
+            detail=(
+                f"deep_classifier ok={float(prediction['sim_ok']):.6f} "
+                f"ng={float(prediction['sim_ng']):.6f}"
+            ),
+        )
+
     def predict_image(
         self,
         path: str,
@@ -788,7 +924,10 @@ class AlgorithmController:
 
         override_text = str(algorithm_override or "").strip()
         camera_role = camera_role_from_text(model_key_override)
-        if override_text:
+        manifest = self._library_model_for_key(model_key_override)
+        if manifest is not None:
+            algorithm = manifest["algorithm"]
+        elif override_text:
             algorithm = self.resolve_tool_algorithm(override_text, camera_role)
             if algorithm not in SUPPORTED_ALGORITHMS:
                 raise RuntimeError(f"unsupported inspection algorithm: {override_text}")
@@ -803,7 +942,25 @@ class AlgorithmController:
         total_t0 = time.perf_counter()
         measurement_payload: Optional[Dict[str, Any]] = None
 
-        if self.is_embedding_algorithm(algorithm):
+        if self.is_yolo_algorithm(algorithm):
+            if not self._active_product_dir:
+                raise RuntimeError("Standard Learning Tool product directory is not active")
+            model = self._load_yolo_model_cached(self._active_product_dir, model_key=model_key)
+            roi_label = str(labels[0] if labels else "roi").strip() or "roi"
+            prediction = model.predict(
+                prepared_roi_from_path(path, roi_label, roi_xywh=roi),
+                ng_threshold=self.classifier_ng_threshold(model_key),
+            )
+            self.model = model
+            self._loaded_yolo_model_key = model_key
+            pred = str(prediction["pred"])
+            diff = float(prediction["diff"])
+            sim_ok = float(prediction["sim_ok"])
+            sim_ng = float(prediction["sim_ng"])
+            value = sim_ng
+            threshold = self.classifier_ng_threshold(model_key)
+            detail = f"deep_classifier ok={sim_ok:.6f} ng={sim_ng:.6f}"
+        elif self.is_embedding_algorithm(algorithm):
             if not self._loaded_embedding_matches(algorithm, labels=labels, model_key=model_key):
                 if not self._active_product_dir:
                     raise RuntimeError(f"algorithm model not loaded: {learning_backbone_storage_code(algorithm)}")

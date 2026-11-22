@@ -40,6 +40,7 @@ from application import (
     AlgorithmController,
     SUPPORTED_ALGORITHMS,
     SUPPORTED_EMBEDDING_ALGORITHMS,
+    SUPPORTED_LEARNING_ALGORITHMS,
     SUPPORTED_SCORE_MODES,
     ProductSession,
     TrainResult,
@@ -268,6 +269,9 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
     # ------------------------------------------------------------------
 
     def retranslate_ui(self) -> None:
+        source_panel = getattr(self, "model_source_panel", None)
+        if source_panel is not None:
+            source_panel.retranslate()
         for attr, text in (
             ("lbl_product_caption", tr("debug.product")),
             ("lbl_current_camera_caption", tr("debug.current_camera")),
@@ -275,6 +279,9 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
             ("lbl_algo_tool", tr("debug.tool")),
             ("lbl_algo_decision", tr("debug.decision")),
             ("lbl_algo_threshold", tr("debug.threshold")),
+            ("lbl_yolo_epochs", tr("debug.yolo_epochs")),
+            ("lbl_yolo_batch", tr("debug.yolo_batch")),
+            ("lbl_yolo_ng_threshold", tr("debug.yolo_ng_threshold")),
             ("lbl_action_section", tr("debug.actions")),
             ("lbl_roi_shape_caption", tr("debug.shape")),
             ("lbl_roi_label_caption", tr("debug.label")),
@@ -1433,13 +1440,13 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
         right_panel = QtWidgets.QFrame()
         self._main_right_panel = right_panel
         right_panel.setStyleSheet(f"background:{_PANEL_BG};border-left:1px solid #505050;")
-        right_vbox = QtWidgets.QVBoxLayout(right_panel)
-        right_vbox.setContentsMargins(0, 0, 0, 0)
-        right_vbox.setSpacing(0)
+        sidebar_vbox = QtWidgets.QVBoxLayout(right_panel)
+        sidebar_vbox.setContentsMargins(0, 0, 0, 0)
+        sidebar_vbox.setSpacing(0)
 
         build_sample_panel(
             self,
-            right_vbox,
+            sidebar_vbox,
             styles={
                 "text_light": _TEXT_LIGHT,
                 "text_dim": _TEXT_DIM,
@@ -1448,8 +1455,22 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
             },
         )
 
+        self.sidebar_config_scroll = QtWidgets.QScrollArea()
+        self.sidebar_config_scroll.setWidgetResizable(True)
+        self.sidebar_config_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.sidebar_config_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.sidebar_config_scroll.setSizeAdjustPolicy(QtWidgets.QAbstractScrollArea.SizeAdjustPolicy.AdjustIgnored)
+        self.sidebar_config_scroll.setMinimumHeight(120)
+        self.sidebar_config_content = QtWidgets.QWidget()
+        right_vbox = QtWidgets.QVBoxLayout(self.sidebar_config_content)
+        right_vbox.setContentsMargins(0, 0, 0, 0)
+        right_vbox.setSpacing(0)
+        self.sidebar_config_scroll.setWidget(self.sidebar_config_content)
+        sidebar_vbox.addWidget(self.sidebar_config_scroll, 2)
+
         # --- 绠楁硶鍙傛暟 ---
         self.btn_toggle_algo = QtWidgets.QToolButton()
+        self.btn_toggle_algo.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
         self.btn_toggle_algo.setText(tr("debug.algorithm_params"))
         self.btn_toggle_algo.setCheckable(True)
         self.btn_toggle_algo.setChecked(True)
@@ -1514,6 +1535,26 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
         self.spin_topk.setValue(3)
         self.spin_topk.valueChanged.connect(self._on_runtime_params_changed)
         self.spin_topk.setStyleSheet(_input_style)
+        self.spin_yolo_epochs = QtWidgets.QSpinBox()
+        self.spin_yolo_epochs.setRange(1, 1000)
+        self.spin_yolo_epochs.setValue(80)
+        self.spin_yolo_epochs.setKeyboardTracking(False)
+        self.spin_yolo_epochs.valueChanged.connect(self._on_runtime_params_changed)
+        self.spin_yolo_epochs.setStyleSheet(_input_style)
+        self.spin_yolo_batch = QtWidgets.QSpinBox()
+        self.spin_yolo_batch.setRange(1, 128)
+        self.spin_yolo_batch.setValue(16)
+        self.spin_yolo_batch.setKeyboardTracking(False)
+        self.spin_yolo_batch.valueChanged.connect(self._on_runtime_params_changed)
+        self.spin_yolo_batch.setStyleSheet(_input_style)
+        self.spin_yolo_ng_threshold = QtWidgets.QDoubleSpinBox()
+        self.spin_yolo_ng_threshold.setDecimals(3)
+        self.spin_yolo_ng_threshold.setRange(0.0, 1.0)
+        self.spin_yolo_ng_threshold.setSingleStep(0.01)
+        self.spin_yolo_ng_threshold.setValue(0.50)
+        self.spin_yolo_ng_threshold.setKeyboardTracking(False)
+        self.spin_yolo_ng_threshold.valueChanged.connect(self._on_runtime_params_changed)
+        self.spin_yolo_ng_threshold.setStyleSheet(_input_style)
 
         _lbl_s = f"color:{_TEXT_DIM};font-size:12px;"
         _lbl_disabled_s = "color:#7a7a7a;font-size:12px;"
@@ -1524,10 +1565,18 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
         self.lbl_algo_threshold = QtWidgets.QLabel(tr("debug.threshold")); self.lbl_algo_threshold.setStyleSheet(_lbl_s)
         self.lbl_topk = QtWidgets.QLabel("TopK")
         self.lbl_topk.setStyleSheet(self._algo_param_label_style)
+        self.lbl_yolo_epochs = QtWidgets.QLabel(tr("debug.yolo_epochs"))
+        self.lbl_yolo_batch = QtWidgets.QLabel(tr("debug.yolo_batch"))
+        self.lbl_yolo_ng_threshold = QtWidgets.QLabel(tr("debug.yolo_ng_threshold"))
+        for label in (self.lbl_yolo_epochs, self.lbl_yolo_batch, self.lbl_yolo_ng_threshold):
+            label.setStyleSheet(self._algo_param_label_style)
         algo_form.addRow(self.lbl_algo_tool, self.btn_algorithm_picker)
         algo_form.addRow(self.lbl_algo_decision, self.cmb_mode)
         algo_form.addRow(self.lbl_algo_threshold, self.spin_margin)
         algo_form.addRow(self.lbl_topk, self.spin_topk)
+        algo_form.addRow(self.lbl_yolo_epochs, self.spin_yolo_epochs)
+        algo_form.addRow(self.lbl_yolo_batch, self.spin_yolo_batch)
+        algo_form.addRow(self.lbl_yolo_ng_threshold, self.spin_yolo_ng_threshold)
         self.algorithm_params_frame = algo_frame
         right_vbox.addWidget(algo_frame)
         self._sync_algorithm_picker()
@@ -1546,7 +1595,7 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
 
         build_action_panel(
             self,
-            right_vbox,
+            sidebar_vbox,
             styles={
                 "text_light": _TEXT_LIGHT,
                 "text_dim": _TEXT_DIM,
@@ -1966,9 +2015,14 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
             return tr("debug.current_tool_stats_select")
         if self.algo.is_measurement_tool(getattr(inspection_item, "algorithm_code", "")):
             return tr("debug.measurement.no_training")
-        camera_role = _normalize_camera_role(getattr(inspection_item, "camera_id", "")) or self.current_camera_role()
-        roi_label = str(getattr(inspection_item, "roi_label", "") or "").strip() or "roi"
-        ok_count, ng_count, unset_count = self._sample_annotation_counts_for_roi(roi_label, camera_role)
+        from ui.debug.tool_page.model_source_panel import binding_status, model_source, training_sample_summary
+        if model_source(inspection_item) == "library":
+            status, _detail, _color = binding_status(self, inspection_item)
+            return tr("debug.model_source.reference_samples", model=status)
+        try:
+            roi_label, _ok, _ng, _paths, ok_count, ng_count, unset_count = training_sample_summary(self, inspection_item)
+        except Exception as exc:
+            return tr("debug.model_source.training_unavailable", detail=str(exc))
         return tr("debug.current_tool_samples", roi=roi_label, ok=ok_count, ng=ng_count, unset=unset_count)
 
     def _training_validation_text(self) -> str:
@@ -1977,12 +2031,19 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
             return tr("debug.training_validation_select")
         if self.algo.is_measurement_tool(getattr(inspection_item, "algorithm_code", "")):
             return tr("debug.measurement.no_training")
+        from ui.debug.tool_page.model_source_panel import binding_description, model_source, training_sample_summary
+        if model_source(inspection_item) == "library":
+            description = binding_description(self, inspection_item)
+            if description.get("ready"):
+                return tr("debug.model_source.reference_ready")
+            return tr("debug.model_source.reference_unavailable", detail=description.get("message", ""))
         camera_role = _normalize_camera_role(getattr(inspection_item, "camera_id", "")) or self.current_camera_role()
-        roi_label = str(getattr(inspection_item, "roi_label", "") or "").strip() or "roi"
-        ok_files, ng_files, candidate_paths = self._training_sample_groups_for_role(camera_role, roi_label=roi_label)
+        try:
+            roi_label, ok_files, ng_files, candidate_paths, _ok, _ng, missing_count = training_sample_summary(self, inspection_item)
+        except Exception as exc:
+            return tr("debug.model_source.training_unavailable", detail=str(exc))
         if not candidate_paths:
             return tr("debug.training_validation_no_samples", role=camera_role)
-        _ok_count, _ng_count, missing_count = self._sample_annotation_counts_for_roi(roi_label, camera_role, paths=candidate_paths)
         if not ok_files or not ng_files:
             missing_groups: List[str] = []
             if not ok_files:
@@ -2264,20 +2325,27 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
     def _apply_runtime_params_to_ui(self) -> None:
         self._updating_runtime_params = True
         try:
+            selected = self._selected_inspection_item()
+            published = {}
+            if selected is not None and getattr(selected, "model_source", "independent") == "library":
+                published = self.algo.describe_model_binding(selected, self.session.product_dir).get("parameters", {})
             algorithm = (
                 self.algo.product_params.algorithm
                 if self.algo.product_params.algorithm in SUPPORTED_ALGORITHMS
                 else ""
             )
             score_mode = (
-                self.algo.product_params.score_mode
-                if self.algo.product_params.score_mode in SUPPORTED_SCORE_MODES
+                published.get("score_mode", self.algo.product_params.score_mode)
+                if published.get("score_mode", self.algo.product_params.score_mode) in SUPPORTED_SCORE_MODES
                 else SUPPORTED_SCORE_MODES[0]
             )
             self._set_current_algorithm(algorithm)
             self.cmb_mode.setCurrentText(score_mode)
-            self.spin_margin.setValue(float(self.algo.product_params.margin))
-            self.spin_topk.setValue(max(1, int(self.algo.product_params.topk)))
+            self.spin_margin.setValue(float(published.get("margin", self.algo.product_params.margin)))
+            self.spin_topk.setValue(max(1, int(published.get("topk", self.algo.product_params.topk))))
+            self.spin_yolo_epochs.setValue(max(1, int(self.algo.product_params.yolo_epochs)))
+            self.spin_yolo_batch.setValue(max(1, int(self.algo.product_params.yolo_batch)))
+            self.spin_yolo_ng_threshold.setValue(float(published.get("yolo_ng_threshold", self.algo.product_params.yolo_ng_threshold)))
         finally:
             self._updating_runtime_params = False
         self._update_runtime_widgets()
@@ -2286,6 +2354,7 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
     def _update_runtime_widgets(self) -> None:
         algorithm_selected = bool(self.current_algorithm())
         embedding = algorithm_selected and self._is_embedding_algorithm()
+        yolo = algorithm_selected and self.algo.is_yolo_algorithm(self.current_algorithm())
         topk_enabled = embedding and self.cmb_mode.currentText() == "topk"
         inspection_items = list(getattr(self, "inspection_items", []) or [])
         current_role = self.current_camera_role()
@@ -2298,15 +2367,18 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
             getattr(item, "enabled", False)
             and _normalize_camera_role(getattr(item, "camera_id", "")) == current_role
             and not self.algo.is_measurement_tool(getattr(item, "algorithm_code", ""))
+            and getattr(item, "model_source", "independent") != "library"
             for item in inspection_items
         )
         selected_item_fn = getattr(self, "_selected_inspection_item", None)
         selected_item = selected_item_fn() if callable(selected_item_fn) else None
+        library_selected = selected_item is not None and getattr(selected_item, "model_source", "independent") == "library"
         selected_tool_enabled = bool(
             algorithm_selected
             and selected_item is not None
             and selected_item.enabled
             and not self.algo.is_measurement_tool(getattr(selected_item, "algorithm_code", ""))
+            and not library_selected
         )
         top_level = self.window()
         has_permission = getattr(top_level, "_has_permission", None)
@@ -2315,9 +2387,20 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
         if callable(has_permission):
             can_train = bool(has_permission("model.train"))
             can_edit_template_params = bool(has_permission("template.edit_params"))
-        self.cmb_mode.setEnabled(embedding and can_edit_template_params)
-        self.spin_margin.setEnabled(embedding and can_edit_template_params)
-        self.spin_topk.setEnabled(topk_enabled and can_edit_template_params)
+        for name in ("cmb_algorithm", "btn_algorithm_picker"):
+            picker = getattr(self, name, None)
+            if picker is not None:
+                picker.setEnabled(can_edit_template_params and not getattr(self, "_training_in_progress", False))
+                shared = selected_item is not None and getattr(selected_item, "model_source", "independent") in {"group", "library"}
+                picker.setToolTip(tr("debug.model_source.tool_change_tip") if shared else self.current_algorithm_display_name())
+        self.cmb_mode.setEnabled(embedding and can_edit_template_params and not library_selected)
+        self.spin_margin.setEnabled(embedding and can_edit_template_params and not library_selected)
+        self.spin_topk.setEnabled(topk_enabled and can_edit_template_params and not library_selected)
+        for widget in (self.spin_yolo_epochs, self.spin_yolo_batch, self.spin_yolo_ng_threshold):
+            widget.setVisible(yolo)
+            widget.setEnabled(yolo and can_edit_template_params and not library_selected)
+        for label in (self.lbl_yolo_epochs, self.lbl_yolo_batch, self.lbl_yolo_ng_threshold):
+            label.setVisible(yolo)
         topk_label = getattr(self, "lbl_topk", None)
         if topk_label is not None:
             enabled_style = getattr(self, "_algo_param_label_style", "")
@@ -2331,10 +2414,13 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
         self.btn_test.setEnabled(has_testable_items)
         margin_button = getattr(self, "btn_validate_margin", None)
         if margin_button is not None:
-            margin_button.setEnabled(embedding and can_edit_template_params)
+            margin_button.setEnabled(embedding and can_edit_template_params and not library_selected)
         embedding_button = getattr(self, "btn_embedding_analysis", None)
         if embedding_button is not None:
-            embedding_button.setEnabled(embedding and can_edit_template_params)
+            embedding_button.setEnabled(embedding and can_edit_template_params and not library_selected)
+        source_panel = getattr(self, "model_source_panel", None)
+        if source_panel is not None:
+            source_panel.refresh()
         if getattr(self, "_training_in_progress", False):
             self._set_training_running(True)
         self._sync_training_action_buttons()
@@ -2342,6 +2428,10 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
 
     def _on_runtime_params_changed(self, *args) -> None:
         if self._updating_runtime_params:
+            return
+        selected_item = self._selected_inspection_item()
+        if selected_item is not None and getattr(selected_item, "model_source", "independent") == "library":
+            self._apply_runtime_params_to_ui()
             return
         top_level = self.window()
         require_permission = getattr(top_level, "_require_permission", None)
@@ -2360,12 +2450,15 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
             if selected_item is not None
             else self.current_camera_role()
         )
-        if current_algorithm in SUPPORTED_EMBEDDING_ALGORITHMS:
+        if current_algorithm in SUPPORTED_LEARNING_ALGORITHMS:
             self.algo.set_learning_backbone(current_algorithm, camera_role)
         self.algo.product_params.algorithm = current_algorithm
         self.algo.product_params.score_mode = self.cmb_mode.currentText()
         self.algo.product_params.margin = float(self.spin_margin.value())
         self.algo.product_params.topk = int(self.spin_topk.value())
+        self.algo.product_params.yolo_epochs = int(self.spin_yolo_epochs.value())
+        self.algo.product_params.yolo_batch = int(self.spin_yolo_batch.value())
+        self.algo.product_params.yolo_ng_threshold = float(self.spin_yolo_ng_threshold.value())
         if self._is_embedding_algorithm():
             self.algo.apply_params_to_model()
         self._save_runtime_params()
@@ -2400,7 +2493,9 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
             else self.current_camera_role()
         )
         before = str(getattr(selected_item, "algorithm_code", "") if selected_item is not None else self.algo.product_params.algorithm)
-        if algorithm in SUPPORTED_EMBEDDING_ALGORITHMS:
+        from ui.debug.tool_page.model_source_changes import detach_for_tool_change
+        detached = bool(algorithm and detach_for_tool_change(self, selected_item, algorithm))
+        if algorithm in SUPPORTED_LEARNING_ALGORITHMS:
             self.algo.set_learning_backbone(algorithm, camera_role)
         if not algorithm:
             self.algo.product_params.algorithm = ""
@@ -2412,13 +2507,14 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
         if selected_item is not None:
             selected_item.algorithm_code = (
                 "shared_backbone_register"
-                if algorithm in SUPPORTED_EMBEDDING_ALGORITHMS
+                if algorithm in SUPPORTED_LEARNING_ALGORITHMS
                 else algorithm
             )
-            self._persist_inspection_items()
-            self._refresh_inspection_items_table()
         self.algo.product_params.algorithm = algorithm
         self._save_runtime_params()
+        if selected_item is not None:
+            self._persist_inspection_items()
+        self._refresh_inspection_items_table()
         self._update_runtime_widgets()
         self._update_learning_backbone_hint()
         audit_event = getattr(top_level, "_audit_event", None)
@@ -2437,6 +2533,8 @@ class ToolPage(ToolPageOperationsMixin, QtWidgets.QWidget):
                 model_key=selected_item.effective_model_key if selected_item is not None else "",
             )
             self.lbl_status.setText(msg)
+            if detached:
+                self.lbl_status.setText(f"{msg}  {tr('debug.model_source.tool_changed_independent')}")
         except Exception as exc:
             self.algo.model = None
             display_name = self.algo.algorithm_display_name(algorithm) or algorithm

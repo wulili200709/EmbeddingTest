@@ -14,19 +14,84 @@ class TrainingTaskBuilder:
 
     @staticmethod
     def item_display_name(inspection_item: InspectionItem) -> str:
-        return str(inspection_item.task_group or "").strip() or str(
-            inspection_item.display_name
+        group = (
+            str(getattr(inspection_item, "task_group", ""))
+            if str(getattr(inspection_item, "model_source", "independent")) == "group"
+            else ""
+        )
+        return str(
+            group
+            or inspection_item.display_name
             or inspection_item.roi_label
             or inspection_item.item_id
             or "tool"
         ).strip() or "tool"
 
     def resolve_algorithm(self, inspection_item: InspectionItem) -> str:
+        resolver = getattr(self.owner.algo, "resolve_item_algorithm", None)
+        if callable(resolver):
+            return resolver(inspection_item)
         if self.owner.algo.is_learning_tool(inspection_item.algorithm_code):
             return self.owner.algo.current_learning_backbone(inspection_item.camera_id)
         return self.owner.algo.resolve_tool_algorithm(
             inspection_item.algorithm_code,
             inspection_item.camera_id,
+        )
+
+    @staticmethod
+    def effective_model_key(inspection_item: InspectionItem) -> str:
+        return str(getattr(inspection_item, "effective_model_key", inspection_item.model_key))
+
+    def group_items_for_item(self, inspection_item: InspectionItem) -> List[InspectionItem]:
+        """Resolve the training group without coupling it to ROI display names."""
+        if str(getattr(inspection_item, "model_source", "independent")) != "group":
+            return [inspection_item]
+        if not str(getattr(inspection_item, "task_group", "")).strip():
+            raise RuntimeError("please select a shared model group")
+        key = self.effective_model_key(inspection_item)
+        role = normalize_camera_role(inspection_item.camera_id) or "cam1"
+        members = [
+            item for item in list(getattr(self.owner, "inspection_items", [inspection_item]))
+            if item.enabled
+            and str(getattr(item, "model_source", "independent")) == "group"
+            and (normalize_camera_role(item.camera_id) or "cam1") == role
+            and self.effective_model_key(item) == key
+        ]
+        algorithm = self.resolve_algorithm(inspection_item)
+        if getattr(inspection_item, "legacy_model_key", ""):
+            # Old conveyor names grouped several tool families; their assets
+            # were separate per algorithm. Preserve that historical behavior.
+            return [item for item in members if self.resolve_algorithm(item) == algorithm] or [inspection_item]
+        if any(self.resolve_algorithm(item) != algorithm for item in members):
+            raise RuntimeError(tr("debug.model_source.group_incompatible"))
+        return members or [inspection_item]
+
+    def _samples_for_item(self, inspection_item: InspectionItem):
+        if str(getattr(inspection_item, "model_source", "independent")) == "library":
+            return [], [], []
+        members = self.group_items_for_item(inspection_item)
+        labels = list(dict.fromkeys(str(item.roi_label or "").strip() for item in members if item.roi_label))
+        role = normalize_camera_role(inspection_item.camera_id) or "cam1"
+        candidates = self.train_sample_paths_for_role(role)
+        ok_samples: list[tuple[str, str]] = []
+        ng_samples: list[tuple[str, str]] = []
+        for path in candidates:
+            for label in labels:
+                if not self.owner._path_has_roi_geometry(path, label):
+                    continue
+                status = self.owner._sample_roi_status_for_path(path, role, label)
+                if status == "OK":
+                    ok_samples.append((path, label))
+                elif status == "NG":
+                    ng_samples.append((path, label))
+        return ok_samples, ng_samples, candidates
+
+    def sample_groups_for_item(self, inspection_item: InspectionItem) -> tuple[List[str], List[str], List[str]]:
+        ok_samples, ng_samples, candidates = self._samples_for_item(inspection_item)
+        return (
+            list(dict.fromkeys(path for path, _label in ok_samples)),
+            list(dict.fromkeys(path for path, _label in ng_samples)),
+            candidates,
         )
 
     def train_sample_paths_for_role(self, camera_role: object = None) -> List[str]:
@@ -35,30 +100,6 @@ class TrainingTaskBuilder:
         if not train_paths:
             train_paths = list(getattr(self.owner, "ok_files", []) or []) + list(getattr(self.owner, "ng_files", []) or [])
         return self.owner._filter_paths_for_camera(list(dict.fromkeys(train_paths)), role)
-
-    @staticmethod
-    def effective_model_key(inspection_item: InspectionItem) -> str:
-        return str(
-            getattr(
-                inspection_item,
-                "effective_model_key",
-                inspection_item.model_key,
-            )
-            or ""
-        ).strip()
-
-    def group_items_for_item(self, inspection_item: InspectionItem) -> List[InspectionItem]:
-        role = normalize_camera_role(inspection_item.camera_id) or "cam1"
-        model_key = self.effective_model_key(inspection_item)
-        algorithm = self.resolve_algorithm(inspection_item)
-        peers = [
-            item
-            for item in list(getattr(self.owner, "inspection_items", []) or [])
-            if (normalize_camera_role(item.camera_id) or "cam1") == role
-            and self.effective_model_key(item) == model_key
-            and self.resolve_algorithm(item) == algorithm
-        ]
-        return peers or [inspection_item]
 
     def sample_groups_for_role(
         self,
@@ -126,6 +167,8 @@ class TrainingTaskBuilder:
     def build_task_for_item(self, inspection_item: InspectionItem) -> dict:
         if not inspection_item.enabled:
             raise RuntimeError("selected tool is disabled")
+        if str(getattr(inspection_item, "model_source", "independent")) == "library":
+            raise RuntimeError("a published model reference does not need training")
 
         algorithm = self.resolve_algorithm(inspection_item)
         if not algorithm:
@@ -133,50 +176,31 @@ class TrainingTaskBuilder:
                 raise RuntimeError("please choose a learning tool subtype first")
             raise RuntimeError("please select an inspection tool")
 
-        group_items = self.group_items_for_item(inspection_item)
-        label_names = list(
-            dict.fromkeys(
-                str(item.roi_label or "").strip()
-                for item in group_items
-                if str(item.roi_label or "").strip()
-            )
-        )
+        members = self.group_items_for_item(inspection_item)
+        label_names = list(dict.fromkeys(str(item.roi_label or "").strip() for item in members if item.roi_label))
         if not label_names:
-            label_names = [str(inspection_item.roi_label or "").strip() or "roi"]
-        candidate_paths = self.train_sample_paths_for_role(inspection_item.camera_id)
+            label_names = ["roi"]
+        ok_samples, ng_samples, candidate_paths = self._samples_for_item(inspection_item)
         if not candidate_paths:
             camera_id = normalize_camera_role(inspection_item.camera_id) or "cam1"
             raise RuntimeError(f"missing training images for {camera_id}")
 
-        camera_id = normalize_camera_role(inspection_item.camera_id) or "cam1"
-        training_ok_files: List[str] = []
-        training_ng_files: List[str] = []
-        training_ok_samples: list[tuple[str, str]] = []
-        training_ng_samples: list[tuple[str, str]] = []
-        for path in candidate_paths:
-            for roi_label in label_names:
-                if not self.owner._path_has_roi_geometry(path, roi_label):
-                    continue
-                status = self.owner._sample_roi_status_for_path(path, camera_id, roi_label)
-                if status == "OK":
-                    training_ok_files.append(path)
-                    training_ok_samples.append((path, roi_label))
-                elif status == "NG":
-                    training_ng_files.append(path)
-                    training_ng_samples.append((path, roi_label))
-
-        training_ok_files = list(dict.fromkeys(training_ok_files))
-        training_ng_files = list(dict.fromkeys(training_ng_files))
+        training_ok_files = list(dict.fromkeys(path for path, _label in ok_samples))
+        training_ng_files = list(dict.fromkeys(path for path, _label in ng_samples))
         missing_groups: List[str] = []
-        if not training_ok_samples:
+        if not training_ok_files:
             missing_groups.append("OK")
-        if not training_ng_samples:
+        if not training_ng_files:
             missing_groups.append("NG")
         if missing_groups:
             raise RuntimeError(
                 tr(
                     "debug.training_missing_required_groups",
-                    roi=str(inspection_item.task_group or "").strip() or "/".join(label_names),
+                    roi=(
+                        str(getattr(inspection_item, "task_group", "") or "").strip()
+                        if str(getattr(inspection_item, "model_source", "independent")) == "group"
+                        else "/".join(label_names)
+                    ),
                     groups="/".join(missing_groups),
                 )
             )
@@ -198,8 +222,9 @@ class TrainingTaskBuilder:
             "ng_files": list(training_ng_files),
             "label_names": label_names,
             "model_key": self.effective_model_key(inspection_item),
-            "ok_samples": training_ok_samples,
-            "ng_samples": training_ng_samples,
+            "model_source": str(getattr(inspection_item, "model_source", "independent")),
+            "ok_samples": ok_samples,
+            "ng_samples": ng_samples,
             "embedding_cache_dir": embedding_cache_dir,
         }
 

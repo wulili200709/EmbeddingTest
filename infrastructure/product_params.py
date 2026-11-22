@@ -37,6 +37,9 @@ class ProductRuntimeParams:
     score_mode: str = "proto"
     margin: float = 0.02
     topk: int = 3
+    yolo_epochs: int = 80
+    yolo_batch: int = 16
+    yolo_ng_threshold: float = 0.50
     traditional_models: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     @classmethod
@@ -58,6 +61,9 @@ class ProductRuntimeParams:
             score_mode=str(data.get("score_mode", "proto")),
             margin=float(data.get("margin", 0.02)),
             topk=int(data.get("topk", 3)),
+            yolo_epochs=max(1, int(data.get("yolo_epochs", 80))),
+            yolo_batch=max(1, int(data.get("yolo_batch", 16))),
+            yolo_ng_threshold=max(0.0, min(1.0, float(data.get("yolo_ng_threshold", 0.50)))),
             traditional_models={
                 str(key): value
                 for key, value in traditional_models.items()
@@ -77,6 +83,9 @@ class ProductRuntimeParams:
             "score_mode": str(self.score_mode or "proto"),
             "margin": float(self.margin),
             "topk": int(self.topk),
+            "yolo_epochs": max(1, int(self.yolo_epochs)),
+            "yolo_batch": max(1, int(self.yolo_batch)),
+            "yolo_ng_threshold": max(0.0, min(1.0, float(self.yolo_ng_threshold))),
             "traditional_models": _json_safe(self.traditional_models),
         }
 

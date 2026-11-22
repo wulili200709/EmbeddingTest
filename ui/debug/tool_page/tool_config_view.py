@@ -3,6 +3,7 @@ from __future__ import annotations
 from PySide6 import QtCore, QtWidgets
 
 from ui.i18n import tr
+from ui.debug.tool_page.model_source_panel import ModelSourcePanel, open_model_source_dialog
 
 
 def build_tool_config_panel(owner, right_vbox: QtWidgets.QVBoxLayout, *, styles: dict[str, str]) -> None:
@@ -17,6 +18,7 @@ def build_tool_config_panel(owner, right_vbox: QtWidgets.QVBoxLayout, *, styles:
     right_vbox.addWidget(tool_gap)
 
     owner.btn_toggle_tools = QtWidgets.QToolButton()
+    owner.btn_toggle_tools.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
     owner.btn_toggle_tools.setText(tr("debug.inspection_tools"))
     owner.btn_toggle_tools.setCheckable(True)
     owner.btn_toggle_tools.setChecked(True)
@@ -30,7 +32,16 @@ def build_tool_config_panel(owner, right_vbox: QtWidgets.QVBoxLayout, *, styles:
         )
     )
     owner.btn_toggle_tools.toggled.connect(owner._toggle_tool_config_section)
-    right_vbox.addWidget(owner.btn_toggle_tools)
+    tool_header = QtWidgets.QHBoxLayout()
+    tool_header.setContentsMargins(0, 0, 0, 0)
+    tool_header.addWidget(owner.btn_toggle_tools, 1)
+    owner.btn_model_source = QtWidgets.QPushButton(tr("debug.model_source.open"))
+    owner.btn_model_source.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Fixed)
+    owner.btn_model_source.setMaximumWidth(200)
+    owner.btn_model_source.setStyleSheet(compact_btn)
+    owner.btn_model_source.clicked.connect(lambda: open_model_source_dialog(owner))
+    tool_header.addWidget(owner.btn_model_source)
+    right_vbox.addLayout(tool_header)
 
     tool_frame = QtWidgets.QWidget()
     tool_vbox = QtWidgets.QVBoxLayout(tool_frame)
@@ -253,6 +264,18 @@ def build_tool_config_panel(owner, right_vbox: QtWidgets.QVBoxLayout, *, styles:
     owner.tool_config_scroll.setWidget(tool_frame)
     owner.tool_config_scroll.setMinimumHeight(220)
     right_vbox.addWidget(owner.tool_config_scroll, 1)
+
+    owner.btn_toggle_model_source = QtWidgets.QToolButton()
+    owner.btn_toggle_model_source.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
+    owner.btn_toggle_model_source.setText(tr("debug.model_source.title"))
+    owner.btn_toggle_model_source.setCheckable(True)
+    owner.btn_toggle_model_source.setChecked(True)
+    owner.btn_toggle_model_source.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+    owner.btn_toggle_model_source.setStyleSheet(owner.btn_toggle_tools.styleSheet())
+    right_vbox.addWidget(owner.btn_toggle_model_source)
+    owner.model_source_panel = ModelSourcePanel(owner, right_vbox, input_style=input_style,
+                                                button_style=compact_btn, section_button=owner.btn_toggle_model_source)
+    owner.model_source_frame = owner.model_source_panel.frame
 
     owner.lbl_current_tool_sample_stats = QtWidgets.QLabel(f"  {tr('debug.current_tool_stats_select')}")
     owner.lbl_current_tool_sample_stats.setWordWrap(True)

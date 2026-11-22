@@ -86,7 +86,9 @@ def _actual_inspection_item_index(tool_page, visible_row: int) -> int:
 
 
 def _persist_inspection_items(tool_page) -> None:
-    save_inspection_items(tool_page.inspection_items, tool_page.session.inspection_items_path)
+    params = getattr(tool_page.algo, "product_params", None)
+    save_inspection_items(tool_page.inspection_items, tool_page.session.inspection_items_path,
+                          traditional_models=getattr(params, "traditional_models", None))
     tool_page.inspectionItemsChanged.emit()
 
 
