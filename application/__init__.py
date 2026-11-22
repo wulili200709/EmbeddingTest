@@ -9,6 +9,7 @@ _SYMBOL_TO_MODULE = {
     "AlgorithmController": ".algorithm_controller",
     "SUPPORTED_ALGORITHMS": ".algorithm_controller",
     "SUPPORTED_EMBEDDING_ALGORITHMS": ".algorithm_controller",
+    "SUPPORTED_LEARNING_ALGORITHMS": ".algorithm_controller",
     "SUPPORTED_SCORE_MODES": ".algorithm_controller",
     "TrainResult": ".algorithm_controller",
     "InspectionExecutionRequest": ".inspection_executor",

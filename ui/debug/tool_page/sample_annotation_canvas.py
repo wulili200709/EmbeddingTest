@@ -6,10 +6,11 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ui.debug import OverlayShape
 from ui.i18n import tr
+from ui.debug.image_pixmap_cache import pixmap_from_path
 
 
 def _pixmap_from_path(path: str) -> QtGui.QPixmap:
-    return QtGui.QPixmap(path)
+    return pixmap_from_path(path)
 
 class _SampleAnnotationCanvas(QtWidgets.QWidget):
     imagePressed = QtCore.Signal(int, int, int)
@@ -32,6 +33,8 @@ class _SampleAnnotationCanvas(QtWidgets.QWidget):
         self._press_pos = QtCore.QPointF()
         self._pan_anchor = QtCore.QPointF()
         self._is_panning = False
+        self._peek_original = False
+        self._press_allows_annotation = False
 
     def clear_image(self) -> None:
         self._pixmap = QtGui.QPixmap()
@@ -40,6 +43,8 @@ class _SampleAnnotationCanvas(QtWidgets.QWidget):
         self._zoom = 1.0
         self._pressed_button = 0
         self._is_panning = False
+        self._peek_original = False
+        self._press_allows_annotation = False
         self.unsetCursor()
         self.update()
 
@@ -53,6 +58,56 @@ class _SampleAnnotationCanvas(QtWidgets.QWidget):
 
     def set_overlays(self, overlays: Optional[List[OverlayShape]]) -> None:
         self._overlays = list(overlays or [])
+        self.update()
+
+    def is_original_preview(self) -> bool:
+        return self._peek_original
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        if event.key() == QtCore.Qt.Key.Key_Space:
+            self._peek_original = True
+            self._press_allows_annotation = False
+            self.update()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event: QtGui.QKeyEvent) -> None:
+        if event.key() == QtCore.Qt.Key.Key_Space:
+            if not event.isAutoRepeat():
+                self._peek_original = False
+                self.update()
+            event.accept()
+            return
+        super().keyReleaseEvent(event)
+
+    def focusOutEvent(self, event: QtGui.QFocusEvent) -> None:
+        self._peek_original = False
+        self._press_allows_annotation = False
+        self._pressed_button = 0
+        self._is_panning = False
+        self._refresh_cursor()
+        self.update()
+        super().focusOutEvent(event)
+
+    def focus_region(self, bounds: QtCore.QRectF) -> None:
+        if self._pixmap.isNull() or bounds.isEmpty():
+            return
+        bounds = bounds.normalized()
+        margin = max(24.0, min(bounds.width(), bounds.height()) * 0.35)
+        padded = bounds.adjusted(-margin, -margin, margin, margin)
+        base_scale = min(self.width() / self._pixmap.width(), self.height() / self._pixmap.height())
+        target_scale = min(self.width() / padded.width(), self.height() / padded.height())
+        self._zoom = max(self._zoom_min, min(self._zoom_max, target_scale / max(base_scale, 0.01)))
+        self._update_scaled_pixmap()
+        center = bounds.center()
+        base_offset = self._base_image_offset()
+        self._pan_offset = self._clamp_pan_offset(QtCore.QPointF(
+            self.width() / 2.0 - center.x() * self._scale - base_offset.x(),
+            self.height() / 2.0 - center.y() * self._scale - base_offset.y(),
+        ))
+        self._image_offset = base_offset + self._pan_offset
+        self._refresh_cursor()
         self.update()
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
@@ -102,6 +157,8 @@ class _SampleAnnotationCanvas(QtWidgets.QWidget):
             super().mousePressEvent(event)
             return
         self._pressed_button = pressed_button
+        self.setFocus(QtCore.Qt.FocusReason.MouseFocusReason)
+        self._press_allows_annotation = not self._peek_original
         self._press_pos = event.position()
         self._pan_anchor = QtCore.QPointF(self._pan_offset)
         self._is_panning = False
@@ -143,7 +200,10 @@ class _SampleAnnotationCanvas(QtWidgets.QWidget):
         released_button = int(getattr(event.button(), "value", event.button()))
         image_xy = self._widget_to_image(event.position())
         was_panning = bool(self._is_panning)
-        if released_button == self._pressed_button and not was_panning and image_xy is not None:
+        if (
+            released_button == self._pressed_button and not was_panning and image_xy is not None
+            and self._press_allows_annotation and not self._peek_original
+        ):
             self.imagePressed.emit(released_button, int(round(image_xy[0])), int(round(image_xy[1])))
         self._pressed_button = 0
         self._is_panning = False
@@ -159,6 +219,8 @@ class _SampleAnnotationCanvas(QtWidgets.QWidget):
             return
         top_left = self._image_offset
         painter.drawPixmap(int(round(top_left.x())), int(round(top_left.y())), self._scaled_pixmap)
+        if self._peek_original:
+            return
         painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
         for overlay in self._overlays:
             pen = QtGui.QPen(QtGui.QColor(overlay.color))

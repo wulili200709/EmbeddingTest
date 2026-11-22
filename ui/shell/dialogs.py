@@ -175,6 +175,7 @@ class RuntimeModeSettingsStore:
             "camera_layout": "two_top_one_bottom",
             "camera_slots": list(CAMERA_ROLES),
             "cpu_inference_chunk_size": 2,
+            "cpu_inference_threads": 0,
         }
 
     def load(self) -> dict[str, object]:
@@ -211,6 +212,9 @@ class RuntimeModeSettingsStore:
             settings["cpu_inference_chunk_size"] = self._normalize_cpu_inference_chunk_size(
                 raw.get("cpu_inference_chunk_size", settings["cpu_inference_chunk_size"])
             )
+            settings["cpu_inference_threads"] = self._normalize_cpu_inference_threads(
+                raw.get("cpu_inference_threads", settings["cpu_inference_threads"])
+            )
 
         try:
             self.save(settings)
@@ -228,6 +232,9 @@ class RuntimeModeSettingsStore:
             "camera_slots": self._normalize_camera_slots(settings.get("camera_slots", list(CAMERA_ROLES))),
             "cpu_inference_chunk_size": self._normalize_cpu_inference_chunk_size(
                 settings.get("cpu_inference_chunk_size", 2)
+            ),
+            "cpu_inference_threads": self._normalize_cpu_inference_threads(
+                settings.get("cpu_inference_threads", 0)
             ),
         }
         if payload["camera_layout"] not in {
@@ -273,6 +280,14 @@ class RuntimeModeSettingsStore:
         except (TypeError, ValueError):
             chunk_size = 2
         return max(1, min(256, chunk_size))
+
+    @staticmethod
+    def _normalize_cpu_inference_threads(value: object) -> int:
+        try:
+            threads = int(value)
+        except (TypeError, ValueError):
+            threads = 0
+        return max(0, min(64, threads))
 
 
 def prompt_password_dialog(

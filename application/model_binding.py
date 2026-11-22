@@ -15,7 +15,7 @@ class ModelBindingMixin:
         manifest = self.model_library.resolve(item.library_model_id, item.library_version)
         algorithm = storage_code_backbone(manifest["algorithm"])
         if self.is_learning_tool(item.algorithm_code):
-            if manifest["kind"] != "embedding" or not self.is_embedding_algorithm(algorithm):
+            if manifest["kind"] not in {"embedding", "yolo"} or not (self.is_embedding_algorithm(algorithm) or self.is_yolo_algorithm(algorithm)):
                 raise ValueError("公共模型类型与当前学习工具不兼容")
         elif manifest["kind"] != "traditional" or algorithm != item.algorithm_code:
             raise ValueError("公共模型算法与当前检测工具不兼容")
@@ -51,6 +51,8 @@ class ModelBindingMixin:
                 )
                 description.update(
                     ready=True, name=manifest["name"], version=manifest["version"],
+                    model_id=manifest["model_id"], created_at=manifest.get("created_at", ""),
+                    origin=dict(manifest.get("source") or {}),
                     path=manifest.get("model_file") or manifest["manifest_path"],
                     parameters=dict(manifest["parameters"]),
                     message=f"公共模型：{manifest['name']} / {manifest['version']}（固定版本）",
@@ -59,7 +61,10 @@ class ModelBindingMixin:
             if source == "group" and not str(item.task_group or "").strip():
                 raise ValueError("请选择或创建共享组")
             key = item.effective_model_key
-            if self.is_embedding_algorithm(algorithm):
+            if self.is_yolo_algorithm(algorithm):
+                paths = self.yolo_model_paths(product_dir, model_key=key)
+                description.update(ready=paths.onnx.is_file() and paths.metadata.is_file(), path=str(paths.onnx))
+            elif self.is_embedding_algorithm(algorithm):
                 model_path = self._local_embedding_file(algorithm, product_dir, key)
                 description.update(
                     ready=bool(model_path),
@@ -85,7 +90,11 @@ class ModelBindingMixin:
         if not description["ready"]:
             raise ValueError(description["message"] or "请先完成模型训练")
         kwargs = {}
-        if self.is_embedding_algorithm(algorithm):
+        if self.is_yolo_algorithm(algorithm):
+            paths = self.yolo_model_paths(product_dir, model_key=item.effective_model_key)
+            self._load_yolo_model_cached(product_dir, model_key=item.effective_model_key)
+            kwargs.update(model_file=paths.onnx, classifier_metadata=paths.metadata)
+        elif self.is_embedding_algorithm(algorithm):
             model = self._load_register_model_cached(description["path"])
             if not model.is_ready() or storage_code_backbone(model.backbone) != algorithm:
                 raise ValueError("模型未就绪或模型算法与当前工具不一致")
@@ -94,12 +103,15 @@ class ModelBindingMixin:
             kwargs["traditional_model"] = self.get_traditional_model_dict(
                 algorithm, model_key=item.effective_model_key
             )
+        parameters = {"score_mode": self.product_params.score_mode,
+                      "margin": float(self.product_params.margin), "topk": int(self.product_params.topk)}
+        if self.is_yolo_algorithm(algorithm):
+            parameters["yolo_ng_threshold"] = float(self.product_params.yolo_ng_threshold)
         return self.model_library.publish(
             name=name, algorithm=algorithm, model_id=model_id,
-            parameters={"score_mode": self.product_params.score_mode,
-                        "margin": float(self.product_params.margin),
-                        "topk": int(self.product_params.topk)},
+            parameters=parameters,
             source={"order": Path(product_dir).name, "roi": item.roi_label,
+                    "camera_id": item.camera_id, "roi_display_name": item.display_name,
                     "group": getattr(item, "task_group", ""),
                     "model_key": item.effective_model_key},
             **kwargs,

@@ -8,6 +8,9 @@ from PySide6 import QtCore, QtWidgets
 
 from common.algorithm_codes import normalize_tool_algorithm_code
 from common.model_groups import OrderModelGroups
+from ui.debug.tool_page.model_library_labels import (
+    library_model_details, library_model_label, library_model_origin, short_model_id,
+)
 from ui.i18n import tr
 
 
@@ -29,7 +32,10 @@ def binding_status(owner, item) -> tuple[str, str, str]:
     if source == "library":
         name = str(description.get("name") or getattr(item, "library_model_id", ""))
         version = str(description.get("version") or getattr(item, "library_version", ""))
-        text = tr("debug.model_source.library_status", name=name, version=version)
+        models = getattr(getattr(owner, "model_source_panel", None), "_models", ())
+        identifier = str(getattr(item, "library_model_id", ""))
+        text = tr("debug.model_source.library_status", name=name, version=version,
+                  identifier=short_model_id(identifier, models))
     elif source == "group":
         key = "debug.model_source.group_status" if ready else "debug.model_source.group_untrained_status"
         text = tr(key, group=getattr(item, "task_group", ""))
@@ -38,6 +44,8 @@ def binding_status(owner, item) -> tuple[str, str, str]:
     if not ready and source == "library":
         text = tr("debug.model_source.unavailable_status", source=text)
     detail = str(description.get("message") or "")
+    if source == "library":
+        detail += "\n" + library_model_details(dict(description, model_id=identifier))
     path = str(description.get("path") or "")
     return text, "\n".join(part for part in (text, detail, path) if part), "#79d279" if ready else "#d98c8c"
 
@@ -120,12 +128,18 @@ class ModelSourcePanel:
         self.group.setEditable(True)
         self.group.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
         self.library = QtWidgets.QComboBox()
+        self.library_details = QtWidgets.QLabel()
+        self.library_details.setObjectName("model_library_details")
+        self.library_details.setWordWrap(True)
+        self.library_details.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        self.library_details.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
         self.mode_label = QtWidgets.QLabel()
         self.group_label = QtWidgets.QLabel()
         self.library_label = QtWidgets.QLabel()
         form.addRow(self.mode_label, self.mode)
         form.addRow(self.group_label, self.group)
         form.addRow(self.library_label, self.library)
+        form.addRow(self.library_details)
         self.status = QtWidgets.QLabel()
         self.status.setWordWrap(True)
         form.addRow(self.status)
@@ -144,6 +158,7 @@ class ModelSourcePanel:
         form.addRow(row)
         layout.addWidget(self.frame)
         self.mode.currentIndexChanged.connect(self._sync_mode)
+        self.library.currentIndexChanged.connect(self._sync_library_details)
         self.apply_button.clicked.connect(self.apply)
         self.publish_button.clicked.connect(self.publish)
         self.refresh_button.clicked.connect(self.reload_library)
@@ -232,11 +247,11 @@ class ModelSourcePanel:
             self.library.clear()
             self.library.addItem(tr("debug.model_source.choose_library"), None)
             for model in self._models:
-                if (model.get("kind") == "embedding") != self.owner.algo.is_learning_tool(item.algorithm_code):
+                if (model.get("kind") in {"embedding", "yolo"}) != self.owner.algo.is_learning_tool(item.algorithm_code):
                     continue
                 key = (str(model["model_id"]), str(model["version"]))
-                self.library.addItem(f"{model['name']} / {model['version']}", key)
-                self.library.setItemData(self.library.count() - 1, str(model["model_id"]), QtCore.Qt.ItemDataRole.ToolTipRole)
+                self.library.addItem(library_model_label(model, self._models), key)
+                self.library.setItemData(self.library.count() - 1, library_model_details(model), QtCore.Qt.ItemDataRole.ToolTipRole)
                 if key == (getattr(item, "library_model_id", ""), str(getattr(item, "library_version", ""))):
                     self.library.setCurrentIndex(self.library.count() - 1)
             if source == "library" and self.library.currentData() is None:
@@ -279,6 +294,14 @@ class ModelSourcePanel:
             widget.setVisible(source == "library")
         self.group.setEnabled(self._has_permission("inspection.edit_items"))
         self.library.setEnabled(self._has_permission("inspection.edit_items"))
+        self._sync_library_details()
+
+    def _sync_library_details(self, *_args) -> None:
+        selected = self.library.currentData()
+        model = next((model for model in self._models
+                      if (model["model_id"], model["version"]) == selected), None)
+        self.library_details.setText(library_model_details(model) if model is not None else "")
+        self.library_details.setVisible(self.mode.currentData() == "library" and model is not None)
 
     def has_pending_changes(self) -> bool:
         item = self._selected()
@@ -335,6 +358,7 @@ class ModelSourcePanel:
             return False
         self.owner.algo.model = None
         self.owner.algo._loaded_embedding_model_key = ("", "")
+        self.owner.algo._loaded_yolo_model_key = ""
         self.owner.algo.clear_embedding_model_cache()
         self.owner._clear_training_roi_review_state(item.camera_id)
         self.owner._refresh_inspection_items_table()
@@ -356,17 +380,25 @@ class ModelSourcePanel:
         latest: dict[str, dict] = {}
         for model in self._models:
             if model.get("algorithm") == self._algorithm(item):
-                latest.setdefault(str(model["model_id"]), model)
+                identifier = str(model["model_id"])
+                if identifier not in latest or str(model["version"]) > str(latest[identifier]["version"]):
+                    latest[identifier] = model
         options = [tr("debug.model_source.publish_new")]
         existing = list(latest.values())
-        options.extend(f"{model['name']} / {str(model['model_id'])[:8]}" for model in existing)
+        options.extend(tr("debug.model_source.publish_existing",
+                          model=library_model_label(model, self._models),
+                          origin=library_model_origin(model)) for model in existing)
         target, accepted = QtWidgets.QInputDialog.getItem(self.prompt_parent, tr("debug.model_source.publish"), tr("debug.model_source.publish_target"), options, 0, False)
         if not accepted:
             return
         index = options.index(target)
         model_id = str(existing[index - 1]["model_id"]) if index else None
         default_name = str(existing[index - 1]["name"]) if index else str(item.task_group or item.display_name or item.roi_label)
-        name, accepted = QtWidgets.QInputDialog.getText(self.prompt_parent, tr("debug.model_source.publish"), tr("debug.model_source.publish_name"), text=default_name)
+        prompt = (
+            tr("debug.model_source.publish_version_name", identifier=short_model_id(model_id, self._models))
+            if model_id else tr("debug.model_source.publish_new_name")
+        )
+        name, accepted = QtWidgets.QInputDialog.getText(self.prompt_parent, tr("debug.model_source.publish"), prompt, text=default_name)
         if not accepted or not name.strip():
             return
         try:
@@ -375,4 +407,7 @@ class ModelSourcePanel:
             QtWidgets.QMessageBox.warning(self.prompt_parent, tr("debug.model_source.publish"), str(exc))
             return
         self.reload_library()
-        QtWidgets.QMessageBox.information(self.prompt_parent, tr("debug.model_source.publish"), tr("debug.model_source.published", name=manifest["name"], version=manifest["version"]))
+        QtWidgets.QMessageBox.information(self.prompt_parent, tr("debug.model_source.publish"), tr(
+            "debug.model_source.published", name=manifest["name"], version=manifest["version"],
+            identifier=short_model_id(manifest["model_id"], self._models),
+        ))

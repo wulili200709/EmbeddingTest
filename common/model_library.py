@@ -18,8 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-from common.algorithm_codes import LEARNING_BACKBONES, storage_code_backbone
-from common.app_paths import writable_embedding_test_root
+from common.algorithm_codes import LEARNING_BACKBONES, EMBEDDING_BACKBONES, YOLO_CLASSIFICATION_ALGORITHMS, storage_code_backbone
+from common.app_paths import MODEL_LIBRARY_DIRECTORY, SESSION_DIRECTORY, writable_embedding_test_root
 
 
 _MODEL_ID = re.compile(r"[0-9a-f]{32}\Z")
@@ -28,6 +28,7 @@ _LIBRARY_KEY = re.compile(
     r"(?P<camera>[A-Za-z0-9._-]+)__library__(?P<model_id>[0-9a-f]{32})__(?P<version>v[0-9]{6})\Z"
 )
 _TRADITIONAL_ALGORITHMS = {"meanintensity", "meanstd", "meanhsv_h", "meanhsv_v", "meanhsv_s"}
+_MIGRATION_LOCK = threading.RLock()
 
 
 def _validate_identity(model_id: object, version: object | None = None) -> tuple[str, str]:
@@ -65,6 +66,12 @@ def _algorithm(value: object) -> str:
     return normalized
 
 
+def _model_kind(algorithm: str) -> str:
+    if algorithm in YOLO_CLASSIFICATION_ALGORITHMS:
+        return "yolo"
+    return "embedding" if algorithm in EMBEDDING_BACKBONES else "traditional"
+
+
 def _json_object(value: Mapping[str, Any] | None, *, label: str) -> dict[str, Any]:
     if value is None:
         return {}
@@ -89,6 +96,20 @@ def _parameters(value: Mapping[str, Any] | None) -> dict[str, Any]:
     if isinstance(result["topk"], bool) or not math.isfinite(result["margin"]) or topk < 1 or topk != result["topk"]:
         raise ValueError("Invalid model scoring parameters")
     result["topk"] = topk
+    if "yolo_ng_threshold" in result:
+        threshold = float(result["yolo_ng_threshold"])
+        if not math.isfinite(threshold) or not 0. <= threshold <= 1.:
+            raise ValueError("Invalid classifier NG threshold")
+        result["yolo_ng_threshold"] = threshold
+    return result
+
+
+def _classifier_metadata(value) -> dict:
+    result = _json_object(value, label="Classifier metadata")
+    names = result.get("names", {})
+    values = list(names.values()) if isinstance(names, dict) else names if isinstance(names, list) else []
+    if not {"ok", "ng"}.issubset({str(name).strip().lower() for name in values}):
+        raise ValueError("Classifier metadata must contain OK and NG classes")
     return result
 
 
@@ -117,9 +138,60 @@ def _sha256(path: Path) -> str:
 
 class ModelLibrary:
     def __init__(self, root: str | Path | None = None) -> None:
-        self.root = Path(root if root is not None else writable_embedding_test_root(__file__) / "model_library").expanduser().resolve()
+        app_root = writable_embedding_test_root(__file__) if root is None else None
+        self.root = Path(root if root is not None else app_root / SESSION_DIRECTORY / MODEL_LIBRARY_DIRECTORY).expanduser().resolve()
         self._lock = threading.RLock()
         self._verified: dict[tuple[str, str], tuple[tuple, dict[str, Any]]] = {}
+        if app_root is not None:
+            if any((self.root / filename).exists() for filename in (
+                "session.json", "inspection_items.json", "product_params.json",
+            )):
+                raise ValueError(f"公共模型库目录与已有订单冲突，请先重命名该订单：{self.root}")
+            self._import_legacy_versions(app_root / MODEL_LIBRARY_DIRECTORY)
+
+    def _import_legacy_versions(self, legacy_root: Path) -> None:
+        """Copy verified old versions atomically, retaining the old library.
+
+        Keeping the old location lets an already running older application keep
+        working. Its later publications are imported on the next startup too.
+        """
+        legacy_root = legacy_root.resolve()
+        if legacy_root == self.root or not legacy_root.is_dir():
+            return
+        with _MIGRATION_LOCK:
+            legacy = ModelLibrary(legacy_root)
+            for model in legacy.list_models():
+                identifier, version = model["model_id"], model["version"]
+                destination = self._directory(identifier, version)
+                manifest = Path(model["manifest_path"])
+                if destination.exists():
+                    self.resolve(identifier, version)
+                    if manifest.read_bytes() != (destination / "manifest.json").read_bytes():
+                        raise FileExistsError(
+                            f"公共模型迁移冲突，两个位置的 {identifier}/{version} 内容不同，均未覆盖："
+                            f"{legacy_root}；{self.root}"
+                        )
+                    continue
+                self.root.mkdir(parents=True, exist_ok=True)
+                stage = self._within_root(Path(tempfile.mkdtemp(prefix=".migrate-", dir=self.root)))
+                try:
+                    staged_version = stage / identifier / version
+                    staged_version.mkdir(parents=True)
+                    shutil.copy2(manifest, staged_version / "manifest.json")
+                    for asset in model["assets"]:
+                        entry = str(asset["file"])
+                        shutil.copy2(legacy._asset_path(manifest.parent, entry), staged_version / entry)
+                    # Check the copied bytes before making this version visible.
+                    ModelLibrary(stage).resolve(identifier, version)
+                    checked_version = self._within_root(staged_version)
+                    checked_destination = self._directory(identifier, version)
+                    checked_destination.parent.mkdir(parents=True, exist_ok=True)
+                    checked_version.rename(checked_destination)
+                finally:
+                    checked_stage = self._within_root(stage)
+                    if checked_stage.parent != self.root or not checked_stage.name.startswith(".migrate-"):
+                        raise ValueError("Invalid temporary migration directory")
+                    shutil.rmtree(checked_stage)
 
     def _within_root(self, path: Path) -> Path:
         resolved = path.resolve()
@@ -161,6 +233,7 @@ class ModelLibrary:
         algorithm: str,
         model_file: str | Path | None = None,
         traditional_model: Mapping[str, Any] | None = None,
+        classifier_metadata: str | Path | None = None,
         parameters: Mapping[str, Any] | None = None,
         source: Mapping[str, Any] | None = None,
         model_id: str | None = None,
@@ -169,6 +242,7 @@ class ModelLibrary:
         if not display_name:
             raise ValueError("A model name is required")
         normalized_algorithm = _algorithm(algorithm)
+        kind = _model_kind(normalized_algorithm)
         if (model_file is None) == (traditional_model is None):
             raise ValueError("Publish exactly one embedding file or traditional model")
         if model_file is not None and normalized_algorithm not in LEARNING_BACKBONES:
@@ -177,10 +251,20 @@ class ModelLibrary:
             raise ValueError("Only traditional algorithms can publish threshold models")
         identifier, _ = _validate_identity(model_id or uuid.uuid4().hex)
         scoring = _parameters(parameters)
+        if kind == "yolo":
+            scoring.setdefault("yolo_ng_threshold", .5)
         provenance = _json_object(source, label="Model source")
         source_file = None if model_file is None else Path(model_file).resolve()
-        if source_file is not None and (source_file.suffix.lower() != ".npz" or not source_file.is_file()):
-            raise ValueError("An existing NPZ model file is required")
+        expected_suffix = ".onnx" if kind == "yolo" else ".npz"
+        if source_file is not None and (source_file.suffix.lower() != expected_suffix or not source_file.is_file()):
+            raise ValueError(f"An existing {expected_suffix} model file is required")
+        metadata_file = None if classifier_metadata is None else Path(classifier_metadata).resolve()
+        if kind == "yolo":
+            if source_file is None or metadata_file is None or not metadata_file.is_file():
+                raise ValueError("Classifier publication requires ONNX and metadata files")
+            _classifier_metadata(json.loads(metadata_file.read_text(encoding="utf-8")))
+        elif metadata_file is not None:
+            raise ValueError("Classifier metadata is only valid for classifier models")
         threshold_model = None if traditional_model is None else _traditional_model(traditional_model, normalized_algorithm)
 
         with self._lock:
@@ -194,24 +278,29 @@ class ModelLibrary:
             destination = self._directory(identifier, revision)
             stage = self._within_root(Path(tempfile.mkdtemp(prefix=".publish-", dir=model_directory)))
             try:
-                filename = "model.npz" if source_file is not None else "threshold_model.json"
+                filename = "model.onnx" if kind == "yolo" else "model.npz" if source_file is not None else "threshold_model.json"
                 artifact = self._asset_path(stage, filename)
                 if source_file is not None:
                     shutil.copyfile(source_file, artifact)
                 else:
                     artifact.write_text(json.dumps(threshold_model, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
+                assets = [{"file": filename, "size": artifact.stat().st_size, "sha256": _sha256(artifact)}]
+                if metadata_file is not None:
+                    metadata_target = self._asset_path(stage, "classifier.json")
+                    shutil.copyfile(metadata_file, metadata_target)
+                    assets.append({"file": "classifier.json", "size": metadata_target.stat().st_size, "sha256": _sha256(metadata_target)})
                 manifest = {
                     "schema_version": 1,
                     "model_id": identifier,
                     "version": revision,
                     "name": display_name,
                     "algorithm": normalized_algorithm,
-                    "kind": "embedding" if source_file is not None else "traditional",
+                    "kind": kind,
                     "created_at": datetime.now(timezone.utc).isoformat(),
                     "parameters": scoring,
                     "source": provenance,
                     "entry_file": filename,
-                    "assets": [{"file": filename, "size": artifact.stat().st_size, "sha256": _sha256(artifact)}],
+                    "assets": assets,
                 }
                 (stage / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
                 # rename never replaces a published, nonempty version directory.
@@ -248,7 +337,7 @@ class ModelLibrary:
             if manifest.get("model_id") != identifier or manifest.get("version") != revision:
                 raise ValueError("Model manifest identity does not match its version directory")
             normalized_algorithm = _algorithm(manifest.get("algorithm"))
-            kind = "embedding" if normalized_algorithm in LEARNING_BACKBONES else "traditional"
+            kind = _model_kind(normalized_algorithm)
             if manifest.get("kind") != kind:
                 raise ValueError("Model kind does not match its algorithm")
             if expected_algorithm is not None and normalized_algorithm != expected_algorithm:
@@ -258,26 +347,32 @@ class ModelLibrary:
             manifest["parameters"] = _parameters(manifest.get("parameters"))
             manifest["source"] = _json_object(manifest.get("source"), label="Model source")
             assets = manifest.get("assets")
-            expected_file = "model.npz" if kind == "embedding" else "threshold_model.json"
-            if not isinstance(assets, list) or len(assets) != 1 or not isinstance(assets[0], dict):
-                raise ValueError("Model manifest must describe exactly one model asset")
-            if manifest.get("entry_file") != expected_file or assets[0].get("file") != expected_file:
+            expected_file = "model.onnx" if kind == "yolo" else "model.npz" if kind == "embedding" else "threshold_model.json"
+            expected_files = {expected_file, "classifier.json"} if kind == "yolo" else {expected_file}
+            if not isinstance(assets, list) or len(assets) != len(expected_files) or not all(isinstance(asset, dict) for asset in assets):
+                raise ValueError("Model manifest describes incorrect model assets")
+            if manifest.get("entry_file") != expected_file or {asset.get("file") for asset in assets} != expected_files:
                 raise ValueError("Invalid model entry filename")
-            asset = assets[0]
-            if not re.fullmatch(r"[0-9a-f]{64}", str(asset.get("sha256", ""))):
-                raise ValueError("Invalid model asset checksum")
-            if type(asset.get("size")) is not int or asset["size"] < 0:
-                raise ValueError("Invalid model asset size")
+            for asset in assets:
+                if not re.fullmatch(r"[0-9a-f]{64}", str(asset.get("sha256", ""))):
+                    raise ValueError("Invalid model asset checksum")
+                if type(asset.get("size")) is not int or asset["size"] < 0:
+                    raise ValueError("Invalid model asset size")
             before = self._signature(directory, manifest)
             artifact = self._asset_path(directory, expected_file)
-            if artifact.stat().st_size != asset["size"] or _sha256(artifact) != asset["sha256"]:
-                raise ValueError("Model asset checksum verification failed")
+            for asset in assets:
+                asset_path = self._asset_path(directory, asset["file"])
+                if asset_path.stat().st_size != asset["size"] or _sha256(asset_path) != asset["sha256"]:
+                    raise ValueError("Model asset checksum verification failed")
             threshold_model = None
             if kind == "traditional":
                 try:
                     threshold_model = _traditional_model(json.loads(artifact.read_text(encoding="utf-8")), normalized_algorithm)
                 except (json.JSONDecodeError, UnicodeError) as exc:
                     raise ValueError("Invalid traditional model asset") from exc
+            if kind == "yolo":
+                _classifier_metadata(json.loads(self._asset_path(directory, "classifier.json").read_text(encoding="utf-8")))
+                manifest["parameters"].setdefault("yolo_ng_threshold", .5)
             after = self._signature(directory, manifest)
             if before != after:
                 raise ValueError("Model files changed during verification")
@@ -285,7 +380,8 @@ class ModelLibrary:
             result.update({
                 "directory": str(directory),
                 "manifest_path": str(manifest_path),
-                "model_file": str(artifact) if kind == "embedding" else "",
+                "model_file": str(artifact) if kind in {"embedding", "yolo"} else "",
+                "classifier_metadata": str(self._asset_path(directory, "classifier.json")) if kind == "yolo" else "",
                 "traditional_model": threshold_model,
             })
             self._verified[identity] = (after, result)

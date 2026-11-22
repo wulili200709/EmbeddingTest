@@ -5,7 +5,7 @@ import os
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 
 ROOT = Path(globals().get("SPECPATH", Path.cwd())).resolve()
@@ -241,6 +241,11 @@ hiddenimports = sorted(
     )
 )
 
+
+ultralytics_bundle = collect_all("ultralytics")
+datas += ultralytics_bundle[0]
+binaries += ultralytics_bundle[1]
+hiddenimports = sorted(set(hiddenimports + ultralytics_bundle[2]))
 
 a = Analysis(
     [str(APP_ROOT / "Main.py")],

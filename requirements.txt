@@ -7,4 +7,4 @@ matplotlib
 onnx
 onnxruntime
 scikit-learn
-
+ultralytics>=8.3.0

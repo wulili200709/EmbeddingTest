@@ -201,6 +201,10 @@ class TrainingTaskBuilder:
                 )
             )
 
+        classifier = getattr(self.owner.algo, "is_yolo_algorithm", lambda _code: False)(algorithm)
+        if classifier and (len(ok_samples) < 2 or len(ng_samples) < 2):
+            raise RuntimeError(tr("debug.standard_learning_min_samples", ok=len(ok_samples), ng=len(ng_samples)))
+
         embedding_cache_dir = ""
         embedding_checker = getattr(self.owner.algo, "is_embedding_algorithm", None)
         is_embedding = bool(embedding_checker(algorithm)) if callable(embedding_checker) else False

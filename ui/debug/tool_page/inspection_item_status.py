@@ -39,6 +39,9 @@ def _inspection_item_status(tool_page, inspection_item):
         backbone = tool_page.algo.current_learning_backbone(inspection_item.camera_id)
         if not backbone:
             return tr("debug.status.not_selected"), "Select a subtype for the learning tool first.", "#d98c8c"
+        if getattr(tool_page.algo, "is_yolo_algorithm", lambda _code: False)(backbone):
+            from ui.debug.tool_page.model_source_panel import binding_status
+            return binding_status(tool_page, inspection_item)
         model_path = tool_page.algo.embedding_model_path(
             backbone,
             tool_page.session.product_dir,

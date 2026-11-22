@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 import os
@@ -210,6 +210,22 @@ def _predict_learning_items_batch_rows(
     for algorithm, group in learning_groups.items():
         if not str(algorithm or "").strip():
             raise RuntimeError("please choose a learning tool subtype first")
+        if getattr(algo, "is_yolo_algorithm", lambda _code: False)(algorithm):
+            for item in group:
+                load_embedding_model(algorithm, model_key=item.effective_model_key)
+                roi_label = str(item.roi_label or "").strip() or "roi"
+                result = algo.predict_image(
+                    path,
+                    labels=[roi_label],
+                    match_ms=match_ms,
+                    algorithm_override=algorithm,
+                    model_key_override=item.effective_model_key,
+                )
+                row = result.to_dict()
+                row["infer_ms"] = float(result.total_ms)
+                rows_by_key[item.model_key] = row
+            continue
+
         group_infer_t0 = time.perf_counter()
         models: List[Any] = []
         for item in group:
@@ -294,7 +310,6 @@ def _predict_learning_items_batch_rows_from_frame(
         return {}
     # Import the embedding helper on demand so startup does not pull torch/torchvision
     # before the main window is visible.
-    from algorithms.embedding import embed_batch_from_array
 
     rows_by_key: Dict[str, Dict[str, object]] = {}
     learning_groups: Dict[str, List[InspectionItem]] = {}
@@ -306,7 +321,32 @@ def _predict_learning_items_batch_rows_from_frame(
     for algorithm, group in learning_groups.items():
         if not str(algorithm or "").strip():
             raise RuntimeError("please choose a learning tool subtype first")
+        if getattr(algo, "is_yolo_algorithm", lambda _code: False)(algorithm):
+            group_infer_t0 = time.perf_counter()
+            for item in group:
+                roi_label = str(item.roi_label or "").strip() or "roi"
+                shape = shape_by_label.get(roi_label)
+                if shape is None:
+                    raise RuntimeError(f"Label '{roi_label}' not found in runtime ROI shapes")
+                load_embedding_model(algorithm, model_key=item.effective_model_key)
+                result = algo.predict_yolo_from_array(
+                    image_bgr,
+                    shape,
+                    model_key=item.effective_model_key,
+                    match_ms=match_ms,
+                )
+                row = result.to_dict()
+                row["infer_ms"] = float(result.total_ms)
+                rows_by_key[item.model_key] = row
+            if timing_breakdown is not None:
+                timing_breakdown["classifier_onnx_ms"] = (
+                    float(timing_breakdown.get("classifier_onnx_ms", 0.0))
+                    + float((time.perf_counter() - group_infer_t0) * 1000.0)
+                )
+            continue
+
         group_infer_t0 = time.perf_counter()
+        from algorithms.embedding import embed_batch_from_array
         model_load_t0 = time.perf_counter()
         models: List[Any] = []
         for item in group:
@@ -528,6 +568,7 @@ class ToolPageRuntimeContext:
 class ProductRuntimeContext:
     session: "ProductSession"
     algo: "AlgorithmController"
+    reuse_embedding_models: bool = False
 
     def __post_init__(self) -> None:
         self._loc_method = "shape"
@@ -602,14 +643,19 @@ class ProductRuntimeContext:
         if not labels:
             labels = self._loc_output_labels(camera_role)
         effective_algorithm = ""
-        if str(algorithm_override or "").strip():
+        publication = self.algo._library_model_for_key(model_key_override)
+        if publication is not None:
+            effective_algorithm = publication["algorithm"]
+        elif str(algorithm_override or "").strip():
             effective_algorithm = self.algo.resolve_tool_algorithm(algorithm_override, camera_role)
         elif str(self.algo.product_params.algorithm or "").strip():
             effective_algorithm = self.algo.resolve_learning_algorithm(
                 self.algo.product_params.algorithm,
                 camera_role,
             )
-        if effective_algorithm and self.algo.is_embedding_algorithm(effective_algorithm):
+        if effective_algorithm and self.algo.is_yolo_algorithm(effective_algorithm):
+            self.load_embedding_model(effective_algorithm, model_key=model_key_override)
+        elif effective_algorithm and self.algo.is_embedding_algorithm(effective_algorithm):
             if not self.algo._loaded_embedding_matches(
                 effective_algorithm,
                 labels=labels,
@@ -1100,7 +1146,10 @@ class ProductRuntimeContext:
         )
 
     def reload(self) -> None:
-        self.algo.load_params(self.session.product_params_path)
+        if self.reuse_embedding_models:
+            self.algo.load_params(self.session.product_params_path, reuse_embedding_models=True)
+        else:
+            self.algo.load_params(self.session.product_params_path)
         self._shape_match_ms_by_image = {}
         session_data = self.session.load_session()
         self._loc_method = _normalize_loc_method(session_data.loc_method)

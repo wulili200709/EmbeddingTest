@@ -1,4 +1,4 @@
-﻿"""
+"""
 Tool page UI for template setup, ROI review, training, and testing.
 
 Main workflow groups:
@@ -40,6 +40,7 @@ from application import (
     AlgorithmController,
     SUPPORTED_ALGORITHMS,
     SUPPORTED_EMBEDDING_ALGORITHMS,
+    SUPPORTED_LEARNING_ALGORITHMS,
     SUPPORTED_SCORE_MODES,
     ProductSession,
     TrainResult,
@@ -250,6 +251,9 @@ class ToolPage(QtWidgets.QWidget):
             ("lbl_algo_tool", tr("debug.tool")),
             ("lbl_algo_decision", tr("debug.decision")),
             ("lbl_algo_threshold", tr("debug.threshold")),
+            ("lbl_yolo_epochs", tr("debug.yolo_epochs")),
+            ("lbl_yolo_batch", tr("debug.yolo_batch")),
+            ("lbl_yolo_ng_threshold", tr("debug.yolo_ng_threshold")),
             ("lbl_action_section", tr("debug.actions")),
             ("lbl_roi_shape_caption", tr("debug.shape")),
             ("lbl_roi_label_caption", tr("debug.label")),
@@ -1509,6 +1513,27 @@ class ToolPage(QtWidgets.QWidget):
         self.spin_topk.valueChanged.connect(self._on_runtime_params_changed)
         self.spin_topk.setStyleSheet(_input_style)
 
+        self.spin_yolo_epochs = QtWidgets.QSpinBox()
+        self.spin_yolo_epochs.setRange(1, 1000)
+        self.spin_yolo_epochs.setValue(80)
+        self.spin_yolo_epochs.setKeyboardTracking(False)
+        self.spin_yolo_epochs.valueChanged.connect(self._on_runtime_params_changed)
+        self.spin_yolo_epochs.setStyleSheet(_input_style)
+        self.spin_yolo_batch = QtWidgets.QSpinBox()
+        self.spin_yolo_batch.setRange(1, 128)
+        self.spin_yolo_batch.setValue(16)
+        self.spin_yolo_batch.setKeyboardTracking(False)
+        self.spin_yolo_batch.valueChanged.connect(self._on_runtime_params_changed)
+        self.spin_yolo_batch.setStyleSheet(_input_style)
+        self.spin_yolo_ng_threshold = QtWidgets.QDoubleSpinBox()
+        self.spin_yolo_ng_threshold.setDecimals(3)
+        self.spin_yolo_ng_threshold.setRange(0.0, 1.0)
+        self.spin_yolo_ng_threshold.setSingleStep(0.01)
+        self.spin_yolo_ng_threshold.setValue(0.50)
+        self.spin_yolo_ng_threshold.setKeyboardTracking(False)
+        self.spin_yolo_ng_threshold.valueChanged.connect(self._on_runtime_params_changed)
+        self.spin_yolo_ng_threshold.setStyleSheet(_input_style)
+
         _lbl_s = f"color:{_TEXT_DIM};font-size:12px;"
         _lbl_disabled_s = "color:#7a7a7a;font-size:12px;"
         self._algo_param_label_style = _lbl_s
@@ -1518,10 +1543,18 @@ class ToolPage(QtWidgets.QWidget):
         self.lbl_algo_threshold = QtWidgets.QLabel(tr("debug.threshold")); self.lbl_algo_threshold.setStyleSheet(_lbl_s)
         self.lbl_topk = QtWidgets.QLabel("TopK")
         self.lbl_topk.setStyleSheet(self._algo_param_label_style)
+        self.lbl_yolo_epochs = QtWidgets.QLabel(tr("debug.yolo_epochs"))
+        self.lbl_yolo_batch = QtWidgets.QLabel(tr("debug.yolo_batch"))
+        self.lbl_yolo_ng_threshold = QtWidgets.QLabel(tr("debug.yolo_ng_threshold"))
+        for label in (self.lbl_yolo_epochs, self.lbl_yolo_batch, self.lbl_yolo_ng_threshold):
+            label.setStyleSheet(self._algo_param_label_style)
         algo_form.addRow(self.lbl_algo_tool, self.btn_algorithm_picker)
         algo_form.addRow(self.lbl_algo_decision, self.cmb_mode)
         algo_form.addRow(self.lbl_algo_threshold, self.spin_margin)
         algo_form.addRow(self.lbl_topk, self.spin_topk)
+        algo_form.addRow(self.lbl_yolo_epochs, self.spin_yolo_epochs)
+        algo_form.addRow(self.lbl_yolo_batch, self.spin_yolo_batch)
+        algo_form.addRow(self.lbl_yolo_ng_threshold, self.spin_yolo_ng_threshold)
         self.algorithm_params_frame = algo_frame
         right_vbox.addWidget(algo_frame)
         self._sync_algorithm_picker()
@@ -1987,6 +2020,9 @@ class ToolPage(QtWidgets.QWidget):
             if not ng_files:
                 missing_groups.append("NG")
             return tr("debug.training_validation_missing_groups", roi=roi_label, groups="/".join(missing_groups))
+        classifier = getattr(self.algo, "is_yolo_algorithm", None)
+        if callable(classifier) and classifier(self.training_controller.task_builder.resolve_algorithm(inspection_item)) and (_ok < 2 or _ng < 2):
+            return tr("debug.standard_learning_min_samples", ok=_ok, ng=_ng)
         if missing_count > 0:
             return tr("debug.training_validation_ready_with_skipped", roi=roi_label, count=missing_count)
         return tr("debug.training_validation_ready", roi=roi_label)
@@ -2260,20 +2296,27 @@ class ToolPage(QtWidgets.QWidget):
     def _apply_runtime_params_to_ui(self) -> None:
         self._updating_runtime_params = True
         try:
+            selected = self._selected_inspection_item()
+            published = {}
+            if selected is not None and getattr(selected, "model_source", "independent") == "library":
+                published = self.algo.describe_model_binding(selected, self.session.product_dir).get("parameters", {})
             algorithm = (
                 self.algo.product_params.algorithm
                 if self.algo.product_params.algorithm in SUPPORTED_ALGORITHMS
                 else ""
             )
             score_mode = (
-                self.algo.product_params.score_mode
-                if self.algo.product_params.score_mode in SUPPORTED_SCORE_MODES
+                published.get("score_mode", self.algo.product_params.score_mode)
+                if published.get("score_mode", self.algo.product_params.score_mode) in SUPPORTED_SCORE_MODES
                 else SUPPORTED_SCORE_MODES[0]
             )
             self._set_current_algorithm(algorithm)
             self.cmb_mode.setCurrentText(score_mode)
-            self.spin_margin.setValue(float(self.algo.product_params.margin))
-            self.spin_topk.setValue(max(1, int(self.algo.product_params.topk)))
+            self.spin_margin.setValue(float(published.get("margin", self.algo.product_params.margin)))
+            self.spin_topk.setValue(max(1, int(published.get("topk", self.algo.product_params.topk))))
+            self.spin_yolo_epochs.setValue(max(1, int(self.algo.product_params.yolo_epochs)))
+            self.spin_yolo_batch.setValue(max(1, int(self.algo.product_params.yolo_batch)))
+            self.spin_yolo_ng_threshold.setValue(float(published.get("yolo_ng_threshold", self.algo.product_params.yolo_ng_threshold)))
         finally:
             self._updating_runtime_params = False
         self._update_runtime_widgets()
@@ -2282,6 +2325,7 @@ class ToolPage(QtWidgets.QWidget):
     def _update_runtime_widgets(self) -> None:
         algorithm_selected = bool(self.current_algorithm())
         embedding = algorithm_selected and self._is_embedding_algorithm()
+        yolo = algorithm_selected and self.algo.is_yolo_algorithm(self.current_algorithm())
         topk_enabled = embedding and self.cmb_mode.currentText() == "topk"
         inspection_items = list(getattr(self, "inspection_items", []) or [])
         current_role = self.current_camera_role()
@@ -2329,6 +2373,11 @@ class ToolPage(QtWidgets.QWidget):
             disabled_style = getattr(self, "_algo_param_label_disabled_style", enabled_style)
             topk_label.setEnabled(topk_enabled)
             topk_label.setStyleSheet(enabled_style if topk_enabled else disabled_style)
+        for widget in (self.spin_yolo_epochs, self.spin_yolo_batch, self.spin_yolo_ng_threshold):
+            widget.setVisible(yolo)
+            widget.setEnabled(yolo and can_edit_template_params and not library_selected)
+        for label in (self.lbl_yolo_epochs, self.lbl_yolo_batch, self.lbl_yolo_ng_threshold):
+            label.setVisible(yolo)
         self.btn_train.setEnabled(has_trainable_items and can_train)
         train_current_button = getattr(self, "btn_train_current", None)
         if train_current_button is not None:
@@ -2369,12 +2418,15 @@ class ToolPage(QtWidgets.QWidget):
             if selected_item is not None
             else self.current_camera_role()
         )
-        if current_algorithm in SUPPORTED_EMBEDDING_ALGORITHMS:
+        if current_algorithm in SUPPORTED_LEARNING_ALGORITHMS:
             self.algo.set_learning_backbone(current_algorithm, camera_role)
         self.algo.product_params.algorithm = current_algorithm
         self.algo.product_params.score_mode = self.cmb_mode.currentText()
         self.algo.product_params.margin = float(self.spin_margin.value())
         self.algo.product_params.topk = int(self.spin_topk.value())
+        self.algo.product_params.yolo_epochs = int(self.spin_yolo_epochs.value())
+        self.algo.product_params.yolo_batch = int(self.spin_yolo_batch.value())
+        self.algo.product_params.yolo_ng_threshold = float(self.spin_yolo_ng_threshold.value())
         if self._is_embedding_algorithm():
             self.algo.apply_params_to_model()
         self._save_runtime_params()
@@ -2411,7 +2463,7 @@ class ToolPage(QtWidgets.QWidget):
         before = str(getattr(selected_item, "algorithm_code", "") if selected_item is not None else self.algo.product_params.algorithm)
         from ui.debug.tool_page.model_source_changes import detach_for_tool_change
         detached = bool(algorithm and detach_for_tool_change(self, selected_item, algorithm))
-        if algorithm in SUPPORTED_EMBEDDING_ALGORITHMS:
+        if algorithm in SUPPORTED_LEARNING_ALGORITHMS:
             self.algo.set_learning_backbone(algorithm, camera_role)
         if not algorithm:
             self.algo.product_params.algorithm = ""
@@ -2423,7 +2475,7 @@ class ToolPage(QtWidgets.QWidget):
         if selected_item is not None:
             selected_item.algorithm_code = (
                 "shared_backbone_register"
-                if algorithm in SUPPORTED_EMBEDDING_ALGORITHMS
+                if algorithm in SUPPORTED_LEARNING_ALGORITHMS
                 else algorithm
             )
         # inspectionItemsChanged synchronously reloads runtime parameters through

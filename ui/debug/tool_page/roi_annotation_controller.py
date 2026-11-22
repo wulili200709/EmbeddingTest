@@ -4,12 +4,12 @@ import os
 from typing import Dict, List, Optional, Tuple
 
 from algorithms.registry import is_measurement_tool_algorithm
-from common import labelme_io
 from common.app_logging import get_app_logger
 from common.camera_roles import normalize_camera_role
 from common.path_utils import product_relative_path, resolve_product_path
 from common.safe_io import atomic_write_json, backup_path_for, load_json_with_backup
 from ui.i18n import tr
+from ui.debug.tool_page.roi_geometry_cache import RoiGeometryCache
 
 
 LOGGER = get_app_logger(__name__)
@@ -22,6 +22,7 @@ def _normalize_camera_role(camera_id: object) -> str:
 class RoiAnnotationController:
     def __init__(self, owner) -> None:
         self.owner = owner
+        self._geometry_cache = RoiGeometryCache()
 
     def store_path(self) -> str:
         return os.path.join(self.owner.session.product_dir, "sample_annotations.json")
@@ -95,17 +96,16 @@ class RoiAnnotationController:
         except Exception as exc:
             LOGGER.exception("Failed to delete sample annotation store %s: %s", store_path, exc)
 
-    @staticmethod
-    def has_geometry(path: str, label_name: str) -> bool:
+    def shapes_for_path(self, path: str) -> dict[str, dict]:
+        return self._geometry_cache.shapes_for_path(path)
+
+    def has_geometry(self, path: str, label_name: str) -> bool:
         if not path or not label_name:
             return False
-        json_path = labelme_io.labelme_json_of_image(path)
-        if not os.path.exists(json_path):
-            return False
         try:
-            return labelme_io.read_shape_from_labelme(json_path, label_name) is not None
+            return label_name in self.shapes_for_path(path)
         except Exception as exc:
-            LOGGER.exception("Failed to read ROI geometry %s label=%s: %s", json_path, label_name, exc)
+            LOGGER.exception("Failed to read ROI geometry %s label=%s: %s", path, label_name, exc)
             return False
 
     def status_for_path(self, path: str, camera_role: object, label_name: str) -> str:
@@ -204,10 +204,11 @@ class RoiAnnotationController:
         if not labels:
             return 0, 0
         role = _normalize_camera_role(camera_role or self.owner.current_camera_role()) or "cam1"
+        shapes = self.shapes_for_path(path)
         present_count = sum(
             1
             for label in labels
-            if self.has_geometry(path, label) and self.status_for_path(path, role, label) in {"OK", "NG"}
+            if label in shapes and self.status_for_path(path, role, label) in {"OK", "NG"}
         )
         return present_count, len(labels)
 
@@ -215,12 +216,18 @@ class RoiAnnotationController:
         geometry_labels = self.owner._inspection_label_names_for_role(camera_role)
         if not geometry_labels:
             return tr("sample.unset")
-        geometry_missing = sum(1 for label in geometry_labels if not self.has_geometry(path, label))
+        shapes = self.shapes_for_path(path)
+        geometry_missing = any(label not in shapes for label in geometry_labels)
         if geometry_missing:
             return tr("sample.missing_roi")
-        if not self.annotation_required_labels(camera_role):
+        required_labels = self.annotation_required_labels(camera_role)
+        if not required_labels:
             return tr("sample.complete")
-        present_count, total_count = self.progress_for_path(path, camera_role)
+        present_count = sum(
+            label in shapes and self.status_for_path(path, camera_role or self.owner.current_camera_role(), label) in {"OK", "NG"}
+            for label in required_labels
+        )
+        total_count = len(required_labels)
         if total_count <= 0 or present_count <= 0:
             return tr("sample.unset")
         if present_count < total_count:

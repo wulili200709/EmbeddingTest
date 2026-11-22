@@ -1,4 +1,4 @@
-﻿"""Execution-oriented RuntimeController helpers."""
+"""Execution-oriented RuntimeController helpers."""
 
 from __future__ import annotations
 
@@ -506,6 +506,8 @@ def _warm_runtime_models(runtime, enabled_items: list[object]) -> None:
                 except Exception:
                     if getattr(item, "model_source", "independent") in {"group", "library"}:
                         raise
+            if getattr(runtime._algo, "is_yolo_algorithm", lambda _code: False)(algorithm):
+                continue
             try:
                 runtime._algo.get_feat_net(algorithm)
             except Exception:

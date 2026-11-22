@@ -3,11 +3,13 @@ from __future__ import annotations
 from typing import List
 
 
-LEARNING_BACKBONES = [
+EMBEDDING_BACKBONES = [
     "efficientnet_b0",
     "mobilenet_v3_small",
     "mobilenet_v3_large",
 ]
+YOLO_CLASSIFICATION_ALGORITHMS = ["yolov8n_cls"]
+LEARNING_BACKBONES = EMBEDDING_BACKBONES + YOLO_CLASSIFICATION_ALGORITHMS
 DEFAULT_LEARNING_BACKBONE = LEARNING_BACKBONES[0]
 SHARED_BACKBONE_ALGORITHM_CODE = "shared_backbone_register"
 
@@ -15,6 +17,7 @@ _LEARNING_STORAGE_CODES = {
     "efficientnet_b0": "b0",
     "mobilenet_v3_small": "b1",
     "mobilenet_v3_large": "b2",
+    "yolov8n_cls": "y8ncls",
 }
 _LEGACY_LEARNING_STORAGE_CODES = {
     "efficientnet_b0": ("lt_b0", "lt01"),
@@ -97,6 +100,7 @@ def normalize_tool_algorithm_code(code: object) -> str:
 
 __all__ = [
     "DEFAULT_LEARNING_BACKBONE",
+    "EMBEDDING_BACKBONES",
     "LEARNING_BACKBONES",
     "LEGACY_SHARED_BACKBONE_ALGORITHM_CODES",
     "SHARED_BACKBONE_ALGORITHM_CODE",
@@ -105,4 +109,5 @@ __all__ = [
     "learning_backbone_storage_codes",
     "normalize_tool_algorithm_code",
     "storage_code_backbone",
+    "YOLO_CLASSIFICATION_ALGORITHMS",
 ]

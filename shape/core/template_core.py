@@ -449,6 +449,31 @@ def load_class_source_assets(
     return source_info, roi_img, roi_mask, roi_rect, mask_rects
 
 
+def load_class_source_geometry(
+    detector: ShapeLikeDetector,
+    class_id: str,
+) -> Tuple[int, int, RoiRect]:
+    """Reuse the fixed template dimensions during runtime ROI projection.
+
+    Decode/validate the embedded source once, exactly as the editor does. Camera
+    frames are never cached. Source replacement or geometry edits invalidate it.
+    """
+    source_info = detector.class_sources.get(class_id, {})
+    source = source_info.get("source", {}) if isinstance(source_info, dict) else {}
+    if not isinstance(source, dict):
+        source = {}
+    signature = tuple(source.get(key) for key in (
+        "roi_png", "mask_png", "roi_x", "roi_y", "roi_w", "roi_h",
+    ))
+    cached = detector._source_geometry_cache.get(class_id)
+    if cached is None or cached[0] != signature:
+        _info, roi_img, _mask, rect, _rects = load_class_source_assets(detector, class_id)
+        cached = (signature, (int(roi_img.shape[1]), int(roi_img.shape[0]), rect))
+        detector._source_geometry_cache[class_id] = cached
+    width, height, rect = cached[1]
+    return width, height, RoiRect(x=rect.x, y=rect.y, w=rect.w, h=rect.h)
+
+
 def build_multi_backend_detector(
     *,
     class_id: str,

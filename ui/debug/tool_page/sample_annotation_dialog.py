@@ -8,12 +8,14 @@ from ui.i18n import tr
 from ui.debug.tool_page.camera_roles import normalize_camera_role
 from ui.debug.tool_page.sample_annotation_canvas import _SampleAnnotationCanvas
 from ui.debug.tool_page.sample_auto_roi_dialog import _SampleAnnotationAutoRoiDialog
+from ui.debug.tool_page.roi_geometry_cache import RoiGeometryCache
 
 
 class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
     def __init__(self, tool_page: "ToolPage", parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent or tool_page)
         self._tool_page = tool_page
+        self._geometry_cache = RoiGeometryCache()
         self.setWindowTitle(tr("sample.annotation_title"))
         self.resize(1100, 720)
         self.setModal(False)
@@ -65,7 +67,25 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         center_layout.addWidget(QtWidgets.QLabel(tr("sample.current_image")))
         self.lbl_canvas_hint = QtWidgets.QLabel(tr("sample.canvas_hint"))
         self.lbl_canvas_hint.setStyleSheet("color:#a0a0a0;font-size:12px;")
+        self.lbl_canvas_hint.setWordWrap(True)
         center_layout.addWidget(self.lbl_canvas_hint)
+        display_row = QtWidgets.QHBoxLayout()
+        display_row.setSpacing(6)
+        self.cmb_overlay_mode = QtWidgets.QComboBox()
+        self.cmb_overlay_mode.setObjectName("sample_overlay_mode")
+        self.cmb_overlay_mode.addItem(tr("sample.show_all_rois"), "all")
+        self.cmb_overlay_mode.addItem(tr("sample.show_current_roi"), "current")
+        self.cmb_overlay_mode.addItem(tr("sample.hide_rois"), "hidden")
+        display_row.addWidget(self.cmb_overlay_mode)
+        display_row.addWidget(QtWidgets.QLabel(tr("sample.active_roi")))
+        self.cmb_active_roi = QtWidgets.QComboBox()
+        self.cmb_active_roi.setObjectName("sample_active_roi")
+        self.cmb_active_roi.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.cmb_active_roi.setMinimumContentsLength(7)
+        display_row.addWidget(self.cmb_active_roi, 1)
+        self.btn_focus_roi = QtWidgets.QPushButton(tr("sample.focus_roi"))
+        display_row.addWidget(self.btn_focus_roi)
+        center_layout.addLayout(display_row)
         self.preview_canvas = _SampleAnnotationCanvas()
         self.preview_canvas.setStyleSheet("QWidget{background:#111111;border:1px solid #303030;}")
         self.preview_canvas.imagePressed.connect(self._on_canvas_image_pressed)
@@ -89,7 +109,8 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         self.roi_table.verticalHeader().setVisible(False)
         self.roi_table.horizontalHeader().setStretchLastSection(True)
         self.roi_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        self.roi_table.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
+        self.roi_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.roi_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.roi_table.setStyleSheet(
             "QTableWidget{background:#333333;color:#d0d0d0;gridline-color:#404040;border:1px solid #404040;}"
             "QHeaderView::section{background:#3a3a3a;color:#d0d0d0;border:1px solid #404040;padding:4px;}"
@@ -140,7 +161,73 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         self.cmb_camera.currentIndexChanged.connect(lambda *_: self._reload_samples())
         self.cmb_sample_kind.currentIndexChanged.connect(lambda *_: self._reload_samples())
         self.sample_list.itemSelectionChanged.connect(self._on_sample_selected)
+        self.cmb_overlay_mode.currentIndexChanged.connect(self._refresh_display)
+        self.cmb_active_roi.currentIndexChanged.connect(self._on_active_roi_changed)
+        self.btn_focus_roi.clicked.connect(self._focus_current_roi)
+        self.roi_table.currentCellChanged.connect(self._on_roi_row_selected)
         self._reload_samples()
+
+    def _overlay_mode(self) -> str:
+        return str(self.cmb_overlay_mode.currentData() or "all")
+
+    def _shapes_for_path(self, path: str) -> dict[str, dict]:
+        controller = getattr(self._tool_page, "roi_annotations", None)
+        if controller is not None:
+            return controller.shapes_for_path(path)
+        return self._geometry_cache.shapes_for_path(path)
+
+    def _sync_roi_selector(self, camera_role: str) -> None:
+        labels = self._tool_page._inspection_label_names_for_role(camera_role)
+        preferred = self._active_roi_label
+        selected = getattr(self._tool_page, "_selected_inspection_item", lambda: None)()
+        if not preferred and selected is not None and getattr(selected, "camera_id", "") == camera_role:
+            preferred = str(getattr(selected, "roi_label", ""))
+        names = {
+            str(item.roi_label): str(item.display_name)
+            for item in getattr(self._tool_page, "inspection_items", [])
+            if getattr(item, "camera_id", "") == camera_role
+        }
+        blocker = QtCore.QSignalBlocker(self.cmb_active_roi)
+        self.cmb_active_roi.clear()
+        for label in labels:
+            name = names.get(label, label)
+            self.cmb_active_roi.addItem(f"{name} ({label})" if name != label else label, label)
+        index = self.cmb_active_roi.findData(preferred)
+        self.cmb_active_roi.setCurrentIndex(index if index >= 0 else (0 if labels else -1))
+        self._active_roi_label = str(self.cmb_active_roi.currentData() or "")
+        self.btn_focus_roi.setEnabled(bool(labels))
+        del blocker
+
+    def _refresh_display(self, *_args) -> None:
+        path, role = self._current_path_and_role()
+        if path:
+            self._refresh_canvas_overlays(path, role)
+
+    def _on_active_roi_changed(self, *_args) -> None:
+        self._active_roi_label = str(self.cmb_active_roi.currentData() or "")
+        self._focus_roi_row(self._active_roi_label)
+        self._refresh_display()
+
+    def _on_roi_row_selected(self, row: int, *_args) -> None:
+        item = self.roi_table.item(row, 0) if row >= 0 else None
+        if item is None:
+            return
+        index = self.cmb_active_roi.findData(item.text())
+        if index >= 0 and index != self.cmb_active_roi.currentIndex():
+            self.cmb_active_roi.setCurrentIndex(index)
+
+    def _focus_current_roi(self) -> None:
+        entry = next((s for s in self._canvas_shapes if s["label"] == self._active_roi_label), None)
+        if entry is None:
+            return
+        points = entry.get("points")
+        if points:
+            xs, ys = zip(*points)
+            bounds = QtCore.QRectF(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+        else:
+            bounds = QtCore.QRectF(*entry["xywh"])
+        self.preview_canvas.focus_region(bounds)
+        self.preview_canvas.setFocus()
 
     def sync_camera_roles(self, roles: List[str]) -> None:
         normalized: List[str] = []
@@ -183,8 +270,10 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
             self.sample_list.addItem(item)
             if current_path and path == current_path:
                 selected_row = index
-        del blocker
         if self.sample_list.count() == 0:
+            del blocker
+            self._canvas_shapes = []
+            self.btn_focus_roi.setEnabled(False)
             self.preview_canvas.clear_image()
             self.lbl_image_status.setText(tr("sample.list_empty"))
             self.roi_table.setRowCount(0)
@@ -194,6 +283,7 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         if selected_row < 0:
             selected_row = 0
         self.sample_list.setCurrentRow(selected_row)
+        del blocker
         self._on_sample_selected()
 
     def _on_sample_selected(self) -> None:
@@ -205,7 +295,7 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         camera_role = str(self.cmb_camera.currentData() or "cam1")
         if not path:
             return
-        self._active_roi_label = ""
+        self._sync_roi_selector(camera_role)
         self._load_canvas_preview(path, camera_role)
         usage_text = tool_page._sample_usage_text(path)
         annotation_state = tool_page._sample_annotation_state_for_path(path, camera_role)
@@ -217,32 +307,50 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
     def _populate_roi_table(self, path: str, camera_role: str) -> None:
         tool_page = self._tool_page
         labels = tool_page._inspection_label_names_for_role(camera_role)
-        self.roi_table.setRowCount(0)
+        shapes = self._shapes_for_path(path)
+        blocker = QtCore.QSignalBlocker(self.roi_table)
+        reuse_rows = self.roi_table.rowCount() == len(labels) and all(
+            self.roi_table.item(row, 0) is not None
+            and self.roi_table.item(row, 0).text() == label
+            for row, label in enumerate(labels)
+        )
+        if not reuse_rows:
+            self.roi_table.setRowCount(0)
+            self.roi_table.setRowCount(len(labels))
         for row_index, label in enumerate(labels):
-            self.roi_table.insertRow(row_index)
-            self.roi_table.setItem(row_index, 0, QtWidgets.QTableWidgetItem(label))
-            has_geometry = tool_page._path_has_roi_geometry(path, label)
-            geometry_item = QtWidgets.QTableWidgetItem(tr("sample.generated") if has_geometry else tr("sample.missing_roi"))
-            self.roi_table.setItem(row_index, 1, geometry_item)
-            combo = QtWidgets.QComboBox()
-            combo.addItem(tr("sample.unset"), "")
-            combo.addItem("OK", "OK")
-            combo.addItem("NG", "NG")
+            if not reuse_rows:
+                self.roi_table.setItem(row_index, 0, QtWidgets.QTableWidgetItem(label))
+                self.roi_table.setItem(row_index, 1, QtWidgets.QTableWidgetItem())
+            has_geometry = label in shapes
+            geometry_item = self.roi_table.item(row_index, 1)
+            geometry_item.setText(tr("sample.generated") if has_geometry else tr("sample.missing_roi"))
+            combo = self.roi_table.cellWidget(row_index, 2)
+            if combo is None:
+                combo = QtWidgets.QComboBox()
+                combo.addItem(tr("sample.unset"), "")
+                combo.addItem("OK", "OK")
+                combo.addItem("NG", "NG")
+                combo.currentIndexChanged.connect(
+                    lambda _index, roi_label=label, widget=combo: self._on_current_roi_status_changed(
+                        roi_label, str(widget.currentData() or "")
+                    )
+                )
+                self.roi_table.setCellWidget(row_index, 2, combo)
             current_status = tool_page._sample_roi_status_for_path(path, camera_role, label)
             combo_index = combo.findData(current_status)
             if combo_index < 0:
                 combo_index = 0
+            combo_blocker = QtCore.QSignalBlocker(combo)
             combo.setCurrentIndex(combo_index)
             combo.setEnabled(has_geometry)
-            combo.currentIndexChanged.connect(
-                lambda _index, image_path=path, role=camera_role, roi_label=label, widget=combo: self._on_roi_status_changed(
-                    image_path,
-                    role,
-                    roi_label,
-                    str(widget.currentData() or ""),
-                )
-            )
-            self.roi_table.setCellWidget(row_index, 2, combo)
+            del combo_blocker
+        self._focus_roi_row(self._active_roi_label)
+        del blocker
+
+    def _on_current_roi_status_changed(self, label: str, status: str) -> None:
+        path, role = self._current_path_and_role()
+        if path:
+            self._on_roi_status_changed(path, role, label, status)
 
     def _on_roi_status_changed(self, path: str, camera_role: str, label: str, status: str) -> None:
         self._tool_page._set_sample_roi_status_for_path(path, camera_role, label, status)
@@ -250,6 +358,9 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         self._tool_page._refresh_lists()
         self._tool_page._update_sample_panel_widgets()
         self._active_roi_label = label
+        blocker = QtCore.QSignalBlocker(self.cmb_active_roi)
+        self.cmb_active_roi.setCurrentIndex(self.cmb_active_roi.findData(label))
+        del blocker
         self._refresh_canvas_overlays(path, camera_role)
         self.lbl_image_status.setText(
             f"Status: {self._tool_page._sample_usage_text(path)} / "
@@ -286,7 +397,8 @@ class _SampleAnnotationPreviewDialog(QtWidgets.QDialog):
         camera_role = str(self.cmb_camera.currentData() or "cam1")
         sample_kind = str(self.cmb_sample_kind.currentData() or "train")
         try:
-            self._tool_page._set_current_camera_role(camera_role, sync_debug_role=True)
+            if self._tool_page.current_camera_role() != camera_role:
+                self._tool_page._set_current_camera_role(camera_role, sync_debug_role=True)
         except Exception:
             pass
         target_index = 0 if sample_kind == "train" else 1

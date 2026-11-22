@@ -6,5 +6,6 @@
     "cam1",
     "cam2"
   ],
-  "cpu_inference_chunk_size": 2
+  "cpu_inference_chunk_size": 2,
+  "cpu_inference_threads": 4
 }

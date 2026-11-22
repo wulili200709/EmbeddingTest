@@ -19,6 +19,7 @@ def detach_for_tool_change(owner, item, algorithm: str) -> bool:
     item.library_version = ""
     owner.algo.model = None
     owner.algo._loaded_embedding_model_key = ("", "")
+    owner.algo._loaded_yolo_model_key = ""
     owner.algo._active_library_parameters = None
     owner.algo.clear_embedding_model_cache()
     owner._clear_training_roi_review_state(item.camera_id)

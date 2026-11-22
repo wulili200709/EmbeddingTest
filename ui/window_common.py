@@ -8,7 +8,7 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from common import labelme_io
-from common.app_paths import packaged_embedding_test_root, writable_embedding_test_root
+from common.app_paths import SESSION_DIRECTORY, packaged_embedding_test_root, writable_embedding_test_root
 from common.camera_roles import DEFAULT_CAMERA_ROLE, camera_role_from_text, normalize_camera_role
 from common.runtime_camera_logging import (
     detailed_camera_diagnostics_enabled,
@@ -40,7 +40,7 @@ def _camera_role_from_path(path: str) -> str:
 
 
 def default_session_dir(anchor_file: str) -> str:
-    return str(writable_embedding_test_root(anchor_file) / ".qr_session")
+    return str(writable_embedding_test_root(anchor_file) / SESSION_DIRECTORY)
 
 
 def build_default_session_and_algo(anchor_file: str) -> tuple[ProductSession, AlgorithmController]:

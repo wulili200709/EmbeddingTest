@@ -1,7 +1,18 @@
 from __future__ import annotations
 
 import sys
+import posixpath
 from pathlib import Path
+
+
+SESSION_DIRECTORY = ".qr_session"
+MODEL_LIBRARY_DIRECTORY = "model_library"
+_RESERVED_SESSION_DIRECTORIES = {MODEL_LIBRARY_DIRECTORY, "_deleted"}
+
+
+def is_reserved_session_directory(name: object) -> bool:
+    parts = posixpath.normpath(str(name or "").strip().replace("\\", "/")).split("/")
+    return any(part.casefold() in _RESERVED_SESSION_DIRECTORIES for part in parts)
 
 
 def _source_embedding_test_root(anchor: str | Path | None = None) -> Path:

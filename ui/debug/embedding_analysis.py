@@ -70,12 +70,14 @@ class EmbeddingModelEntry:
 
 
 def list_product_names(session_root: str) -> List[str]:
+    from common.app_paths import is_reserved_session_directory
+
     if not os.path.isdir(session_root):
         return []
     names = [
         name
         for name in sorted(os.listdir(session_root))
-        if os.path.isdir(os.path.join(session_root, name))
+        if os.path.isdir(os.path.join(session_root, name)) and not is_reserved_session_directory(name)
     ]
     return names
 

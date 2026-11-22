@@ -1,4 +1,4 @@
-﻿"""Prediction and test-result helpers for ToolPage."""
+"""Prediction and test-result helpers for ToolPage."""
 
 from __future__ import annotations
 
@@ -38,6 +38,10 @@ def _predict_image(
         else tool_page.current_algorithm()
     )
 
+    publication = tool_page.algo._library_model_for_key(model_key_override)
+    if publication is not None:
+        algorithm = publication["algorithm"]
+
     match_ms: Optional[float] = None
     method_getter = getattr(tool_page, "loc_method_for_role", None)
     method = method_getter(camera_role) if callable(method_getter) else tool_page.loc_method
@@ -75,7 +79,9 @@ def _predict_image(
     if prefer_canvas_roi and len(labels) == 1 and tool_page.canvas.image_path() == path:
         roi = tool_page._roi_xywh_from_canvas()
 
-    if tool_page.algo.is_embedding_algorithm(algorithm):
+    if tool_page.algo.is_yolo_algorithm(algorithm):
+        tool_page.load_embedding_model(algorithm, model_key=model_key_override)
+    elif tool_page.algo.is_embedding_algorithm(algorithm):
         if not tool_page.algo._loaded_embedding_matches(
             algorithm,
             labels=labels,

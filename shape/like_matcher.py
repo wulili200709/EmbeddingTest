@@ -595,6 +595,7 @@ class ShapeLikeDetector:
         self.class_templates = self.backend_templates["original"]
         self.class_meta: Dict[str, List[Dict[str, float]]] = {}
         self.class_sources: Dict[str, Dict[str, Any]] = {}
+        self._source_geometry_cache: Dict[str, Any] = {}
         self.original_editor_levels: Dict[str, List[TemplateLevel]] = {}
         self._native_detectors: Dict[str, Any] = {}
         self._native_dirty = True
@@ -660,6 +661,7 @@ class ShapeLikeDetector:
     def set_class_source(self, class_id: str, source_info: Dict[str, Any]) -> None:
         self._ensure_class_containers(class_id)
         self.class_sources[class_id] = copy.deepcopy(source_info)
+        self._source_geometry_cache.pop(class_id, None)
 
     def get_class_source(self, class_id: str) -> Dict[str, Any]:
         info = self.class_sources.get(class_id, {})

@@ -9,6 +9,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from common import labelme_io
 from ui.debug import OverlayShape
 from ui.debug.tool_page.sample_annotation_canvas import _pixmap_from_path
+from ui.debug.tool_page.roi_geometry_cache import shape_geometry
 from ui.i18n import tr
 from ui.roi_overlay_colors import overlay_style_for_label
 
@@ -59,29 +60,32 @@ def _load_canvas_preview(self, path: str, camera_role: str) -> None:
 def _refresh_canvas_overlays(self, path: str, camera_role: str) -> None:
     jpath = labelme_io.labelme_json_of_image(path)
     labels = self._tool_page._inspection_label_names_for_role(camera_role)
+    mode = self._overlay_mode()
     overlays: list[OverlayShape] = []
     shape_entries: list[dict[str, object]] = []
     if not os.path.exists(jpath):
         self._canvas_shapes = []
         self.preview_canvas.set_overlays([])
         return
+    shapes = self._shapes_for_path(path)
     for label in labels:
-        poly_points = labelme_io.try_read_polygon_points_from_labelme(jpath, label)
-        xywh = labelme_io.try_read_xywh_from_labelme(jpath, label)
+        visible = mode == "all" or (mode == "current" and label == self._active_roi_label)
+        poly_points, xywh = shape_geometry(shapes.get(label, {}))
         if poly_points and len(poly_points) >= 3:
             status = self._tool_page._sample_roi_status_for_path(path, camera_role, label).lower()
             color, width, dash = overlay_style_for_label(label, status=status)
             if label == self._active_roi_label:
-                width = max(float(width), 4.0)
-            overlays.append(
-                OverlayShape(
-                    shape_type="polygon",
-                    points=[(float(x), float(y)) for x, y in poly_points],
-                    color=QtGui.QColor(color),
-                    width=float(width),
-                    dash=bool(dash),
+                width = max(float(width), 2.0)
+            if visible:
+                overlays.append(
+                    OverlayShape(
+                        shape_type="polygon",
+                        points=[(float(x), float(y)) for x, y in poly_points],
+                        color=QtGui.QColor(color),
+                        width=float(width),
+                        dash=bool(dash),
+                    )
                 )
-            )
             shape_entries.append(
                 {
                     "label": label,
@@ -94,16 +98,17 @@ def _refresh_canvas_overlays(self, path: str, camera_role: str) -> None:
             status = self._tool_page._sample_roi_status_for_path(path, camera_role, label).lower()
             color, width, dash = overlay_style_for_label(label, status=status)
             if label == self._active_roi_label:
-                width = max(float(width), 4.0)
-            overlays.append(
-                OverlayShape(
-                    shape_type="rect",
-                    xywh=tuple(int(v) for v in xywh),
-                    color=QtGui.QColor(color),
-                    width=float(width),
-                    dash=bool(dash),
+                width = max(float(width), 2.0)
+            if visible:
+                overlays.append(
+                    OverlayShape(
+                        shape_type="rect",
+                        xywh=tuple(int(v) for v in xywh),
+                        color=QtGui.QColor(color),
+                        width=float(width),
+                        dash=bool(dash),
+                    )
                 )
-            )
             shape_entries.append(
                 {
                     "label": label,
@@ -162,10 +167,15 @@ def _set_roi_status_from_canvas(self, path: str, camera_role: str, label: str, s
     self._refresh_after_annotation_change(path, camera_role)
 
 def _find_roi_label_at_point(self, image_x: float, image_y: float) -> str:
+    mode = self._overlay_mode()
+    if mode == "hidden" or self.preview_canvas.is_original_preview():
+        return ""
     candidates: list[tuple[float, int, str]] = []
     for stack_index, entry in enumerate(reversed(self._canvas_shapes)):
         label = str(entry.get("label", "") or "").strip()
         if not label:
+            continue
+        if mode == "current" and label != self._active_roi_label:
             continue
         area = _hit_area(entry, image_x, image_y)
         if area is None:

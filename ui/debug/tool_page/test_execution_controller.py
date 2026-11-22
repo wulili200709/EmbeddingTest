@@ -134,7 +134,9 @@ class TestExecutionController:
 
         # Match production runtime behavior: all ROI projection and inference uses
         # the one decoded image array and never updates LabelMe JSON.
-        executor = InspectionExecutor(ProductRuntimeContext(self.owner.session, self.owner.algo))
+        executor = InspectionExecutor(ProductRuntimeContext(
+            self.owner.session, self.owner.algo, reuse_embedding_models=True,
+        ))
         image_total_t0 = time.perf_counter()
         image_bgr = imread(p)
         if image_bgr is None:

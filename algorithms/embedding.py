@@ -59,6 +59,7 @@ _ORT_EXPORT_LOCK = RLock()
 _EMBEDDING_CACHE_VERSION = "v1"
 _DEFAULT_CPU_INFERENCE_CHUNK_SIZE = 2
 _MAX_CPU_INFERENCE_CHUNK_SIZE = 256
+_DEFAULT_CPU_INFERENCE_THREADS = 0
 
 
 def _normalize_cpu_inference_chunk_size(value: object) -> int:
@@ -84,6 +85,21 @@ def _configured_cpu_inference_chunk_size() -> int:
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         pass
     return _DEFAULT_CPU_INFERENCE_CHUNK_SIZE
+
+
+def _configured_cpu_inference_threads() -> int:
+    value = str(os.environ.get("LC_CPU_INFERENCE_THREADS", "")).strip()
+    if not value:
+        settings_path = writable_embedding_test_root(__file__) / "config" / "runtime_mode_settings.json"
+        try:
+            with settings_path.open("r", encoding="utf-8") as handle:
+                value = json.load(handle).get("cpu_inference_threads", _DEFAULT_CPU_INFERENCE_THREADS)
+        except (OSError, TypeError, ValueError, AttributeError):
+            value = _DEFAULT_CPU_INFERENCE_THREADS
+    try:
+        return max(0, min(64, int(value)))
+    except (TypeError, ValueError):
+        return _DEFAULT_CPU_INFERENCE_THREADS
 
 
 def get_device() -> str:
@@ -114,6 +130,7 @@ class OrtBackboneRunner:
     model_format: str = "ort"
     runtime_backend: str = "ort"
     cpu_inference_chunk_size: int = _DEFAULT_CPU_INFERENCE_CHUNK_SIZE
+    cpu_inference_threads: int = _DEFAULT_CPU_INFERENCE_THREADS
 
     def run(
         self,
@@ -362,10 +379,20 @@ def _load_ort_backbone(name: str, *, device: str) -> Optional[OrtBackboneRunner]
     providers = _ort_providers_for_device(device)
     if not providers:
         return None
+    cpu_threads = _configured_cpu_inference_threads() if _device_kind(device) == "cpu" else 0
+    session_kwargs = {"providers": list(providers)}
+    if _device_kind(device) == "cpu":
+        session_options = ort.SessionOptions()
+        session_options.intra_op_num_threads = cpu_threads
+        session_options.inter_op_num_threads = 1
+        # Yield CPU workers between batches so they do not compete with the
+        # camera/image preprocessing or other camera sessions while idle.
+        session_options.add_session_config_entry("session.intra_op.allow_spinning", "0")
+        session_kwargs["sess_options"] = session_options
     try:
         model_path = _ensure_ort_model(name, device=device)
         try:
-            session = ort.InferenceSession(str(model_path), providers=list(providers))
+            session = ort.InferenceSession(str(model_path), **session_kwargs)
         except Exception:
             if str(model_path).lower().endswith(".ort"):
                 try:
@@ -373,7 +400,7 @@ def _load_ort_backbone(name: str, *, device: str) -> Optional[OrtBackboneRunner]
                 except OSError:
                     pass
                 model_path = _ensure_ort_model(name, device=device)
-                session = ort.InferenceSession(str(model_path), providers=list(providers))
+                session = ort.InferenceSession(str(model_path), **session_kwargs)
             else:
                 raise
     except Exception:
@@ -392,6 +419,7 @@ def _load_ort_backbone(name: str, *, device: str) -> Optional[OrtBackboneRunner]
         model_path=str(model_path),
         model_format=model_path.suffix.lstrip(".") or "ort",
         cpu_inference_chunk_size=_configured_cpu_inference_chunk_size(),
+        cpu_inference_threads=cpu_threads,
     )
 
 
@@ -414,6 +442,7 @@ def describe_backbone_runner(feat_net: object) -> dict[str, object]:
         "cpu_inference_chunk_size": int(
             getattr(feat_net, "cpu_inference_chunk_size", 0) or 0
         ),
+        "cpu_inference_threads": int(getattr(feat_net, "cpu_inference_threads", 0) or 0),
     }
 
 
@@ -444,9 +473,24 @@ TF = transforms.Compose(
 )
 
 
+def _preprocess_roi_batch(roi_images: Sequence[Image.Image], feat_net) -> np.ndarray | torch.Tensor:
+    if getattr(feat_net, "runtime_backend", "") != "ort":
+        return torch.stack([TF(image) for image in roi_images], dim=0)
+    # Keep PIL's exact RGB resize/interpolation. ORT already consumes NumPy;
+    # avoid 34 separate Torch conversion/normalization kernel launches.
+    batch = np.empty((len(roi_images), 3, 224, 224), dtype=np.float32)
+    for index, image in enumerate(roi_images):
+        resized = image.resize((224, 224), resample=Image.Resampling.BILINEAR)
+        batch[index] = np.asarray(resized).transpose(2, 0, 1)
+    batch /= np.float32(255.0)
+    batch -= np.asarray([0.485, 0.456, 0.406], dtype=np.float32)[None, :, None, None]
+    batch /= np.asarray([0.229, 0.224, 0.225], dtype=np.float32)[None, :, None, None]
+    return batch
+
+
 def _run_embedding_batch(
     feat_net,
-    batch: torch.Tensor,
+    batch: torch.Tensor | np.ndarray,
     *,
     device: Optional[str] = None,
     timing_breakdown: Optional[dict[str, object]] = None,
@@ -526,6 +570,10 @@ def _image_from_bgr_array(image_bgr: np.ndarray) -> Image.Image:
     if image.ndim != 3:
         raise ValueError(f"unsupported image shape: {image.shape!r}")
     image = np.ascontiguousarray(image[:, :, :3])
+    if cv2 is not None and image.dtype == np.uint8 and image.shape[2] == 3:
+        # The camera supplies BGR. Convert channels in native code rather than
+        # copying a negative-stride RGB view, then copying it again in PIL.
+        return Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
     rgb = np.ascontiguousarray(image[:, :, ::-1])
     return Image.fromarray(rgb).convert("RGB")
 
@@ -620,7 +668,7 @@ def embed_batch(
 
     require_shapes = roi_xywhs is None or any(roi_xywh is None for roi_xywh in roi_xywhs)
     context = _build_image_roi_context(img_path, require_shapes=require_shapes)
-    tensors = []
+    roi_images = []
     for index, label_name in enumerate(labels):
         roi_xywh = roi_xywhs[index] if roi_xywhs is not None else None
         roi_img = _resolve_roi_image(
@@ -628,9 +676,9 @@ def embed_batch(
             label_name=label_name,
             roi_xywh=roi_xywh,
         )
-        tensors.append(TF(roi_img))
+        roi_images.append(roi_img)
 
-    batch = torch.stack(tensors, dim=0)
+    batch = _preprocess_roi_batch(roi_images, feat_net)
     return _run_embedding_batch(feat_net, batch, device=device)
 
 
@@ -801,7 +849,7 @@ def embed_batch_from_array(
 
     preprocess_t0 = time.perf_counter()
     context = _build_array_roi_context(image_bgr, shape_by_label=shape_by_label)
-    tensors = []
+    roi_images = []
     for index, label_name in enumerate(labels):
         roi_xywh = roi_xywhs[index] if roi_xywhs is not None else None
         roi_img = _resolve_roi_image(
@@ -809,9 +857,9 @@ def embed_batch_from_array(
             label_name=label_name,
             roi_xywh=roi_xywh,
         )
-        tensors.append(TF(roi_img))
+        roi_images.append(roi_img)
 
-    batch = torch.stack(tensors, dim=0)
+    batch = _preprocess_roi_batch(roi_images, feat_net)
     preprocess_ms = float((time.perf_counter() - preprocess_t0) * 1000.0)
     backbone_t0 = time.perf_counter()
     embeddings = _run_embedding_batch(

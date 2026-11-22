@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from common.safe_io import atomic_write_json, backup_path_for, load_json_with_backup
+from common.app_paths import is_reserved_session_directory
 from common.path_utils import (
     product_relative_path,
     resolve_existing_product_path,
@@ -99,7 +100,8 @@ class ProductSession:
 
     @property
     def product_names(self) -> List[str]:
-        return list(self._products_data.get("products", ["Default"]))
+        return [name for name in self._products_data.get("products", ["Default"])
+                if not is_reserved_session_directory(name)] or ["Default"]
 
     @property
     def product_dir(self) -> str:
@@ -162,6 +164,8 @@ class ProductSession:
             return "\u4ea7\u54c1\u7f16\u53f7\u4e0d\u80fd\u4e3a\u7a7a"
         if not PRODUCT_NAME_RE.match(name):
             return "\u4ea7\u54c1\u7f16\u53f7\u53ea\u80fd\u5305\u542b\u82f1\u6587\u3001\u6570\u5b57\u548c\u4e0b\u5212\u7ebf"
+        if is_reserved_session_directory(name):
+            return f"{name} 为系统保留目录，不能作为产品编号"
         if name in self._products_data["products"]:
             if self._product_dir_exists(name):
                 return "\u4ea7\u54c1\u7f16\u53f7\u5df2\u5b58\u5728"
@@ -178,6 +182,8 @@ class ProductSession:
         """
         source = str(source_name or "").strip()
         target = str(target_name or "").strip()
+        if is_reserved_session_directory(source) or is_reserved_session_directory(target):
+            return "系统保留目录不能作为产品方案复制源或目标"
         if not source:
             return "请先选择复制源产品"
         if source not in self._products_data.get("products", []):
@@ -223,6 +229,8 @@ class ProductSession:
 
     def delete_product(self, name: str) -> str:
         product_name = str(name or "").strip()
+        if is_reserved_session_directory(product_name):
+            return "系统保留目录不能作为产品删除"
         if not product_name:
             return "\u8bf7\u5148\u9009\u62e9\u8981\u5220\u9664\u7684\u4ea7\u54c1"
         if product_name == "Default":
@@ -253,6 +261,8 @@ class ProductSession:
         return ""
 
     def switch_product(self, name: str) -> None:
+        if is_reserved_session_directory(name):
+            raise ValueError("系统保留目录不能作为产品打开")
         self.current_product = name
         self._products_data["current_product"] = name
         self._refresh_paths()
@@ -412,6 +422,8 @@ class ProductSession:
             pass
 
     def _refresh_paths(self) -> None:
+        if is_reserved_session_directory(self.current_product):
+            raise ValueError("系统保留目录不能作为产品目录")
         product_dir = os.path.join(self.session_dir, self.current_product)
         os.makedirs(product_dir, exist_ok=True)
         self.paths = ProductPaths.build(product_dir)
@@ -423,7 +435,7 @@ class ProductSession:
 
     def _product_dir_exists(self, name: str) -> bool:
         product_name = str(name or "").strip()
-        if not product_name:
+        if not product_name or is_reserved_session_directory(product_name):
             return False
         return os.path.isdir(os.path.join(self.session_dir, product_name))
 

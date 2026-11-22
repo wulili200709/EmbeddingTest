@@ -15,7 +15,7 @@ from .recipe import ShapeRecipe, normalize_follow_mode
 from .template_core import (
     apply_affine_to_points,
     expanded_pose_affine,
-    load_class_source_assets,
+    load_class_source_geometry,
 )
 
 ensure_repo_root_on_path()
@@ -267,12 +267,12 @@ def _follow_by_affine_roi(
     ref_img_path: str,
     image_shape: Tuple[int, int],
 ) -> FollowResult:
-    source_info, roi_img, _roi_mask, template_roi_rect, _mask_rects = load_class_source_assets(detector, match.class_id)
+    source_width, source_height, template_roi_rect = load_class_source_geometry(detector, match.class_id)
     region_specs = _region_specs_from_recipe(recipe, ref_img_path, template_roi_rect)
     meta = detector.get_template_meta(match.class_id, int(match.template_id))
     angle = float(meta.get("angle", 0.0))
     scale = float(meta.get("scale", 1.0))
-    affine3, _canvas_size = expanded_pose_affine(roi_img.shape[1], roi_img.shape[0], angle, scale)
+    affine3, _canvas_size = expanded_pose_affine(source_width, source_height, angle, scale)
     quad = match_quad(detector, match)
     top_left = quad[0]
     regions: List[FollowRegion] = []

@@ -12,6 +12,8 @@ from common.camera_roles import DEFAULT_CAMERA_ROLE, normalize_camera_role
 
 from shape.core.recipe_labels import output_labels_from_shape_recipe
 from ui.debug import OverlayShape
+from ui.debug.image_pixmap_cache import pixmap_from_path
+from ui.debug.tool_page.roi_geometry_cache import shape_geometry
 from ui.debug.tool_page.roi_measurement_overlays import measurement_overlays_for_path
 from ui.roi_overlay_colors import (
     ROI_DISABLED_COLOR,
@@ -22,6 +24,16 @@ from ui.roi_overlay_colors import (
 )
 
 _SELECTED_TOOL_COLOR = QtGui.QColor("#00C8C8")
+
+
+def _canvas_shapes_for_path(tool_page, image_path: str) -> dict[str, dict]:
+    controller = getattr(tool_page, "roi_annotations", None)
+    if controller is not None:
+        return controller.shapes_for_path(image_path)
+    shapes: dict[str, dict] = {}
+    for shape in labelme_io.list_shapes_from_labelme(labelme_io.labelme_json_of_image(image_path)):
+        shapes.setdefault(str(shape.get("label", "")), shape)
+    return shapes
 
 
 def _selected_tool_roi_label(tool_page) -> str:
@@ -84,7 +96,7 @@ def _canvas_roi_style_for_label(tool_page, img_path: str, label_name: str) -> tu
 
 
 def _load_canvas_image(tool_page, path: str) -> None:
-    tool_page.canvas.set_image(path, pixmap=QtGui.QPixmap(path))
+    tool_page.canvas.set_image(path, pixmap=pixmap_from_path(path))
     tool_page._load_shape_for_label(path, tool_page._current_label())
 
 
@@ -163,18 +175,22 @@ def _set_overlay_shapes(tool_page, img_path: str, current_label: str) -> None:
         overlays.extend(measurement_overlays_for_path(tool_page, img_path))
         tool_page.canvas.set_overlays(overlays)
         return
+    shapes = _canvas_shapes_for_path(tool_page, img_path)
 
     def add_shape(label: str, color: QtGui.QColor, *, width: float, dash: bool = False) -> None:
-        poly_pts = labelme_io.try_read_polygon_points_from_labelme(j, label)
+        poly_pts, xywh = shape_geometry(shapes.get(label, {}))
         if poly_pts and len(poly_pts) >= 3:
             overlays.append(OverlayShape(shape_type="polygon", points=poly_pts, color=color, width=width, dash=dash))
             return
-        xywh = labelme_io.try_read_xywh_from_labelme(j, label)
         if xywh:
             overlays.append(OverlayShape(shape_type="rect", xywh=xywh, color=color, width=width, dash=dash))
 
     seen_labels: set[str] = set()
-    for label in labelme_io.sorted_label_names_from_labelme(j, label_prefix="roi"):
+    def roi_sort_key(label: str):
+        suffix = label[3:]
+        return (0, int(suffix)) if suffix.isdigit() else ((0, 0) if label == "roi" else (1, label))
+
+    for label in sorted((label for label in shapes if label.startswith("roi")), key=roi_sort_key):
         if visible_roi_labels is not None and label not in visible_roi_labels:
             continue
         if label == current_label:
@@ -205,12 +221,12 @@ def _load_shape_for_label(tool_page, img_path: str, label_name: str) -> None:
     j = labelme_io.labelme_json_of_image(img_path)
     loaded = False
     if os.path.exists(j):
-        poly_pts = labelme_io.try_read_polygon_points_from_labelme(j, label_name)
+        shapes = _canvas_shapes_for_path(tool_page, img_path)
+        poly_pts, xywh = shape_geometry(shapes.get(label_name, {}))
         if poly_pts and len(poly_pts) >= 3:
             tool_page.canvas.set_roi_polygon(poly_pts)
             tool_page.cmb_shape.setCurrentText("polygon")
             loaded = True
-        xywh = labelme_io.try_read_xywh_from_labelme(j, label_name)
         if xywh:
             tool_page.canvas.set_roi_rect(xywh)
             tool_page.cmb_shape.setCurrentText("rect")

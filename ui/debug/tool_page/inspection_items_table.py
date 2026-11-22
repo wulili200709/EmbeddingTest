@@ -242,6 +242,7 @@ def _on_inspection_items_selection_changed(tool_page) -> None:
     finally:
         tool_page._updating_runtime_params = False
     tool_page.algo.product_params.algorithm = algorithm
+    tool_page._apply_runtime_params_to_ui()
     tool_page._refresh_lists()
     tool_page._update_runtime_widgets()
     tool_page._update_learning_backbone_hint()
