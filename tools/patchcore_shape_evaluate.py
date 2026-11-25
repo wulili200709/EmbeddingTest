@@ -19,8 +19,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--patchcore-project', type=Path,
                         default=Path('C:/Users/goney/Desktop/2026-09-29-15-16-48'))
-    parser.add_argument('--shape-root', type=Path, default=ROOT/'reports/shape_print_extraction_20261013')
-    parser.add_argument('--output', type=Path, default=ROOT/'reports/shape_patchcore_20261013')
+    parser.add_argument('--shape-root', type=Path, default=ROOT / 'artifacts/reports/shape_print_extraction_20261013')
+    parser.add_argument('--output', type=Path, default=ROOT / 'artifacts/reports/shape_patchcore_20261013')
     args = parser.parse_args()
     sys.path.insert(0, str(args.patchcore_project.resolve()))
     import cv2

@@ -3,6 +3,7 @@
 import math
 import os
 import time
+from copy import deepcopy
 from typing import Dict, List, Optional, Tuple, cast
 
 import cv2
@@ -16,7 +17,7 @@ from shape.core.locator import (
     resolved_model_path_for_product,
     resolved_recipe_path_for_product,
 )
-from shape.core.recipe import ShapeRecipe, load_recipe, normalize_follow_mode, save_recipe
+from shape.core.recipe import ShapeRecipe, load_recipe, normalize_follow_mode, normalize_localization_groups, save_recipe
 from shape.core.recipe_store import ShapeRecipeStore
 from shape.core.roi_follow import locate_and_follow
 from shape.core.template_core import (
@@ -38,6 +39,8 @@ from shape.core.template_core import (
 from ui.debug import OverlayShape, RoiCanvas, pixmap_from_path
 from ui.i18n import tr
 from ui.shape_template.reference_roi_tab import ReferenceRoiTabMixin
+from ui.shape_template.localization_groups_tab import LocalizationGroupsTabMixin
+from ui.shape_template.localization_text import group_error_message
 from ui.shape_template.template_build_worker import _TemplateBuildWorker
 from ui.shape_template.template_page_utils import (
     _arrow_endpoint,
@@ -124,6 +127,9 @@ QHeaderView::section {
     border: 1px solid #404040;
     padding: 4px;
 }
+QTableWidget {
+    alternate-background-color: #3b3b3b;
+}
 QAbstractItemView {
     background: #333333;
     color: #e0e0e0;
@@ -152,7 +158,7 @@ class _NoWheelDoubleSpinBox(QtWidgets.QDoubleSpinBox):
         event.ignore()
 
 
-class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
+class ShapeTemplateDialog(LocalizationGroupsTabMixin, ReferenceRoiTabMixin, QtWidgets.QDialog):
     modelSaved = QtCore.Signal(str, str)
     referenceRegionsChanged = QtCore.Signal()
 
@@ -205,6 +211,8 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         self._recipe_reference_shape_type: str = ""
         self._recipe_reference_points: List[List[float]] = []
         self._reference_regions: List[Dict[str, object]] = []
+        self._localization_groups: List[Dict[str, object]] = []
+        self._syncing_group_canvas = False
         self._selected_reference_idx: Optional[int] = None
         self._syncing_reference_view = False
         self._reference_dirty = False
@@ -212,10 +220,12 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         self._search_roi_shape_type: str = ""
         self._search_roi_points: List[List[float]] = []
         self._find_result_cache: Dict[str, Dict[str, object]] = {}
+        self._translated_form_labels: list[tuple[QtWidgets.QLabel, str]] = []
         self._suppress_create_auto_apply = False
         self._build_thread: Optional[QtCore.QThread] = None
         self._build_worker: Optional[_TemplateBuildWorker] = None
         self._build_progress: Optional[QtWidgets.QProgressDialog] = None
+        self._initializing = True
 
         self._build_ui()
         self._disable_enter_default_buttons()
@@ -225,6 +235,7 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         if os.path.exists(self.find_model_path):
             self._load_existing_model(silent=True)
         self._update_find_model_label()
+        self._initializing = False
 
     def _build_ui(self) -> None:
         root = QtWidgets.QVBoxLayout(self)
@@ -233,14 +244,23 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
 
         self.tab_create = QtWidgets.QWidget()
         self.tab_reference = QtWidgets.QWidget()
+        self.tab_groups = QtWidgets.QWidget()
         self.tab_find = QtWidgets.QWidget()
         self.tabs.addTab(self.tab_create, tr("template.tab.create"))
         self.tabs.addTab(self.tab_reference, tr("template.tab.reference"))
+        self.tabs.addTab(self.tab_groups, tr("template.groups.tab"))
         self.tabs.addTab(self.tab_find, tr("template.tab.find"))
 
         self._build_create_tab()
         self._build_reference_tab()
+        self._build_groups_tab()
         self._build_find_tab()
+        self._retranslate_groups_ui()
+
+    def _add_translated_form_row(self, form, key: str, field) -> None:
+        label = QtWidgets.QLabel(tr(key))
+        form.addRow(label, field)
+        self._translated_form_labels.append((label, key))
 
     def _disable_enter_default_buttons(self) -> None:
         for button in self.findChildren(QtWidgets.QPushButton):
@@ -251,7 +271,8 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         self.setWindowTitle(tr("template.title", product=self.product_name))
         self.tabs.setTabText(0, tr("template.tab.create"))
         self.tabs.setTabText(1, tr("template.tab.reference"))
-        self.tabs.setTabText(2, tr("template.tab.find"))
+        self.tabs.setTabText(2, tr("template.groups.tab"))
+        self.tabs.setTabText(3, tr("template.tab.find"))
         for attr, text in (
             ("file_box", tr("template.reference_image")),
             ("select_box", tr("template.template_edit")),
@@ -326,6 +347,7 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
                 tr("template.reference_table.name"),
                 tr("template.reference_table.roi_label"),
                 tr("template.reference_table.info"),
+                tr("template.groups.binding"),
             ])
         if hasattr(self, "lbl_find_model"):
             self._update_find_model_label()
@@ -345,6 +367,13 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
                 self.lbl_reference_status.setText(tr("template.reference_status"))
         if hasattr(self, "lbl_find_status") and self.list_find_images.count() <= 0:
             self.lbl_find_status.setText(tr("template.find_status"))
+        for label, key in self._translated_form_labels:
+            label.setText(tr(key))
+        self.chk_enable_groups.setText(tr("template.groups.enable"))
+        self.chk_enable_groups.setToolTip(tr("template.groups.enable_tip"))
+        self.lbl_group_overlay_hint.setText(tr("template.groups.overlay_hint"))
+        self._retranslate_groups_ui()
+        self._refresh_find_result_texts()
 
     def _make_left_scroll_column(self) -> Tuple[QtWidgets.QScrollArea, QtWidgets.QVBoxLayout]:
         scroll = QtWidgets.QScrollArea()
@@ -523,17 +552,17 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         self.spin_scale_step.setRange(0.001, 5.0)
         self.spin_scale_step.setDecimals(3)
         self.spin_scale_step.setValue(0.05)
-        form.addRow("class_id", self.edit_class_id)
-        form.addRow("levels", self.edit_levels)
-        form.addRow("num_features", self.spin_num_features)
-        form.addRow("weak_threshold", self.spin_weak)
-        form.addRow("strong_threshold", self.spin_strong)
-        form.addRow("angle_start", self.spin_angle_start)
-        form.addRow("angle_end", self.spin_angle_end)
-        form.addRow("angle_step", self.spin_angle_step)
-        form.addRow("scale_start", self.spin_scale_start)
-        form.addRow("scale_end", self.spin_scale_end)
-        form.addRow("scale_step", self.spin_scale_step)
+        self._add_translated_form_row(form, "template.param.class_id", self.edit_class_id)
+        self._add_translated_form_row(form, "template.param.levels", self.edit_levels)
+        self._add_translated_form_row(form, "template.param.num_features", self.spin_num_features)
+        self._add_translated_form_row(form, "template.param.weak_threshold", self.spin_weak)
+        self._add_translated_form_row(form, "template.param.strong_threshold", self.spin_strong)
+        self._add_translated_form_row(form, "template.param.angle_start", self.spin_angle_start)
+        self._add_translated_form_row(form, "template.param.angle_end", self.spin_angle_end)
+        self._add_translated_form_row(form, "template.param.angle_step", self.spin_angle_step)
+        self._add_translated_form_row(form, "template.param.scale_start", self.spin_scale_start)
+        self._add_translated_form_row(form, "template.param.scale_end", self.spin_scale_end)
+        self._add_translated_form_row(form, "template.param.scale_step", self.spin_scale_step)
         param_box.setTitle(tr("template.params"))
         left.addWidget(param_box)
 
@@ -552,10 +581,10 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         self.spin_nms_create.setValue(0.3)
         self.cmb_follow_create = QtWidgets.QComboBox()
         self.cmb_follow_create.addItems(["affine_roi", "match_bbox"])
-        recipe_form.addRow("backend", self.cmb_backend_create)
-        recipe_form.addRow("threshold", self.spin_threshold_create)
-        recipe_form.addRow("nms_iou", self.spin_nms_create)
-        recipe_form.addRow("follow_mode", self.cmb_follow_create)
+        self._add_translated_form_row(recipe_form, "template.param.backend", self.cmb_backend_create)
+        self._add_translated_form_row(recipe_form, "template.param.threshold", self.spin_threshold_create)
+        self._add_translated_form_row(recipe_form, "template.param.nms_iou", self.spin_nms_create)
+        self._add_translated_form_row(recipe_form, "template.param.follow_mode", self.cmb_follow_create)
         recipe_box.setTitle(tr("template.recipe"))
         left.addWidget(recipe_box)
         recipe_box.setVisible(False)
@@ -651,12 +680,17 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         self.edit_display_name.returnPressed.connect(self._apply_reference_region_fields)
         self.btn_apply_region_name = QtWidgets.QPushButton(tr("template.apply_name"))
         self.btn_apply_region_name.clicked.connect(self._apply_reference_region_fields)
-        info_form.addRow(tr("template.roi_label"), self.edit_output_label)
-        info_form.addRow(tr("template.display_name"), self.edit_display_name)
+        self._add_translated_form_row(info_form, "template.roi_label", self.edit_output_label)
+        self._add_translated_form_row(info_form, "template.display_name", self.edit_display_name)
+        self.cmb_region_group = QtWidgets.QComboBox()
+        self.cmb_region_group.addItem(tr("template.groups.global"), "")
+        self.cmb_region_group.setEnabled(False)
+        self.cmb_region_group.currentIndexChanged.connect(self._assign_region_group)
+        self._add_translated_form_row(info_form, "template.groups.binding", self.cmb_region_group)
         name_btn_row = QtWidgets.QHBoxLayout()
         name_btn_row.addWidget(self.btn_apply_region_name)
         name_btn_row.addWidget(self.cmb_reference_shape)
-        info_form.addRow(tr("template.shape_action"), name_btn_row)
+        self._add_translated_form_row(info_form, "template.shape_action", name_btn_row)
         self.edit_output_label.setEnabled(False)
         self.edit_display_name.setEnabled(False)
         self.btn_apply_region_name.setEnabled(False)
@@ -665,27 +699,30 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         self.region_box = QtWidgets.QGroupBox(tr("template.reference_regions"))
         region_box = self.region_box
         region_l = QtWidgets.QVBoxLayout(region_box)
-        region_body = QtWidgets.QHBoxLayout()
-        self.table_reference_regions = QtWidgets.QTableWidget(0, 4)
+        region_body = QtWidgets.QVBoxLayout()
+        self.table_reference_regions = QtWidgets.QTableWidget(0, 5)
         self.table_reference_regions.setHorizontalHeaderLabels([
             tr("template.reference_table.index"),
             tr("template.reference_table.name"),
             tr("template.reference_table.roi_label"),
             tr("template.reference_table.info"),
+            tr("template.groups.binding"),
         ])
         self.table_reference_regions.verticalHeader().setVisible(False)
         self.table_reference_regions.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.table_reference_regions.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.table_reference_regions.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.table_reference_regions.setAlternatingRowColors(True)
+        self.table_reference_regions.setMinimumHeight(220)
         self.table_reference_regions.currentCellChanged.connect(self._on_reference_region_selected)
         self.table_reference_regions.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
         self.table_reference_regions.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
         self.table_reference_regions.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
         self.table_reference_regions.horizontalHeader().setSectionResizeMode(3, QtWidgets.QHeaderView.Stretch)
+        self.table_reference_regions.horizontalHeader().setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeToContents)
         region_body.addWidget(self.table_reference_regions, 1)
 
-        region_btn_col = QtWidgets.QVBoxLayout()
+        region_btn_col = QtWidgets.QGridLayout()
         self.btn_add_reference_roi = QtWidgets.QPushButton(tr("template.new_roi"))
         self.btn_add_reference_roi.clicked.connect(self._prepare_new_reference_roi)
         self.btn_remove_reference_roi = QtWidgets.QPushButton(tr("template.delete_selected_roi"))
@@ -696,16 +733,15 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         self.btn_load_reference_roi.clicked.connect(lambda: self._load_reference_roi_from_json(silent=False))
         self.btn_save_reference_roi = QtWidgets.QPushButton(tr("template.save_roi_config"))
         self.btn_save_reference_roi.clicked.connect(self._save_reference_roi_config)
-        for button in [
+        for index, button in enumerate([
             self.btn_add_reference_roi,
             self.btn_load_reference_roi,
             self.btn_remove_reference_roi,
             self.btn_clear_reference_rois,
             self.btn_save_reference_roi,
-        ]:
+        ]):
             button.setMinimumWidth(120)
-            region_btn_col.addWidget(button)
-        region_btn_col.addStretch(1)
+            region_btn_col.addWidget(button, index // 2, index % 2)
         region_body.addLayout(region_btn_col)
         region_l.addLayout(region_body, 1)
         left.addWidget(region_box)
@@ -748,6 +784,8 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         model_l = QtWidgets.QGridLayout(model_box)
         self.lbl_find_model = QtWidgets.QLabel(tr("template.not_set"))
         self.lbl_find_model.setWordWrap(True)
+        self.lbl_find_model.setMinimumWidth(0)
+        self.lbl_find_model.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
         self.btn_find_open_model = QtWidgets.QPushButton(tr("template.open_model"))
         self.btn_find_open_model.clicked.connect(self._pick_find_model)
         self.btn_find_use_product = QtWidgets.QPushButton(tr("template.use_product_model"))
@@ -801,11 +839,16 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         self.chk_auto_threshold_sweep = QtWidgets.QCheckBox(tr("template.auto_threshold_sweep"))
         self.chk_auto_threshold_sweep.setToolTip(tr("template.auto_threshold_tip"))
         self.chk_auto_threshold_sweep.toggled.connect(lambda _checked: self._save_recipe())
-        recipe_form.addRow("backend", self.cmb_backend_find)
-        recipe_form.addRow("threshold", self.spin_threshold_find)
-        recipe_form.addRow("nms_iou", self.spin_nms_find)
-        recipe_form.addRow("follow_mode", self.cmb_follow_find)
+        self._add_translated_form_row(recipe_form, "template.param.backend", self.cmb_backend_find)
+        self._add_translated_form_row(recipe_form, "template.param.threshold", self.spin_threshold_find)
+        self._add_translated_form_row(recipe_form, "template.param.nms_iou", self.spin_nms_find)
+        self._add_translated_form_row(recipe_form, "template.param.follow_mode", self.cmb_follow_find)
         recipe_form.addRow("", self.chk_auto_threshold_sweep)
+        self.chk_enable_groups = QtWidgets.QCheckBox(tr("template.groups.enable"))
+        self.chk_enable_groups.setToolTip(tr("template.groups.enable_tip"))
+        self.chk_enable_groups.setChecked(True)
+        self.chk_enable_groups.toggled.connect(self._clear_group_find_cache)
+        recipe_form.addRow(self.chk_enable_groups)
         left.addWidget(recipe_box)
 
         self.search_box = QtWidgets.QGroupBox(tr("template.search_roi"))
@@ -846,17 +889,30 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
             )
         run_row.addWidget(self.btn_run_find_selected)
         run_row.addWidget(self.btn_run_find_all)
-        left.addLayout(run_row)
+        left_container_layout.addLayout(run_row)
 
         self.lbl_find_status = QtWidgets.QLabel(tr("template.find_status"))
         self.lbl_find_status.setWordWrap(True)
-        left.addWidget(self.lbl_find_status)
+        self.lbl_find_status.setMaximumHeight(90)
+        left_container_layout.addWidget(self.lbl_find_status)
 
         right = QtWidgets.QVBoxLayout()
         layout.addLayout(right, 1)
         self.find_canvas = RoiCanvas()
         self.find_canvas.setMinimumSize(640, 480)
         right.addWidget(self.find_canvas, 1)
+        self.lbl_group_overlay_hint = QtWidgets.QLabel(tr("template.groups.overlay_hint"))
+        group_hint = self.lbl_group_overlay_hint
+        group_hint.setWordWrap(True)
+        right.addWidget(group_hint)
+        self.table_group_results = QtWidgets.QTableWidget(0, 6)
+        self.table_group_results.setHorizontalHeaderLabels(self._group_result_headers())
+        self.table_group_results.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.table_group_results.verticalHeader().hide()
+        self.table_group_results.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeToContents)
+        self.table_group_results.horizontalHeader().setSectionResizeMode(5, QtWidgets.QHeaderView.Stretch)
+        self.table_group_results.setMaximumHeight(170)
+        right.addWidget(self.table_group_results)
 
     def _pick_image(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -873,12 +929,19 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         if image_bgr is None:
             QtWidgets.QMessageBox.critical(self, tr("common.read_failed"), path)
             return
+        reference_changed = bool(self.image_path and os.path.normcase(os.path.abspath(path)) != os.path.normcase(os.path.abspath(self.image_path)))
+        if reference_changed:
+            for group in self._localization_groups:
+                group["needs_rebuild"] = True
+            self._clear_group_find_cache()
         self.image_path = path
         self.image_bgr = image_bgr
         self.lbl_image.setText(_compact_path_text(path))
         self.lbl_image.setToolTip(path)
         self.create_canvas.set_image(path, pixmap=pixmap_from_path(path))
         self.ref_canvas.set_image(path, pixmap=pixmap_from_path(path))
+        self.group_canvas.set_image(path, pixmap=pixmap_from_path(path))
+        self._refresh_group_list()
         if reset_state:
             self.template_roi = None
             self.mask_rects = []
@@ -959,6 +1022,7 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
                     or ""
                 ),
                 "shape_type": str(region.get("shape_type", "rectangle")),
+                "group_id": str(region.get("group_id") or ""),
                 "points": [
                     [float(pt[0]), float(pt[1])]
                     for pt in region.get("points", []) or []
@@ -998,11 +1062,16 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
             reference_shape_type=reference_shape_type,
             reference_points=reference_points or None,
             reference_regions=saved_reference_regions,
+            localization_groups=deepcopy(self._localization_groups),
             search_shape_type=str(self._search_roi_shape_type or ""),
             search_points=[list(pt) for pt in (self._search_roi_points or [])] or None,
         )
 
     def _save_recipe(self) -> None:
+        # Loading widgets emits valueChanged signals; opening the editor must
+        # not rewrite a legacy product or persist partially loaded settings.
+        if self._initializing:
+            return
         recipe = self._recipe_from_controls(use_find_values=False)
         recipe.model_path = self.paths.model_path
         os.makedirs(self.paths.role_dir, exist_ok=True)
@@ -1016,6 +1085,10 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
             self._set_reference_dirty(False)
             return
         recipe = load_recipe(recipe_path)
+        self._localization_groups = normalize_localization_groups(recipe.localization_groups)
+        if self.image_path and recipe.reference_image and os.path.normcase(os.path.abspath(self.image_path)) != os.path.normcase(os.path.abspath(recipe.reference_image)):
+            for group in self._localization_groups:
+                group["needs_rebuild"] = True
         if recipe.reference_image and os.path.exists(recipe.reference_image) and not self.image_path:
             self.image_path = recipe.reference_image
         self.edit_class_id.setText(recipe.class_id or self.product_name or "object")
@@ -1036,6 +1109,7 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
                     or ""
                 ),
                 "shape_type": str(region.get("shape_type", "rectangle")),
+                "group_id": str(region.get("group_id") or ""),
                 "points": [
                     [float(pt[0]), float(pt[1])]
                     for pt in region.get("points", []) or []
@@ -1048,6 +1122,7 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         self._reference_regions_explicit = ShapeRecipeStore.has_explicit_reference_regions(recipe)
         self._selected_reference_idx = None
         self._refresh_search_roi_status()
+        self._refresh_group_list()
         self.cmb_backend_create.setCurrentText(BACKEND_KEY_TO_LABEL.get(recipe.backend, "Original"))
         self.spin_threshold_create.setValue(float(recipe.threshold))
         self.spin_nms_create.setValue(float(recipe.nms_iou))
@@ -1877,7 +1952,7 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
 
     def _update_find_model_label(self) -> None:
         text = self.find_model_path or tr("template.not_set")
-        self.lbl_find_model.setText(text)
+        self.lbl_find_model.setText(_compact_path_text(text, max_chars=64))
         self.lbl_find_model.setToolTip(text)
 
     def _add_find_images(self) -> None:
@@ -1909,6 +1984,7 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
 
     def _clear_find_images(self) -> None:
         self._find_result_cache.clear()
+        self._find_status_scene_path = ""
         self.list_find_images.clear()
         self.find_canvas.clear_image()
         self.lbl_find_status.setText(tr("template.status_find_list_cleared"))
@@ -1938,6 +2014,8 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
             return
         cached = self._find_result_cache.get(scene_path)
         if cached:
+            self._find_status_scene_path = scene_path
+            self._show_group_results(cached.get("group_results", []))
             pixmap = cached.get("pixmap")
             message = str(cached.get("message") or "")
             if isinstance(pixmap, QtGui.QPixmap) and not pixmap.isNull():
@@ -1951,7 +2029,47 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         if os.path.exists(scene_path):
             self.find_canvas.set_image(scene_path, pixmap=pixmap_from_path(scene_path))
             self._apply_search_roi_to_find_canvas()
+        self._show_group_results([])
+        self._find_status_scene_path = scene_path
         self.lbl_find_status.setText(tr("template.status_find_switched", image=os.path.basename(scene_path)))
+
+    def _refresh_find_item_text(self, item: QtWidgets.QListWidgetItem) -> str:
+        """Translate cached diagnostics without running matching or changing the view."""
+        scene_path = str(item.data(QtCore.Qt.UserRole) or "")
+        cached = self._find_result_cache.get(scene_path)
+        if not cached:
+            return ""
+        if cached.get("kind") == "success":
+            summary = str(cached.get("summary") or "")
+            if cached.get("global_only"):
+                summary += f" [{tr('template.groups.global_only')}]"
+            status = tr("template.status_find_done", image=os.path.basename(scene_path), message=summary)
+        elif cached.get("kind") == "error":
+            records = cached.get("group_results") or []
+            if any(record.get("used", True) and not record.get("valid", False) for record in records):
+                error = group_error_message(records)
+            elif cached.get("error_key"):
+                error = tr(str(cached["error_key"]), **dict(cached.get("error_params") or {}))
+            else:
+                error = str(cached.get("error") or "")
+            summary = f"ERROR: {error}"
+            status = tr("template.status_find_failed", message=error)
+        else:
+            return str(cached.get("message") or "")
+        item.setText(f"{os.path.basename(scene_path)} | {summary}")
+        item.setToolTip(f"{scene_path}\n{summary}")
+        cached["message"] = status
+        return status
+
+    def _refresh_find_result_texts(self) -> None:
+        displayed_path = getattr(self, "_find_status_scene_path", "")
+        for index in range(self.list_find_images.count()):
+            item = self.list_find_images.item(index)
+            status = self._refresh_find_item_text(item)
+            if str(item.data(QtCore.Qt.UserRole) or "") == displayed_path:
+                self.lbl_find_status.setText(status or tr(
+                    "template.status_find_switched", image=os.path.basename(displayed_path),
+                ))
 
     def _get_detector_for_model(self, model_path: str, *, reuse_shared: bool = True) -> ShapeLikeDetector:
         if reuse_shared and self.detector is not None and os.path.abspath(model_path) == os.path.abspath(self.detector_path or ""):
@@ -1976,6 +2094,10 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
             QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.load_find_model_first"))
             return
         recipe = self._recipe_from_controls(use_find_values=True)
+        if not self.chk_enable_groups.isChecked():
+            recipe.localization_groups = []
+            for region in recipe.reference_regions or []:
+                region["group_id"] = ""
         recipe.model_path = model_path
         if not recipe.reference_image and self.image_path:
             recipe.reference_image = self.image_path
@@ -1985,11 +2107,16 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
 
         scene_bgr = imread(scene_path, cv2.IMREAD_COLOR)
         if scene_bgr is None:
-            self._set_find_item_error(item, tr("template.read_image_failed", path=scene_path))
+            self._set_find_item_error(
+                item, tr("template.read_image_failed", path=scene_path),
+                error_key="template.read_image_failed", error_params={"path": scene_path},
+            )
             return
 
         used_threshold = float(recipe.threshold)
         elapsed_ms = -1.0
+        started = time.perf_counter()
+        self._show_group_results([])
         try:
             detector = self._get_detector_for_model(model_path, reuse_shared=True)
             thresholds = [float(recipe.threshold)]
@@ -2026,7 +2153,16 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
             overlay = _draw_match_overlay(detector, scene_bgr, result.match)
             overlay = _overlay_follow_result(overlay, result, recipe.output_label, elapsed_ms=elapsed_ms)
         except Exception as exc:
-            self._set_find_item_error(item, str(exc))
+            group_results = getattr(exc, "group_results", [])
+            self._set_find_item_error(item, str(exc), group_results=group_results)
+            self._show_group_results(group_results)
+            preview_result = getattr(exc, "preview_result", None)
+            if preview_result is not None:
+                diagnostic = _overlay_follow_result(scene_bgr, preview_result, "INVALID", elapsed_ms=(time.perf_counter()-started)*1000.)
+                pixmap = _cv_to_qpixmap(diagnostic)
+                self.find_canvas.set_image(scene_path, pixmap=pixmap)
+                self._apply_search_roi_to_find_canvas()
+                self._find_result_cache[scene_path]["pixmap"] = QtGui.QPixmap(pixmap)
             return
 
         overlay_pixmap = _cv_to_qpixmap(overlay)
@@ -2039,22 +2175,27 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
         )
         if abs(float(used_threshold) - float(self.spin_threshold_find.value())) > 1e-6:
             msg += f" th={used_threshold:.0f}"
-        item.setText(f"{os.path.basename(scene_path)} | {msg}")
-        item.setToolTip(f"{scene_path}\n{msg}")
+        group_results = getattr(result, "group_results", [])
+        self._show_group_results(group_results)
+        if group_results:
+            msg += f" groups={len(group_results)}"
         item.setForeground(QtGui.QBrush(QtGui.QColor(20, 160, 20)))
-        status_msg = tr("template.status_find_done", image=os.path.basename(scene_path), message=msg)
         self._find_result_cache[scene_path] = {
+            "kind": "success",
+            "summary": msg,
+            "global_only": not self.chk_enable_groups.isChecked(),
             "pixmap": QtGui.QPixmap(overlay_pixmap),
-            "message": status_msg,
+            "group_results": deepcopy(group_results),
         }
-        self.lbl_find_status.setText(status_msg)
+        self._find_status_scene_path = scene_path
+        self.lbl_find_status.setText(self._refresh_find_item_text(item))
 
-    def _set_find_item_error(self, item: QtWidgets.QListWidgetItem, message: str) -> None:
+    def _set_find_item_error(
+        self, item: QtWidgets.QListWidgetItem, message: str, *,
+        group_results=None, error_key: str = "", error_params=None,
+    ) -> None:
         scene_path = str(item.data(QtCore.Qt.UserRole) or "")
-        item.setText(f"{os.path.basename(scene_path)} | ERROR: {message}")
-        item.setToolTip(f"{scene_path}\nERROR: {message}")
         item.setForeground(QtGui.QBrush(QtGui.QColor(200, 40, 40)))
-        status_msg = tr("template.status_find_failed", message=message)
         pixmap: Optional[QtGui.QPixmap] = None
         if scene_path and os.path.exists(scene_path):
             pixmap = pixmap_from_path(scene_path)
@@ -2062,10 +2203,15 @@ class ShapeTemplateDialog(ReferenceRoiTabMixin, QtWidgets.QDialog):
                 self.find_canvas.set_image(scene_path, pixmap=pixmap)
                 self._apply_search_roi_to_find_canvas()
         self._find_result_cache[scene_path] = {
+            "kind": "error",
+            "error": message,
+            "error_key": error_key,
+            "error_params": deepcopy(error_params or {}),
+            "group_results": deepcopy(group_results or []),
             "pixmap": QtGui.QPixmap(pixmap) if isinstance(pixmap, QtGui.QPixmap) else None,
-            "message": status_msg,
         }
-        self.lbl_find_status.setText(status_msg)
+        self._find_status_scene_path = scene_path
+        self.lbl_find_status.setText(self._refresh_find_item_text(item))
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         if self._build_thread is not None:

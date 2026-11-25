@@ -112,12 +112,17 @@ class DebugMainWindow(QtWidgets.QMainWindow):
         )
         if ret != QtWidgets.QMessageBox.Yes:
             return
+        close_editor = getattr(self.tool_page.product_session_controller, "close_template_editor_before_switch", None)
+        if callable(close_editor) and not close_editor(product_dir=str(Path(self.session.session_dir) / name)):
+            return
+        was_current = name == self.session.current_product
         error = self.session.delete_product(name)
         if error:
             QtWidgets.QMessageBox.critical(self, "\u5220\u9664\u4ea7\u54c1", error)
             return
         self.tool_page.refresh_product_selector()
-        self.tool_page.apply_product_switch(self.session.current_product)
+        if was_current:
+            self.tool_page.apply_product_switch(self.session.current_product)
 
     def _on_session_clear_request(self) -> None:
         self.tool_page.reset_for_clear()

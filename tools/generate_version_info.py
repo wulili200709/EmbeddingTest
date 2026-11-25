@@ -7,6 +7,8 @@ from pathlib import Path
 import platform
 import re
 import sys
+import subprocess
+import hashlib
 
 
 _VERSION_RE = re.compile(
@@ -16,6 +18,51 @@ _VERSION_RE = re.compile(
     r"(?:\.(?P<build>0|[1-9]\d*))?"
     r"(?:[-+][0-9A-Za-z.-]+)?$"
 )
+
+
+def source_metadata(root: Path) -> dict:
+    def git(*args: str) -> str:
+        result = subprocess.run(
+            ['git', '-c', 'core.quotepath=false', *args], cwd=root,
+            capture_output=True, encoding='utf-8', errors='replace', check=True,
+        )
+        return result.stdout.strip()
+
+    try:
+        commit = git('rev-parse', 'HEAD')
+        status = git('status', '--short')
+        commits = git('log', '-20', '--format=%H%x1f%aI%x1f%s')
+        history_path = root / 'releases' / 'history.json'
+        history = json.loads(history_path.read_text(encoding='utf-8')) if history_path.exists() else []
+        previous_commit = history[0].get('source', {}).get('commit') if history else None
+        release_commits = (git('log', f'{previous_commit}..HEAD', '--format=%H%x1f%aI%x1f%s')
+                           if previous_commit else commits)
+        # Include hashes of source files so a build with uncommitted edits can
+        # be distinguished from another build at the same Git commit.
+        names = git('ls-files', '--cached', '--others', '--exclude-standard', '-z').split('\0')
+        source_hash = hashlib.sha256()
+        for name in sorted(set(filter(None, names))):
+            path = root / name
+            if path.is_file() and (path.suffix in {'.py', '.ps1', '.bat', '.spec', '.json'}
+                                   or name in {'VERSION', 'requirements.txt'}):
+                if name.startswith('releases/'):
+                    continue
+                source_hash.update(name.encode('utf-8') + b'\0')
+                source_hash.update(hashlib.sha256(path.read_bytes()).digest())
+        return {
+            'commit': commit, 'branch': git('rev-parse', '--abbrev-ref', 'HEAD'),
+            'dirty': bool(status), 'working_tree_changes': status.splitlines(),
+            'source_sha256': source_hash.hexdigest(),
+            'recent_commits': [dict(zip(('commit', 'date', 'subject'), line.split('\x1f', 2)))
+                               for line in commits.splitlines()],
+            'previous_release_commit': previous_commit,
+            'changes_since_previous_release': [
+                dict(zip(('commit', 'date', 'subject'), line.split('\x1f', 2)))
+                for line in release_commits.splitlines()
+            ],
+        }
+    except (OSError, subprocess.CalledProcessError) as exc:
+        return {'available': False, 'reason': str(exc)}
 
 
 def parse_version(value: object) -> tuple[str, tuple[int, int, int, int]]:
@@ -83,6 +130,7 @@ def main() -> int:
     parser.add_argument("--version-file", required=True)
     parser.add_argument("--resource-file", required=True)
     parser.add_argument("--manifest-file", required=True)
+    parser.add_argument("--project-root", type=Path, default=Path(__file__).resolve().parents[1])
     args = parser.parse_args()
 
     try:
@@ -106,15 +154,21 @@ def main() -> int:
         ),
         encoding="utf-8",
     )
+    now = datetime.now(timezone.utc)
+    notes_path = args.project_root / 'releases' / 'notes' / f'{version}.json'
+    notes = json.loads(notes_path.read_text(encoding='utf-8')) if notes_path.exists() else {}
     manifest_path.write_text(
         json.dumps(
             {
                 "product_name": str(args.product_name),
                 "version": version,
                 "windows_version": list(numeric_version),
-                "built_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "build_id": now.strftime('%Y%m%dT%H%M%S%fZ'),
+                "built_at_utc": now.isoformat(timespec="seconds"),
                 "python_version": platform.python_version(),
                 "platform": platform.platform(),
+                "source": source_metadata(args.project_root.resolve()),
+                "release_notes": notes,
             },
             ensure_ascii=False,
             indent=2,

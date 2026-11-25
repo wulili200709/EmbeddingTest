@@ -1,0 +1,265 @@
+[
+  {
+    "schema_version": 1,
+    "record_id": "20261122T090403542181Z_full",
+    "status": "built",
+    "product_name": "LC System",
+    "version": "3.0.7",
+    "windows_version": [
+      3,
+      0,
+      7,
+      0
+    ],
+    "build_id": "20261122T090403542181Z",
+    "built_at_utc": "2026-11-22T09:04:03+00:00",
+    "python_version": "3.12.6",
+    "platform": "Windows-11-10.0.26300-SP0",
+    "source": {
+      "commit": "437ef1ad7bbfb353154c11d792c24e2b416dcb7b",
+      "branch": "backup/embeddingtest-local",
+      "dirty": true,
+      "working_tree_changes": [
+        "M VERSION",
+        " M build_lite_py312.ps1",
+        " M build_py312.ps1",
+        " M tools/generate_version_info.py",
+        " M tools/package_release.ps1",
+        " M ui/shell/support.py",
+        "?? build_v3.0.7.log",
+        "?? releases/",
+        "?? tests/test_release_history.py",
+        "?? tools/record_release.py"
+      ],
+      "source_sha256": "ee41f4761275d5d7943c9db3234c6bfb0740b2a4f3b92a382c75049a19860f16",
+      "recent_commits": [
+        {
+          "commit": "437ef1ad7bbfb353154c11d792c24e2b416dcb7b",
+          "date": "2026-11-22T15:56:27+08:00",
+          "subject": "add yolon for class"
+        },
+        {
+          "commit": "555efd0368a46becffef3a4e530d393022c277c6",
+          "date": "2026-11-20T16:24:28+08:00",
+          "subject": "update"
+        },
+        {
+          "commit": "716079580e66e55b5bbafbecf2985a895566f062",
+          "date": "2026-10-10T09:39:38+08:00",
+          "subject": "backup"
+        },
+        {
+          "commit": "7c954e018c9c822fb06b92a65c270d2022b0e124",
+          "date": "2026-09-06T07:47:43+08:00",
+          "subject": "update 多针尖检测"
+        },
+        {
+          "commit": "a5c0b5ef26bc8b6d8c45022ec03c8635df39d7ec",
+          "date": "2026-09-05T18:00:47+08:00",
+          "subject": "针点检测和多针点检测"
+        },
+        {
+          "commit": "f9646ce4c04c5ebe972fa2de9d0ca0e9caaa4030",
+          "date": "2026-09-04T13:52:32+08:00",
+          "subject": "update mainlite"
+        },
+        {
+          "commit": "afdbd9ca94786841b7fe481f4f1a8c774ee70e38",
+          "date": "2026-08-31T16:07:17+08:00",
+          "subject": "Remove node_modules folder from repository"
+        },
+        {
+          "commit": "fe018c6d52f68d32d8deb2531ffaeb0f804be010",
+          "date": "2026-08-31T15:59:57+08:00",
+          "subject": "优化训练不重新匹配模板只根据ROI当前标注得训练,标注页面支持平移"
+        },
+        {
+          "commit": "fca649463fab3ebc591289e8610ec8b261e2e0fe",
+          "date": "2026-08-20T10:35:07+08:00",
+          "subject": "Remove BUG folder"
+        },
+        {
+          "commit": "90ce99ea2c5725e3db15422cba35152e7cf8d528",
+          "date": "2026-08-20T10:32:24+08:00",
+          "subject": "version 3.0.3"
+        },
+        {
+          "commit": "318798d2cdc82318096620f05b027c78ad77cd6b",
+          "date": "2026-08-18T10:22:35+08:00",
+          "subject": "三通道切换到两通道运行界面显示通道3的bug"
+        },
+        {
+          "commit": "a32e4f1719198c784052b93f34fce03f52fb39c5",
+          "date": "2026-08-11T11:11:37+08:00",
+          "subject": "optimize three cameras sequence"
+        },
+        {
+          "commit": "3b1317494b0b170b16c15dafc70d9ab6edc273a2",
+          "date": "2026-08-07T22:30:03+08:00",
+          "subject": "optimize multi cmeras"
+        },
+        {
+          "commit": "bf7841fc1bbb13b5657495a3268525e87e893072",
+          "date": "2026-08-07T13:44:30+08:00",
+          "subject": "optimize speed using chunk in CPU"
+        },
+        {
+          "commit": "2035a433bf7a41dd420d0f6f1aee80e9ae71e42b",
+          "date": "2026-08-07T10:36:28+08:00",
+          "subject": "fix open mvs and refresh time"
+        },
+        {
+          "commit": "14cb99a4d5422185cd09ee56a36a100cb64c56e3",
+          "date": "2026-08-06T22:47:19+08:00",
+          "subject": "add exception logs"
+        },
+        {
+          "commit": "15412f3102f07f21a1c37349367496a3db461d3e",
+          "date": "2026-08-06T20:15:23+08:00",
+          "subject": "optimize multi channels test"
+        },
+        {
+          "commit": "2436ba81b55f243bc756911b94219ef30ef3bd7f",
+          "date": "2026-08-06T09:39:32+08:00",
+          "subject": "support different cameras using different models and also choose different working cameras"
+        },
+        {
+          "commit": "2e14c678f9235c993a588c04f72b0e2a27fa8562",
+          "date": "2026-08-05T14:36:15+08:00",
+          "subject": "update"
+        },
+        {
+          "commit": "4dd7c70b2dd06180bf8e037721aa5a6791a424fd",
+          "date": "2026-08-05T07:23:26+08:00",
+          "subject": "update backup"
+        }
+      ],
+      "previous_release_commit": null,
+      "changes_since_previous_release": [
+        {
+          "commit": "437ef1ad7bbfb353154c11d792c24e2b416dcb7b",
+          "date": "2026-11-22T15:56:27+08:00",
+          "subject": "add yolon for class"
+        },
+        {
+          "commit": "555efd0368a46becffef3a4e530d393022c277c6",
+          "date": "2026-11-20T16:24:28+08:00",
+          "subject": "update"
+        },
+        {
+          "commit": "716079580e66e55b5bbafbecf2985a895566f062",
+          "date": "2026-10-10T09:39:38+08:00",
+          "subject": "backup"
+        },
+        {
+          "commit": "7c954e018c9c822fb06b92a65c270d2022b0e124",
+          "date": "2026-09-06T07:47:43+08:00",
+          "subject": "update 多针尖检测"
+        },
+        {
+          "commit": "a5c0b5ef26bc8b6d8c45022ec03c8635df39d7ec",
+          "date": "2026-09-05T18:00:47+08:00",
+          "subject": "针点检测和多针点检测"
+        },
+        {
+          "commit": "f9646ce4c04c5ebe972fa2de9d0ca0e9caaa4030",
+          "date": "2026-09-04T13:52:32+08:00",
+          "subject": "update mainlite"
+        },
+        {
+          "commit": "afdbd9ca94786841b7fe481f4f1a8c774ee70e38",
+          "date": "2026-08-31T16:07:17+08:00",
+          "subject": "Remove node_modules folder from repository"
+        },
+        {
+          "commit": "fe018c6d52f68d32d8deb2531ffaeb0f804be010",
+          "date": "2026-08-31T15:59:57+08:00",
+          "subject": "优化训练不重新匹配模板只根据ROI当前标注得训练,标注页面支持平移"
+        },
+        {
+          "commit": "fca649463fab3ebc591289e8610ec8b261e2e0fe",
+          "date": "2026-08-20T10:35:07+08:00",
+          "subject": "Remove BUG folder"
+        },
+        {
+          "commit": "90ce99ea2c5725e3db15422cba35152e7cf8d528",
+          "date": "2026-08-20T10:32:24+08:00",
+          "subject": "version 3.0.3"
+        },
+        {
+          "commit": "318798d2cdc82318096620f05b027c78ad77cd6b",
+          "date": "2026-08-18T10:22:35+08:00",
+          "subject": "三通道切换到两通道运行界面显示通道3的bug"
+        },
+        {
+          "commit": "a32e4f1719198c784052b93f34fce03f52fb39c5",
+          "date": "2026-08-11T11:11:37+08:00",
+          "subject": "optimize three cameras sequence"
+        },
+        {
+          "commit": "3b1317494b0b170b16c15dafc70d9ab6edc273a2",
+          "date": "2026-08-07T22:30:03+08:00",
+          "subject": "optimize multi cmeras"
+        },
+        {
+          "commit": "bf7841fc1bbb13b5657495a3268525e87e893072",
+          "date": "2026-08-07T13:44:30+08:00",
+          "subject": "optimize speed using chunk in CPU"
+        },
+        {
+          "commit": "2035a433bf7a41dd420d0f6f1aee80e9ae71e42b",
+          "date": "2026-08-07T10:36:28+08:00",
+          "subject": "fix open mvs and refresh time"
+        },
+        {
+          "commit": "14cb99a4d5422185cd09ee56a36a100cb64c56e3",
+          "date": "2026-08-06T22:47:19+08:00",
+          "subject": "add exception logs"
+        },
+        {
+          "commit": "15412f3102f07f21a1c37349367496a3db461d3e",
+          "date": "2026-08-06T20:15:23+08:00",
+          "subject": "optimize multi channels test"
+        },
+        {
+          "commit": "2436ba81b55f243bc756911b94219ef30ef3bd7f",
+          "date": "2026-08-06T09:39:32+08:00",
+          "subject": "support different cameras using different models and also choose different working cameras"
+        },
+        {
+          "commit": "2e14c678f9235c993a588c04f72b0e2a27fa8562",
+          "date": "2026-08-05T14:36:15+08:00",
+          "subject": "update"
+        },
+        {
+          "commit": "4dd7c70b2dd06180bf8e037721aa5a6791a424fd",
+          "date": "2026-08-05T07:23:26+08:00",
+          "subject": "update backup"
+        }
+      ]
+    },
+    "release_notes": {
+      "version": "3.0.7",
+      "date": "2026-11-22",
+      "changes": [
+        "新增 YOLO 分类学习工具及随包提供的初始模型。",
+        "改进公共模型库的模型标识、版本选择和存储管理。",
+        "优化样本标注的检测框显示、原图查看和图片切换缓存。",
+        "优化学习检测的批量预处理和 CPU 推理线程使用。",
+        "图片测试复用未变化的区域模型，定位投影复用模板几何信息。",
+        "统一软件显示版本、Windows exe 属性和发布目录版本号。",
+        "正式版与 Lite 打包成功后自动生成版本记录、更新说明、源码指纹和 exe SHA-256；同版本重建保留历史产物。"
+      ],
+      "validation_notes": [
+        "性能优化不代表已达到整张图 500 毫秒的目标；具体订单仍需单独测量。"
+      ]
+    },
+    "recorded_at": "2026-11-22T17:16:31+08:00",
+    "release_folder": "C:\\Users\\goney\\Desktop\\MatchTemplate2\\EmbeddingTest\\dist\\LC System V3.0.7",
+    "executable": {
+      "name": "LC System.exe",
+      "size_bytes": 68130220,
+      "sha256": "bc2ccc44fad0a677226f3cc4d260b7a1600dd8200893c65c8048052ae4d2d099"
+    }
+  }
+]

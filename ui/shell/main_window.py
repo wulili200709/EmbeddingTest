@@ -1285,18 +1285,27 @@ class MainWindow(QtWidgets.QMainWindow):
         if ret != QtWidgets.QMessageBox.Yes:
             return
 
-        self.runtime_ctrl.disconnect(silent=True)
+        close_editor = getattr(self.tool_page.product_session_controller, "close_template_editor_before_switch", None)
+        if callable(close_editor) and not close_editor(product_dir=os.path.join(self.session.session_dir, name)):
+            return
+        was_current = name == self.session.current_product
+        if was_current:
+            self.runtime_ctrl.disconnect(silent=True)
         error = self.session.delete_product(name)
         if error:
             QtWidgets.QMessageBox.critical(self, "\u5220\u9664\u4ea7\u54c1", error)
             return
 
         self.tool_page.refresh_product_selector()
-        self.tool_page.apply_product_switch(self.session.current_product)
-        if is_qr_core_ready():
-            self._preload_current_embedding_model()
+        if was_current:
+            self.tool_page.apply_product_switch(self.session.current_product)
+            if is_qr_core_ready():
+                self._preload_current_embedding_model()
         self._sync_shell_status()
-        self.runtime_ctrl.refresh_all_status("\u4ea7\u54c1\u5df2\u5220\u9664\uff0c\u8bf7\u91cd\u65b0\u8fde\u63a5\u8fd0\u884c\u94fe\u8def")
+        self.runtime_ctrl.refresh_all_status(
+            "\u4ea7\u54c1\u5df2\u5220\u9664\uff0c\u8bf7\u91cd\u65b0\u8fde\u63a5\u8fd0\u884c\u94fe\u8def"
+            if was_current else "\u4ea7\u54c1\u5df2\u5220\u9664"
+        )
         self._audit_event(
             module="产品",
             action="删除产品",

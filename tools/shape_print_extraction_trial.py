@@ -94,7 +94,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--input',required=True,type=Path)
     parser.add_argument('--reference',required=True,type=Path)
-    parser.add_argument('--output',type=Path,default=ROOT/'reports/shape_print_extraction_20261013')
+    parser.add_argument('--output',type=Path,default=ROOT / 'artifacts/reports/shape_print_extraction_20261013')
     parser.add_argument('--reuse-model',action='store_true')
     parser.add_argument('--search-mode', choices=('full-image', 'legacy-roi'), default='full-image',
                         help='Full-image search keeps a displaced housing template from being clipped; legacy-roi reproduces the earlier trial.')

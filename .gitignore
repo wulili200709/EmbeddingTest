@@ -5,15 +5,60 @@ dist/
 dist-build/
 dist-build-lite/
 .build-metadata/
-_dev_only/
-!_dev_only/manual_capture/
-!_dev_only/manual_capture/capture_beginner_guide.py
+# Keep the development parent traversable: ignoring the directory itself would
+# prevent the source/test exceptions below from taking effect.
+_dev_only/*
+!_dev_only/README.md
+!_dev_only/native_build.md
+!_dev_only/setup.py
+!_dev_only/build_embedding_core_pyd.py
+
+# Native bridge sources. Binaries are generated outside this source directory.
+!_dev_only/native/
+_dev_only/native/*
+!_dev_only/native/*.cpp
+!_dev_only/native/*.cc
+!_dev_only/native/*.cxx
+!_dev_only/native/*.h
+!_dev_only/native/*.hpp
+!_dev_only/native/*.inl
+
+# Only the four source trees consumed by setup.py are eligible for tracking.
+!_dev_only/vendor/
+_dev_only/vendor/*
+!_dev_only/vendor/_third_party_shape_based_matching/
+!_dev_only/vendor/_third_party_shape_based_matching_fusion_fix_memo/
+!_dev_only/vendor/_third_party_shape_based_matching_sim3/
+!_dev_only/vendor/eigen/
+_dev_only/vendor/**/build/
+_dev_only/vendor/**/build_bench/
+_dev_only/vendor/**/CMakeFiles/
+_dev_only/vendor/**/CMakeCache.txt
+_dev_only/vendor/**/compile_commands.json
+_dev_only/vendor/**/.vs/
+_dev_only/vendor/**/.git/
+_dev_only/vendor/**/*.obj
+_dev_only/vendor/**/*.o
+_dev_only/vendor/**/*.pdb
+_dev_only/vendor/**/*.ilk
+_dev_only/vendor/**/*.exp
+_dev_only/vendor/**/*.pyd
+_dev_only/vendor/**/*.dll
+_dev_only/vendor/**/*.lib
+_dev_only/vendor/**/*.so
+_dev_only/vendor/**/*.a
+_dev_only/vendor/**/*.exe
+
+# Keep test/capture Python entry points at their existing paths. Captured images,
+# logs, private fixtures, and other generated files remain excluded.
 !_dev_only/tests/
-_dev_only/tests/
-!_dev_only/tests/test_runtime_capture_plan.py
-!_dev_only/tests/test_nkio_runtime_concurrency.py
-!_dev_only/tests/test_runtime_image_view_zoom.py
-!_dev_only/tests/test_training_asset_localization.py
+_dev_only/tests/**
+!_dev_only/tests/**/
+!_dev_only/tests/**/*.py
+!_dev_only/manual_capture/
+_dev_only/manual_capture/**
+!_dev_only/manual_capture/**/
+!_dev_only/manual_capture/**/*.py
 __pycache__/
 *.pyc
 *.pyo
@@ -29,4 +74,30 @@ runtime_camera.log
 model_library/
 .qr_session/
 reports/
+
+# Private experiment inputs/outputs stay local. Only reviewed documentation or
+# explicitly whitelisted example configuration should enter version control.
+experiments/**
+!experiments/README.md
+artifacts/
+/build_*.log
+/lens_calibration.json
+/.cache/*.jpg
+
+# Machine-specific settings; existing tracked files are not removed by ignore
+# rules. Defaults/examples remain eligible for tracking and packaging.
+config/camera_settings.json
+config/runtime_mode_settings.json
+config/runtime_record_settings.json
+config/system_passwords.json
+config/tower_light_settings.json
+config/ui_settings.json
+config/*.bak
+
+# Historical copies and compiler intermediates, not runtime DLL/PYD outputs.
+*.bak
+*.obj
+*.pdb
+*.ilk
+*.exp
 

@@ -117,7 +117,25 @@ class ProductSessionController:
         self.owner._current_result_rows = []
         self.owner._roi_results_by_image = {}
 
+    def close_template_editor_before_switch(self, *, product_dir: str | None = None) -> bool:
+        dialog = getattr(self.owner, "_template_editor_dialog", None)
+        if dialog is None:
+            return True
+        if product_dir is not None and (
+            os.path.normcase(os.path.abspath(str(dialog.product_dir)))
+            != os.path.normcase(os.path.abspath(product_dir))
+        ):
+            return True
+        if not dialog.close():
+            self.refresh_product_selector()
+            return False
+        if getattr(self.owner, "_template_editor_dialog", None) is dialog:
+            self.owner._template_editor_dialog = None
+        return True
+
     def apply_product_switch(self, name: str) -> None:
+        if not self.close_template_editor_before_switch():
+            return
         self.owner.session.switch_product(name)
         self.owner.session.save_products()
         self.sync_camera_settings_store_path()

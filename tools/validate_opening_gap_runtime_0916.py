@@ -65,7 +65,7 @@ def main() -> None:
         rows.append(row)
         if index % 10 == 0:
             print(f"processed {index}/{len(paths)}", flush=True)
-    report = ROOT / "reports"
+    report = ROOT / "artifacts/reports"
     report.mkdir(exist_ok=True)
     with (report / "0916_opening_gap_runtime_50.csv").open("w", encoding="utf-8-sig", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=["image", "roi_count", *names])

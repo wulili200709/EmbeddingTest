@@ -119,11 +119,19 @@ def _overlay_follow_result(
     region_palette = [(0, 255, 255), (255, 0, 255), (0, 220, 120), (255, 180, 0), (0, 180, 255)]
     for idx, region in enumerate(result.regions):
         color = region_palette[idx % len(region_palette)]
+        baseline = getattr(region, "global_points", None)
+        if baseline:
+            before = np.round(np.asarray(baseline, dtype=np.float32)).astype(np.int32).reshape(-1, 1, 2)
+            cv2.polylines(canvas, [before], True, (160, 160, 160), 1, cv2.LINE_AA)
+        valid = getattr(region, "valid", True)
+        if not valid:
+            color = (70, 70, 255)
         pts = np.round(np.asarray(region.points, dtype=np.float32)).astype(np.int32).reshape(-1, 1, 2)
         cv2.polylines(canvas, [pts], True, color, 2, cv2.LINE_AA)
         tx = int(round(region.points[0][0]))
         ty = int(round(region.points[0][1]))
-        cv2.putText(canvas, region.label_name, (tx, max(20, ty - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
+        roi_text = region.label_name if valid else region.label_name + " INVALID"
+        cv2.putText(canvas, roi_text, (tx, max(20, ty - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
     return canvas
 
 

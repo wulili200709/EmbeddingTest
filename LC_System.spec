@@ -14,7 +14,7 @@ REPO_ROOT = APP_ROOT.parent
 SDK_ROOT = REPO_ROOT / "NKDIOLC_SDK"
 RES_ROOT = APP_ROOT / "res"
 CONFIG_ROOT = APP_ROOT / "config"
-RECORDS_ROOT = APP_ROOT / "records"
+BUILD_METADATA_ROOT = APP_ROOT / "artifacts" / "build" / "metadata" / "full"
 SESSION_ROOT = APP_ROOT / ".qr_session"
 ORT_BACKBONE_CACHE_ROOT = APP_ROOT / ".cache" / "ort_backbones"
 MVIMPORT_ROOT = APP_ROOT / "third_party" / "MvImport"
@@ -156,7 +156,7 @@ for path in CONFIG_DATA_FILES:
 # The build script creates this clean seed database. It contains only the
 # default accounts and permissions—never development-machine audit or runtime
 # history.
-seed_audit_db = RECORDS_ROOT / ".package-seed" / "audit.db"
+seed_audit_db = BUILD_METADATA_ROOT / "audit.db"
 if not seed_audit_db.exists():
     raise RuntimeError("Missing package seed database; build with build_py312.ps1.")
 datas.append(_pair(seed_audit_db, "EmbeddingTest/records"))

@@ -13,18 +13,11 @@ $releaseTools = Join-Path $scriptRoot "tools\package_release.ps1"
 
 $PythonExe = Resolve-LCPython312 -RequestedPythonExe $PythonExe
 $Version = Resolve-LCBuildVersion -ScriptRoot $scriptRoot -RequestedVersion $Version
-$distPath = if ($OutputPath.Trim()) {
-    if ([System.IO.Path]::IsPathRooted($OutputPath)) {
-        [System.IO.Path]::GetFullPath($OutputPath)
-    } else {
-        [System.IO.Path]::GetFullPath((Join-Path $scriptRoot $OutputPath))
-    }
-} else {
-    Join-Path $scriptRoot "dist"
-}
-$workPath = Join-Path $scriptRoot "dist-build"
+$buildPaths = Resolve-LCBuildPaths -ScriptRoot $scriptRoot -Edition "full" -OutputPath $OutputPath
+$distPath = $buildPaths.DistPath
+$workPath = $buildPaths.WorkPath
 $specPath = Join-Path $scriptRoot "LC_System.spec"
-$metadataPath = Join-Path $scriptRoot ".build-metadata\full"
+$metadataPath = $buildPaths.MetadataPath
 $metadata = New-LCBuildMetadata `
     -ScriptRoot $scriptRoot `
     -MetadataPath $metadataPath `
@@ -32,7 +25,7 @@ $metadata = New-LCBuildMetadata `
     -Version $Version `
     -ProductName "LC System" `
     -ExeName "LC System.exe"
-$seedAuditDb = Join-Path $scriptRoot "records\.package-seed\audit.db"
+$seedAuditDb = Join-Path $metadataPath "audit.db"
 $seedGenerator = Join-Path $scriptRoot "tools\generate_seed_audit_db.py"
 $sdkRoot = Join-Path $scriptRoot "..\NKDIOLC_SDK"
 $winRingSysCandidates = @(
@@ -84,7 +77,7 @@ finally {
     $env:LC_SYSTEM_BUILD_MANIFEST = $previousBuildManifest
 }
 
-$exeDir = Join-Path $distPath "LC System"
+$exeDir = $buildPaths.BuildPath
 if (-not (Test-Path -LiteralPath $exeDir)) {
     throw "Build output directory not found: $exeDir"
 }
@@ -96,6 +89,7 @@ $release = Publish-LCReleaseFolder `
     -BuildFolderName "LC System" `
     -ReleaseFolderName "LC System V$Version" `
     -ArchiveFileName "LC_System_V$Version.zip" `
+    -ScriptRoot $scriptRoot -PythonExe $PythonExe -ExeName "LC System.exe" `
     -SkipArchive:$SkipArchive
 
 Write-Host "Built LC System V${Version}: $($release.ReleasePath)"

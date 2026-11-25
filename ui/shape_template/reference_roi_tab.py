@@ -54,6 +54,8 @@ class ReferenceRoiTabMixin:
 
     def _set_reference_dirty(self, dirty: bool, status_text: str = "") -> None:
         self._reference_dirty = bool(dirty)
+        if dirty and hasattr(self, "_clear_group_find_cache"):
+            self._clear_group_find_cache()
         if hasattr(self, "btn_save_reference_roi"):
             self.btn_save_reference_roi.setEnabled(self._reference_dirty or bool(self._reference_regions))
         if status_text and hasattr(self, "lbl_reference_status"):
@@ -93,9 +95,11 @@ class ReferenceRoiTabMixin:
                 display_name,
                 label,
                 info_text,
+                self._group_name(str(region.get("group_id") or "")),
             ]
             for col, value in enumerate(values):
                 item = QtWidgets.QTableWidgetItem(value)
+                item.setToolTip(value)
                 item.setData(QtCore.Qt.UserRole, idx)
                 if col == 0:
                     item.setTextAlignment(
@@ -108,6 +112,8 @@ class ReferenceRoiTabMixin:
         if self._selected_reference_idx is not None and 0 <= self._selected_reference_idx < self.table_reference_regions.rowCount():
             self.table_reference_regions.setCurrentCell(self._selected_reference_idx, 0)
         self.table_reference_regions.blockSignals(False)
+        if hasattr(self, "list_localization_groups"):
+            self._refresh_group_list()
 
     def _refresh_reference_region_fields(self) -> None:
         self.edit_output_label.blockSignals(True)
@@ -132,6 +138,7 @@ class ReferenceRoiTabMixin:
         finally:
             self.edit_output_label.blockSignals(False)
             self.edit_display_name.blockSignals(False)
+            self._refresh_group_choices()
 
     def _on_region_field_edited(self) -> None:
         pass
@@ -241,6 +248,7 @@ class ReferenceRoiTabMixin:
                     "reference_label": label,
                     "output_label": label,
                     "display_name": label,
+                    "group_id": "",
                     "shape_type": shape_type,
                     "points": points,
                 }
@@ -280,6 +288,10 @@ class ReferenceRoiTabMixin:
                 QtWidgets.QMessageBox.information(self, tr("common.info"), tr("template.no_reference_json"))
             return False
         try:
+            bindings = {
+                str(region.get("output_label") or region.get("reference_label") or ""): str(region.get("group_id") or "")
+                for region in self._reference_regions
+            }
             regions: List[Dict[str, object]] = []
             for shape in labelme_io.list_shapes_from_labelme(jpath, label_prefix="roi"):
                 label_name = str(shape.get("label", "")).strip()
@@ -302,6 +314,7 @@ class ReferenceRoiTabMixin:
                         "reference_label": label_name,
                         "output_label": label_name,
                         "display_name": label_name,
+                        "group_id": bindings.get(label_name, ""),
                         "shape_type": shape_type,
                         "points": points,
                     }
@@ -390,6 +403,8 @@ class ReferenceRoiTabMixin:
             QtWidgets.QMessageBox.warning(self, tr("common.save_failed"), str(exc))
             return
         self._set_reference_dirty(False, tr("template.status_reference_config_saved", count=len(self._reference_regions)))
+        if hasattr(self, "lbl_group_status"):
+            self._set_group_status("template.groups.saved", groups=len(self._localization_groups), rois=len(self._reference_regions))
         self.referenceRegionsChanged.emit()
 
     def _confirm_reference_roi_discard(self) -> bool:

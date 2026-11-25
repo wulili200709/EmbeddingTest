@@ -13,6 +13,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from common.algorithm_codes import learning_backbone_storage_code
 from ncc import locator as ncc_locator
 from shape.core import locator as shape_locator
+from shape.core.recipe import has_bound_localization_groups
 
 
 def _predict_image(
@@ -50,7 +51,9 @@ def _predict_image(
         ref_image = tool_page.ref_image
         if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
             ref_image = recipe.reference_image
-        if ref_image and os.path.exists(ref_image):
+        if (ref_image and os.path.exists(ref_image)) or (
+            recipe is not None and has_bound_localization_groups(recipe)
+        ):
             run = shape_locator.autogen_roi_json_from_shape_timed(
                 tgt_img_path=path,
                 ref_img_path=ref_image,

@@ -13,19 +13,12 @@ $releaseTools = Join-Path $scriptRoot "tools\package_release.ps1"
 
 $PythonExe = Resolve-LCPython312 -RequestedPythonExe $PythonExe
 $Version = Resolve-LCBuildVersion -ScriptRoot $scriptRoot -RequestedVersion $Version
-$distPath = if ($OutputPath.Trim()) {
-    if ([System.IO.Path]::IsPathRooted($OutputPath)) {
-        [System.IO.Path]::GetFullPath($OutputPath)
-    } else {
-        [System.IO.Path]::GetFullPath((Join-Path $scriptRoot $OutputPath))
-    }
-} else {
-    Join-Path $scriptRoot "dist-lite"
-}
-$workPath = Join-Path $scriptRoot "dist-build-lite"
+$buildPaths = Resolve-LCBuildPaths -ScriptRoot $scriptRoot -Edition "lite" -OutputPath $OutputPath
+$distPath = $buildPaths.DistPath
+$workPath = $buildPaths.WorkPath
 $specPath = Join-Path $scriptRoot "LC_System_Lite.spec"
-$exeDir = Join-Path $distPath "LC System Lite"
-$metadataPath = Join-Path $scriptRoot ".build-metadata\lite"
+$exeDir = $buildPaths.BuildPath
+$metadataPath = $buildPaths.MetadataPath
 $metadata = New-LCBuildMetadata `
     -ScriptRoot $scriptRoot `
     -MetadataPath $metadataPath `
@@ -94,31 +87,8 @@ $release = Publish-LCReleaseFolder `
     -BuildFolderName "LC System Lite" `
     -ReleaseFolderName "LC System Lite V$Version" `
     -ArchiveFileName "LC_System_Lite_V$Version.zip" `
-    -SkipArchive
-
-if (-not $SkipArchive) {
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $archivePath = Join-Path $distPath "LC_System_Lite_V$Version.zip"
-    $temporaryArchivePath = Join-Path $distPath "LC_System_Lite_V$Version.building.zip"
-    if (Test-Path -LiteralPath $temporaryArchivePath) {
-        Remove-Item -LiteralPath $temporaryArchivePath -Force
-    }
-    [System.IO.Compression.ZipFile]::CreateFromDirectory(
-        $release.ReleasePath,
-        $temporaryArchivePath,
-        [System.IO.Compression.CompressionLevel]::Optimal,
-        $true
-    )
-    $archiveInfo = Get-Item -LiteralPath $temporaryArchivePath
-    if ($archiveInfo.Length -le 0) {
-        throw "Lite release archive is empty: $temporaryArchivePath"
-    }
-    if (Test-Path -LiteralPath $archivePath) {
-        Remove-Item -LiteralPath $archivePath -Force
-    }
-    Move-Item -LiteralPath $temporaryArchivePath -Destination $archivePath
-    $release.ArchivePath = $archivePath
-}
+    -ScriptRoot $scriptRoot -PythonExe $PythonExe -ExeName "LC System Lite.exe" `
+    -SkipArchive:$SkipArchive
 
 Write-Host "Built LC System Lite V${Version}: $($release.ReleasePath)"
 if ($release.ArchivePath) {

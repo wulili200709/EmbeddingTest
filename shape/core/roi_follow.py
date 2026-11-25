@@ -2,7 +2,7 @@
 
 import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import List, Optional, Sequence, Tuple
 
 import cv2
@@ -11,7 +11,8 @@ import numpy as np
 from common import labelme_io
 
 from .bootstrap import ensure_repo_root_on_path
-from .recipe import ShapeRecipe, normalize_follow_mode
+from .recipe import ShapeRecipe, normalize_follow_mode, normalize_group_id, normalize_localization_groups
+from .localization_groups import GroupDiagnosticError, LocalizationGroupError, diagnostic_fields, localize_groups
 from .template_core import (
     apply_affine_to_points,
     expanded_pose_affine,
@@ -39,6 +40,9 @@ class FollowRegion:
     points: List[Point]
     bbox: Tuple[int, int, int, int]
     source_shape_type: str
+    group_id: str = ""
+    valid: bool = True
+    global_points: Optional[List[Point]] = None
 
 
 @dataclass
@@ -48,6 +52,7 @@ class FollowResult:
     points: List[Point]
     bbox: Tuple[int, int, int, int]
     source_shape_type: str
+    group_results: list[dict] = field(default_factory=list)
 
 
 def _shape_points_from_labelme(labelme_json_path: str, label_name: str) -> Tuple[str, List[Point]]:
@@ -87,8 +92,8 @@ def _region_specs_from_recipe(
     recipe: ShapeRecipe,
     ref_img_path: str,
     template_roi_rect,
-) -> List[Tuple[str, str, List[Point]]]:
-    specs: List[Tuple[str, str, List[Point]]] = []
+) -> List[Tuple[str, str, List[Point], str]]:
+    specs: List[Tuple[str, str, List[Point], str]] = []
     raw_regions = recipe.reference_regions or []
     for region in raw_regions:
         if not isinstance(region, dict):
@@ -105,20 +110,20 @@ def _region_specs_from_recipe(
         if shape_type == "rectangle" and len(points) == 2:
             (x0, y0), (x1, y1) = points
             points = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
-        specs.append((label_name, shape_type, points))
+        specs.append((label_name, shape_type, points, normalize_group_id(region.get("group_id"))))
     if specs:
         return specs
 
     recipe_shape = _shape_points_from_recipe(recipe)
     if recipe_shape is not None:
         shape_type, ref_points = recipe_shape
-        return [(str(recipe.output_label or "roi"), shape_type, ref_points)]
+        return [(str(recipe.output_label or "roi"), shape_type, ref_points, "")]
 
     ref_json = labelme_io.labelme_json_of_image(ref_img_path)
     if ref_img_path and os.path.exists(ref_json):
         try:
             shape_type, ref_points = _shape_points_from_labelme(ref_json, recipe.reference_label)
-            return [(str(recipe.output_label or recipe.reference_label or "roi"), shape_type, ref_points)]
+            return [(str(recipe.output_label or recipe.reference_label or "roi"), shape_type, ref_points, "")]
         except Exception:
             pass
 
@@ -128,7 +133,7 @@ def _region_specs_from_recipe(
         float(template_roi_rect.w),
         float(template_roi_rect.h),
     )
-    return [(str(recipe.output_label or "roi"), "rectangle", ref_points)]
+    return [(str(recipe.output_label or "roi"), "rectangle", ref_points, "")]
 
 
 def _bbox_from_points(points: Sequence[Point], image_shape: Tuple[int, int]) -> Tuple[int, int, int, int]:
@@ -276,7 +281,7 @@ def _follow_by_affine_roi(
     quad = match_quad(detector, match)
     top_left = quad[0]
     regions: List[FollowRegion] = []
-    for label_name, _shape_type, ref_points in region_specs:
+    for label_name, _shape_type, ref_points, group_id in region_specs:
         local_points = [
             (float(x) - float(template_roi_rect.x), float(y) - float(template_roi_rect.y))
             for x, y in ref_points
@@ -292,6 +297,7 @@ def _follow_by_affine_roi(
                 points=scene_points,
                 bbox=bbox,
                 source_shape_type="polygon",
+                group_id=group_id,
             )
         )
     primary = regions[0]
@@ -302,6 +308,123 @@ def _follow_by_affine_roi(
         bbox=primary.bbox,
         source_shape_type=primary.source_shape_type,
     )
+
+
+def _reference_to_scene_affine(detector: ShapeLikeDetector, match: Match) -> np.ndarray:
+    """Recover the complete forward pose, applying any refinement exactly once."""
+    width, height, rect = load_class_source_geometry(detector, match.class_id)
+    meta = detector.get_template_meta(match.class_id, int(match.template_id))
+    pose, _ = expanded_pose_affine(width, height, float(meta.get("angle", 0.0)), float(meta.get("scale", 1.0)))
+    raw_match = replace(match, refined_transform=None, refined_quad=None)
+    raw = np.asarray(match_quad(detector, raw_match), dtype=np.float64)
+    final = np.asarray(match_quad(detector, match), dtype=np.float64)
+    if raw.shape != (4, 2) or final.shape != (4, 2) or not np.isfinite(final).all():
+        raise GroupDiagnosticError("invalid_global_quad", "全局匹配四角无效")
+    # Raw quad includes native feature offsets and any search-crop translation.
+    # A refined quad can also be supplied without its original refinement matrix.
+    design = np.column_stack((raw[[0, 1, 3]], np.ones(3)))
+    refinement = np.linalg.solve(design, final[[0, 1, 3]]).T
+    predicted = refinement[:, :2] @ raw[2] + refinement[:, 2]
+    if np.linalg.norm(predicted - final[2]) > 0.1:
+        raise GroupDiagnosticError("unsupported_global_transform", "定位组当前只支持仿射全局定位")
+    raw_origin = np.eye(3)
+    raw_origin[:2, 2] = raw[0]
+    source_origin = np.eye(3)
+    source_origin[:2, 2] = [-float(rect.x), -float(rect.y)]
+    refinement3 = np.eye(3)
+    refinement3[:2] = refinement
+    return (refinement3 @ raw_origin @ np.asarray(pose, dtype=np.float64) @ source_origin)[:2]
+
+
+def _follow_localization_groups(
+    detector: ShapeLikeDetector, result: FollowResult, scene_bgr: np.ndarray,
+    ref_img_path: str, recipe: ShapeRecipe,
+) -> FollowResult:
+    active_ids = {region.group_id for region in result.regions if region.group_id}
+    invalid_bindings = []
+    # Do not infer usage only from rendered regions: the legacy ROI parser
+    # skips incomplete regions and can fall back to the entire template.
+    for raw_region in recipe.reference_regions or []:
+        if not isinstance(raw_region, dict):
+            continue
+        group_id = normalize_group_id(raw_region.get("group_id"))
+        if not group_id:
+            continue
+        active_ids.add(group_id)
+        label = str(raw_region.get("output_label") or raw_region.get("reference_label") or raw_region.get("label") or "").strip()
+        try:
+            points = np.asarray(raw_region.get("points", []), dtype=np.float64)
+            shape_type = str(raw_region.get("shape_type", "rectangle"))
+            if not label or points.ndim != 2 or points.shape[1] != 2 or not np.isfinite(points).all():
+                raise GroupDiagnosticError("invalid_bound_roi", "绑定 ROI 缺少有效名称或坐标")
+            if shape_type == "rectangle" and len(points) == 2:
+                if np.any(np.abs(points[1] - points[0]) < 1e-6):
+                    raise GroupDiagnosticError("empty_bound_roi", "绑定 ROI 矩形面积为零")
+            elif len(points) < 3 or abs(cv2.contourArea(points.astype(np.float32))) < 1e-6:
+                raise GroupDiagnosticError("invalid_bound_roi_shape", "绑定 ROI 缺少有效的闭合区域")
+        except (ValueError, TypeError, cv2.error) as error:
+            invalid_bindings.append({"id": group_id, "name": label or group_id, "used": True,
+                                     "valid": False, "score": None, "peak_margin": None,
+                                     "delta_ref": [0.0, 0.0], "delta_scene": [0.0, 0.0],
+                                     **diagnostic_fields(error, "invalid_bound_roi")})
+    if invalid_bindings:
+        result.group_results = invalid_bindings
+        for region in result.regions:
+            region.valid = False
+        raise LocalizationGroupError(invalid_bindings, result)
+    raw_groups = getattr(recipe, "localization_groups", None) or []
+    if not active_ids and not raw_groups:
+        return result
+    try:
+        groups = normalize_localization_groups(raw_groups)
+        transform = _reference_to_scene_affine(detector, result.match) if active_ids else np.eye(3)[:2]
+        diagnostics = localize_groups(scene_bgr, ref_img_path or recipe.reference_image, groups, active_ids, transform)
+    except (ValueError, TypeError, np.linalg.LinAlgError) as error:
+        diagnostics = [{"id": "__configuration__", "name": "定位组配置", "used": True,
+                        "valid": False, "score": None, "peak_margin": None,
+                        "delta_ref": [0.0, 0.0], "delta_scene": [0.0, 0.0],
+                        **diagnostic_fields(error, "configuration_invalid")}]
+        result.group_results = diagnostics
+        for region in result.regions:
+            if region.group_id:
+                region.valid = False
+        raise LocalizationGroupError(diagnostics, result) from error
+    result.group_results = diagnostics
+    if not active_ids:
+        return result
+    by_id = {record["id"]: record for record in diagnostics}
+    _, _, template_rect = load_class_source_geometry(detector, result.match.class_id)
+    specs = _region_specs_from_recipe(recipe, ref_img_path, template_rect)
+    rows = []
+    image_height, image_width = scene_bgr.shape[:2]
+    for label, _shape_type, reference_points, group_id in specs:
+        points = np.asarray(reference_points, dtype=np.float64)
+        baseline = points @ transform[:, :2].T + transform[:, 2]
+        record = by_id.get(group_id) if group_id else None
+        delta = np.asarray(record["delta_ref"] if record and record["valid"] else [0.0, 0.0])
+        mapped = (points + delta) @ transform[:, :2].T + transform[:, 2]
+        if record and record["valid"] and (np.any(mapped < 0) or np.any(mapped[:, 0] > image_width) or np.any(mapped[:, 1] > image_height)):
+            record["valid"] = False
+            record["reason"] = f"绑定 ROI {label} 超出检测图范围"
+            record["reason_code"] = "bound_roi_outside_scene"
+            record["reason_params"] = {"label": label}
+        rows.append((label, group_id, baseline, mapped))
+    regions = []
+    for label, group_id, baseline, mapped in rows:
+        valid = not group_id or bool(by_id.get(group_id, {}).get("valid", False))
+        # Invalid estimates are diagnostic only and must not move an ROI.
+        if not valid:
+            mapped = baseline
+        points = [(float(x), float(y)) for x, y in mapped]
+        regions.append(FollowRegion(label, points, _bbox_from_points(points, scene_bgr.shape[:2]), "polygon",
+                                    group_id=group_id, valid=valid,
+                                    global_points=[(float(x), float(y)) for x, y in baseline]))
+    primary = regions[0]
+    result = FollowResult(result.match, regions, primary.points, primary.bbox, primary.source_shape_type,
+                          group_results=diagnostics)
+    if any(record.get("used", True) and not record["valid"] for record in diagnostics):
+        raise LocalizationGroupError(diagnostics, result)
+    return result
 
 
 def locate_and_follow(
@@ -339,9 +462,10 @@ def locate_and_follow(
                     if label_name:
                         break
         return _follow_by_bbox(det, match, scene_bgr.shape[:2], label_name=label_name)
-    return _follow_by_affine_roi(det, match, recipe, ref_img_path, scene_bgr.shape[:2])
+    result = _follow_by_affine_roi(det, match, recipe, ref_img_path, scene_bgr.shape[:2])
+    return _follow_localization_groups(det, result, scene_bgr, ref_img_path, recipe)
 
 
-__all__ = ["FollowRegion", "FollowResult", "locate_and_follow"]
+__all__ = ["FollowRegion", "FollowResult", "LocalizationGroupError", "locate_and_follow"]
 
 

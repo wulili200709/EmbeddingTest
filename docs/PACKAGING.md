@@ -22,8 +22,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build_py312.ps1 -Versi
 输出：
 
 ```text
-dist\LC System V3.1.0\
-dist\LC_System_V3.1.0.zip
+artifacts\packages\full\LC System V3.1.0\
+artifacts\packages\full\LC_System_V3.1.0.zip
 ```
 
 ## 轻量版
@@ -35,11 +35,11 @@ build_lite_release.bat 3.1.0
 输出：
 
 ```text
-dist-lite\LC System Lite V3.1.0\
-dist-lite\LC_System_Lite_V3.1.0.zip
+artifacts\packages\lite\LC System Lite V3.1.0\
+artifacts\packages\lite\LC_System_Lite_V3.1.0.zip
 ```
 
-Lite 默认使用独立的 `dist-lite` 目录，不会和 Main 正式版的 `dist` 目录混放。
+Full 和 Lite 默认分别输出到 `artifacts\packages\full` 和 `artifacts\packages\lite`。
 发布包入口固定为 `LC System Lite.exe`，包内还会生成 `README_LITE.txt` 作为版本标识。
 
 Lite 使用 HALCON 小图或普通外部图片进行离线训练、测试时，目标电脑不需要
@@ -60,7 +60,18 @@ Lite 指定自定义 Python 路径时使用：
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build_lite_py312.ps1 -Version 3.1.0 -PythonExe "D:\Python312\python.exe"
 ```
 
-需要把产物输出到其他目录时，可增加 `-OutputPath "D:\LC-Releases"`。
+需要把产物输出到其他目录时，可增加 `-OutputPath "D:\LC-Releases"`。该参数直接指定发布文件夹和 ZIP 的父目录，不会再追加 `full` 或 `lite`；相对路径以项目根目录为基准，与启动命令所在目录无关。
+
+构建中间文件集中存放于：
+
+| 用途 | Full | Lite |
+| --- | --- | --- |
+| PyInstaller 工作文件 | `artifacts\build\full` | `artifacts\build\lite` |
+| 临时版本信息和构建清单 | `artifacts\build\metadata\full` | `artifacts\build\metadata\lite` |
+
+Full 打包使用的干净账户数据库也生成在 `artifacts\build\metadata\full\audit.db`，再复制到包内 `EmbeddingTest\records`。项目运行数据 `.qr_session`、`config`、`records` 的位置不变。
+
+旧的 `dist*` 发布目录保留原位，新构建不会自动移动或覆盖它们。根目录原来的 `dist-build`、`dist-build-lite` 和 `.build-metadata` 不再被上述构建入口使用；清理旧中间文件前应确认没有其他旧脚本正在使用。同版本重复发布会另加时间后缀，既有发布历史和自动版本记录继续保留在 `releases`。
 
 版本号会同时写入：
 

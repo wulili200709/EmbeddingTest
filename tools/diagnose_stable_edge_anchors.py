@@ -12,7 +12,7 @@ import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
-REPORT = ROOT / 'reports/lab_line_comparison_20261015'
+REPORT = ROOT / 'artifacts/reports/lab_line_comparison_20261015'
 OUTPUT = REPORT / 'stable_anchor_experiment'
 
 

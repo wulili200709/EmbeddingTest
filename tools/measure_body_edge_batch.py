@@ -182,7 +182,7 @@ def main():
     for folder in ('details', 'overviews', 'diagnostics', 'qa'):
         (out / folder).mkdir(parents=True, exist_ok=True)
     config = json.loads((ROOT / 'config/examples/0916_opening_gaps.json').read_text(encoding='utf-8'))
-    previous = json.loads((ROOT / 'reports/lab_holdout6_20261030/holdout6_results.json').read_text(encoding='utf-8'))
+    previous = json.loads((ROOT / 'artifacts/reports/lab_holdout6_20261030/holdout6_results.json').read_text(encoding='utf-8'))
     calibration = {**previous['methods']['new']['parameters'], 'training_images': previous['training_images'],
                    'training_pairs': previous['training_pairs'], 'source': 'Lab Test 前5张拟合，用于第6张测试',
                    'formula': 'distance_mm = distance_px * scale_mm_per_px + offsets_add_mm[point]',

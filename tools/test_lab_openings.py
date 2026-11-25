@@ -81,7 +81,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input_dir", type=Path)
     parser.add_argument("--config", type=Path, default=ROOT / "config/examples/lab_test_opening_gaps.json")
-    parser.add_argument("--output-dir", type=Path, default=ROOT / "reports" / f"lab_test_{datetime.now():%Y%m%d_%H%M%S}")
+    parser.add_argument("--output-dir", type=Path, default=ROOT / "artifacts/reports" / f"lab_test_{datetime.now():%Y%m%d_%H%M%S}")
     args = parser.parse_args()
     source, out = args.input_dir.resolve(), args.output_dir.resolve()
     config = json.loads(args.config.read_text(encoding="utf-8"))

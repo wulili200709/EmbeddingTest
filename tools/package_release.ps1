@@ -1,3 +1,35 @@
+function Resolve-LCBuildPaths {
+    param(
+        [Parameter(Mandatory = $true)][string]$ScriptRoot,
+        [Parameter(Mandatory = $true)][ValidateSet("full", "lite")][string]$Edition,
+        [string]$OutputPath = ""
+    )
+
+    $projectRoot = [System.IO.Path]::GetFullPath($ScriptRoot)
+    $distPath = if ($OutputPath.Trim()) {
+        if ([System.IO.Path]::IsPathRooted($OutputPath)) {
+            [System.IO.Path]::GetFullPath($OutputPath)
+        } else {
+            [System.IO.Path]::GetFullPath((Join-Path $projectRoot $OutputPath))
+        }
+    } else {
+        Join-Path $projectRoot "artifacts\packages\$Edition"
+    }
+    $buildFolderName = if ($Edition -eq "lite") { "LC System Lite" } else { "LC System" }
+    $buildPath = [System.IO.Path]::GetFullPath((Join-Path $distPath $buildFolderName))
+    if ([System.IO.Path]::GetDirectoryName($buildPath).TrimEnd('\') -ne $distPath.TrimEnd('\')) {
+        throw "Unsafe build output directory: $buildPath"
+    }
+
+    return [PSCustomObject]@{
+        DistPath = $distPath
+        WorkPath = Join-Path $projectRoot "artifacts\build\$Edition"
+        MetadataPath = Join-Path $projectRoot "artifacts\build\metadata\$Edition"
+        BuildPath = $buildPath
+    }
+}
+
+
 function Resolve-LCPython312 {
     param([string]$RequestedPythonExe = "")
 
@@ -70,6 +102,7 @@ function New-LCBuildMetadata {
         --version $Version `
         --product-name $ProductName `
         --exe-name $ExeName `
+        --project-root $ScriptRoot `
         --version-file $versionFile `
         --resource-file $resourceFile `
         --manifest-file $manifestFile
@@ -94,6 +127,9 @@ function Publish-LCReleaseFolder {
         [Parameter(Mandatory = $true)][string]$BuildFolderName,
         [Parameter(Mandatory = $true)][string]$ReleaseFolderName,
         [Parameter(Mandatory = $true)][string]$ArchiveFileName,
+        [string]$ScriptRoot = "",
+        [string]$PythonExe = "",
+        [string]$ExeName = "",
         [switch]$SkipArchive
     )
 
@@ -105,6 +141,9 @@ function Publish-LCReleaseFolder {
     if (-not (Test-Path -LiteralPath $sourcePath)) {
         throw "Build output directory not found: $sourcePath"
     }
+    if ([System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($sourcePath)).TrimEnd('\') -ne $distFullPath) {
+        throw "Unsafe build directory: $sourcePath"
+    }
     if ([System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($releasePath)).TrimEnd('\') -ne $distFullPath) {
         throw "Unsafe release directory: $releasePath"
     }
@@ -112,16 +151,31 @@ function Publish-LCReleaseFolder {
         throw "Unsafe release archive: $archivePath"
     }
 
-    if (Test-Path -LiteralPath $releasePath) {
-        Remove-Item -LiteralPath $releasePath -Recurse -Force
+    if ((Test-Path -LiteralPath $releasePath) -or (Test-Path -LiteralPath $archivePath)) {
+        $rebuildSuffix = Get-Date -Format "yyyyMMdd_HHmmss_fffffff"
+        $releasePath = Join-Path $distFullPath "$ReleaseFolderName-$rebuildSuffix"
+        $archiveStem = [System.IO.Path]::GetFileNameWithoutExtension($ArchiveFileName)
+        $archivePath = Join-Path $distFullPath "$archiveStem-$rebuildSuffix.zip"
     }
     Move-Item -LiteralPath $sourcePath -Destination $releasePath
 
-    if (-not $SkipArchive) {
-        if (Test-Path -LiteralPath $archivePath) {
-            Remove-Item -LiteralPath $archivePath -Force
+    if ($ScriptRoot -and $PythonExe -and $ExeName) {
+        $recorder = Join-Path $ScriptRoot "tools\record_release.py"
+        & $PythonExe $recorder --project-root $ScriptRoot --release-dir $releasePath --exe-name $ExeName | ForEach-Object { Write-Host $_ }
+        if ($LASTEXITCODE -ne 0) {
+            throw "Release executable was built but its automatic version record failed."
         }
-        Compress-Archive -LiteralPath $releasePath -DestinationPath $archivePath -CompressionLevel Optimal
+    }
+
+    if (-not $SkipArchive) {
+        # ZipFile streams large ML releases and includes hidden model files.
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $temporaryArchivePath = "$archivePath.building"
+        [System.IO.Compression.ZipFile]::CreateFromDirectory(
+            $releasePath, $temporaryArchivePath,
+            [System.IO.Compression.CompressionLevel]::Optimal, $true
+        )
+        Move-Item -LiteralPath $temporaryArchivePath -Destination $archivePath
     }
 
     return [PSCustomObject]@{

@@ -1,0 +1,28 @@
+﻿LC System - 自动版本记录
+
+LC System V3.0.7  2026-11-22T17:16:31+08:00
+构建编号: 20261122T090403542181Z_full
+代码提交: 437ef1ad7bbfb353154c11d792c24e2b416dcb7b
+  - 新增 YOLO 分类学习工具及随包提供的初始模型。
+  - 改进公共模型库的模型标识、版本选择和存储管理。
+  - 优化样本标注的检测框显示、原图查看和图片切换缓存。
+  - 优化学习检测的批量预处理和 CPU 推理线程使用。
+  - 图片测试复用未变化的区域模型，定位投影复用模板几何信息。
+  - 统一软件显示版本、Windows exe 属性和发布目录版本号。
+  - 正式版与 Lite 打包成功后自动生成版本记录、更新说明、源码指纹和 exe SHA-256；同版本重建保留历史产物。
+构建时未提交的文件改动:
+  M VERSION
+   M build_lite_py312.ps1
+   M build_py312.ps1
+   M tools/generate_version_info.py
+   M tools/package_release.ps1
+   M ui/shell/support.py
+  ?? build_v3.0.7.log
+  ?? releases/
+  ?? tests/test_release_history.py
+  ?? tools/record_release.py
+说明: 性能优化不代表已达到整张图 500 毫秒的目标；具体订单仍需单独测量。
+EXE SHA-256: bc2ccc44fad0a677226f3cc4d260b7a1600dd8200893c65c8048052ae4d2d099
+
+增加模板匹配分组选择ROI
+

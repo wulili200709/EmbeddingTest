@@ -49,6 +49,7 @@ from domain import (
 )
 from ncc import locator as ncc_locator
 from shape.core import locator as shape_locator
+from shape.core.recipe import has_bound_localization_groups
 from shape.core.recipe_labels import inspection_item_specs_from_shape_recipe, output_labels_from_shape_recipe
 
 if TYPE_CHECKING:
@@ -507,7 +508,9 @@ class ToolPageRuntimeContext:
             ref_image = tool_page.ref_image
             if recipe is not None and recipe.reference_image and os.path.exists(recipe.reference_image):
                 ref_image = recipe.reference_image
-            if ref_image and os.path.exists(ref_image):
+            if (ref_image and os.path.exists(ref_image)) or (
+                recipe is not None and has_bound_localization_groups(recipe)
+            ):
                 run = shape_locator.autogen_roi_json_from_shape_timed(
                     tgt_img_path=path,
                     ref_img_path=ref_image,
@@ -621,7 +624,9 @@ class ProductRuntimeContext:
         if method == "shape":
             recipe = self._ensure_recipe_loaded(camera_role)
             ref_image = self._reference_image(recipe)
-            if ref_image and os.path.exists(ref_image):
+            if (ref_image and os.path.exists(ref_image)) or (
+                recipe is not None and has_bound_localization_groups(recipe)
+            ):
                 run = shape_locator.autogen_roi_json_from_shape_timed(
                     tgt_img_path=path,
                     ref_img_path=ref_image,
@@ -714,7 +719,9 @@ class ProductRuntimeContext:
         if method == "shape":
             recipe = self._ensure_recipe_loaded(camera_role)
             ref_image = self._reference_image(recipe)
-            if ref_image and os.path.exists(ref_image):
+            if (ref_image and os.path.exists(ref_image)) or (
+                recipe is not None and has_bound_localization_groups(recipe)
+            ):
                 run = shape_locator.autogen_roi_json_from_shape_timed(
                     tgt_img_path=path,
                     ref_img_path=ref_image,
@@ -795,7 +802,9 @@ class ProductRuntimeContext:
         if method == "shape":
             recipe = self._ensure_recipe_loaded(role)
             ref_image = self._reference_image(recipe)
-            if ref_image and os.path.exists(ref_image):
+            if (ref_image and os.path.exists(ref_image)) or (
+                recipe is not None and has_bound_localization_groups(recipe)
+            ):
                 run = shape_locator.autogen_runtime_roi_shapes_timed(
                     scene_bgr=image,
                     ref_img_path=ref_image,

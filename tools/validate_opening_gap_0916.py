@@ -25,7 +25,7 @@ def main() -> None:
     regions = regions_from_params(config)
     region_configs = {item["name"]: item for item in config["regions"]}
     roi_half_width = int(config.get("roi_width", 180)) // 2
-    output = PROJECT_ROOT / "reports"
+    output = PROJECT_ROOT / "artifacts/reports"
     output.mkdir(exist_ok=True)
     rows = []
     details = []

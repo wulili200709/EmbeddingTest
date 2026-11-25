@@ -36,7 +36,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output-dir", type=Path,
-        help="destination folder; default is a new timestamped folder under reports",
+        help="destination folder; default is a new timestamped folder under artifacts/reports",
     )
     parser.add_argument(
         "--pattern", help="file name glob; default comes from config (the original 50 images)",
@@ -94,7 +94,7 @@ def main() -> int:
     modes = ("dark_plateau", "peak") if args.mode == "both" else (args.mode,)
     output_dir = (
         args.output_dir.resolve() if args.output_dir
-        else ROOT / "reports" / f"50-2_test_{datetime.now():%Y%m%d_%H%M%S}"
+        else ROOT / "artifacts/reports" / f"50-2_test_{datetime.now():%Y%m%d_%H%M%S}"
     )
     output_dir.mkdir(parents=True, exist_ok=True)
 

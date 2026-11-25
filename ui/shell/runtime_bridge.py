@@ -264,6 +264,10 @@ def ensure_runtime_camera_connection(window, *, debug_role: str = "", debug_seri
 
 
 def on_product_change_request(window, new_name: str) -> None:
+    controller = getattr(window.tool_page, "product_session_controller", None)
+    close_editor = getattr(controller, "close_template_editor_before_switch", None)
+    if callable(close_editor) and not close_editor():
+        return
     window.runtime_ctrl.disconnect(silent=True)
     window.tool_page.apply_product_switch(new_name)
     if is_qr_core_ready():
