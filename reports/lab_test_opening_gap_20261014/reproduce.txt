@@ -1,6 +1,0 @@
-Run from: C:\Users\goney\Desktop\MatchTemplate2\EmbeddingTest
-
-py -3.12 tools\test_lab_openings.py "C:\Users\goney\Desktop\DC尺寸数据测试\Lab Test" --output-dir reports\lab_test_opening_gap_20261014
-
-Core regression: py -3.12 -m unittest discover -s tests -p test_measurement_opening_gap.py
-4 tests passed.
