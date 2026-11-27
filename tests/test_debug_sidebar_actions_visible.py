@@ -14,7 +14,7 @@ from application import AlgorithmController, ProductSession
 from common.model_library import ModelLibrary
 from domain import load_inspection_items
 from ui.debug.tool_page import ToolPage
-from ui.i18n import LANG_EN, LANG_ZH, set_language
+from ui.i18n import LANG_EN, LANG_ZH, set_language, tr
 
 
 class DebugSidebarActionsVisibleTests(unittest.TestCase):
@@ -109,6 +109,9 @@ class DebugSidebarActionsVisibleTests(unittest.TestCase):
             set_language(language, persist=False)
             self.page.retranslate_ui()
             self.assert_actions_visible(height)
+            button = self.page.btn_copy_product
+            self.assertEqual(button.text(), tr("debug.copy_product"))
+            self.assertGreaterEqual(button.width(), button.sizeHint().width())
 
     def test_main_window_menu_and_status_bar_do_not_hide_test_actions(self):
         host = QtWidgets.QMainWindow()

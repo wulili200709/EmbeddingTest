@@ -11,7 +11,8 @@ from algorithms.measurement import (
     POINT_LINE_DISTANCE_ALGORITHM,
 )
 from common.algorithm_codes import normalize_tool_algorithm_code
-from domain import InspectionItem, save_inspection_items
+from domain import InspectionItem
+from services.lens_inspection_items import save_inspection_items
 from ui.i18n import tr
 from ui.debug.tool_page.inspection_item_status import _inspection_item_status
 from ui.debug.tool_page.inspection_items_table import (

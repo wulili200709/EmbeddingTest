@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Iterable, Mapping
 
-from common.camera_roles import DEFAULT_CAMERA_ROLE, normalize_camera_role
+from common.camera_roles import CAMERA_ROLES, DEFAULT_CAMERA_ROLE, normalize_camera_role
 from common.safe_io import atomic_write_json, load_json_with_backup
 
 
@@ -25,7 +25,7 @@ def make_group_model_key(camera_id: object, name: object) -> str:
     return f"{camera}__group__{slug}_{identity}"
 
 
-_GROUP_KEY = re.compile(r"(?P<camera>cam[1-3])__group__(?P<slug>.+)_[0-9a-f]{10}\Z")
+_GROUP_KEY = re.compile(r"(?P<camera>" + "|".join(CAMERA_ROLES) + r")__group__(?P<slug>.+)_[0-9a-f]{10}\Z")
 
 
 class OrderModelGroups:

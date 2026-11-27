@@ -4,7 +4,7 @@ import re
 from typing import Iterable
 
 
-CAMERA_ROLES: tuple[str, ...] = ("cam1", "cam2", "cam3")
+CAMERA_ROLES: tuple[str, ...] = ("cam1", "cam2", "cam3", "cam4")
 DEFAULT_CAMERA_ROLE = "cam1"
 ROLE_TO_CAMERA_INDEX: dict[str, int] = {
     role: index for index, role in enumerate(CAMERA_ROLES, start=1)

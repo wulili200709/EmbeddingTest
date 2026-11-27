@@ -274,7 +274,9 @@ class ToolPage(QtWidgets.QWidget):
 
         for attr, text in (
             ("btn_new_product", tr("debug.new")),
+            ("btn_copy_product", tr("debug.copy_product")),
             ("btn_delete_product", tr("debug.delete_product")),
+            ("btn_lens_correction", "镜头矫正" if language_code().lower().startswith("zh") else "Lens correction"),
             ("btn_import_train", tr("debug.add_external_images")),
             ("btn_train_to_test", tr("debug.move_to_test")),
             ("btn_sample_annotation", tr("debug.sample_annotation")),
@@ -1334,7 +1336,7 @@ class ToolPage(QtWidgets.QWidget):
         header_layout.addWidget(self.btn_new_product)
 
         self.btn_copy_product = QtWidgets.QPushButton(_si(SP.SP_FileDialogDetailedView), tr("debug.copy_product"))
-        self.btn_copy_product.setFixedWidth(76)
+        self.btn_copy_product.setMinimumWidth(76)
         self.btn_copy_product.setStyleSheet(_compact_btn)
         self.btn_copy_product.clicked.connect(self._copy_product)
         header_layout.addWidget(self.btn_copy_product)
@@ -1355,6 +1357,14 @@ class ToolPage(QtWidgets.QWidget):
         self.cmb_current_camera_role.setStyleSheet(_input_style)
         self.cmb_current_camera_role.currentTextChanged.connect(self._on_current_camera_role_changed)
         header_layout.addWidget(self.cmb_current_camera_role)
+
+        if self.lite_mode:
+            self.btn_lens_correction = QtWidgets.QPushButton(
+                "镜头矫正" if language_code().lower().startswith("zh") else "Lens correction"
+            )
+            self.btn_lens_correction.setStyleSheet(_compact_btn)
+            self.btn_lens_correction.clicked.connect(self._open_lens_correction_settings)
+            header_layout.addWidget(self.btn_lens_correction)
 
         header_layout.addStretch(1)
 
@@ -1792,6 +1802,8 @@ class ToolPage(QtWidgets.QWidget):
     # ------------------------------------------------------------------
 
     def _refresh_lists(self) -> None:
+        from ui.debug.tool_page.lens_correction_flow import refresh_sample_paths
+        refresh_sample_paths(self)
         current_role = _selected_image_list_camera_role(self)
         if hasattr(self, "lbl_images_section"):
             title = tr("debug.image_list")
@@ -1818,6 +1830,9 @@ class ToolPage(QtWidgets.QWidget):
             for index, p in enumerate(files):
                 it = QtWidgets.QListWidgetItem(self._sample_item_display_text(p, sample_kind, current_role))
                 it.setToolTip(p)
+                if p in getattr(self, "_lens_sample_errors", {}):
+                    it.setText("[!] " + it.text())
+                    it.setToolTip(p + "\n" + self._lens_sample_errors[p])
                 it.setData(QtCore.Qt.UserRole, p)
                 listw.addItem(it)
                 if current_path and p == current_path:
@@ -1833,6 +1848,14 @@ class ToolPage(QtWidgets.QWidget):
 
     def _save_session(self) -> None:
         self.product_session_controller.save_session()
+
+    def _open_lens_correction_settings(self) -> None:
+        from ui.debug.tool_page.lens_correction_flow import open_settings
+        open_settings(self)
+
+    def _reload_lens_correction_context(self) -> None:
+        from ui.debug.tool_page.lens_correction_flow import reload_context
+        reload_context(self)
 
     # ------------------------------------------------------------------
         ref_name = os.path.basename(self.ref_image) if self.ref_image else "Not Set"

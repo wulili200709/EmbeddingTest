@@ -46,6 +46,7 @@ def ensure_training_image_local(path: object, *, product_dir: object) -> str:
     target_dir = product_root / TRAINING_SAMPLE_SUBDIR
     target_dir.mkdir(parents=True, exist_ok=True)
     source_sidecar = source.with_suffix(".json")
+    correction_sidecar = source.with_suffix(".undistortion.json")
 
     candidate = target_dir / source.name
     suffix_index = 1
@@ -61,6 +62,8 @@ def ensure_training_image_local(path: object, *, product_dir: object) -> str:
         copied_image = True
         if source_sidecar.is_file():
             _copy_file_atomically(source_sidecar, candidate.with_suffix(".json"))
+        if correction_sidecar.is_file():
+            _copy_file_atomically(correction_sidecar, candidate.with_suffix(".undistortion.json"))
     except Exception:
         if copied_image:
             try:
@@ -79,6 +82,12 @@ def _training_bundle_matches(
 ) -> bool:
     try:
         if not candidate.is_file() or not filecmp.cmp(source, candidate, shallow=False):
+            return False
+        correction = source.with_suffix(".undistortion.json")
+        target_correction = candidate.with_suffix(".undistortion.json")
+        if correction.is_file() != target_correction.is_file():
+            return False
+        if correction.is_file() and not filecmp.cmp(correction, target_correction, shallow=False):
             return False
         if not source_sidecar.is_file():
             return True

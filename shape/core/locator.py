@@ -10,6 +10,7 @@ import cv2
 from algorithms.image_io import imread
 from common import labelme_io
 from common.camera_roles import DEFAULT_CAMERA_ROLE, normalize_camera_role
+from services import lens_correction
 
 from .recipe_labels import clearable_roi_labels, output_labels_from_shape_recipe
 from .recipe import ShapeRecipe, load_recipe, save_recipe
@@ -85,15 +86,16 @@ def _normalize_camera_role(camera_role: str) -> str:
 
 def product_paths(product_dir: str, camera_role: str = "cam1") -> ProductShapePaths:
     normalized_role = _normalize_camera_role(camera_role)
-    role_dir = os.path.join(product_dir, "shape", normalized_role)
+    scoped_root = lens_correction.asset_root(product_dir, normalized_role)
+    role_dir = os.path.join(scoped_root, "shape", normalized_role)
     return ProductShapePaths(
         product_dir=product_dir,
         camera_role=normalized_role,
         role_dir=role_dir,
         model_path=os.path.join(role_dir, "model.json"),
         recipe_path=os.path.join(role_dir, "recipe.json"),
-        legacy_model_path=os.path.join(product_dir, "line2dup_model.json"),
-        legacy_recipe_path=os.path.join(product_dir, "line2dup_recipe.json"),
+        legacy_model_path=os.path.join(scoped_root, "line2dup_model.json"),
+        legacy_recipe_path=os.path.join(scoped_root, "line2dup_recipe.json"),
     )
 
 
@@ -146,6 +148,9 @@ def autogen_roi_json_from_shape_timed(
     recipe.model_path = model_path
     if (not ref_img_path) and recipe.reference_image:
         ref_img_path = recipe.reference_image
+    lens_correction.validate_prepared_path(ref_img_path, product_dir, camera_role)
+    tgt_img_path = lens_correction.prepare_path(tgt_img_path, product_dir, camera_role)
+    lens_correction.validate_prepared_path(tgt_img_path, product_dir, camera_role)
 
     scene = imread(tgt_img_path, cv2.IMREAD_COLOR)
     if scene is None:
@@ -153,6 +158,8 @@ def autogen_roi_json_from_shape_timed(
 
     scene_mask = None
     if scene_mask_path:
+        # A raw-space mask cannot accompany an already corrected scene.
+        lens_correction.validate_prepared_path(scene_mask_path, product_dir, camera_role)
         scene_mask = imread(scene_mask_path, cv2.IMREAD_GRAYSCALE)
         if scene_mask is None:
             raise FileNotFoundError(scene_mask_path)
@@ -193,6 +200,7 @@ def autogen_runtime_roi_shapes_timed(
     recipe.model_path = model_path
     if (not ref_img_path) and recipe.reference_image:
         ref_img_path = recipe.reference_image
+    lens_correction.validate_prepared_path(ref_img_path, product_dir, camera_role)
     if scene_bgr is None:
         raise ValueError("scene_bgr is required")
 

@@ -158,6 +158,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._release_password = self._password_settings["run_password"]
         self._admin_password = self._password_settings["engineer_password"]
         self._audit_store = AuditStore()
+        self._audit_store.sync_software_updates()
         self._runtime_results_store = RuntimeRecordStore()
         self._permission_service = PermissionService(self._audit_store)
         self._auto_show_release_dialog_on_ng = bool(
@@ -290,6 +291,7 @@ class MainWindow(QtWidgets.QMainWindow):
         actions = refs.get("actions", {})
         permission_by_action = {
             "camera_tool": "camera.edit_params",
+            "lens_correction": "camera.edit_params",
             "current_product_capture_plan": "camera.edit_params",
             "io_tool": "io.debug",
             "template_editor": "template.edit_roi",
@@ -396,10 +398,7 @@ class MainWindow(QtWidgets.QMainWindow):
             runtime_allowed = self._has_permission("runtime.run")
             camera_allowed = self._has_permission("runtime.connect_camera")
             release_allowed = self._has_permission("runtime.release_ng")
-            for attr in ("btn_trigger", "btn_simulate_foot", "btn_trigger_cam1", "btn_trigger_cam2", "btn_trigger_cam3"):
-                button = getattr(self.runtime_page, attr, None)
-                if button is not None:
-                    button.setEnabled(runtime_allowed)
+            self.runtime_page.set_trigger_permission(runtime_allowed)
             for attr in ("btn_connect_cameras", "btn_disconnect_cameras"):
                 button = getattr(self.runtime_page, attr, None)
                 if button is not None:
@@ -744,6 +743,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _build_menu_bar(self) -> None:
         _build_shell_menu_bar(self)
+
+    def _show_lens_correction_settings(self) -> None:
+        from ui.lens_correction_dialog import open_lens_correction_settings
+        roles = self._configured_runtime_camera_roles()
+        store = CameraSettingsStore(self.session.camera_settings_path)
+        serials = {role: store.serial_for_role(role) for role in roles}
+        open_lens_correction_settings(self, self.session.product_dir, roles, serials)
 
     def _build_status_bar(self) -> None:
         _build_shell_status_bar(self)
@@ -1174,6 +1180,7 @@ class MainWindow(QtWidgets.QMainWindow):
             cam1_serial=self.runtime_page.camera_serial("cam1"),
             cam2_serial=self.runtime_page.camera_serial("cam2"),
             cam3_serial=self.runtime_page.camera_serial("cam3"),
+            cam4_serial=self.runtime_page.camera_serial("cam4"),
             enabled_roles=physical_roles if single_multi_light else configured_roles,
             visible_roles=physical_roles if single_multi_light else None,
             physical_roles_only=single_multi_light,
@@ -1222,7 +1229,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def _show_release_dialog(self) -> None:
-        if self._auto_show_release_dialog_on_ng:
+        if self.runtime_ctrl.requires_ng_box_confirmation():
             self.runtime_ctrl.infoOccurred.emit("请将 NG 产品放入 NG 盒，等待 DI2 上升沿自动解锁")
             return
         if not self._require_permission("runtime.release_ng", "NG放行"):

@@ -144,23 +144,32 @@ def run_auto_roi_batch(
     pre_resolved: bool = False,
     progress: Optional[Callable[[str], None]] = None,
 ) -> dict[str, object]:
-    image_paths = [str(path) for path in paths if str(path)]
+    from services.lens_correction import prepare_path
+    image_paths = []
+    prepare_errors = []
+    for source in paths:
+        if not str(source):
+            continue
+        try:
+            image_paths.append(prepare_path(str(source), product_dir, camera_role or "cam1"))
+        except Exception as exc:
+            prepare_errors.append(f"{os.path.basename(str(source))}: {exc}")
     wanted_labels = [str(label).strip() for label in labels if str(label).strip()] or ["roi"]
     todo = list(image_paths) if pre_resolved else (missing_roi_files(image_paths, wanted_labels) if only_missing else list(image_paths))
     if not todo:
         return {
             "ok": 0,
-            "errs": [],
+            "errs": prepare_errors,
             "ok_paths": [],
             "todo_paths": [],
             "timings": {},
-            "no_work": True,
+            "no_work": not prepare_errors,
         }
 
     ok = 0
     ok_paths: List[str] = []
     timings: dict[str, float] = {}
-    errs: List[str] = []
+    errs: List[str] = list(prepare_errors)
     total = len(todo)
     method = str(method or "").strip().lower()
     for index, path in enumerate(todo, start=1):

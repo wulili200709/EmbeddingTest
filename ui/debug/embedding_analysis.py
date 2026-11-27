@@ -21,7 +21,7 @@ if __package__ in (None, ""):
 
 import algorithms.lazy_api as qr_core
 from common.algorithm_codes import learning_backbone_storage_code, storage_code_backbone
-from domain import load_inspection_items
+from services.lens_inspection_items import load_inspection_items
 from infrastructure.product_params import load_product_params
 from ui.algorithm_labels import algorithm_display_name
 from ui.i18n import tr

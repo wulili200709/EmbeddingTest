@@ -8,6 +8,8 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from algorithms.image_io import imread
+from services.lens_correction import active_signature, mark_corrected_path, source_image_path as original_image_path
+from ui.lens_correction_dialog import ensure_lens_context, prepare_editor_image
 from algorithms.labelme import (
     labelme_json_of_image,
     list_shapes_from_labelme,
@@ -267,6 +269,9 @@ class _NccFindWorker(QtCore.QObject):
         scene_paths: Sequence[str],
         options: NccMatchOptions,
         search_roi: Optional[Tuple[int, int, int, int]],
+        product_dir: str = "",
+        camera_role: str = "cam1",
+        lens_signature: str = "raw",
         parent: Optional[QtCore.QObject] = None,
     ) -> None:
         super().__init__(parent)
@@ -275,6 +280,9 @@ class _NccFindWorker(QtCore.QObject):
         self._scene_paths = [str(path or "").strip() for path in scene_paths if str(path or "").strip()]
         self._options = options.normalized()
         self._search_roi = search_roi
+        self._product_dir = product_dir
+        self._camera_role = camera_role
+        self._lens_signature = lens_signature
 
     @QtCore.Slot()
     def run(self) -> None:
@@ -285,7 +293,10 @@ class _NccFindWorker(QtCore.QObject):
             for index, scene_path in enumerate(self._scene_paths):
                 self.progressChanged.emit(f"matching {index + 1}/{total}: {Path(scene_path).name}")
                 try:
-                    scene = imread(scene_path, cv2.IMREAD_COLOR)
+                    if self._product_dir and active_signature(self._product_dir, self._camera_role) != self._lens_signature:
+                        raise RuntimeError("Lens correction settings changed; reopen the editor.")
+                    prepared = prepare_editor_image(scene_path, self._product_dir, self._camera_role) if self._product_dir else scene_path
+                    scene = imread(prepared, cv2.IMREAD_COLOR)
                     if scene is None:
                         raise RuntimeError(f"failed to read scene image: {scene_path}")
                     response = compiled.match(
@@ -331,7 +342,10 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._product_name = str(product_name or "").strip()
         self._product_dir = str(product_dir or "").strip()
         self._camera_role = str(camera_role or "cam1").strip().lower() or "cam1"
+        self._lens_signature = active_signature(self._product_dir, self._camera_role)
         self._initial_image_path = str(initial_image_path or "").strip()
+        if self._initial_image_path and Path(self._initial_image_path).exists():
+            self._initial_image_path = prepare_editor_image(self._initial_image_path, self._product_dir, self._camera_role)
         self._model_path = resolved_model_path_for_product(self._product_dir, self._camera_role)
         self._model: NccMatchModel = create_default_model()
         self._latest_response: Optional[NccMatchResponse] = None
@@ -929,6 +943,18 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         if not self.edt_scene_path.text():
             self._set_scene_path(self._initial_image_path)
 
+    def _ensure_lens_context(self) -> bool:
+        return ensure_lens_context(self, self._product_dir, self._camera_role, self._lens_signature)
+
+    def _prepare_external_image(self, path: str) -> str:
+        if not self._ensure_lens_context():
+            return ""
+        try:
+            return prepare_editor_image(path, self._product_dir, self._camera_role)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "NCC", str(exc))
+            return ""
+
     def _reference_image_path(self) -> str:
         model_source = self.edt_source_path.text().strip()
         if model_source and Path(model_source).exists():
@@ -1009,6 +1035,8 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             self.mask_canvas.set_overlays([])
 
     def _on_template_mask_enabled_toggled(self, checked: bool) -> None:
+        if not self._ensure_lens_context():
+            return
         self._model.template_mask_enabled = bool(checked)
         self._refresh_template_mask_visibility()
         if getattr(self, "_loading_model", False):
@@ -1237,6 +1265,8 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._model.reference_regions = [region.normalized() for region in self._reference_regions]
 
     def _save_find_options_to_model(self, *_args) -> None:
+        if not self._ensure_lens_context():
+            return
         if getattr(self, "_loading_model", False):
             return
         self._sync_model_without_template_roi_from_ui()
@@ -1262,6 +1292,8 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         return self._model.search_roi.normalized().to_xywh()
 
     def _update_search_roi(self, xywh: Optional[Tuple[int, int, int, int]], *, persist: bool) -> None:
+        if not self._ensure_lens_context():
+            return
         self._model.search_roi = None if xywh is None else NccMatchRect(*[int(v) for v in xywh]).normalized()
         if persist:
             self._sync_model_without_template_roi_from_ui()
@@ -1270,6 +1302,8 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             self.modelSaved.emit(self._model_path)
 
     def _save_reference_regions_to_model(self) -> None:
+        if not self._ensure_lens_context():
+            return
         self._sync_model_without_template_roi_from_ui()
         save_model(self._model_path, self._model)
         self._refresh_model_summary()
@@ -1339,16 +1373,23 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         )
         if not path:
             return
+        path = self._prepare_external_image(path)
+        if not path:
+            return
         self.source_canvas.set_image(path)
         self._refresh_reference_image(force=True)
         self._set_status(f"已加载参考图：{path}")
 
     def _save_model_metadata(self) -> None:
+        if not self._ensure_lens_context():
+            return
         self._sync_model_without_template_roi_from_ui()
         save_model(self._model_path, self._model)
         self._refresh_model_summary()
 
     def _save_template(self, _checked: object = None, *, show_progress: bool = True) -> None:
+        if not self._ensure_lens_context():
+            return
         source_path = str(self.source_canvas.image_path() or "").strip()
         if not source_path:
             QtWidgets.QMessageBox.warning(self, "NCC", "请先加载参考图。")
@@ -1380,7 +1421,10 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             QtWidgets.QApplication.processEvents(QtCore.QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
         try:
             self._sync_model_from_ui()
-            set_source_from_image_file(self._model_path, self._model, source_path)
+            copied_source = set_source_from_image_file(self._model_path, self._model, source_path)
+            if self._lens_signature != "raw":
+                mark_corrected_path(copied_source, self._product_dir, self._camera_role,
+                                    profile_id=self._lens_signature, source_path=original_image_path(source_path))
             self._model = set_template_from_roi(self._model_path, self._model, roi)
             self._model.reference_regions = [region.normalized() for region in self._reference_regions]
             save_model(self._model_path, self._model)
@@ -1857,6 +1901,8 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
                 QtWidgets.QMessageBox.warning(self, "NCC", str(exc))
 
     def _save_reference_roi_to_json(self) -> None:
+        if not self._ensure_lens_context():
+            return
         image_path = self._reference_image_path()
         if not image_path or not Path(image_path).exists():
             QtWidgets.QMessageBox.warning(self, "NCC", "请先加载参考图。")
@@ -1940,6 +1986,11 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
 
     def _set_scene_path(self, path: str) -> None:
         scene_path = str(path or "").strip()
+        if scene_path:
+            scene_path = self._prepare_external_image(scene_path)
+            if not scene_path:
+                self.find_canvas.clear_image()
+                return
         self.edt_scene_path.setText(scene_path)
         self.find_canvas.set_overlays([])
         if scene_path and Path(scene_path).exists():
@@ -2278,6 +2329,8 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._set_find_canvas_overlays(summary_text=self._running_find_summary_text())
 
     def _start_find_worker(self, scene_paths: Sequence[str]) -> None:
+        if not self._ensure_lens_context():
+            return
         if self._find_running:
             self._set_status("NCC find is already running")
             return
@@ -2306,6 +2359,9 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             scene_paths=paths,
             options=self._current_find_options(),
             search_roi=self._effective_search_roi(),
+            product_dir=self._product_dir,
+            camera_role=self._camera_role,
+            lens_signature=self._lens_signature,
         )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
@@ -2472,6 +2528,8 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._start_find_worker(paths)
 
     def _writeback_top1(self) -> None:
+        if not self._ensure_lens_context():
+            return
         scene_path = self.edt_scene_path.text().strip()
         if not scene_path or self._latest_response is None or not self._latest_response.matches:
             QtWidgets.QMessageBox.warning(self, "NCC", "当前没有可写回的匹配结果。")
@@ -2482,6 +2540,8 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._set_status(f"已写回 LabelMe 标签：{label_name}")
 
     def _writeback_reference_regions(self) -> None:
+        if not self._ensure_lens_context():
+            return
         scene_path = self.edt_scene_path.text().strip()
         if not scene_path or self._latest_response is None or not self._latest_response.matches:
             QtWidgets.QMessageBox.warning(self, "NCC", "当前没有可写回的匹配结果。")
@@ -2532,6 +2592,9 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         )
         if not path:
             return
+        path = self._prepare_external_image(path)
+        if not path:
+            return
         self.source_canvas.set_image(path)
         self._refresh_source_canvas_overlays()
         self._refresh_mask_canvas()
@@ -2562,6 +2625,8 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.lbl_mask_status.setText("状态：Mask 已更新，点击“保存当前 Mask”或直接“保存模板”即可生效。")
 
     def _save_template_mask(self) -> None:
+        if not self._ensure_lens_context():
+            return
         source_path = str(self.mask_canvas.image_path() or "").strip()
         if not source_path:
             QtWidgets.QMessageBox.warning(self, "NCC", "请先加载参考图。")
@@ -2579,6 +2644,8 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
             self._set_status("Template Mask 已保存，保存模板后生效。")
 
     def _clear_template_mask(self) -> None:
+        if not self._ensure_lens_context():
+            return
         self.mask_canvas.clear_roi(emit_signal=False)
         index = self.cmb_mask_shape.findData("disabled")
         if index >= 0:
@@ -2726,6 +2793,8 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self.lbl_mask_status.setText("状态：Mask 已更新，点击“保存当前 Mask”或直接“保存模板”即可生效。")
 
     def _save_template_mask(self) -> None:
+        if not self._ensure_lens_context():
+            return
         if not self._template_mask_enabled():
             QtWidgets.QMessageBox.information(self, "NCC", "请先打开“启用 Template Mask”。")
             return
@@ -2742,6 +2811,8 @@ class NccMatchWorkbenchDialog(QtWidgets.QDialog):
         self._set_status("Template Mask 已保存，保存模板后生效。")
 
     def _clear_template_mask(self) -> None:
+        if not self._ensure_lens_context():
+            return
         self.mask_canvas.clear_roi(emit_signal=False)
         self._model.template_mask = None
         save_model(self._model_path, self._model)

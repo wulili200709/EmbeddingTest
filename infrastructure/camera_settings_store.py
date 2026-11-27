@@ -106,21 +106,7 @@ def normalize_capture_light_output(value: object, *, default: str = "DO_LIGHT_CA
 
 
 def default_capture_channels(mode: object = CAPTURE_MODE_INDEPENDENT) -> list[dict[str, Any]]:
-    normalized_mode = normalize_capture_mode(mode)
-    channels: list[dict[str, Any]] = []
-    for index, role in enumerate(CAMERA_ROLES, start=1):
-        channels.append(
-            {
-                "enabled": True,
-                "role": role,
-                "physical_role": role if normalized_mode != CAPTURE_MODE_SINGLE_MULTI_LIGHT else DEFAULT_CAMERA_ROLE,
-                "light_output": f"DO_LIGHT_CAM{index}",
-                "exposure_time_us": CAPTURE_DEFAULT_EXPOSURE_US,
-                "gain": 0.0,
-                "stable_delay_ms": 50,
-            }
-        )
-    return channels
+    return normalize_capture_channels(None, mode=mode)
 
 
 def _normalize_capture_channel(
@@ -183,7 +169,7 @@ def normalize_capture_channels(
             mode=normalized_mode,
             index=index,
         )
-        if has_explicit_list and raw is None:
+        if raw is None and (has_explicit_list or role == "cam4"):
             channel["enabled"] = False
         normalized_channels.append(channel)
     return normalized_channels

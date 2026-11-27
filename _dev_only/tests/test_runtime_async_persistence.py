@@ -11,14 +11,14 @@ from unittest.mock import patch
 import numpy as np
 
 
-PROJECT_DIR = Path(__file__).resolve().parents[1]
+PROJECT_DIR = Path(__file__).resolve().parents[2]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 
 from application.runtime import execution
+from application.runtime.controller import RuntimeController
 from application.runtime.preview_frame import build_runtime_preview_frame
-from application.runtime_controller import RuntimeController
 from domain.inspection_items import InspectionItem
 from services.inspection_runtime import FinalInspectionOutcome
 
@@ -64,15 +64,16 @@ class RuntimeAsyncPersistenceTest(unittest.TestCase):
                 roi_label="roi1",
             )
         ]
-        controller = RuntimeController(
-            session=SimpleNamespace(
-                current_product="Demo",
-                line2dup_recipe_path="",
-                product_dir=product_dir,
-            ),
-            algo=SimpleNamespace(),
-            runtime_context=_FakeRuntimeContext(items),
-        )
+        with patch("infrastructure.audit_store.default_audit_db_path", return_value=Path(product_dir) / "audit.db"):
+            controller = RuntimeController(
+                session=SimpleNamespace(
+                    current_product="Demo",
+                    shape_recipe_path="",
+                    product_dir=product_dir,
+                ),
+                algo=SimpleNamespace(),
+                runtime_context=_FakeRuntimeContext(items),
+            )
         controller._frame_grab_service = _FakeFrameGrabService()
         controller._scheduler = SimpleNamespace(state=SimpleNamespace(value="WaitingTrigger"))
         return controller
@@ -106,8 +107,8 @@ class RuntimeAsyncPersistenceTest(unittest.TestCase):
 
             try:
                 controller._finalize_trigger_outcome(outcome, release_status_before=None)
-                self.assertTrue(result_event.wait(0.3))
-                self.assertTrue(record_service.started.wait(0.3))
+                self.assertTrue(result_event.is_set())
+                self.assertTrue(record_service.started.wait(3))
                 self.assertFalse(record_service.finished.is_set())
                 self.assertEqual(result_payload[0][0], "OK")
                 self.assertEqual(controller._last_runtime_result.final_result, "OK")
@@ -170,8 +171,8 @@ class RuntimeAsyncPersistenceTest(unittest.TestCase):
             with patch.object(execution, "export_runtime_preview_frame", side_effect=_blocking_export):
                 try:
                     controller._finalize_trigger_outcome(outcome, release_status_before=None)
-                    self.assertTrue(result_event.wait(0.3))
-                    self.assertTrue(export_started.wait(0.3))
+                    self.assertTrue(result_event.is_set())
+                    self.assertTrue(export_started.wait(3))
                     self.assertEqual(controller._last_capture_paths, {})
                 finally:
                     release_export.set()

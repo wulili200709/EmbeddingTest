@@ -25,6 +25,7 @@ class TestRecord:
     release_required: bool = False
     release_result: str = ""
     extra_fields: dict[str, Any] = field(default_factory=dict)
+    camera4_result: str = ""
 
     @classmethod
     def now(
@@ -37,6 +38,7 @@ class TestRecord:
         camera1_result: str = "",
         camera2_result: str = "",
         camera3_result: str = "",
+        camera4_result: str = "",
         duration_ms: int = 0,
         is_error: bool = False,
         error_code: str = "",
@@ -55,6 +57,7 @@ class TestRecord:
             camera1_result=camera1_result,
             camera2_result=camera2_result,
             camera3_result=camera3_result,
+            camera4_result=camera4_result,
             duration_ms=int(duration_ms),
             is_error=bool(is_error),
             error_code=error_code,
@@ -260,6 +263,7 @@ class TestRecordService:
         camera1_result: str = "",
         camera2_result: str = "",
         camera3_result: str = "",
+        camera4_result: str = "",
         duration_ms: int = 0,
         is_error: bool = False,
         error_code: str = "",
@@ -277,6 +281,7 @@ class TestRecordService:
             camera1_result=camera1_result,
             camera2_result=camera2_result,
             camera3_result=camera3_result,
+            camera4_result=camera4_result,
             duration_ms=duration_ms,
             is_error=is_error,
             error_code=error_code,

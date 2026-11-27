@@ -9,6 +9,7 @@ class RunState(str, Enum):
     CapturingCam1 = "CapturingCam1"
     CapturingCam2 = "CapturingCam2"
     CapturingCam3 = "CapturingCam3"
+    CapturingCam4 = "CapturingCam4"
     Inspecting = "Inspecting"
     Aggregating = "Aggregating"
     CompletedOk = "CompletedOk"
@@ -25,6 +26,7 @@ class RunStateMachine:
             RunState.CapturingCam1,
             RunState.CapturingCam2,
             RunState.CapturingCam3,
+            RunState.CapturingCam4,
             RunState.Inspecting,
             RunState.LockedByNg,
             RunState.Error,
@@ -34,6 +36,7 @@ class RunStateMachine:
             RunState.CapturingCam1,
             RunState.CapturingCam2,
             RunState.CapturingCam3,
+            RunState.CapturingCam4,
             RunState.Inspecting,
             RunState.LockedByNg,
             RunState.Error,
@@ -42,15 +45,22 @@ class RunStateMachine:
         RunState.CapturingCam1: {
             RunState.CapturingCam2,
             RunState.CapturingCam3,
+            RunState.CapturingCam4,
             RunState.Inspecting,
             RunState.Error,
         },
         RunState.CapturingCam2: {
             RunState.CapturingCam3,
+            RunState.CapturingCam4,
             RunState.Inspecting,
             RunState.Error,
         },
         RunState.CapturingCam3: {
+            RunState.CapturingCam4,
+            RunState.Inspecting,
+            RunState.Error,
+        },
+        RunState.CapturingCam4: {
             RunState.Inspecting,
             RunState.Error,
         },

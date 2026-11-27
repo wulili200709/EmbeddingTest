@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 import json
+import inspect
 import math
 import os
 from typing import List, Protocol
@@ -104,6 +105,8 @@ class InspectionExecutionRequest:
     image_path: str = ""
     image_bgr: object | None = None
     items: List[InspectionItem] = field(default_factory=list)
+    image_prepared: bool = False
+    correction_ms: float = 0.0
 
 
 @dataclass
@@ -162,10 +165,16 @@ class InspectionExecutor:
         batch_predict_from_frame = getattr(self._predictor, "predict_items_batch_from_frame", None)
         batch_predict = getattr(self._predictor, "predict_items_batch", None)
         if request.image_bgr is not None and callable(batch_predict_from_frame) and predicted_enabled_items:
+            frame_kwargs = {}
+            # Older/custom predictors do not own lens preprocessing. Do not
+            # retry on TypeError: a predictor's real failure must propagate.
+            if "image_prepared" in inspect.signature(batch_predict_from_frame).parameters:
+                frame_kwargs["image_prepared"] = request.image_prepared
             batch_prediction = batch_predict_from_frame(
                 request.image_bgr,
                 camera_role=request.camera_id,
                 items=predicted_enabled_items,
+                **frame_kwargs,
             )
             if batch_prediction is not None:
                 batch_rows = [dict(row) for row in list(getattr(batch_prediction, "rows", []) or [])]
@@ -178,6 +187,9 @@ class InspectionExecutor:
                 }
         elif callable(batch_predict) and predicted_enabled_items:
             batch_rows = [dict(row) for row in batch_predict(request.image_path, items=predicted_enabled_items)]
+        correction_ms = float(request.correction_ms or 0.0) + float(batch_timing_breakdown.get("correction_ms", 0.0) or 0.0)
+        if correction_ms:
+            batch_timing_breakdown["correction_ms"] = correction_ms
         predicted_index = 0
         rows_by_item_id: dict[str, dict] = {}
 
@@ -334,7 +346,7 @@ class InspectionExecutor:
             default=0.0,
         )
         infer_ms = sum(self._extract_timing_fields(row)[1] for row in item_rows)
-        total_ms = match_ms + infer_ms if (match_ms > 0.0 or infer_ms > 0.0) else 0.0
+        total_ms = match_ms + infer_ms + correction_ms
         decision_has_ng = any(_normalized_result(item.result) == "NG" for item in decision_item_results)
         if post_distance_results and not decision_has_ng:
             distance_detail = "; ".join(

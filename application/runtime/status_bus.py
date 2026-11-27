@@ -19,6 +19,7 @@ _RUN_STATE_ZH_FOR_STATUS = {
     "CapturingCam1": "采集中(相机1)",
     "CapturingCam2": "采集中(相机2)",
     "CapturingCam3": "采集中(相机3)",
+    "CapturingCam4": "采集中(相机4)",
     "Inspecting": "检测中",
     "Aggregating": "汇总结果",
     "CompletedOk": "本轮完成 OK",
@@ -63,6 +64,11 @@ def _update_status(runtime, message=None) -> None:
     if runtime._scheduler is not None:
         state_value = runtime._scheduler.state
         state_text = state_value.value if hasattr(state_value, "value") else str(state_value)
+    elif runtime._permission_manager is not None:
+        if runtime._permission_manager.is_locked:
+            state_text = "LockedByNg"
+        elif runtime._permission_manager.has_pending_release:
+            state_text = "ReleasedPendingConsume"
     runtime.runtimeStateChanged.emit(state_text)
 
     if runtime._permission_manager is not None:
@@ -91,6 +97,9 @@ def _update_status(runtime, message=None) -> None:
         "ng": "红灯结果",
     }
     runtime.towerLightStatusChanged.emit(tower_text_map.get(tower_state, str(tower_state)))
+    storage_error = getattr(runtime._permission_manager, "storage_error", "")
+    if storage_error:
+        message = f"NG interlock storage error: {storage_error}"
     runtime.statusMessageChanged.emit(message or _RUN_STATE_ZH_FOR_STATUS.get(state_text, state_text))
     runtime.recordPathChanged.emit(runtime._last_record_path or "-")
 
@@ -182,10 +191,13 @@ def _emit_runtime_context(runtime) -> None:
         capture_ms = float(getattr(camera_result, "capture_ms", 0.0) or 0.0)
         match_ms = float(getattr(camera_result, "match_ms", 0.0) or 0.0)
         infer_ms = float(getattr(camera_result, "infer_ms", 0.0) or 0.0)
+        correction_ms = float(getattr(camera_result, "correction_ms", 0.0) or 0.0)
         timing_payload[f"{camera_key}_capture_ms"] = capture_ms
         timing_payload[f"{camera_key}_match_ms"] = match_ms
         timing_payload[f"{camera_key}_infer_ms"] = infer_ms
-        timing_payload[f"{camera_key}_total_ms"] = capture_ms + match_ms + infer_ms
+        if correction_ms:
+            timing_payload[f"{camera_key}_correction_ms"] = correction_ms
+        timing_payload[f"{camera_key}_total_ms"] = capture_ms + correction_ms + match_ms + infer_ms
     runtime.timingBreakdownChanged.emit(timing_payload)
 
 

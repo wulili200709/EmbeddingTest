@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass
 
@@ -25,7 +26,13 @@ class InspectionScheduler:
         self.state_machine = state_machine
         self.permission_manager = permission_manager
         self._lock_on_ng = bool(lock_on_ng)
+        self._interlock_guard = threading.Lock()
         self._ng_locked_at = float("inf")
+        if permission_manager.is_locked:
+            self._ng_locked_at = time.time()
+            self.state_machine.transition_to(RunState.LockedByNg)
+        elif permission_manager.has_pending_release:
+            self.state_machine.transition_to(RunState.ReleasedPendingConsume)
 
     @property
     def state(self) -> RunState:
@@ -46,12 +53,19 @@ class InspectionScheduler:
         return True
 
     def release_from_ng_box(self, timestamp: float) -> bool:
-        if (not self._lock_on_ng or self.state != RunState.LockedByNg
-                or not self.permission_manager.is_locked or timestamp <= self._ng_locked_at):
-            return False
-        self.permission_manager.release_after_ng_box_confirmation()
-        self.state_machine.transition_to(RunState.ReleasedPendingConsume)
-        return True
+        with self._interlock_guard:
+            if self.state != RunState.LockedByNg or timestamp <= self._ng_locked_at:
+                return False
+            if not self.permission_manager.release_after_ng_box_confirmation():
+                return False
+            self.state_machine.transition_to(RunState.ReleasedPendingConsume)
+            return True
+
+    def _lock_for_ng(self) -> None:
+        with self._interlock_guard:
+            self._ng_locked_at = time.time()
+            self.permission_manager.lock_for_ng()
+            self.state_machine.transition_to(RunState.LockedByNg)
 
     def begin_precheck(self) -> StartDecision:
         return self.can_accept_trigger()
@@ -73,6 +87,9 @@ class InspectionScheduler:
         if int(camera_index) == 3:
             self.state_machine.transition_to(RunState.CapturingCam3)
             return
+        if int(camera_index) == 4:
+            self.state_machine.transition_to(RunState.CapturingCam4)
+            return
         raise ValueError(f"unsupported camera index: {camera_index}")
 
     def on_inspecting_started(self) -> None:
@@ -91,9 +108,7 @@ class InspectionScheduler:
 
         self.state_machine.transition_to(RunState.CompletedNg)
         if self._lock_on_ng:
-            self._ng_locked_at = time.time()
-            self.permission_manager.lock_for_ng()
-            self.state_machine.transition_to(RunState.LockedByNg)
+            self._lock_for_ng()
             return
         self.permission_manager.reset_after_success()
         self.state_machine.transition_to(RunState.WaitingTrigger)
@@ -103,9 +118,7 @@ class InspectionScheduler:
             self.state_machine.transition_to(RunState.Error)
         should_lock = bool(lock_as_ng and self._lock_on_ng)
         if should_lock:
-            self._ng_locked_at = time.time()
-            self.permission_manager.lock_for_ng()
-            self.state_machine.transition_to(RunState.LockedByNg)
+            self._lock_for_ng()
         else:
             self.permission_manager.reset_after_success()
             self.state_machine.transition_to(RunState.WaitingTrigger)

@@ -1,0 +1,15 @@
+{
+  "version": "2.2.1",
+  "date": "2026-07-11",
+  "changes": [
+    {
+      "id": "multi-light-acquisition", "time": "2026-07-11 22:18:17", "type": "新增",
+      "summary": "单相机多光源拍摄", "details": "同一台物理相机可配合多个光源分别拍摄。",
+      "previous_record": {"summary":"增加物理相机1个，多个光源拍摄功能；模板匹配参数回车之后删除默认弹框","details":""}
+    },
+    {
+      "id": "template-parameter-enter", "time": "2026-07-11 22:18:17", "type": "优化",
+      "summary": "模板匹配参数确认", "details": "输入模板匹配参数后按回车即可确认，省去默认提示框。"
+    }
+  ]
+}

@@ -396,6 +396,7 @@ def prompt_connect_camera_bindings(
     cam1_serial: str,
     cam2_serial: str,
     cam3_serial: str = "",
+    cam4_serial: str = "",
     enabled_roles: list[str] | None = None,
     visible_roles: list[str] | None = None,
     physical_roles_only: bool = False,
@@ -418,64 +419,39 @@ def prompt_connect_camera_bindings(
         enabled = {"cam1"}
     visible = {str(role).strip() for role in (visible_roles or []) if str(role).strip()}
 
-    chk_cam1 = QtWidgets.QCheckBox("Cam1")
-    chk_cam1.setChecked("cam1" in enabled)
-    edit_cam1 = QtWidgets.QLineEdit(cam1_serial)
-    edit_cam1.setPlaceholderText("Cam1 序列号")
-
-    chk_cam2 = QtWidgets.QCheckBox("Cam2")
-    chk_cam2.setChecked("cam2" in enabled)
-    edit_cam2 = QtWidgets.QLineEdit(cam2_serial)
-
-    chk_cam3 = QtWidgets.QCheckBox("Cam3")
-    chk_cam3.setChecked("cam3" in enabled)
-    edit_cam3 = QtWidgets.QLineEdit(cam3_serial)
-    edit_cam3.setPlaceholderText("Cam3 序列号（可选）")
-    edit_cam2.setPlaceholderText("Cam2 序列号（可选）")
-
-    layout.addWidget(chk_cam1, 1, 0)
-    layout.addWidget(edit_cam1, 1, 1)
-    layout.addWidget(chk_cam2, 2, 0)
-    layout.addWidget(edit_cam2, 2, 1)
-    layout.addWidget(chk_cam3, 3, 0)
-    layout.addWidget(edit_cam3, 3, 1)
-    if visible:
-        for role, checkbox, editor in (
-            ("cam1", chk_cam1, edit_cam1),
-            ("cam2", chk_cam2, edit_cam2),
-            ("cam3", chk_cam3, edit_cam3),
-        ):
-            row_visible = role in visible
-            checkbox.setVisible(row_visible)
-            editor.setVisible(row_visible)
+    serials_by_role = dict(zip(CAMERA_ROLES, (cam1_serial, cam2_serial, cam3_serial, cam4_serial), strict=True))
+    checkboxes = {}
+    editors = {}
+    for row, role in enumerate(CAMERA_ROLES, start=1):
+        checkbox = QtWidgets.QCheckBox(role.capitalize())
+        checkbox.setChecked(role in enabled)
+        editor = QtWidgets.QLineEdit(serials_by_role[role])
+        editor.setPlaceholderText(f"{role.capitalize()} 序列号")
+        layout.addWidget(checkbox, row, 0)
+        layout.addWidget(editor, row, 1)
+        checkbox.setVisible(not visible or role in visible)
+        editor.setVisible(not visible or role in visible)
+        checkboxes[role] = checkbox
+        editors[role] = editor
 
     button_box = QtWidgets.QDialogButtonBox(
         QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
     )
-    role_checkboxes = (
-        ("cam1", chk_cam1),
-        ("cam2", chk_cam2),
-        ("cam3", chk_cam3),
-    )
 
     def _accept_selected_roles() -> None:
-        if not any(checkbox.isChecked() for _role, checkbox in role_checkboxes):
+        if not any(checkbox.isChecked() for checkbox in checkboxes.values()):
             QtWidgets.QMessageBox.warning(dialog, "连接相机", "请至少选择一台相机。")
             return
         dialog.accept()
 
     button_box.accepted.connect(_accept_selected_roles)
     button_box.rejected.connect(dialog.reject)
-    layout.addWidget(button_box, 4, 0, 1, 2)
+    layout.addWidget(button_box, len(CAMERA_ROLES) + 1, 0, 1, 2)
 
     if dialog.exec() != QtWidgets.QDialog.Accepted:
         return None
-    serials = {
-        "cam1": edit_cam1.text().strip(),
-        "cam2": edit_cam2.text().strip(),
-        "cam3": edit_cam3.text().strip(),
-    }
-    roles = [role for role, checkbox in role_checkboxes if checkbox.isChecked()]
+    serials = {role: editor.text().strip() for role, editor in editors.items()}
+    roles = [role for role, checkbox in checkboxes.items() if checkbox.isChecked()]
     return serials, roles
 
 

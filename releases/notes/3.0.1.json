@@ -1,0 +1,31 @@
+{
+  "version": "3.0.1",
+  "date": "2026-08-18",
+  "changes": [
+    {
+      "id": "per-camera-model", "time": "2026-08-06 09:39:32", "type": "新增",
+      "summary": "多相机模型配置", "details": "可选择参与检测的相机，并为不同相机配置不同的模型。",
+      "commit": "2436ba8"
+    },
+    {
+      "id": "exception-log", "time": "2026-08-06 22:47:19", "type": "新增",
+      "summary": "异常日志", "details": "软件记录运行异常，便于排查检测和相机问题。",
+      "commit": "14cb99a"
+    },
+    {
+      "id": "cpu-batch", "time": "2026-08-07 13:44:30", "type": "优化",
+      "summary": "CPU 检测", "details": "CPU 检测按块处理数据，提高计算效率。",
+      "commit": "bf7841f"
+    },
+    {
+      "id": "train-configured-tools", "time": "2026-08-11 11:11:37", "type": "优化",
+      "summary": "批量训练与标定", "details": "可一次训练或标定全部可训练工具，测量工具只需配置参数。",
+      "commit": "a32e4f1"
+    },
+    {
+      "id": "reduced-channel-layout", "time": "2026-08-18 10:22:35", "type": "修复",
+      "summary": "运行页通道切换", "details": "从三个通道切换为两个后，运行页正确隐藏第三个通道。",
+      "commit": "318798d"
+    }
+  ]
+}

@@ -23,6 +23,3 @@ LC System V3.0.7  2026-11-22T17:16:31+08:00
   ?? tools/record_release.py
 说明: 性能优化不代表已达到整张图 500 毫秒的目标；具体订单仍需单独测量。
 EXE SHA-256: bc2ccc44fad0a677226f3cc4d260b7a1600dd8200893c65c8048052ae4d2d099
-
-增加模板匹配分组选择ROI
-

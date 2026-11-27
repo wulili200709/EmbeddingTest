@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import sys
 import threading
-import time
 import types
 import unittest
 from itertools import combinations
@@ -10,7 +9,7 @@ from unittest import mock
 from pathlib import Path
 
 
-PROJECT_DIR = Path(__file__).resolve().parents[1]
+PROJECT_DIR = Path(__file__).resolve().parents[2]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
@@ -45,17 +44,22 @@ class _FakeScheduler:
 
 
 class _FakeFrameGrabService:
-    def __init__(self, cam1_inspect_started: threading.Event, events: list[str]) -> None:
+    def __init__(
+        self, cam1_inspect_started: threading.Event, cam2_captured: threading.Event, events: list[str]
+    ) -> None:
         self._cam1_inspect_started = cam1_inspect_started
+        self._cam2_captured = cam2_captured
         self._events = events
 
     def roles(self) -> list[str]:
         return ["cam2", "cam1"]
 
     def capture_once(self, role: str, *, timeout_ms: int = 1000):
-        if role == "cam2":
-            assert self._cam1_inspect_started.wait(0.2), "cam1 检测未在线程中先启动"
+        if role == "cam2" and not self._cam1_inspect_started.wait(3):
+            raise TimeoutError("cam1 检测未在 cam2 取图期间启动")
         self._events.append(f"capture:{role}")
+        if role == "cam2":
+            self._cam2_captured.set()
         return {"role": role, "timeout_ms": timeout_ms}
 
 
@@ -132,19 +136,21 @@ class InspectionRuntimePipelineTest(unittest.TestCase):
     def test_capture_pipeline_orders_roles_and_submits_cam1_inspection_before_cam2_capture(self) -> None:
         events: list[str] = []
         cam1_inspect_started = threading.Event()
+        cam2_captured = threading.Event()
         scheduler = _FakeScheduler()
 
         def inspect_callback(role: str, frame) -> CameraInspectionOutcome:
             events.append(f"inspect:{role}")
             if role == "cam1":
                 cam1_inspect_started.set()
-                time.sleep(0.05)
+                if not cam2_captured.wait(3):
+                    raise TimeoutError("cam1 检测阻塞了 cam2 取图")
             return CameraInspectionOutcome(role=role, result="OK")
 
         runtime = InspectionRuntime(
             scheduler=scheduler,
             permission_manager=object(),
-            frame_grab_service=_FakeFrameGrabService(cam1_inspect_started, events),
+            frame_grab_service=_FakeFrameGrabService(cam1_inspect_started, cam2_captured, events),
             light_controller=_FakeLightController(events),
             tower_light_controller=object(),
             inspect_callback=inspect_callback,
@@ -154,17 +160,21 @@ class InspectionRuntimePipelineTest(unittest.TestCase):
         outcomes = runtime._capture_and_inspect_pipeline(timeout_ms=1000)
 
         self.assertEqual(list(outcomes.keys()), ["cam1", "cam2"])
+        self.assertEqual([outcome.result for outcome in outcomes.values()], ["OK", "OK"])
         self.assertEqual(
-            [events[i] for i in range(6)],
+            [event for event in events if event.startswith(("light_", "capture:"))],
             [
                 "light_on:1",
                 "capture:cam1",
                 "light_off:1",
-                "inspect:cam1",
                 "light_on:2",
                 "capture:cam2",
+                "light_off:2",
             ],
         )
+        self.assertLess(events.index("capture:cam1"), events.index("inspect:cam1"))
+        self.assertLess(events.index("inspect:cam1"), events.index("capture:cam2"))
+        self.assertLess(events.index("capture:cam2"), events.index("inspect:cam2"))
         self.assertEqual(
             scheduler.events,
             [

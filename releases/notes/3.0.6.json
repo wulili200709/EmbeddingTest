@@ -1,0 +1,21 @@
+{
+  "version": "3.0.6",
+  "date": "2026-11-20",
+  "changes": [
+    {
+      "id": "roi-model-source", "time": "2026-11-20 16:24:28", "type": "新增",
+      "summary": "检测区域模型来源", "details": "每个 ROI 可选择独立训练、同订单组共享或引用公共模型。",
+      "commit": "555efd0"
+    },
+    {
+      "id": "shared-model-precheck", "time": "2026-11-20 16:24:28", "type": "优化",
+      "summary": "共享模型检查", "details": "训练或测试前检查共享组和公共模型的配置，并提示缺失项。",
+      "commit": "555efd0"
+    },
+    {
+      "id": "ng-box-release", "time": "2026-11-20 16:24:28", "type": "新增",
+      "summary": "NG 盒放行", "details": "启用 NG 锁定后，NG 盒收到新的 DI2 上升沿即可放行。",
+      "commit": "555efd0"
+    }
+  ]
+}

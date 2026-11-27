@@ -1,0 +1,51 @@
+{
+  "version": "3.0.8",
+  "date": "2026-11-27",
+  "changes": [
+    {
+      "id": "shape-localization-groups", "time": "2026-11-25 17:35:03", "type": "新增",
+      "summary": "模板分组定位", "details": "可为不同 ROI 绑定定位组，分别配置模板搜索区域。",
+      "commit": "d178cba"
+    },
+    {
+      "id": "lens-tool-entry", "time": "2026-11-27 14:26:10", "type": "优化",
+      "summary": "镜头矫正入口", "details": "镜头矫正设置移入「工具」菜单。"
+    },
+    {
+      "id": "lens-calibration-layout", "time": "2026-11-27 14:26:10", "type": "优化",
+      "summary": "镜头标定界面", "details": "统一设置窗口样式，精简标定和预览界面的操作提示。"
+    },
+    {
+      "id": "shell-language-switch", "time": "2026-11-27 14:26:10", "type": "修复",
+      "summary": "中英文切换", "details": "切换语言后，「复制方案」按钮和镜头标定控件同步更新。"
+    },
+    {
+      "id": "shell-tool-icons", "time": "2026-11-27 14:26:10", "type": "优化",
+      "summary": "菜单与工作区图标", "details": "更新菜单、调试与运行入口、脚踏和相机触发按钮的图标。"
+    },
+    {
+      "id": "channel-trigger-buttons", "time": "2026-11-27 14:26:10", "type": "优化",
+      "summary": "相机触发按钮", "details": "运行页只显示当前产品启用的通道，并按原通道编号触发。"
+    },
+    {
+      "id": "persistent-ng-interlock", "time": "2026-11-27 14:26:10", "type": "修复",
+      "summary": "NG 锁定恢复", "details": "重启、重连或切换产品后仍保留 NG 锁，收到 NG 盒新的 DI2 上升沿才放行。"
+    },
+    {
+      "id": "automatic-software-history", "time": "2026-11-27 14:26:10", "type": "新增",
+      "summary": "自动版本履历", "details": "软件按更新要点逐条收录版本履历，同一项只记录一次。"
+    },
+    {
+      "id": "software-history-corrections", "time": "2026-11-27 14:38:21", "type": "修复",
+      "summary": "履历文字同步", "details": "版本说明修订后，已收录条目的摘要和详情会同步更新。"
+    },
+    {
+      "id": "earlier-version-history", "time": "2026-11-27 14:44:57", "type": "优化",
+      "summary": "历史版本履历", "details": "早期版本的改动按功能逐条展示，原有履历沿用原记录时间。"
+    },
+    {
+      "id": "version-history-cutoff", "time": "2026-11-27 14:53:51", "type": "修复",
+      "summary": "版本履历归属", "details": "11 月 22 日 17:22 后的更新归入 V3.0.8。"
+    }
+  ]
+}

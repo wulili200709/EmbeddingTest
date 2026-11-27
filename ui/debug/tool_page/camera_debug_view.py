@@ -3,7 +3,7 @@ from __future__ import annotations
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from common.camera_roles import CAMERA_ROLES
-from infrastructure.camera_settings_store import CAPTURE_DEFAULT_EXPOSURE_US
+from infrastructure.camera_settings_store import default_capture_channels
 from ui.i18n import tr
 from ui.runtime import RuntimeImageView
 
@@ -448,7 +448,7 @@ def build_camera_debug_page(
     capture_channel_header_layout.addWidget(owner.lbl_capture_channel_count)
     capture_channel_layout.addWidget(capture_channel_header)
 
-    owner.capture_channel_table = QtWidgets.QTableWidget(3, 6)
+    owner.capture_channel_table = QtWidgets.QTableWidget(len(CAMERA_ROLES), 6)
     capture_headers = [
         ("enabled", tr("debug.capture_table.enabled")),
         ("channel", tr("debug.capture_table.channel")),
@@ -468,7 +468,6 @@ def build_camera_debug_page(
     owner.capture_channel_table.setAlternatingRowColors(True)
     owner.capture_channel_table.setShowGrid(False)
     owner.capture_channel_table.setIconSize(QtCore.QSize(15, 15))
-    owner.capture_channel_table.setFixedHeight(172)
     owner.capture_channel_table.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
     owner.capture_channel_table.setStyleSheet(
         "QTableWidget{background:#303030;alternate-background-color:#333333;color:#dddddd;"
@@ -489,6 +488,7 @@ def build_camera_debug_page(
     capture_header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Stretch)
     capture_rows = owner.capture_channel_table.verticalHeader()
     capture_rows.setDefaultSectionSize(44)
+    owner.capture_channel_table.setFixedHeight(capture_header.height() + 44 * len(CAMERA_ROLES) + 2)
 
     capture_editor_style = (
         "QComboBox,QDoubleSpinBox{background:transparent;color:#e3e3e3;border:1px solid transparent;"
@@ -499,19 +499,15 @@ def build_camera_debug_page(
         "selection-background-color:#505050;selection-color:white;outline:0;}"
     )
 
-    channel_rows = [
-        ("cam1", "DO_LIGHT_CAM1", CAPTURE_DEFAULT_EXPOSURE_US, 0.0),
-        ("cam2", "DO_LIGHT_CAM2", CAPTURE_DEFAULT_EXPOSURE_US, 0.0),
-        ("cam3", "DO_LIGHT_CAM3", CAPTURE_DEFAULT_EXPOSURE_US, 0.0),
-    ]
-    for row, (channel, light_output, exposure, gain) in enumerate(channel_rows):
+    for row, settings in enumerate(default_capture_channels()):
+        channel = settings["role"]
         enabled_item = QtWidgets.QTableWidgetItem("")
         enabled_item.setFlags(
             QtCore.Qt.ItemFlag.ItemIsEnabled
             | QtCore.Qt.ItemFlag.ItemIsSelectable
             | QtCore.Qt.ItemFlag.ItemIsUserCheckable
         )
-        enabled_item.setCheckState(QtCore.Qt.CheckState.Checked)
+        enabled_item.setCheckState(QtCore.Qt.CheckState.Checked if settings["enabled"] else QtCore.Qt.CheckState.Unchecked)
         enabled_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         owner.capture_channel_table.setItem(row, 0, enabled_item)
         channel_item = QtWidgets.QTableWidgetItem(channel)
@@ -534,7 +530,7 @@ def build_camera_debug_page(
         light_combo.addItem(tr("debug.io_name.light_cam1"), "DO_LIGHT_CAM1")
         light_combo.addItem(tr("debug.io_name.light_cam2"), "DO_LIGHT_CAM2")
         light_combo.addItem(tr("debug.io_name.light_cam3"), "DO_LIGHT_CAM3")
-        light_combo.setCurrentIndex(row)
+        light_combo.setCurrentIndex(light_combo.findData(settings["light_output"]))
         light_combo.setMinimumWidth(88)
         light_combo.view().setMinimumWidth(110)
         light_combo.setStyleSheet(capture_editor_style)
@@ -544,7 +540,7 @@ def build_camera_debug_page(
         exposure_spin = QtWidgets.QDoubleSpinBox()
         exposure_spin.setDecimals(0)
         exposure_spin.setRange(1.0, 1000000.0)
-        exposure_spin.setValue(float(exposure))
+        exposure_spin.setValue(settings["exposure_time_us"])
         exposure_spin.setKeyboardTracking(False)
         exposure_spin.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
         exposure_spin.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
@@ -556,7 +552,7 @@ def build_camera_debug_page(
         gain_spin = QtWidgets.QDoubleSpinBox()
         gain_spin.setDecimals(2)
         gain_spin.setRange(0.0, 48.0)
-        gain_spin.setValue(float(gain))
+        gain_spin.setValue(settings["gain"])
         gain_spin.setKeyboardTracking(False)
         gain_spin.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
         gain_spin.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)

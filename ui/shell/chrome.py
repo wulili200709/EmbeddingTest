@@ -6,11 +6,9 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from algorithms.lazy_api import is_ready as is_qr_core_ready
 from ui.i18n import LANG_EN, LANG_ZH, language_code, set_language, tr
+from ui.tool_icons import tool_icon
 
-from .support import APP_NAME, APP_VERSION, shell_icon
-
-
-SP = QtWidgets.QStyle.StandardPixmap
+from .support import APP_NAME, APP_VERSION
 
 
 def build_menu_bar(window) -> None:
@@ -75,88 +73,65 @@ def build_menu_bar(window) -> None:
 
     file_menu = QtWidgets.QMenu(tr("menu.file"), window)
     file_menu.setStyleSheet(menu_style)
-    act_exit = file_menu.addAction(shell_icon(SP.SP_DialogCloseButton), tr("action.exit"))
+    act_exit = file_menu.addAction(tool_icon("exit"), tr("action.exit"))
     act_exit.triggered.connect(window.close)
 
     view_menu = QtWidgets.QMenu(tr("menu.view"), window)
     view_menu.setStyleSheet(menu_style)
     window.act_show_debug = view_menu.addAction(
-        shell_icon(SP.SP_FileDialogDetailedView), tr("action.switch_debug")
+        tool_icon("switch_debug"), tr("action.switch_debug")
     )
     window.act_show_debug.triggered.connect(lambda: window._switch_workspace("debug"))
     window.act_show_runtime = view_menu.addAction(
-        shell_icon(SP.SP_MediaPlay), tr("action.switch_runtime")
+        tool_icon("switch_runtime"), tr("action.switch_runtime")
     )
     window.act_show_runtime.triggered.connect(lambda: window._switch_workspace("runtime"))
 
     tools_menu = QtWidgets.QMenu(tr("menu.tools"), window)
     tools_menu.setStyleSheet(menu_style)
-    window.act_reload_debug = tools_menu.addAction(
-        shell_icon(SP.SP_BrowserReload), tr("action.reload_debug")
-    )
-    window.act_reload_debug.triggered.connect(window._reload_debug_session)
+    def add_tool(menu, name, slot):
+        action = menu.addAction(tool_icon(name), tr(f"action.{name}"))
+        action.triggered.connect(slot)
+        return action
+
+    hardware_menu = tools_menu.addMenu(tool_icon("hardware"), tr("menu.acquisition"))
+    positioning_menu = tools_menu.addMenu(tool_icon("positioning"), tr("menu.positioning"))
+    algo_menu = tools_menu.addMenu(tool_icon("algo"), tr("menu.algorithm_tools"))
+    tool_actions = {}
+    for menu, name, slot in (
+        (hardware_menu, "camera_tool", window.tool_page.open_camera_debug_dialog),
+        (hardware_menu, "io_tool", window.tool_page.open_io_debug_dialog),
+        (hardware_menu, "current_product_capture_plan", window.tool_page.open_current_product_capture_plan_dialog),
+        (positioning_menu, "template_editor", window.tool_page.open_template_editor_dialog),
+        (positioning_menu, "ncc_tool", window.tool_page.open_ncc_match_dialog),
+        (positioning_menu, "auto_region", window.tool_page.open_template_match_dialog),
+        (algo_menu, "margin_validation", window.tool_page.open_margin_validation_tool),
+        (algo_menu, "embedding_analysis", window.tool_page.open_embedding_analysis_tool),
+        (algo_menu, "baseline_debug", window.tool_page.open_baseline_debug_tool),
+    ):
+        tool_actions[name] = add_tool(menu, name, slot)
     tools_menu.addSeparator()
-
-    hardware_menu = tools_menu.addMenu(shell_icon(SP.SP_ComputerIcon), tr("menu.engineering_tools"))
-    act_camera_tool = hardware_menu.addAction(
-        shell_icon(SP.SP_DesktopIcon), tr("action.camera_tool")
-    )
-    act_camera_tool.triggered.connect(window.tool_page.open_camera_debug_dialog)
-    act_io_tool = hardware_menu.addAction(
-        shell_icon(SP.SP_DriveNetIcon), tr("action.io_tool")
-    )
-    act_io_tool.triggered.connect(window.tool_page.open_io_debug_dialog)
-    act_template_editor = hardware_menu.addAction(
-        shell_icon(SP.SP_FileDialogContentsView), tr("action.template_editor")
-    )
-    act_template_editor.triggered.connect(window.tool_page.open_template_editor_dialog)
-    act_ncc_tool = hardware_menu.addAction(
-        shell_icon(SP.SP_FileDialogDetailedView), tr("action.ncc_tool")
-    )
-    act_ncc_tool.triggered.connect(window.tool_page.open_ncc_match_dialog)
-    act_auto_region = hardware_menu.addAction(
-        shell_icon(SP.SP_FileDialogListView), tr("action.auto_region")
-    )
-    act_auto_region.triggered.connect(window.tool_page.open_template_match_dialog)
-
-    tools_menu.addSeparator()
-    algo_menu = tools_menu.addMenu(shell_icon(SP.SP_FileDialogInfoView), tr("menu.algorithm_tools"))
-    act_margin_validation = algo_menu.addAction(
-        shell_icon(SP.SP_DialogApplyButton), tr("action.margin_validation")
-    ).triggered.connect(window.tool_page.open_margin_validation_tool)
-    act_embedding_analysis = algo_menu.addAction(
-        shell_icon(SP.SP_FileDialogDetailedView), tr("action.embedding_analysis")
-    ).triggered.connect(window.tool_page.open_embedding_analysis_tool)
-    act_baseline_debug = algo_menu.addAction(
-        shell_icon(SP.SP_FileDialogListView), tr("action.baseline_debug")
-    ).triggered.connect(window.tool_page.open_baseline_debug_tool)
-
-    act_current_product_capture_plan = tools_menu.addAction(
-        shell_icon(SP.SP_FileDialogDetailedView),
-        tr("action.current_product_capture_plan"),
-    )
-    act_current_product_capture_plan.triggered.connect(
-        window.tool_page.open_current_product_capture_plan_dialog
-    )
+    tool_actions["lens_correction"] = add_tool(tools_menu, "lens_correction", window._show_lens_correction_settings)
+    window.act_reload_debug = add_tool(tools_menu, "reload_debug", window._reload_debug_session)
 
     runtime_menu = QtWidgets.QMenu(tr("menu.control"), window)
     runtime_menu.setStyleSheet(menu_style)
     act_refresh_cameras = runtime_menu.addAction(
-        shell_icon(SP.SP_BrowserReload), tr("action.refresh_cameras")
+        tool_icon("refresh_cameras"), tr("action.refresh_cameras")
     ).triggered.connect(window.runtime_page.refreshCamerasRequested.emit)
     act_open_mvs = runtime_menu.addAction(
-        shell_icon(SP.SP_ComputerIcon), tr("action.open_mvs")
+        tool_icon("open_mvs"), tr("action.open_mvs")
     ).triggered.connect(window._open_mvs)
     act_connect_camera = runtime_menu.addAction(
-        shell_icon(SP.SP_DriveNetIcon), tr("action.connect_camera")
+        tool_icon("connect_camera"), tr("action.connect_camera")
     ).triggered.connect(window._show_connect_dialog)
     act_disconnect_camera = runtime_menu.addAction(
-        shell_icon(SP.SP_DialogDiscardButton), tr("action.disconnect_camera")
+        tool_icon("disconnect_camera"), tr("action.disconnect_camera")
     ).triggered.connect(window._disconnect_runtime_cameras)
-    capture_menu = runtime_menu.addMenu(shell_icon(SP.SP_DialogSaveButton), tr("menu.runtime_capture"))
+    capture_menu = runtime_menu.addMenu(tool_icon("capture"), tr("menu.runtime_capture"))
     window.runtime_capture_policy_group = QtGui.QActionGroup(window)
     window.runtime_capture_policy_group.setExclusive(True)
-    window.act_runtime_capture_keep_all = capture_menu.addAction(tr("action.keep_all"))
+    window.act_runtime_capture_keep_all = capture_menu.addAction(tool_icon("keep_all", checkable=True), tr("action.keep_all"))
     window.act_runtime_capture_keep_all.setCheckable(True)
     window.runtime_capture_policy_group.addAction(window.act_runtime_capture_keep_all)
     window.act_runtime_capture_keep_all.triggered.connect(
@@ -166,7 +141,7 @@ def build_menu_bar(window) -> None:
             show_message=True,
         )
     )
-    window.act_runtime_capture_keep_ng_only = capture_menu.addAction(tr("action.keep_ng_only"))
+    window.act_runtime_capture_keep_ng_only = capture_menu.addAction(tool_icon("keep_ng_only", checkable=True), tr("action.keep_ng_only"))
     window.act_runtime_capture_keep_ng_only.setCheckable(True)
     window.runtime_capture_policy_group.addAction(window.act_runtime_capture_keep_ng_only)
     window.act_runtime_capture_keep_ng_only.triggered.connect(
@@ -178,21 +153,21 @@ def build_menu_bar(window) -> None:
     )
     window._sync_runtime_capture_policy_actions()
     act_tower_light = runtime_menu.addAction(
-        shell_icon(SP.SP_FileDialogInfoView), tr("action.tower_light")
+        tool_icon("tower_light"), tr("action.tower_light")
     ).triggered.connect(window._show_tower_light_settings_dialog)
     runtime_menu.addSeparator()
     act_foot_trigger = runtime_menu.addAction(
-        shell_icon(SP.SP_MediaPlay), tr("action.foot_trigger")
+        tool_icon("foot_trigger"), tr("action.foot_trigger")
     ).triggered.connect(window.runtime_page.triggerRequested.emit)
     act_password_release = runtime_menu.addAction(
-        shell_icon(SP.SP_DialogYesButton), tr("action.password_release")
+        tool_icon("password_release"), tr("action.password_release")
     ).triggered.connect(window._show_release_dialog)
     act_change_release_password = runtime_menu.addAction(
-        shell_icon(SP.SP_FileDialogDetailedView), tr("action.change_release_password")
+        tool_icon("change_release_password"), tr("action.change_release_password")
     ).triggered.connect(window._show_change_release_password_dialog)
     runtime_menu.addSeparator()
     act_refresh_runtime = runtime_menu.addAction(
-        shell_icon(SP.SP_BrowserReload), tr("action.refresh_runtime")
+        tool_icon("reload_debug"), tr("action.refresh_runtime")
     ).triggered.connect(
         lambda: window.runtime_ctrl.refresh_all_status(tr("action.refresh_runtime"))
     )
@@ -203,53 +178,53 @@ def build_menu_bar(window) -> None:
 
     path_menu.setStyleSheet(menu_style)
     act_open_system_root = path_menu.addAction(
-        shell_icon(SP.SP_DirHomeIcon), tr("action.open_system_root")
+        tool_icon("open_system_root"), tr("action.open_system_root")
     ).triggered.connect(window._open_workspace_root)
     act_open_product_dir = path_menu.addAction(
-        shell_icon(SP.SP_DirOpenIcon), tr("action.open_product_dir")
+        tool_icon("open_product_dir"), tr("action.open_product_dir")
     ).triggered.connect(window._open_current_product_dir)
     act_open_session_dir = path_menu.addAction(
-        shell_icon(SP.SP_DirIcon), tr("action.open_session_dir")
+        tool_icon("open_session_dir"), tr("action.open_session_dir")
     ).triggered.connect(window._open_session_dir)
     act_open_runtime_images = path_menu.addAction(
-        shell_icon(SP.SP_DirLinkIcon), tr("action.open_runtime_images")
+        tool_icon("open_runtime_images"), tr("action.open_runtime_images")
     ).triggered.connect(window._open_runtime_capture_dir)
     act_save_image_path = path_menu.addAction(
-        shell_icon(SP.SP_DialogSaveButton), tr("action.save_image_path")
+        tool_icon("save_image_path"), tr("action.save_image_path")
     ).triggered.connect(window._show_runtime_capture_directory_dialog)
     path_menu.addSeparator()
     act_open_runtime_records = path_menu.addAction(
-        shell_icon(SP.SP_DirLinkIcon), tr("action.open_runtime_records")
+        tool_icon("open_runtime_records"), tr("action.open_runtime_records")
     ).triggered.connect(window._open_runtime_records_dir)
     act_save_runtime_records = path_menu.addAction(
-        shell_icon(SP.SP_DialogSaveButton), tr("action.save_runtime_records")
+        tool_icon("save_runtime_records"), tr("action.save_runtime_records")
     ).triggered.connect(window._show_runtime_records_directory_dialog)
 
     system_menu = QtWidgets.QMenu(tr("menu.system"), window)
     system_menu.setStyleSheet(menu_style)
-    window.act_auth_login = system_menu.addAction(shell_icon(SP.SP_DialogApplyButton), tr("action.auth_login"))
+    window.act_auth_login = system_menu.addAction(tool_icon("auth_login"), tr("action.auth_login"))
     window.act_auth_login.triggered.connect(window._show_login_dialog)
-    window.act_auth_logout = system_menu.addAction(shell_icon(SP.SP_DialogCloseButton), tr("action.auth_logout"))
+    window.act_auth_logout = system_menu.addAction(tool_icon("auth_logout"), tr("action.auth_logout"))
     window.act_auth_logout.triggered.connect(window._logout_current_user)
     window.act_change_current_password = system_menu.addAction(
-        shell_icon(SP.SP_FileDialogDetailedView), tr("action.change_current_password")
+        tool_icon("change_current_password"), tr("action.change_current_password")
     )
     window.act_change_current_password.triggered.connect(
         lambda checked=False: window._show_change_current_user_password()
     )
     system_menu.addSeparator()
     window.act_user_permissions = system_menu.addAction(
-        shell_icon(SP.SP_FileDialogDetailedView), tr("action.user_permissions")
+        tool_icon("user_permissions"), tr("action.user_permissions")
     )
     window.act_user_permissions.triggered.connect(window._show_user_permission_dialog)
-    window.act_audit_log = system_menu.addAction(shell_icon(SP.SP_FileDialogListView), tr("action.audit_log"))
+    window.act_audit_log = system_menu.addAction(tool_icon("audit_log"), tr("action.audit_log"))
     window.act_audit_log.triggered.connect(window._show_audit_log_dialog)
     window.act_runtime_records_query = system_menu.addAction(
-        shell_icon(SP.SP_FileDialogListView), tr("action.runtime_records_query")
+        tool_icon("runtime_records_query"), tr("action.runtime_records_query")
     )
     window.act_runtime_records_query.triggered.connect(window._show_runtime_records_dialog)
     window.act_software_versions = system_menu.addAction(
-        shell_icon(SP.SP_FileDialogInfoView), tr("action.software_versions")
+        tool_icon("software_versions"), tr("action.software_versions")
     )
     window.act_software_versions.triggered.connect(window._show_software_version_dialog)
 
@@ -257,9 +232,9 @@ def build_menu_bar(window) -> None:
     language_menu.setStyleSheet(menu_style)
     language_group = QtGui.QActionGroup(window)
     language_group.setExclusive(True)
-    window.act_language_zh = language_menu.addAction(tr("language.zh"))
+    window.act_language_zh = language_menu.addAction(tool_icon("language_zh", checkable=True), tr("language.zh"))
     window.act_language_zh.setCheckable(True)
-    window.act_language_en = language_menu.addAction(tr("language.en"))
+    window.act_language_en = language_menu.addAction(tool_icon("language_en", checkable=True), tr("language.en"))
     window.act_language_en.setCheckable(True)
     language_group.addAction(window.act_language_zh)
     language_group.addAction(window.act_language_en)
@@ -271,11 +246,11 @@ def build_menu_bar(window) -> None:
     help_menu = QtWidgets.QMenu(tr("menu.help"), window)
     help_menu.setStyleSheet(menu_style)
     act_about_version = help_menu.addAction(
-        shell_icon(SP.SP_MessageBoxInformation), tr("software.version")
+        tool_icon("about_version"), tr("software.version")
     )
     act_about_version.triggered.connect(window._show_about_dialog)
     window.act_detailed_camera_diagnostics = help_menu.addAction(
-        shell_icon(SP.SP_FileDialogInfoView),
+        tool_icon("detailed_camera_diagnostics", checkable=True),
         tr("action.detailed_camera_diagnostics"),
     )
     window.act_detailed_camera_diagnostics.setCheckable(True)
@@ -284,42 +259,42 @@ def build_menu_bar(window) -> None:
     )
 
     top_layout.addWidget(
-        _make_popup_button(tr("menu.file"), shell_icon(SP.SP_DirOpenIcon), file_menu),
+        _make_popup_button(tr("menu.file"), tool_icon("file"), file_menu),
         0,
     )
     window.btn_menu_file = top_layout.itemAt(top_layout.count() - 1).widget()
     top_layout.addWidget(
-        _make_popup_button(tr("menu.view"), shell_icon(SP.SP_FileDialogDetailedView), view_menu),
+        _make_popup_button(tr("menu.view"), tool_icon("view"), view_menu),
         0,
     )
     window.btn_menu_view = top_layout.itemAt(top_layout.count() - 1).widget()
     top_layout.addWidget(
-        _make_popup_button(tr("menu.tools"), shell_icon(SP.SP_ComputerIcon), tools_menu),
+        _make_popup_button(tr("menu.tools"), tool_icon("tools"), tools_menu),
         0,
     )
     window.btn_menu_tools = top_layout.itemAt(top_layout.count() - 1).widget()
     top_layout.addWidget(
-        _make_popup_button(tr("menu.control"), shell_icon(SP.SP_MediaPlay), runtime_menu),
+        _make_popup_button(tr("menu.control"), tool_icon("control"), runtime_menu),
         0,
     )
     window.btn_menu_control = top_layout.itemAt(top_layout.count() - 1).widget()
     top_layout.addWidget(
-        _make_popup_button(tr("menu.path"), shell_icon(SP.SP_DirIcon), path_menu),
+        _make_popup_button(tr("menu.path"), tool_icon("path"), path_menu),
         0,
     )
     window.btn_menu_path = top_layout.itemAt(top_layout.count() - 1).widget()
     top_layout.addWidget(
-        _make_popup_button(tr("menu.system"), shell_icon(SP.SP_FileDialogInfoView), system_menu),
+        _make_popup_button(tr("menu.system"), tool_icon("system"), system_menu),
         0,
     )
     window.btn_menu_system = top_layout.itemAt(top_layout.count() - 1).widget()
     top_layout.addWidget(
-        _make_popup_button(tr("menu.language"), shell_icon(SP.SP_FileDialogInfoView), language_menu),
+        _make_popup_button(tr("menu.language"), tool_icon("language"), language_menu),
         0,
     )
     window.btn_menu_language = top_layout.itemAt(top_layout.count() - 1).widget()
     top_layout.addWidget(
-        _make_popup_button(tr("menu.help"), shell_icon(SP.SP_MessageBoxInformation), help_menu),
+        _make_popup_button(tr("menu.help"), tool_icon("help"), help_menu),
         0,
     )
     window.btn_menu_help = top_layout.itemAt(top_layout.count() - 1).widget()
@@ -331,6 +306,7 @@ def build_menu_bar(window) -> None:
             "view": view_menu,
             "tools": tools_menu,
             "hardware": hardware_menu,
+            "positioning": positioning_menu,
             "algo": algo_menu,
             "runtime": runtime_menu,
             "capture": capture_menu,
@@ -341,15 +317,7 @@ def build_menu_bar(window) -> None:
         },
         "actions": {
             "exit": act_exit,
-            "camera_tool": act_camera_tool,
-            "io_tool": act_io_tool,
-            "template_editor": act_template_editor,
-            "ncc_tool": act_ncc_tool,
-            "auto_region": act_auto_region,
-            "margin_validation": algo_menu.actions()[0],
-            "embedding_analysis": algo_menu.actions()[1],
-            "baseline_debug": algo_menu.actions()[2],
-            "current_product_capture_plan": act_current_product_capture_plan,
+            **tool_actions,
             "refresh_cameras": runtime_menu.actions()[0],
             "open_mvs": runtime_menu.actions()[1],
             "connect_camera": runtime_menu.actions()[2],
@@ -495,7 +463,8 @@ def retranslate_shell_chrome(window) -> None:
         "file": "menu.file",
         "view": "menu.view",
         "tools": "menu.tools",
-        "hardware": "menu.engineering_tools",
+        "hardware": "menu.acquisition",
+        "positioning": "menu.positioning",
         "algo": "menu.algorithm_tools",
         "runtime": "menu.control",
         "capture": "menu.runtime_capture",
@@ -526,6 +495,7 @@ def retranslate_shell_chrome(window) -> None:
 
     action_keys = {
         "exit": "action.exit",
+        "lens_correction": "action.lens_correction",
         "camera_tool": "action.camera_tool",
         "io_tool": "action.io_tool",
         "template_editor": "action.template_editor",

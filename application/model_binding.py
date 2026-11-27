@@ -4,15 +4,15 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from common.algorithm_codes import storage_code_backbone
+from common.algorithm_codes import learning_backbone_storage_codes, storage_code_backbone
 from common.model_library import parse_library_model_key
 
 
 class ModelBindingMixin:
-    def resolve_item_algorithm(self, item) -> str:
+    def resolve_item_algorithm(self, item, *, product_dir=None) -> str:
         if getattr(item, "model_source", "independent") != "library":
             return self.resolve_tool_algorithm(item.algorithm_code, item.camera_id)
-        manifest = self.model_library.resolve(item.library_model_id, item.library_version)
+        manifest = self._library_model_for_key(item.effective_model_key, product_dir=product_dir)
         algorithm = storage_code_backbone(manifest["algorithm"])
         if self.is_learning_tool(item.algorithm_code):
             if manifest["kind"] not in {"embedding", "yolo"} or not (self.is_embedding_algorithm(algorithm) or self.is_yolo_algorithm(algorithm)):
@@ -21,19 +21,26 @@ class ModelBindingMixin:
             raise ValueError("公共模型算法与当前检测工具不兼容")
         return algorithm
 
-    def _library_model_for_key(self, model_key, algorithm=None):
-        reference = parse_library_model_key(str(model_key or ""))
+    def _library_model_for_key(self, model_key, algorithm=None, *, product_dir=None):
+        reference = parse_library_model_key(self._raw_model_key(model_key))
         if reference is None:
             return None
-        return self.model_library.resolve(*reference, algorithm=algorithm)
+        manifest = self.model_library.resolve(*reference, algorithm=algorithm)
+        self._validate_library_coordinate_space(manifest, model_key, product_dir)
+        return manifest
 
     def _local_embedding_file(self, algorithm, product_dir, model_key):
         paths = self.embedding_model_storage_paths(algorithm, product_dir, model_key=model_key)
         found = next((path for path in paths if os.path.isfile(path)), "")
         # Legacy unkeyed models belong only to the old independent workflow.
-        if not found and model_key and "__group__" not in model_key:
+        normalized_key = self.tool_model_key(model_key, product_dir=product_dir)
+        if not found and model_key and "__group__" not in model_key and "__lens_" not in normalized_key:
+            # This is the raw camera's historical fallback. Do not normalize an
+            # empty key through cam1: cam1 may independently have correction on.
+            legacy_codes = [*learning_backbone_storage_codes(algorithm), storage_code_backbone(algorithm)]
             found = next(
-                (path for path in self.embedding_model_storage_paths(algorithm, product_dir)
+                (path for code in dict.fromkeys(legacy_codes)
+                 if (path := os.path.join(product_dir, f"register_model_{code}.npz"))
                  if os.path.isfile(path)), ""
             )
         return found
@@ -43,12 +50,10 @@ class ModelBindingMixin:
         description = dict(ready=False, source=source, message="", path="", name="",
                            version="", algorithm="", parameters={})
         try:
-            algorithm = self.resolve_item_algorithm(item)
+            algorithm = self.resolve_item_algorithm(item, product_dir=product_dir)
             description["algorithm"] = algorithm
             if source == "library":
-                manifest = self.model_library.resolve(
-                    item.library_model_id, item.library_version, algorithm=algorithm
-                )
+                manifest = self._library_model_for_key(item.effective_model_key, algorithm=algorithm, product_dir=product_dir)
                 description.update(
                     ready=True, name=manifest["name"], version=manifest["version"],
                     model_id=manifest["model_id"], created_at=manifest.get("created_at", ""),
@@ -71,7 +76,7 @@ class ModelBindingMixin:
                     path=model_path or self.embedding_model_path(algorithm, product_dir, model_key=key),
                 )
             elif self.is_traditional_tool(item.algorithm_code):
-                description["ready"] = bool(self.get_traditional_model_dict(algorithm, model_key=key))
+                description["ready"] = bool(self.get_traditional_model_dict(algorithm, model_key=key, product_dir=product_dir))
             else:
                 raise ValueError("当前工具不使用 OK/NG 模型")
             description["name"] = item.task_group if source == "group" else item.display_name
@@ -85,7 +90,7 @@ class ModelBindingMixin:
     def publish_model_to_library(self, item, product_dir, name, model_id=None) -> dict:
         if getattr(item, "model_source", "independent") == "library":
             raise ValueError("引用的公共模型为只读，请从独立模型或组模型发布新版本")
-        algorithm = self.resolve_item_algorithm(item)
+        algorithm = self.resolve_item_algorithm(item, product_dir=product_dir)
         description = self.describe_model_binding(item, product_dir)
         if not description["ready"]:
             raise ValueError(description["message"] or "请先完成模型训练")
@@ -101,18 +106,22 @@ class ModelBindingMixin:
             kwargs["model_file"] = description["path"]
         else:
             kwargs["traditional_model"] = self.get_traditional_model_dict(
-                algorithm, model_key=item.effective_model_key
+                algorithm, model_key=item.effective_model_key, product_dir=product_dir
             )
         parameters = {"score_mode": self.product_params.score_mode,
                       "margin": float(self.product_params.margin), "topk": int(self.product_params.topk)}
         if self.is_yolo_algorithm(algorithm):
             parameters["yolo_ng_threshold"] = float(self.product_params.yolo_ng_threshold)
+        source = {"order": Path(product_dir).name, "roi": item.roi_label,
+                  "camera_id": item.camera_id, "roi_display_name": item.display_name,
+                  "group": getattr(item, "task_group", ""),
+                  "model_key": item.effective_model_key}
+        correction = self._model_coordinate_metadata(item.effective_model_key, product_dir)
+        if correction:
+            source["lens_correction"] = correction
         return self.model_library.publish(
             name=name, algorithm=algorithm, model_id=model_id,
             parameters=parameters,
-            source={"order": Path(product_dir).name, "roi": item.roi_label,
-                    "camera_id": item.camera_id, "roi_display_name": item.display_name,
-                    "group": getattr(item, "task_group", ""),
-                    "model_key": item.effective_model_key},
+            source=source,
             **kwargs,
         )

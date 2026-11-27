@@ -75,7 +75,6 @@ def _rebuild_runner(runtime) -> bool:
         )
     runtime._camera_manager = runtime_controller_module.HikCameraManager()
     runtime._frame_grab_service = runtime_controller_module.FrameGrabService(runtime._camera_manager)
-    runtime._permission_manager = runtime_controller_module.PermissionManager(runtime._release_password)
     runtime._scheduler = runtime_controller_module.InspectionScheduler(
         state_machine=runtime_controller_module.RunStateMachine(),
         permission_manager=runtime._permission_manager,

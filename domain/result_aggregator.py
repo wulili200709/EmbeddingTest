@@ -84,6 +84,7 @@ def aggregate_runtime_outcome(
     capture_ms_total = 0.0
     match_ms_total = 0.0
     infer_ms_total = 0.0
+    correction_ms_total = 0.0
 
     for role in sorted(active_role_set):
         outcome = camera_outcomes.get(role)
@@ -92,9 +93,11 @@ def aggregate_runtime_outcome(
         capture_ms = _timing_value_ms(getattr(outcome, "capture_ms", 0.0))
         match_ms = _timing_value_ms(getattr(outcome, "match_ms", 0.0))
         infer_ms = _timing_value_ms(getattr(outcome, "infer_ms", 0.0))
+        correction_ms = _timing_value_ms(getattr(outcome, "correction_ms", 0.0))
         capture_ms_total += capture_ms
         match_ms_total += match_ms
         infer_ms_total += infer_ms
+        correction_ms_total += correction_ms
         camera_results[role] = CameraRuntimeResult(
             camera_id=role,
             result=result or ("NG" if error_message else ""),
@@ -103,6 +106,7 @@ def aggregate_runtime_outcome(
             capture_ms=capture_ms,
             match_ms=match_ms,
             infer_ms=infer_ms,
+            correction_ms=correction_ms,
         )
 
     explicit_item_results: dict[tuple[str, str], InspectionItemResult] = {}
@@ -163,6 +167,7 @@ def aggregate_runtime_outcome(
         capture_ms=float(capture_ms_total),
         match_ms=float(match_ms_total),
         infer_ms=float(infer_ms_total),
+        correction_ms=float(correction_ms_total),
         error_message=str(error_message or ""),
         is_system_error=is_system_error,
         camera_results=camera_results,

@@ -13,7 +13,6 @@ import time
 
 import cv2
 import numpy as np
-from scipy.optimize import least_squares
 
 from algorithms import image_io
 from algorithms.lens_calibration import _detect_pattern, _size_tuple
@@ -272,6 +271,9 @@ def validate_single_profile(profile):
 def calibrate_single_points(points, image_size, pattern_size, spacing_mm=2.0, mode="radial", progress=None,
                             grid_indices=None, grid_step_confirmed=False):
     """Fit observed grid points, optionally with explicit sparse integer indices."""
+    # The preview also uses these profile types. Load the solver only when fitting.
+    from scipy.optimize import least_squares
+
     width, height = _size_tuple(image_size, "图像尺寸")
     grid, _ = _indexed_grid(pattern_size, grid_indices)
     _validate_grid_step_confirmation(grid_indices, grid_step_confirmed)

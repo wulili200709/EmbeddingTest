@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 
-PROJECT_DIR = Path(__file__).resolve().parents[1]
+PROJECT_DIR = Path(__file__).resolve().parents[2]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 
-from application.runtime_controller import RuntimeController
+from application.product_session import ProductSession
+from application.runtime.controller import RuntimeController
 from domain.inspection_items import InspectionItem
 from domain.inspection_models import InspectionItemResult
 from services.inspection_runtime import FinalInspectionOutcome
@@ -40,7 +43,7 @@ class _FakePermissionManager:
 
 
 class _FakeRunner:
-    def on_foot_trigger(self):
+    def on_roles_trigger(self, roles):
         return FinalInspectionOutcome(
             final_result="NG",
             camera_outcomes={},
@@ -65,14 +68,16 @@ class RuntimeFailureItemResetTest(unittest.TestCase):
                 roi_label="roi2",
             ),
         ]
-        controller = RuntimeController(
-            session=SimpleNamespace(
-                current_product="Demo",
-                line2dup_recipe_path="",
-            ),
-            algo=SimpleNamespace(),
-            runtime_context=_FakeRuntimeContext(items),
-        )
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        with patch("infrastructure.audit_store.default_audit_db_path", return_value=Path(folder.name) / "audit.db"):
+            controller = RuntimeController(
+                session=ProductSession(folder.name),
+                algo=SimpleNamespace(),
+                runtime_context=_FakeRuntimeContext(items),
+            )
+        self.addCleanup(controller.shutdown_persistence)
+        self.addCleanup(controller.shutdown_trigger_worker)
         controller._frame_grab_service = _FakeFrameGrabService()
         controller._permission_manager = _FakePermissionManager()
         controller._scheduler = SimpleNamespace(
@@ -99,7 +104,7 @@ class RuntimeFailureItemResetTest(unittest.TestCase):
             ]
         }
 
-        controller.trigger()
+        controller._run_trigger()
 
         results = {item.item_id: item.result for item in controller._last_runtime_result.item_results}
         self.assertEqual(results, {"roi1": "NG", "roi2": "NG"})

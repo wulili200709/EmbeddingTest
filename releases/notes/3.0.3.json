@@ -1,0 +1,26 @@
+{
+  "version": "3.0.3",
+  "date": "2026-08-20",
+  "changes": [
+    {
+      "id": "product-training-images", "time": "2026-08-20 10:32:24", "type": "优化",
+      "summary": "训练图片导入", "details": "导入外部训练图片时，将图片和对应标注复制到当前产品目录。",
+      "commit": "90ce99e"
+    },
+    {
+      "id": "match-failure-result", "time": "2026-08-20 10:32:24", "type": "修复",
+      "summary": "匹配失败提示", "details": "全局匹配失败时，检测项和运行页汇总同步显示失败结果。",
+      "commit": "90ce99e"
+    },
+    {
+      "id": "train-from-annotations", "time": "2026-08-31 15:59:57", "type": "优化",
+      "summary": "标注区域训练", "details": "训练直接使用当前标注的 ROI，减少重复的模板匹配。",
+      "commit": "fe018c6"
+    },
+    {
+      "id": "annotation-pan", "time": "2026-08-31 15:59:57", "type": "新增",
+      "summary": "标注画面平移", "details": "标注图片时可以平移画面，查看不同区域。",
+      "commit": "fe018c6"
+    }
+  ]
+}

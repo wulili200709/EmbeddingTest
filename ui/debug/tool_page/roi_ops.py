@@ -96,6 +96,8 @@ def _canvas_roi_style_for_label(tool_page, img_path: str, label_name: str) -> tu
 
 
 def _load_canvas_image(tool_page, path: str) -> None:
+    from ui.debug.tool_page.lens_correction_flow import prepare_sample
+    path = prepare_sample(tool_page, path)
     tool_page.canvas.set_image(path, pixmap=pixmap_from_path(path))
     tool_page._load_shape_for_label(path, tool_page._current_label())
 

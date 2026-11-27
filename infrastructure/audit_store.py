@@ -4,14 +4,16 @@ import csv
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 import sqlite3
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Iterable, Iterator, Mapping
 
-from common.app_paths import writable_embedding_test_root
+from common.app_paths import packaged_embedding_test_root, writable_embedding_test_root
 
 
 AUDIT_DB_FILENAME = "audit.db"
@@ -122,6 +124,12 @@ class CurrentUser:
     must_change_password: bool = False
 
 
+@contextmanager
+def _closing_transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+    with closing(conn), conn:
+        yield conn
+
+
 def default_audit_db_path() -> Path:
     return writable_embedding_test_root(__file__) / "records" / AUDIT_DB_FILENAME
 
@@ -133,6 +141,10 @@ def utcnow_text() -> str:
 def _initialize_runtime_record_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
+        CREATE TABLE IF NOT EXISTS station_ng_interlock (
+            station INTEGER PRIMARY KEY CHECK (station = 1),
+            state TEXT NOT NULL CHECK (state IN ('locked', 'released'))
+        );
         CREATE TABLE IF NOT EXISTS runtime_runs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             record_time TEXT NOT NULL,
@@ -184,6 +196,33 @@ def _verify_password(password: str, salt_hex: str, digest_hex: str) -> bool:
     return hmac.compare_digest(candidate, str(digest_hex or ""))
 
 
+def _reclassify_3_0_8_notes(conn: sqlite3.Connection) -> None:
+    # Version log timestamps are local station time. The published 3.0.7 ends at this cutoff.
+    rows = conn.execute(
+        """SELECT id, source_key, created_at FROM software_versions
+           WHERE version IN ('V3.0.7', '3.0.7') AND created_at > ?""",
+        ("2026-11-22 17:22:00",),
+    ).fetchall()
+    for row in rows:
+        key = row["source_key"]
+        if key is not None and key.startswith("3.0.7/"):
+            key = "3.0.8/" + key.removeprefix("3.0.7/")
+            # An older process can import the new notes before this upgrade. Keep the original row ID.
+            conn.execute(
+                """DELETE FROM software_versions WHERE source_key=? AND created_at=?
+                   AND version IN ('V3.0.8', '3.0.8')""",
+                (key, row["created_at"]),
+            )
+        conn.execute(
+            """UPDATE software_versions SET version=replace(version, '3.0.7', '3.0.8'), source_key=?,
+                   software_version=CASE WHEN software_version IN ('3.0.7','V3.0.7')
+                                         THEN replace(software_version, '3.0.7', '3.0.8')
+                                         ELSE software_version END
+               WHERE id=?""",
+            (key, row["id"]),
+        )
+
+
 class AuditStore:
     def __init__(self, db_path: str | Path | None = None) -> None:
         self.db_path = Path(db_path) if db_path is not None else default_audit_db_path()
@@ -197,7 +236,7 @@ class AuditStore:
         return conn
 
     def initialize(self) -> None:
-        with self.connect() as conn:
+        with _closing_transaction(self.connect()) as conn:
             conn.executescript(
                 """
                 PRAGMA journal_mode=WAL;
@@ -258,10 +297,19 @@ class AuditStore:
                 """
             )
             _initialize_runtime_record_schema(conn)
+            # NULL source keys belong to manually entered records, including older installations.
+            conn.execute("BEGIN IMMEDIATE")
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(software_versions)")}
+            if "source_key" not in columns:
+                conn.execute("ALTER TABLE software_versions ADD COLUMN source_key TEXT")
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_version_source ON software_versions(source_key)")
+            if conn.execute("PRAGMA user_version").fetchone()[0] == 0:
+                _reclassify_3_0_8_notes(conn)
+                conn.execute("PRAGMA user_version=1")
         self._ensure_defaults()
 
     def _ensure_defaults(self) -> None:
-        with self.connect() as conn:
+        with _closing_transaction(self.connect()) as conn:
             for role_key, role_name in DEFAULT_ROLE_NAMES.items():
                 editable = 0 if role_key == "super_admin" else 1
                 conn.execute(
@@ -421,14 +469,14 @@ class AuditStore:
                 )
 
     def roles(self) -> list[dict]:
-        with self.connect() as conn:
+        with _closing_transaction(self.connect()) as conn:
             rows = conn.execute(
                 "SELECT role_key, role_name, editable FROM roles ORDER BY editable, role_key"
             ).fetchall()
             return [dict(row) for row in rows]
 
     def role_permissions(self, role_key: str) -> set[str]:
-        with self.connect() as conn:
+        with _closing_transaction(self.connect()) as conn:
             rows = conn.execute(
                 "SELECT permission_key FROM role_permissions WHERE role_key=?",
                 (role_key,),
@@ -455,11 +503,11 @@ class AuditStore:
         if conn is not None:
             _write(conn)
             return
-        with self.connect() as own_conn:
+        with _closing_transaction(self.connect()) as own_conn:
             _write(own_conn)
 
     def users(self) -> list[dict]:
-        with self.connect() as conn:
+        with _closing_transaction(self.connect()) as conn:
             rows = conn.execute(
                 """
                 SELECT u.id, u.user_name, u.role_key, r.role_name, u.enabled,
@@ -475,7 +523,7 @@ class AuditStore:
         name = str(user_name or "").strip()
         if not name:
             return None
-        with self.connect() as conn:
+        with _closing_transaction(self.connect()) as conn:
             row = conn.execute(
                 """
                 SELECT u.*, r.role_name
@@ -516,7 +564,7 @@ class AuditStore:
         if len(str(password or "")) < 4:
             raise ValueError("密码至少需要 4 位")
         salt, digest = _hash_password(password)
-        with self.connect() as conn:
+        with _closing_transaction(self.connect()) as conn:
             conn.execute(
                 """
                 INSERT INTO users(
@@ -554,7 +602,7 @@ class AuditStore:
         if not fields:
             return
         params.append(int(user_id))
-        with self.connect() as conn:
+        with _closing_transaction(self.connect()) as conn:
             row = conn.execute(
                 "SELECT is_super_admin FROM users WHERE id=?",
                 (int(user_id),),
@@ -583,7 +631,7 @@ class AuditStore:
         if len(str(password or "")) < 4:
             raise ValueError("密码至少需要 4 位")
         salt, digest = _hash_password(password)
-        with self.connect() as conn:
+        with _closing_transaction(self.connect()) as conn:
             conn.execute(
                 """
                 UPDATE users
@@ -600,7 +648,7 @@ class AuditStore:
         *,
         must_change_password: bool = False,
     ) -> None:
-        with self.connect() as conn:
+        with _closing_transaction(self.connect()) as conn:
             row = conn.execute(
                 "SELECT id FROM users WHERE user_name=?",
                 (str(user_name or "").strip(),),
@@ -633,7 +681,7 @@ class AuditStore:
         remark: str = "",
         software_version: str = "",
     ) -> None:
-        with self.connect() as conn:
+        with _closing_transaction(self.connect()) as conn:
             conn.execute(
                 """
                 INSERT INTO audit_events(
@@ -687,7 +735,7 @@ class AuditStore:
             params.append(f"%{user_name}%")
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(int(limit))
-        with self.connect() as conn:
+        with _closing_transaction(self.connect()) as conn:
             rows = conn.execute(
                 f"""
                 SELECT created_at, user_name, role_name, product_name, module, action,
@@ -705,7 +753,7 @@ class AuditStore:
         allowed_columns = {"product_name", "module", "user_name"}
         if column not in allowed_columns:
             return []
-        with self.connect() as conn:
+        with _closing_transaction(self.connect()) as conn:
             rows = conn.execute(
                 f"""
                 SELECT DISTINCT {column} AS value
@@ -748,7 +796,7 @@ class AuditStore:
         operator: str = "",
         software_version: str = "",
     ) -> None:
-        with self.connect() as conn:
+        with _closing_transaction(self.connect()) as conn:
             conn.execute(
                 """
                 INSERT INTO software_versions(
@@ -766,8 +814,63 @@ class AuditStore:
                 ),
             )
 
+    def sync_software_updates(self, notes_dir: Path | None = None) -> int:
+        if notes_dir is None:
+            notes_dir = packaged_embedding_test_root(__file__) / "releases" / "notes"
+        rows = []
+        previous_text = {}
+        for path in sorted(notes_dir.glob("*.json")):
+            try:
+                notes = json.loads(path.read_text(encoding="utf-8-sig"))
+                version = notes["version"]
+                if version != path.stem:
+                    raise ValueError("version must match the notes filename")
+                for change in notes["changes"]:
+                    if isinstance(change, str):
+                        # Legacy build summaries carry no individual change ID or timestamp.
+                        continue
+                    source_key = f"{version}/{change['id']}"
+                    if "previous_record" in change:
+                        previous = change["previous_record"]
+                        previous_text[source_key] = (previous["summary"], previous["details"])
+                    rows.append((
+                        source_key, change["time"], f"V{version}",
+                        f"【{change['type']}】{change['summary']}", change["details"], "系统", version,
+                    ))
+            except (OSError, UnicodeError, ValueError, TypeError, KeyError) as exc:
+                logging.getLogger(__name__).warning("Invalid software release notes in %s: %s", path, exc)
+        if not rows:
+            return 0
+        with _closing_transaction(self.connect()) as conn:
+            existing = {
+                row["source_key"]: (row["summary"], row["details"])
+                for row in conn.execute(
+                    "SELECT source_key, summary, details FROM software_versions WHERE source_key IS NOT NULL"
+                )
+            }
+            pending = [row for row in rows if existing.get(row[0]) != (row[3], row[4])]
+            if pending:
+                for key, recorded_at, version, summary, details, _, _ in pending:
+                    if key in previous_text and key not in existing:
+                        # Adopt only the exact original entry, preserving its ID, operator and version context.
+                        conn.execute(
+                            """UPDATE software_versions SET source_key=?, summary=?, details=?
+                               WHERE id=(SELECT MIN(id) FROM software_versions WHERE source_key IS NULL
+                                         AND created_at=? AND version=? AND summary=? AND COALESCE(details, '')=?)
+                                 AND NOT EXISTS(SELECT 1 FROM software_versions WHERE source_key=?)""",
+                            (key, summary, details, recorded_at, version, *previous_text[key], key),
+                        )
+                conn.executemany(
+                    """INSERT INTO software_versions(source_key, created_at, version, summary, details, operator, software_version)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(source_key) DO UPDATE SET summary=excluded.summary, details=excluded.details
+                       WHERE software_versions.summary IS NOT excluded.summary
+                          OR software_versions.details IS NOT excluded.details""", pending,
+                )
+            return conn.total_changes
+
     def software_versions(self, *, limit: int = 500) -> list[dict]:
-        with self.connect() as conn:
+        with _closing_transaction(self.connect()) as conn:
             rows = conn.execute(
                 """
                 SELECT created_at, version, summary, details, operator, software_version
@@ -801,9 +904,23 @@ class RuntimeRecordStore:
         return conn
 
     def initialize(self) -> None:
-        with self.connect() as conn:
+        with _closing_transaction(self.connect()) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             _initialize_runtime_record_schema(conn)
+
+    def load_ng_interlock(self) -> str:
+        with closing(self.connect()) as conn:
+            row = conn.execute("SELECT state FROM station_ng_interlock WHERE station=1").fetchone()
+            return row[0] if row is not None else "waiting"
+
+    def save_ng_interlock(self, state: str) -> None:
+        with _closing_transaction(self.connect()) as conn:
+            # Commit before reporting NG or granting the next trigger, including in WAL mode.
+            conn.execute("PRAGMA synchronous=FULL")
+            if state == "waiting":
+                conn.execute("DELETE FROM station_ng_interlock WHERE station=1")
+            else:
+                conn.execute("INSERT OR REPLACE INTO station_ng_interlock VALUES (1, ?)", (state,))
 
     def write_runtime_result(self, runtime_result: object) -> int:
         camera_results = dict(getattr(runtime_result, "camera_results", {}) or {})
@@ -812,7 +929,7 @@ class RuntimeRecordStore:
             for camera_id, camera_result in camera_results.items()
             if str(camera_id or "").strip() and str(getattr(camera_result, "image_path", "") or "").strip()
         }
-        with self.connect() as conn:
+        with _closing_transaction(self.connect()) as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO runtime_runs(
@@ -892,7 +1009,7 @@ class RuntimeRecordStore:
             params.append(str(final_result).strip())
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(max(1, min(int(limit), 5000)))
-        with self.connect() as conn:
+        with closing(self.connect()) as conn:
             rows = conn.execute(
                 f"""
                 SELECT id, record_time, product_name, recipe_name, final_result,
@@ -910,7 +1027,7 @@ class RuntimeRecordStore:
         allowed_columns = {"product_name", "final_result"}
         if column not in allowed_columns:
             return []
-        with self.connect() as conn:
+        with closing(self.connect()) as conn:
             rows = conn.execute(
                 f"""
                 SELECT DISTINCT {column} AS value
@@ -936,7 +1053,7 @@ class RuntimeRecordStore:
         for start in range(0, len(normalized_ids), 900):
             chunk = normalized_ids[start:start + 900]
             placeholders = ", ".join("?" for _ in chunk)
-            with self.connect() as conn:
+            with closing(self.connect()) as conn:
                 rows = conn.execute(
                     f"""
                     SELECT id, run_id, camera_id, item_id, roi_label, display_name,

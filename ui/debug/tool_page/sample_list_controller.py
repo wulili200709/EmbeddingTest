@@ -74,6 +74,12 @@ class SampleListController:
     def select_path_in_current_tab(self, path: str) -> None:
         if not path:
             return
+        from ui.debug.tool_page.lens_correction_flow import prepare_sample
+        try:
+            path = prepare_sample(self.owner, path)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self.owner, tr("common.error"), str(exc))
+            return
         list_widget = self.owner.ok_list if self.owner._current_sample_tab_kind() == "train" else self.owner.test_list
         for row in range(list_widget.count()):
             item = list_widget.item(row)
@@ -93,7 +99,12 @@ class SampleListController:
             return
         self.owner._clear_selected_inspection_item()
         if self.owner.canvas.image_path() != path:
-            self.owner._load_canvas_image(path)
+            try:
+                self.owner._load_canvas_image(path)
+            except Exception as exc:
+                self.owner.canvas.clear_image()
+                QtWidgets.QMessageBox.warning(self.owner, tr("common.error"), str(exc))
+                return
         self.owner._set_status_for_current_image(path)
         self.owner._update_sample_panel_widgets()
 
@@ -107,7 +118,10 @@ class SampleListController:
         failures: list[tuple[str, Exception]] = []
         for path in files:
             try:
-                local_path = ensure_training_image_local(path, product_dir=product_dir)
+                from ui.debug.tool_page.lens_correction_flow import sample_source
+                role = camera_role_from_path(path) or self.owner.current_camera_role()
+                source_path = sample_source(self.owner, path, role)
+                local_path = ensure_training_image_local(source_path, product_dir=product_dir)
             except Exception as exc:
                 failures.append((str(path), exc))
                 continue
@@ -295,6 +309,8 @@ class SampleListController:
             role_text = tr("runtime.camera2")
         elif current_role == "cam3":
             role_text = tr("runtime.camera3")
+        elif current_role == "cam4":
+            role_text = tr("runtime.camera4")
         else:
             role_text = current_role
         confirm = QtWidgets.QMessageBox.question(

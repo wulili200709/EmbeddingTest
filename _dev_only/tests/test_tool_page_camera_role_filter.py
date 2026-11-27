@@ -10,7 +10,7 @@ from PySide6 import QtCore, QtWidgets
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 root_str = str(ROOT)
 if root_str not in sys.path:
     sys.path.insert(0, root_str)
@@ -19,6 +19,8 @@ from application.algorithm_controller import TrainResult
 from domain.inspection_items import InspectionItem
 from ui.debug.tool_page.debug_camera_flow import _temporary_debug_camera_light
 from ui.debug.tool_page.page import ToolPage, _SampleAnnotationPreviewDialog
+from ui.debug.tool_page.training_controller import TrainingController
+from ui.debug.tool_page.training_worker import TrainingJobWorker
 
 
 class _FakeAlgo:
@@ -49,11 +51,15 @@ class _FakeAlgo:
         product_dir,
         label_names,
         model_key,
+        ok_samples,
+        ng_samples,
     ):
         self.train_calls.append(
             {
                 "ok_files": list(ok_files),
                 "ng_files": list(ng_files),
+                "ok_samples": list(ok_samples),
+                "ng_samples": list(ng_samples),
                 "algorithm": str(algorithm),
                 "product_dir": str(product_dir),
                 "label_names": list(label_names),
@@ -123,6 +129,9 @@ class _RoleFilterHarness:
     _apply_camera_role_options_to_combo = ToolPage._apply_camera_role_options_to_combo
     _apply_configured_camera_roles_to_ui = ToolPage._apply_configured_camera_roles_to_ui
     _set_current_camera_role = ToolPage._set_current_camera_role
+    loc_method_for_role = ToolPage.loc_method_for_role
+    _sync_loc_combo = ToolPage._sync_loc_combo
+    _filter_paths_for_camera = ToolPage._filter_paths_for_camera
 
     def __init__(self) -> None:
         self.lbl_images_section = QtWidgets.QLabel("")
@@ -167,9 +176,17 @@ class _RoleFilterHarness:
         self.spin_margin.setValue(0.02)
         self.spin_topk = QtWidgets.QSpinBox()
         self.spin_topk.setValue(3)
-        self.loc_method = "line2dup"
+        self._loc_methods_by_role = {"cam1": "shape", "cam2": "ncc"}
+        self.loc_method = self._loc_methods_by_role["cam1"]
         self.session = SimpleNamespace(product_dir="demo_product")
         self.canvas = SimpleNamespace(image_path=lambda: None)
+        self.training_controller = TrainingController(self, TrainingJobWorker)
+
+    def _path_has_roi_geometry(self, path: str, label: str) -> bool:
+        return path in self.train_files and label in {"roi1", "roi2"}
+
+    def _sample_roi_status_for_path(self, path: str, _role: str, _label: str) -> str:
+        return Path(path).stem.split("_")[1].upper()
 
     def _selected_inspection_item(self):
         return self._selected_item
@@ -327,6 +344,8 @@ class ToolPageCameraRoleFilterTest(unittest.TestCase):
                 {
                     "ok_files": ["cam1_ok_a.png"],
                     "ng_files": ["cam1_ng_a.png"],
+                    "ok_samples": [("cam1_ok_a.png", "roi1")],
+                    "ng_samples": [("cam1_ng_a.png", "roi1")],
                     "algorithm": "efficientnet_b0",
                     "product_dir": "demo_product",
                     "label_names": ["roi1"],
@@ -359,10 +378,10 @@ class ToolPageCameraRoleFilterTest(unittest.TestCase):
         harness.set_configured_camera_roles(["cam1"])
 
         self.assertEqual(harness.current_camera_role(), "cam1")
-        self.assertFalse(harness.cmb_current_camera_role.isEnabled())
-        self.assertFalse(harness.cmb_debug_camera_role.isEnabled())
-        self.assertFalse(harness.cmb_current_camera_role.model().item(1).isEnabled())
-        self.assertFalse(harness.cmb_debug_camera_role.model().item(1).isEnabled())
+        for combo in (harness.cmb_current_camera_role, harness.cmb_debug_camera_role):
+            self.assertEqual([combo.itemData(i) for i in range(combo.count())], ["cam1"])
+            self.assertEqual(combo.currentData(), "cam1")
+            self.assertFalse(combo.isEnabled())
 
     def test_preview_refresh_from_tool_change_does_not_switch_main_camera_role(self) -> None:
         harness = _PreviewDialogToolPageHarness()

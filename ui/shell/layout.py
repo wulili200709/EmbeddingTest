@@ -5,6 +5,7 @@ from PySide6 import QtCore, QtWidgets
 from ui.debug import ToolPage
 from ui.i18n import tr
 from ui.runtime import RuntimeModePage
+from ui.tool_icons import tool_icon
 
 from .support import BrandBannerWidget, shell_icon
 
@@ -38,14 +39,14 @@ def build_main_window_ui(window) -> None:
     nav_layout.setSpacing(4)
 
     window.btn_workspace_debug = QtWidgets.QPushButton(
-        shell_icon(SP.SP_FileDialogDetailedView), tr("workspace.debug")
+        tool_icon("switch_debug"), tr("workspace.debug")
     )
     window.btn_workspace_debug.setCheckable(True)
     window.btn_workspace_debug.clicked.connect(lambda: window._switch_workspace("debug"))
     nav_layout.addWidget(window.btn_workspace_debug)
 
     window.btn_workspace_runtime = QtWidgets.QPushButton(
-        shell_icon(SP.SP_MediaPlay), tr("workspace.runtime")
+        tool_icon("switch_runtime"), tr("workspace.runtime")
     )
     window.btn_workspace_runtime.setCheckable(True)
     window.btn_workspace_runtime.clicked.connect(lambda: window._switch_workspace("runtime"))

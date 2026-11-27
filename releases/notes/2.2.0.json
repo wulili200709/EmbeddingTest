@@ -1,0 +1,19 @@
+{
+  "version": "2.2.0",
+  "date": "2026-07-09",
+  "changes": [
+    {
+      "id": "user-permissions", "time": "2026-07-09 16:52:39", "type": "新增",
+      "summary": "管理员权限", "details": "可为不同管理员分配相应的操作权限。",
+      "previous_record": {"summary":"新增权限管理和履历记录","details":"1.可分配不同的管理员\n2.系统相关的功能适配英文"}
+    },
+    {
+      "id": "operation-history", "time": "2026-07-09 16:52:39", "type": "新增",
+      "summary": "操作履历", "details": "可在系统中查看操作履历。"
+    },
+    {
+      "id": "system-english", "time": "2026-07-09 16:52:39", "type": "优化",
+      "summary": "系统界面英文显示", "details": "系统相关功能支持切换为英文显示。"
+    }
+  ]
+}

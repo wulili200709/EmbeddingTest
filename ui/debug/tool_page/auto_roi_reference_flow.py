@@ -23,6 +23,12 @@ def _set_reference(self, path: str) -> None:
     if callable(require_permission) and not require_permission("template.edit_roi", "设置参考图"):
         return
     camera_role = self.current_camera_role()
+    from ui.debug.tool_page.lens_correction_flow import prepare_sample
+    try:
+        path = prepare_sample(self, path, camera_role=camera_role)
+    except Exception as exc:
+        QtWidgets.QMessageBox.warning(self, tr("common.error"), str(exc))
+        return
     before = str(self.ref_image or "")
     reference_changed = False
     try:

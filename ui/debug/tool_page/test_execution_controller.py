@@ -138,9 +138,18 @@ class TestExecutionController:
             self.owner.session, self.owner.algo, reuse_embedding_models=True,
         ))
         image_total_t0 = time.perf_counter()
-        image_bgr = imread(p)
+        from services.lens_correction import get_config, prepare_array, validate_prepared_path
+        from ui.debug.tool_page.lens_correction_flow import prepare_sample, sample_source
+        source_path = sample_source(self.owner, p, camera_id)
+        if not get_config(self.owner.session.product_dir, camera_id).enabled:
+            validate_prepared_path(source_path, self.owner.session.product_dir, camera_id)
+        image_bgr = imread(source_path)
         if image_bgr is None:
-            raise FileNotFoundError(p)
+            raise FileNotFoundError(source_path)
+        correction = prepare_array(
+            image_bgr, self.owner.session.product_dir, camera_id, source_path=source_path,
+        )
+        image_bgr = correction.image
         try:
             response = executor.execute(
                 InspectionExecutionRequest(
@@ -148,11 +157,15 @@ class TestExecutionController:
                     image_path=p,
                     items=target_items,
                     image_bgr=image_bgr,
+                    image_prepared=True,
+                    correction_ms=correction.correction_ms,
                 )
             )
         except Exception as exc:
             raise RuntimeError(str(exc)) from exc
         image_total_ms = float((time.perf_counter() - image_total_t0) * 1000.0)
+        # Cached display/annotation files are outside the measured inspection CT.
+        p = prepare_sample(self.owner, p, camera_role=camera_id)
 
         rows: List[Dict[str, object]] = []
         log_names: List[str] = []
@@ -185,6 +198,7 @@ class TestExecutionController:
                 row["match_ms"] = match_ms if match_ms > 0.0 else row.get("match_ms")
                 row["infer_ms"] = row.get("infer_ms", 0.0)
                 row["total_ms"] = total_ms
+                row["correction_ms"] = correction.correction_ms
                 row["tool_name"] = display_name
                 row["camera_id"] = item_result.camera_id
                 row["roi_label"] = roi_label
@@ -208,6 +222,7 @@ class TestExecutionController:
             row["match_ms"] = match_ms if match_ms > 0.0 else row.get("match_ms")
             row["infer_ms"] = row.get("infer_ms", infer_ms)
             row["total_ms"] = total_ms
+            row["correction_ms"] = correction.correction_ms
             row["file_path"] = p
             row["file_name"] = os.path.basename(p)
             row["json_name"] = "(memory)"
@@ -234,6 +249,8 @@ class TestExecutionController:
         if match_ms > 0.0:
             status_text += f"  match={match_ms:.1f}ms"
         status_text += f"  infer_total={infer_ms:.1f}ms"
+        if correction.corrected:
+            status_text += f"  remap={correction.correction_ms:.1f}ms"
         status_text += f"  total={total_ms:.1f}ms"
         if log_names:
             status_text += f"  log={log_names[-1]}"
@@ -251,6 +268,7 @@ class TestExecutionController:
             "match_ms": match_ms,
             "infer_ms": infer_ms,
             "total_ms": total_ms,
+            "correction_ms": correction.correction_ms,
         }
 
     def run_current_image(self) -> None:
@@ -295,6 +313,7 @@ class TestExecutionController:
             button.setEnabled(False)
 
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
+        self.owner._test_in_progress = True
         try:
             for index, path in enumerate(paths, start=1):
                 self.owner.lbl_status.setText(
@@ -313,6 +332,7 @@ class TestExecutionController:
                 else:
                     ng_count += 1
         finally:
+            self.owner._test_in_progress = False
             QtWidgets.QApplication.restoreOverrideCursor()
             for button, enabled in old_enabled.items():
                 button.setEnabled(enabled)

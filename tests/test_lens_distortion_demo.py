@@ -15,6 +15,7 @@ from algorithms.image_io import imread, imwrite
 from algorithms.lens_calibration import load_profile, save_profile
 from algorithms.lens_single_calibration import SingleCalibrationProfile
 from tools.lens_distortion_demo import LensDemoWindow, load_demo_profile
+from ui.i18n import LANG_EN, LANG_ZH, language_code, set_language
 
 
 class LensDemoTests(unittest.TestCase):
@@ -23,6 +24,8 @@ class LensDemoTests(unittest.TestCase):
         cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
     def setUp(self):
+        self.addCleanup(set_language, language_code(), persist=False)
+        set_language(LANG_ZH, persist=False)
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
         self.window = LensDemoWindow()
@@ -32,6 +35,29 @@ class LensDemoTests(unittest.TestCase):
         self.window.deleteLater()
         self.app.processEvents()
         self.temporary.cleanup()
+
+    def test_english_camera_window_translates_controls_progress_and_failures(self):
+        set_language(LANG_EN, persist=False)
+        window = LensDemoWindow(workdir=self.root)
+        self.addCleanup(window.close)
+        window.set_camera_context(product_dir=self.root, camera_role="cam2", apply_callback=lambda *_: False)
+        window.show()
+        self.assertFalse(window.log.isVisible())
+        self.assertFalse(window.examples_menu.menuAction().isVisible())
+        self.assertEqual(window.apply_camera_button.text(), "Apply to cam2")
+        self.assertEqual(window.tabs.tabText(0), "Calibration")
+        for mode in range(window.mode.count()):
+            window.mode.setCurrentIndex(mode)
+            for widget in window.findChildren(QtWidgets.QLabel) + window.findChildren(QtWidgets.QAbstractButton):
+                self.assertNotRegex(widget.text(), r"[\u4e00-\u9fff]")
+            self.assertNotRegex(window.mode.currentText(), r"[\u4e00-\u9fff]")
+        window.start_calibration()
+        self.assertIn("10 distinct board images", window.status.text())
+        window._on_progress(1, 2, "board.bmp：已检测到完整图案")
+        self.assertIn("board.bmp: Complete pattern detected", window.log.toPlainText())
+        window._on_calibration_failed("已识别 24 个可见格点（网格范围 6×4），但标定未通过：棋盘角点超出图像范围。")
+        self.assertIn("6 × 4", window.status.text())
+        self.assertIn("outside the image", window.status.text())
 
     def test_example_export_round_trip_and_double_correction_guard(self):
         w = self.window

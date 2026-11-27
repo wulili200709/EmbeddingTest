@@ -120,6 +120,7 @@ def _pair(src: Path, dest: str = "."):
 
 
 datas = []
+datas.append(_pair(APP_ROOT / "releases" / "notes", "EmbeddingTest/releases/notes"))
 if VERSION_SOURCE.exists():
     datas.append(_pair(VERSION_SOURCE, "EmbeddingTest"))
 if BUILD_MANIFEST_SOURCE is not None and BUILD_MANIFEST_SOURCE.exists():

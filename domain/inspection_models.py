@@ -70,6 +70,7 @@ class CameraRuntimeResult:
     match_ms: float = 0.0
     infer_ms: float = 0.0
     item_results: List[InspectionItemResult] = field(default_factory=list)
+    correction_ms: float = 0.0
 
 
 @dataclass
@@ -87,6 +88,7 @@ class RuntimeInspectionResult:
     created_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     camera_results: Dict[str, CameraRuntimeResult] = field(default_factory=dict)
     item_results: List[InspectionItemResult] = field(default_factory=list)
+    correction_ms: float = 0.0
 
     def item_rows(self) -> List[dict]:
         return [item.to_runtime_row() for item in self.item_results]
@@ -110,6 +112,8 @@ class RuntimeInspectionResult:
             "infer_ms": float(self.infer_ms or 0.0),
             "duration_ms": float(self.duration_ms or 0.0),
         }
+        if self.correction_ms:
+            payload["correction_ms"] = float(self.correction_ms)
         for camera_id, camera_result in sorted(self.camera_results.items()):
             camera_key = str(camera_id or "").strip()
             if not camera_key:
@@ -117,10 +121,13 @@ class RuntimeInspectionResult:
             capture_ms = float(camera_result.capture_ms or 0.0)
             match_ms = float(camera_result.match_ms or 0.0)
             infer_ms = float(camera_result.infer_ms or 0.0)
+            correction_ms = float(camera_result.correction_ms or 0.0)
             payload[f"{camera_key}_capture_ms"] = capture_ms
             payload[f"{camera_key}_match_ms"] = match_ms
             payload[f"{camera_key}_infer_ms"] = infer_ms
-            payload[f"{camera_key}_total_ms"] = capture_ms + match_ms + infer_ms
+            if correction_ms:
+                payload[f"{camera_key}_correction_ms"] = correction_ms
+            payload[f"{camera_key}_total_ms"] = capture_ms + correction_ms + match_ms + infer_ms
         return payload
 
     def summary_text(self) -> str:
@@ -132,6 +139,8 @@ class RuntimeInspectionResult:
             parts.append(self.error_message)
         if self.capture_ms:
             parts.append(f"capture {self.capture_ms:.1f} ms")
+        if self.correction_ms:
+            parts.append(f"correction {self.correction_ms:.1f} ms")
         if self.match_ms:
             parts.append(f"match {self.match_ms:.1f} ms")
         if self.infer_ms:

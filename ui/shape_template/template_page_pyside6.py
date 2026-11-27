@@ -11,6 +11,8 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from algorithms.image_io import imread
+from services.lens_correction import active_signature
+from ui.lens_correction_dialog import ensure_lens_context, lens_text, prepare_editor_image
 from shape.core.bootstrap import ensure_repo_root_on_path
 from shape.core.locator import (
     product_paths,
@@ -185,11 +187,13 @@ class ShapeTemplateDialog(LocalizationGroupsTabMixin, ReferenceRoiTabMixin, QtWi
         self.product_name = product_name
         self.product_dir = product_dir
         self.camera_role = str(camera_role or "cam1").strip() or "cam1"
+        self._lens_signature = active_signature(product_dir, self.camera_role)
         self.paths = product_paths(product_dir, self.camera_role)
         self._resolved_recipe_path = resolved_recipe_path_for_product(product_dir, self.camera_role)
         self._resolved_model_path = resolved_model_path_for_product(product_dir, self.camera_role)
 
-        self.image_path = initial_image_path
+        self.image_path = (prepare_editor_image(initial_image_path, product_dir, self.camera_role)
+                           if initial_image_path and os.path.exists(initial_image_path) else initial_image_path)
         self.image_bgr: Optional[np.ndarray] = None
 
         self.detector: Optional[ShapeLikeDetector] = None
@@ -925,6 +929,13 @@ class ShapeTemplateDialog(LocalizationGroupsTabMixin, ReferenceRoiTabMixin, QtWi
             self._set_image(path, reset_state=True)
 
     def _set_image(self, path: str, *, reset_state: bool) -> None:
+        if not self._ensure_lens_context():
+            return
+        try:
+            path = prepare_editor_image(path, self.product_dir, self.camera_role)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, tr("common.read_failed"), str(exc))
+            return
         image_bgr = imread(path, cv2.IMREAD_COLOR)
         if image_bgr is None:
             QtWidgets.QMessageBox.critical(self, tr("common.read_failed"), path)
@@ -1067,10 +1078,23 @@ class ShapeTemplateDialog(LocalizationGroupsTabMixin, ReferenceRoiTabMixin, QtWi
             search_points=[list(pt) for pt in (self._search_roi_points or [])] or None,
         )
 
+    def _ensure_lens_context(self) -> bool:
+        return ensure_lens_context(self, self.product_dir, self.camera_role, self._lens_signature)
+
+    def _save_reference_roi_to_json(self) -> None:
+        if self._ensure_lens_context():
+            super()._save_reference_roi_to_json()
+
+    def _save_reference_roi_config(self, _checked: object = None) -> None:
+        if self._ensure_lens_context():
+            super()._save_reference_roi_config(_checked)
+
     def _save_recipe(self) -> None:
         # Loading widgets emits valueChanged signals; opening the editor must
         # not rewrite a legacy product or persist partially loaded settings.
         if self._initializing:
+            return
+        if not self._ensure_lens_context():
             return
         recipe = self._recipe_from_controls(use_find_values=False)
         recipe.model_path = self.paths.model_path
@@ -1316,6 +1340,8 @@ class ShapeTemplateDialog(LocalizationGroupsTabMixin, ReferenceRoiTabMixin, QtWi
         self._extract_points_from_roi(show_errors=False)
 
     def _build_and_save(self) -> None:
+        if not self._ensure_lens_context():
+            return
         if self._build_thread is not None:
             return
         if self.image_bgr is None or not self.image_path:
@@ -1404,6 +1430,8 @@ class ShapeTemplateDialog(LocalizationGroupsTabMixin, ReferenceRoiTabMixin, QtWi
             self._build_progress.setValue(100)
             self._build_progress.close()
         self._set_build_controls_enabled(True)
+        if not self._ensure_lens_context():
+            return
         result = cast(Dict[str, object], payload)
         detector = cast(ShapeLikeDetector, result.get("detector"))
         kept = int(result.get("kept", 0) or 0)
@@ -1936,6 +1964,8 @@ class ShapeTemplateDialog(LocalizationGroupsTabMixin, ReferenceRoiTabMixin, QtWi
         self._refresh_search_roi_status()
 
     def _pick_find_model(self) -> None:
+        if not self._ensure_lens_context():
+            return
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
             tr("template.pick_model_title"),
@@ -1943,6 +1973,8 @@ class ShapeTemplateDialog(LocalizationGroupsTabMixin, ReferenceRoiTabMixin, QtWi
             "template model (*.json)",
         )
         if path:
+            if not self._model_matches_lens_context(path):
+                return
             self.find_model_path = path
             self._update_find_model_label()
 
@@ -1956,6 +1988,8 @@ class ShapeTemplateDialog(LocalizationGroupsTabMixin, ReferenceRoiTabMixin, QtWi
         self.lbl_find_model.setToolTip(text)
 
     def _add_find_images(self) -> None:
+        if not self._ensure_lens_context():
+            return
         paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
             self,
             tr("template.pick_test_images_title"),
@@ -1964,6 +1998,11 @@ class ShapeTemplateDialog(LocalizationGroupsTabMixin, ReferenceRoiTabMixin, QtWi
         )
         existing = {self.list_find_images.item(i).data(QtCore.Qt.UserRole) for i in range(self.list_find_images.count())}
         for path in paths:
+            try:
+                path = prepare_editor_image(path, self.product_dir, self.camera_role)
+            except Exception as exc:
+                QtWidgets.QMessageBox.warning(self, tr("common.read_failed"), str(exc))
+                continue
             if not path or path in existing:
                 continue
             item = QtWidgets.QListWidgetItem(os.path.basename(path))
@@ -2008,6 +2047,8 @@ class ShapeTemplateDialog(LocalizationGroupsTabMixin, ReferenceRoiTabMixin, QtWi
         _previous: Optional[QtWidgets.QListWidgetItem],
     ) -> None:
         if current is None:
+            return
+        if not self._ensure_lens_context():
             return
         scene_path = str(current.data(QtCore.Qt.UserRole) or "")
         if not scene_path:
@@ -2085,11 +2126,34 @@ class ShapeTemplateDialog(LocalizationGroupsTabMixin, ReferenceRoiTabMixin, QtWi
             self.find_detector_path = model_path
         return detector
 
+    def _model_matches_lens_context(self, model_path: str) -> bool:
+        if self._lens_signature == "raw":
+            return True
+        model = os.path.normcase(os.path.abspath(model_path))
+        folder = os.path.normcase(os.path.abspath(self.paths.role_dir))
+        try:
+            if os.path.commonpath([model, folder]) == folder:
+                return True
+        except ValueError:
+            pass
+        QtWidgets.QMessageBox.warning(self, lens_text("title"), lens_text("model_space"))
+        return False
+
     def _run_find_for_item(self, item: QtWidgets.QListWidgetItem) -> None:
+        if not self._ensure_lens_context():
+            return
         scene_path = str(item.data(QtCore.Qt.UserRole) or "")
         if not scene_path:
             return
+        try:
+            scene_path = prepare_editor_image(scene_path, self.product_dir, self.camera_role)
+            item.setData(QtCore.Qt.UserRole, scene_path)
+        except Exception as exc:
+            self._set_find_item_error(item, str(exc))
+            return
         model_path = self.find_model_path or self.paths.model_path
+        if not self._model_matches_lens_context(model_path):
+            return
         if not model_path or not os.path.exists(model_path):
             QtWidgets.QMessageBox.warning(self, tr("common.info"), tr("template.load_find_model_first"))
             return

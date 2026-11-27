@@ -18,9 +18,10 @@ from algorithms.labelme import (
     upsert_labelme_shapes,
 )
 from common.camera_roles import DEFAULT_CAMERA_ROLE, normalize_camera_role
+from services import lens_correction
 from shape.core.recipe_labels import clearable_roi_labels
 
-from .model import NccMatchModel, NccReferenceRegion, load_model, save_model
+from .model import NccMatchModel, NccReferenceRegion, load_model, save_model, resolve_asset_path
 from .runtime_service import NccCompiledModel
 
 
@@ -62,13 +63,14 @@ def _normalize_camera_role(camera_role: str) -> str:
 
 def product_paths(product_dir: str, camera_role: str = "cam1") -> ProductNccPaths:
     normalized_role = _normalize_camera_role(camera_role)
-    role_dir = os.path.join(product_dir, "ncc", normalized_role)
+    scoped_root = lens_correction.asset_root(product_dir, normalized_role)
+    role_dir = os.path.join(scoped_root, "ncc", normalized_role)
     return ProductNccPaths(
         product_dir=product_dir,
         camera_role=normalized_role,
         role_dir=role_dir,
         model_path=os.path.join(role_dir, "model.json"),
-        legacy_model_path=os.path.join(product_dir, "ncc_model.json"),
+        legacy_model_path=os.path.join(scoped_root, "ncc_model.json"),
     )
 
 
@@ -83,6 +85,25 @@ def resolved_model_path_for_product(product_dir: str, camera_role: str = "cam1")
 
 def model_is_ready(product_dir: str, camera_role: str = "cam1") -> bool:
     return os.path.exists(resolved_model_path_for_product(product_dir, camera_role))
+
+
+def _validate_model_scope(model_path: str, product_dir: str, camera_role: str) -> None:
+    if lens_correction.active_signature(product_dir, camera_role) == "raw":
+        return
+    scoped_root = os.path.normcase(os.path.abspath(lens_correction.asset_root(product_dir, camera_role)))
+    candidate = os.path.normcase(os.path.abspath(model_path))
+    try:
+        valid = os.path.commonpath([candidate, scoped_root]) == scoped_root
+    except ValueError:
+        valid = False
+    if not valid:
+        raise lens_correction.LensCorrectionError("NCC model belongs to a different image calibration; create a model for the selected calibration")
+
+
+def _validate_source_image(model, model_path, product_dir, camera_role):
+    if lens_correction.active_signature(product_dir, camera_role) != "raw":
+        source = resolve_asset_path(model_path, model.source_image_path)
+        lens_correction.validate_prepared_path(str(source), product_dir, camera_role)
 
 
 def load_model_for_product(product_dir: str, camera_role: str = "cam1") -> NccMatchModel:
@@ -293,10 +314,16 @@ def autogen_roi_json_from_ncc_timed(
 ) -> NccAutogenRun:
     total_t0 = time.perf_counter()
     active_model_path = model_path or resolved_model_path_for_product(product_dir, camera_role)
+    _validate_model_scope(active_model_path, product_dir, camera_role)
+    if compiled_model is not None and lens_correction.active_signature(product_dir, camera_role) != "raw":
+        _validate_model_scope(compiled_model.model_path, product_dir, camera_role)
     if not os.path.exists(active_model_path):
         raise FileNotFoundError(f"Missing NCC model: {active_model_path}")
 
     active_model = (model or getattr(compiled_model, "model", None) or load_model(active_model_path)).normalized()
+    _validate_source_image(active_model, active_model_path, product_dir, camera_role)
+    tgt_img_path = lens_correction.prepare_path(tgt_img_path, product_dir, camera_role)
+    lens_correction.validate_prepared_path(tgt_img_path, product_dir, camera_role)
     scene = imread(tgt_img_path, cv2.IMREAD_COLOR)
     if scene is None:
         raise FileNotFoundError(tgt_img_path)
@@ -356,12 +383,16 @@ def autogen_runtime_roi_shapes_timed(
 ) -> NccRuntimeAutogenRun:
     total_t0 = time.perf_counter()
     active_model_path = model_path or resolved_model_path_for_product(product_dir, camera_role)
+    _validate_model_scope(active_model_path, product_dir, camera_role)
+    if compiled_model is not None and lens_correction.active_signature(product_dir, camera_role) != "raw":
+        _validate_model_scope(compiled_model.model_path, product_dir, camera_role)
     if not os.path.exists(active_model_path):
         raise FileNotFoundError(f"Missing NCC model: {active_model_path}")
     if scene_bgr is None:
         raise ValueError("scene_bgr is required")
 
     active_model = (model or getattr(compiled_model, "model", None) or load_model(active_model_path)).normalized()
+    _validate_source_image(active_model, active_model_path, product_dir, camera_role)
     compiled = compiled_model or NccCompiledModel(active_model_path, active_model)
     should_close = compiled_model is None
     try:

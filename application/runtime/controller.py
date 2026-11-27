@@ -33,6 +33,7 @@ _RUN_STATE_ZH_FOR_STATUS = {
     "CapturingCam1": "采集中（相机1）",
     "CapturingCam2": "采集中（相机2）",
     "CapturingCam3": "采集中（相机3）",
+    "CapturingCam4": "采集中（相机4）",
     "Inspecting": "检测中",
     "Aggregating": "汇总结果",
     "CompletedOk": "本轮完成 OK",
@@ -262,7 +263,11 @@ class RuntimeController(QtCore.QObject):
 
         self._camera_manager = None
         self._frame_grab_service = None
-        self._permission_manager = None
+        # The station interlock outlives a product selection and a camera connection.
+        self._permission_manager = (
+            PermissionManager(self._release_password, interlock_store=self._runtime_results_store)
+            if PermissionManager is not None else None
+        )
         self._scheduler = None
         self._record_service = None
         self._release_log_service = None
@@ -679,7 +684,6 @@ class RuntimeController(QtCore.QObject):
 
         self._camera_manager = None
         self._frame_grab_service = None
-        self._permission_manager = None
         self._scheduler = None
         self._record_service = None
         self._release_log_service = None
@@ -746,6 +750,15 @@ class RuntimeController(QtCore.QObject):
         self._update_status(f"camera settings synced: {serial_text}")
 
 
+    def _reject_pending_ng(self) -> bool:
+        if self._permission_manager is None or not self._permission_manager.status().is_locked:
+            return False
+        reason = "NG 锁定"
+        self._write_release_log(event_type="invalid_trigger", result="blocked", message=reason)
+        self.triggerResultReady.emit("BLOCKED", reason)
+        self._update_status(reason)
+        return True
+
     def trigger_camera(self, cam_index: int) -> None:
         self._submit_trigger_task(
             self._run_trigger_camera,
@@ -755,6 +768,8 @@ class RuntimeController(QtCore.QObject):
 
     def _run_trigger_camera(self, cam_index: int) -> None:
         """手动触发指定物理序号相机的检测流程（仅该路采图+检测，调试用）。"""
+        if self._reject_pending_ng():
+            return
         self._sync_camera_settings_store_path()
         self._reload_runtime_context()
         if self._runner is None:
@@ -832,6 +847,8 @@ class RuntimeController(QtCore.QObject):
 
     def _run_trigger(self) -> None:
         """执行脚踏触发检测流程。"""
+        if self._reject_pending_ng():
+            return
         self._sync_camera_settings_store_path()
         self._reload_runtime_context()
         if self._runner is None:
@@ -903,9 +920,16 @@ class RuntimeController(QtCore.QObject):
             self._write_release_log(event_type="ng_box_release", result="granted",
                                     message="DI2 上升沿确认 NG 产品入盒，自动解锁")
             self._update_status("NG 产品已入盒，等待下一次检测")
+        elif self._permission_manager.storage_error:
+            self._update_status()
+
+    def requires_ng_box_confirmation(self) -> bool:
+        return self._lock_on_ng or (
+            self._permission_manager is not None and self._permission_manager.is_locked
+        )
 
     def release(self, password: str) -> None:
-        if self._lock_on_ng:
+        if self.requires_ng_box_confirmation():
             self.infoOccurred.emit("请将 NG 产品放入 NG 盒，等待 DI2 上升沿自动解锁")
             return
         """尝试放行 NG 锁定。"""

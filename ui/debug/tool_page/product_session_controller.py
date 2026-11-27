@@ -83,6 +83,7 @@ class ProductSessionController:
             and not self.owner.ref_image
             and session_data.ref_image
             and os.path.exists(session_data.ref_image)
+            and self._raw_reference_allowed(session_data.ref_image)
         ):
             self.owner.ref_image = session_data.ref_image
             self.owner.lbl_ref.setText(f"{tr('debug.reference_image')}: {os.path.basename(self.owner.ref_image)}")
@@ -93,6 +94,11 @@ class ProductSessionController:
         self.owner._sync_footer()
 
         self.owner.sessionLoaded.emit()
+
+    def _raw_reference_allowed(self, path: str) -> bool:
+        from services.lens_correction import get_config, is_managed_image
+        return (not get_config(self.owner.session.product_dir, self.owner.current_camera_role()).enabled
+                and not is_managed_image(path))
 
     def run_deferred_initial_session_load(self) -> None:
         self.owner._deferred_session_load_scheduled = False

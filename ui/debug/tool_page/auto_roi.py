@@ -8,11 +8,8 @@ from typing import List, Tuple
 from common import labelme_io
 from application.auto_roi_service import missing_roi_files as service_missing_roi_files
 
-from domain import (
-    load_inspection_items,
-    save_inspection_items,
-    sync_items_with_labels,
-)
+from domain import sync_items_with_labels
+from services.lens_inspection_items import load_inspection_items, save_inspection_items
 from ncc import locator as ncc_locator
 from shape.core.recipe_labels import (
     clearable_roi_labels,

@@ -9,6 +9,7 @@ import numpy as np
 
 from common.labelme_io import labelme_json_of_image
 from common.safe_io import atomic_write_json, load_json_with_backup
+from services import lens_correction
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,7 @@ class RuntimePreviewFrame:
     camera_role: str = "cam1"
     roi_shapes: tuple[RuntimePreviewShape, ...] = ()
     measurements: tuple[dict, ...] = ()
+    correction_profile_id: str = ""
 
 
 def build_runtime_preview_frame(
@@ -48,6 +50,7 @@ def build_runtime_preview_frame(
     camera_role: str = "cam1",
     roi_shapes: tuple[RuntimePreviewShape, ...] = (),
     measurements: tuple[dict, ...] = (),
+    correction_profile_id: str = "",
 ) -> RuntimePreviewFrame:
     image = np.asarray(image_bgr)
     if image.ndim not in {2, 3}:
@@ -68,6 +71,7 @@ def build_runtime_preview_frame(
         camera_role=str(camera_role or "").strip() or "cam1",
         roi_shapes=tuple(roi_shapes or ()),
         measurements=tuple(dict(item) for item in tuple(measurements or ()) if isinstance(item, dict)),
+        correction_profile_id=str(correction_profile_id or ""),
     )
 
 
@@ -150,6 +154,11 @@ def export_runtime_preview_frame(
         raise RuntimeError(f"failed to save runtime capture: {image_path}")
 
     _write_runtime_preview_json(image_path, frame)
+    if frame.correction_profile_id:
+        lens_correction.mark_corrected_path(
+            str(image_path), frame.product_dir, frame.camera_role,
+            profile_id=frame.correction_profile_id, camera_serial=frame.camera_serial,
+        )
     return build_runtime_preview_frame(
         role=frame.role,
         image_bgr=frame.image_bgr,
@@ -163,6 +172,7 @@ def export_runtime_preview_frame(
         camera_role=frame.camera_role,
         roi_shapes=frame.roi_shapes,
         measurements=frame.measurements,
+        correction_profile_id=frame.correction_profile_id,
     )
 
 

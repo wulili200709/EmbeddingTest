@@ -45,7 +45,7 @@ def source_metadata(root: Path) -> dict:
             path = root / name
             if path.is_file() and (path.suffix in {'.py', '.ps1', '.bat', '.spec', '.json'}
                                    or name in {'VERSION', 'requirements.txt'}):
-                if name.startswith('releases/'):
+                if name.startswith('releases/') and not name.startswith('releases/notes/'):
                     continue
                 source_hash.update(name.encode('utf-8') + b'\0')
                 source_hash.update(hashlib.sha256(path.read_bytes()).digest())
@@ -157,6 +157,9 @@ def main() -> int:
     now = datetime.now(timezone.utc)
     notes_path = args.project_root / 'releases' / 'notes' / f'{version}.json'
     notes = json.loads(notes_path.read_text(encoding='utf-8')) if notes_path.exists() else {}
+    if "changes" in notes:
+        # Published manifests and VERSION_HISTORY.txt use a plain list of release-note sentences.
+        notes["changes"] = [item["details"] if isinstance(item, dict) else item for item in notes["changes"]]
     manifest_path.write_text(
         json.dumps(
             {

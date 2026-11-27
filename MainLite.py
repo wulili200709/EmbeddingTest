@@ -787,6 +787,7 @@ class LiteDebugMainWindow(DebugMainWindow):
 
     def _install_halcon_crop_import(self) -> None:
         page = self.tool_page
+        page._validate_lens_input = lambda path, role: self._validate_lens_crop_input(path, role)
         train_tab = page.tabs.widget(0)
         train_layout = train_tab.layout() if train_tab is not None else None
         if train_layout is None:
@@ -881,8 +882,12 @@ class LiteDebugMainWindow(DebugMainWindow):
 
         signals.finished.connect(finish)
         progress.show()
-        threading.Thread(target=worker, name="MainLiteFileImport", daemon=True).start()
-        wait_loop.exec()
+        self._lite_file_job_running = True
+        try:
+            threading.Thread(target=worker, name="MainLiteFileImport", daemon=True).start()
+            wait_loop.exec()
+        finally:
+            self._lite_file_job_running = False
         progress.close()
         progress.deleteLater()
         signals.deleteLater()
@@ -972,6 +977,9 @@ class LiteDebugMainWindow(DebugMainWindow):
                         )
                     )
                     item.setToolTip(path)
+                    if path in getattr(page, "_lens_sample_errors", {}):
+                        item.setText("[!] " + item.text())
+                        item.setToolTip(path + "\n" + page._lens_sample_errors[path])
                     item.setData(QtCore.Qt.ItemDataRole.UserRole, path)
                     list_widget.addItem(item)
                     if path == state["selected_path"]:
@@ -987,6 +995,8 @@ class LiteDebugMainWindow(DebugMainWindow):
         self._lite_list_refresh_timer.timeout.connect(append_list_batch)
 
         def lite_refresh_lists(tool_page) -> None:
+            from ui.debug.tool_page.lens_correction_flow import refresh_sample_paths
+            refresh_sample_paths(tool_page)
             self._lite_list_refresh_generation += 1
             self._lite_list_refresh_timer.stop()
             role = tool_page._selected_image_list_camera_role()
@@ -1063,6 +1073,17 @@ class LiteDebugMainWindow(DebugMainWindow):
                 original_show_path(path)
                 return
             path = str(path)
+            from ui.debug.tool_page.lens_correction_flow import prepare_sample
+            try:
+                path = prepare_sample(page, path)
+            except Exception as exc:
+                self._lite_image_request_id += 1
+                self._lite_image_loading_path = ""
+                self._lite_image_pool.clear()
+                page.canvas.clear_image()
+                page.lbl_status.setText(str(exc))
+                QtWidgets.QMessageBox.warning(page, tr("common.error"), str(exc))
+                return
             if page.canvas.image_path() == path:
                 # Lite training is tool-oriented. Keep the selected tool when
                 # operators review samples so calibration remains available.
@@ -1101,6 +1122,7 @@ class LiteDebugMainWindow(DebugMainWindow):
         page = self.tool_page
         selected_path = page.sample_list_controller.current_selected_path()
         if str(selected_path or "") != str(path):
+            self._lite_image_loading_path = ""
             return
         self._lite_image_loading_path = ""
         if error_text or image.isNull():
@@ -1113,10 +1135,14 @@ class LiteDebugMainWindow(DebugMainWindow):
             page._update_sample_panel_widgets()
             return
         try:
+            from ui.debug.tool_page.lens_correction_flow import prepare_sample
+            if prepare_sample(page, path) != path:
+                raise RuntimeError(_lite_text("镜头矫正设置已改变，请重新选择图片。", "Lens settings changed; select the image again."))
             page.canvas.set_image(path, pixmap=QtGui.QPixmap.fromImage(image))
             page._load_shape_for_label(path, page._current_label())
             page._set_status_for_current_image(path)
         except Exception as exc:
+            page.canvas.clear_image()
             page.lbl_status.setText(
                 _lite_text(f"状态：图片显示失败：{exc}", f"Status: image display failed: {exc}")
             )
@@ -1182,7 +1208,24 @@ class LiteDebugMainWindow(DebugMainWindow):
             and not page.algo.is_measurement_tool(getattr(item, "algorithm_code", ""))
         ]
 
+    def _validate_lens_crop_input(self, path: str, role: str) -> None:
+        from services.lens_correction import get_config, source_image_path
+        if not get_config(self.session.product_dir, role).enabled:
+            return
+        if self._lite_crop_context(source_image_path(path)) is not None:
+            raise RuntimeError(_lite_text(
+                "当前相机已启用镜头矫正。HALCON 小图缺少完整原图坐标，不能直接矫正、训练或检测；请导入完整原图，或关闭该相机矫正后使用小图。",
+                "Lens correction is enabled for this camera. HALCON crops lack full-frame coordinates and cannot be corrected, trained or inspected directly. Import the full frame or disable correction for this camera.",
+            ))
+
     def _show_halcon_crop_import(self) -> None:
+        from services.lens_correction import get_config
+        if get_config(self.session.product_dir, self.tool_page.current_camera_role()).enabled:
+            QtWidgets.QMessageBox.warning(self, tr("common.info"), _lite_text(
+                "已启用镜头矫正，请使用“普通外部图片”导入完整原图；HALCON 小图没有完整原图坐标。",
+                "Lens correction is enabled. Import full frames using Regular external image; HALCON crops lack full-frame coordinates.",
+            ))
+            return
         page = self.tool_page
         require_permission = getattr(self, "_require_permission", None)
         if callable(require_permission) and not require_permission("sample.manage", "导入 HALCON 小图"):
@@ -1478,6 +1521,12 @@ class LiteDebugMainWindow(DebugMainWindow):
             confirmation_token: str = "",
         ) -> bool:
             role = normalize_camera_role(camera_role or tool_page.current_camera_role(), default="cam1")
+            try:
+                for path in original_train_paths(role):
+                    self._validate_lens_crop_input(path, role)
+            except Exception as exc:
+                QtWidgets.QMessageBox.warning(page, tr("common.info"), str(exc))
+                return False
             normal_paths = [path for path in original_train_paths(role) if self._lite_crop_context(path) is None]
             if not normal_paths:
                 return True
@@ -1516,6 +1565,7 @@ class LiteDebugMainWindow(DebugMainWindow):
             metadata = self._lite_crop_context(path)
             if metadata is None:
                 return original_execute_image(path)
+            self._validate_lens_crop_input(path, normalize_camera_role(metadata.get("camera_role"), default="cam1"))
 
             self._wait_for_lite_model_warmup()
 
@@ -1886,6 +1936,16 @@ class LiteDebugMainWindow(DebugMainWindow):
             target_button.clicked.connect(handler)
 
         def lite_start_worker(training_controller, payload: dict) -> None:
+            try:
+                for task in payload.get("tasks", []):
+                    paths = list(task.get("ok_files", [])) + list(task.get("ng_files", []))
+                    paths += [sample[0] for key in ("ok_samples", "ng_samples") for sample in task.get(key, [])]
+                    for path in paths:
+                        role = camera_role_from_text(Path(path).name, default=page.current_camera_role())
+                        self._validate_lens_crop_input(path, role)
+            except Exception as exc:
+                QtWidgets.QMessageBox.warning(page, tr("common.info"), str(exc))
+                return
             save_current_name()
             names = load_names()
             pending: list[dict[str, str]] = []
@@ -1895,16 +1955,19 @@ class LiteDebugMainWindow(DebugMainWindow):
                 model_key = str(task.get("model_key", "") or "").strip()
                 display_name = str(task.get("display_name", "") or "model").strip()
                 custom_name = _safe_export_stem(names.get(model_key, display_name), "model")
+                from services.lens_correction import asset_root
+                export_dir = asset_root(product_dir, str(task.get("camera_id") or page.current_camera_role()))
                 pending.append({
                     "display_name": display_name,
                     "model_key": model_key,
                     "algorithm": str(task.get("algorithm", "") or "").strip(),
                     "product_dir": product_dir,
+                    "export_dir": export_dir,
                     "custom_name": custom_name,
                 })
 
             destination_names = [
-                os.path.normcase(os.path.abspath(os.path.join(entry["product_dir"], f"{entry['custom_name']}.npz")))
+                os.path.normcase(os.path.abspath(os.path.join(entry["export_dir"], f"{entry['custom_name']}.npz")))
                 for entry in pending
             ]
             if len(destination_names) != len(set(destination_names)):
@@ -1997,12 +2060,13 @@ class LiteDebugMainWindow(DebugMainWindow):
                     model_key=entry["model_key"],
                 )
                 destination = os.path.join(
-                    entry["product_dir"],
+                    entry["export_dir"],
                     f"{entry['custom_name']}.npz",
                 )
                 try:
                     if not os.path.exists(source):
                         raise FileNotFoundError(source)
+                    Path(destination).parent.mkdir(parents=True, exist_ok=True)
                     if os.path.normcase(os.path.abspath(source)) != os.path.normcase(os.path.abspath(destination)):
                         shutil.copy2(source, destination)
                     exported.append(destination)

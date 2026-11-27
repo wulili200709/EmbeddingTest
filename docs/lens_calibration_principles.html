@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>镜头矫正原理 · 本地中文说明</title>
+  <style>
+    :root { color-scheme: light; font-family: "Microsoft YaHei", "PingFang SC", sans-serif; color: #213247; background: #f2f5f8; }
+    body { max-width: 980px; margin: auto; padding: 32px 22px 64px; line-height: 1.85; }
+    h1 { font-size: 30px; line-height: 1.4; margin: 4px 0 12px; }
+    h2 { font-size: 22px; line-height: 1.5; margin-top: 0; color: #154f75; }
+    h3 { font-size: 17px; }
+    p { margin: 12px 0; }
+    a { color: #17638d; overflow-wrap: anywhere; }
+    section { background: #fff; border: 1px solid #dce4ec; border-radius: 12px; padding: 24px; margin-top: 22px; }
+    .meta { color: #526577; font-size: 14px; }
+    .note { background: #edf6fc; border-left: 4px solid #2d7aa5; padding: 10px 16px; }
+    .flow { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 20px 0; }
+    .node { padding: 12px 16px; border: 1px solid #c4d8e8; border-radius: 8px; background: #f5f9fc; text-align: center; }
+    .arrow { color: #47728d; }
+    .formula { background: #f3f6fa; border-radius: 8px; padding: 16px; overflow-wrap: anywhere; font-family: Consolas, "Microsoft YaHei", monospace; }
+    .table-wrap { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; font-size: 15px; }
+    th, td { border: 1px solid #dce4ec; padding: 12px; text-align: left; vertical-align: top; }
+    th { background: #edf4f9; }
+    code { color: #185a7d; overflow-wrap: anywhere; }
+    li { margin-bottom: 8px; }
+    nav { display: flex; flex-wrap: wrap; gap: 10px 20px; margin: 18px 0; }
+    html { scroll-behavior: smooth; }
+    [id] { scroll-margin-top: 18px; }
+    .source { background: #142337; color: #e2ecf5; padding: 16px; border-radius: 8px; overflow-x: auto; font: 13px/1.7 Consolas, "Microsoft YaHei", monospace; tab-size: 4; }
+    .source code { color: inherit; white-space: pre; overflow-wrap: normal; }
+    details { margin: 14px 0; }
+    summary { cursor: pointer; color: #17638d; font-weight: 600; padding: 8px 0; }
+    .step { margin-top: 30px; padding-top: 8px; border-top: 1px solid #e3eaf0; }
+    @media(max-width: 600px) { body { padding: 20px 12px 40px; } section { padding: 18px; } h1 { font-size: 25px; } }
+    @media print { body { max-width: none; padding: 0; background: white; font-size: 11pt; } section { border: 0; padding: 0; } .formula, tr { break-inside: avoid; } }
+  </style>
+</head>
+<body>
+  <p class="meta">LC System · 镜头畸变矫正 Demo · 2026-11-26</p>
+  <h1>镜头矫正原理</h1>
+  <p>根据当前项目代码整理的中文说明。正文、表格和公式均可离线阅读；末尾的官方参考链接需要联网。</p>
+  <p class="meta">这是对当前实现的独立讲解，不是 OpenCV 官方文档的完整翻译。</p>
+  <nav aria-label="阅读导航"><a href="#single-code">单图算法逐段代码</a><a href="#code-residual">误差怎样计算</a><a href="#code-optimize">怎样求 k₁、k₂</a><a href="#code-map">怎样矫正图片</a><a href="#multi-code">多姿态代码</a></nav>
+
+  <section>
+    <h2>先求参数，再矫正图片</h2>
+    <p>棋盘格的角点有规则的行列关系。程序检测照片中的角点，用数学模型预测它们应该出现在哪里，再调整参数，让预测位置与检测位置之间的误差尽量小。</p>
+    <div class="flow" aria-label="处理步骤">
+      <div class="node">检测棋盘角点</div><span class="arrow">→</span>
+      <div class="node">拟合模型参数</div><span class="arrow">→</span>
+      <div class="node">生成坐标映射表</div><span class="arrow">→</span>
+      <div class="node">对产品图取样矫正</div>
+    </div>
+    <p>标定需要棋盘图；应用已经保存的参数时，产品图里不需要再出现棋盘。当前 Demo 要求输入图片分辨率与参数记录一致。</p>
+  </section>
+
+  <section>
+    <h2>1. 单张 · 径向</h2>
+    <p>当前模型用两个系数描述像素相对畸变中心的径向缩放，以拟合桶形、枕形等畸变：</p>
+    <div class="formula">r² = x² + y²<br>f = 1 + k₁r² + k₂r⁴<br>x<sub>d</sub> = x · f<br>y<sub>d</sub> = y · f</div>
+    <p><code>x、y</code> 是理想成像位置的归一化坐标，<code>x<sub>d</sub>、y<sub>d</sub></code> 是加入畸变后的坐标。当前单图代码把中心固定在图像中心，用图像宽高中的较大值归一化；不能直接把像素坐标代入上述公式。</p>
+    <p>拍摄棋盘时可能存在倾斜，因此求参同时使用平面矩阵 <code>H</code> 解释拍摄姿态。程序联合调整 <code>H、k₁、k₂</code>，比较全部角点的预测误差，并使用稳健损失减轻异常角点的影响。</p>
+    <div class="flow">
+      <div class="node">规则棋盘坐标</div><span class="arrow">— H →</span>
+      <div class="node">理想成像坐标</div><span class="arrow">— 径向模型 →</span>
+      <div class="node">预测照片角点</div>
+    </div>
+    <p class="note"><strong>输出只去除径向畸变，保留透视关系。</strong> 弯曲的线条可以变直，但斜拍形成的梯形仍可能保留。这里固定了中心、限制了参数，没有求完整相机内参。</p>
+    <p class="meta">对应代码：<code>algorithms/lens_single_calibration.py</code>，<code>calibrate_single_points()</code> 第 272 行；优化调用第 326 行；径向输出分支第 451 行。<a href="#single-code">查看逐段代码与解释 ↓</a></p>
+  </section>
+
+  <section>
+    <h2>2. 单张 · 径向＋透视</h2>
+    <p>它与第一种模式共用求参过程。区别在输出时还使用 <code>H</code>，把棋盘所在平面转换为正视的规则布局。</p>
+    <p>平面单应矩阵 <code>H</code> 可以描述平面点在透视成像前后的对应关系。当前实现从拉正后的输出平面出发，经 <code>H</code> 找到理想成像坐标，再加入径向畸变，得到原图的采样位置；两个步骤合并为一次图像取样。</p>
+    <p class="note"><strong>这张矩阵对应一个固定平面。</strong> 标定板应处于需要拉正的工作平面。产品上不同高度的结构不一定服从同一个平面变换，无法靠这一张矩阵同时全部拉正。</p>
+    <p class="meta">对应代码：<code>algorithms/lens_single_calibration.py</code>，<code>SingleUndistorter</code> 第 454 行的透视分支。<a href="#code-map">查看两种输出分支 ↓</a></p>
+  </section>
+
+  <section>
+    <h2>3. 多姿态 · 相机标定</h2>
+    <p>当前代码调用 <code>cv2.calibrateCamera(flags=0)</code>，使用多张不同姿态的棋盘照片联合求解。各张照片共享相机内参和畸变参数，但各自具有不同的棋盘旋转、平移。</p>
+    <ul>
+      <li><strong>相机内参 K：</strong><code>fx、fy、cx、cy</code>，描述像素尺度下的焦距和主点。</li>
+      <li><strong>畸变 D：</strong>径向 <code>k₁、k₂、k₃</code>，切向 <code>p₁、p₂</code>。</li>
+      <li><strong>每张图的姿态：</strong>旋转 <code>R</code> 和平移 <code>t</code>。</li>
+    </ul>
+    <p>多种姿态为同一套相机参数提供更多约束，帮助区分镜头畸变和棋盘姿态的影响。当前 Demo 要求至少 10 张有效且不重复的图，这是程序的使用门槛，并非所有标定算法都必须恰好使用 10 张。</p>
+    <p class="note"><strong>当前多姿态模式的输出只去镜头畸变。</strong> 没有额外选择工作平面做透视拉正，也不会自动消除立体产品的视差。</p>
+    <p class="meta">对应代码：<code>algorithms/lens_calibration.py</code>，<code>calibrate_images()</code> 第 184 行；OpenCV 求参第 251 行；<code>Undistorter</code> 第 293 行。<a href="#multi-code">查看多姿态核心代码 ↓</a></p>
+  </section>
+
+  <section id="single-code">
+    <h2>单图算法：从角点到矫正图，逐段看代码</h2>
+    <p>以下摘录来自 <code>algorithms/lens_single_calibration.py</code>，行号对应 2026-11-26 的源码。代码保留原样，解释写在代码外；后续源码若修改，需同步更新本文摘录。</p>
+    <div class="flow">
+      <div class="node">calibrate_single_image<br>读取原图、检测角点</div><span class="arrow">→</span>
+      <div class="node">calibrate_single_points<br>拟合 H、k₁、k₂</div><span class="arrow">→</span>
+      <div class="node">SingleUndistorter<br>建表、应用矫正</div>
+    </div>
+
+    <h3 class="step">① 输入是什么：照片角点与棋盘格位必须一一对应</h3>
+    <p><code>points</code> 是照片中实际检测到的 N 个角点，每点包含像素坐标 <code>(u, v)</code>；<code>grid</code> 是同一批点在规则棋盘中的格位。完整棋盘按行列生成格位；自动可见棋盘使用 <code>grid_indices</code>，保留实际检测到的点，不补造遮挡处的角点。</p>
+    <p>完整棋盘的归一化方法如下：以网格中心为原点，除以横向、纵向格距数量中的较大值。<code>_indexed_grid()</code> 对可见格位也使用同样的中心与尺度约定。</p>
+    <pre class="source" data-source="algorithms/lens_single_calibration.py" data-start="28" data-end="35"><code> 28 | def _grid(pattern_size):
+ 29 |     columns, rows = _size_tuple(pattern_size, "棋盘内角点数")
+ 30 |     if min(columns, rows) &lt; 4 or columns * rows &lt; 20:
+ 31 |         raise ValueError("单张模式至少需要 20 个内角点，且每行、每列至少 4 点，例如 5×4。")
+ 32 |     points = np.mgrid[0:columns, 0:rows].T.reshape(-1, 2).astype(np.float64)
+ 33 |     center = np.array([(columns - 1) / 2, (rows - 1) / 2])
+ 34 |     scale = float(max(columns - 1, rows - 1))
+ 35 |     return (points - center) / scale, scale</code></pre>
+    <p><code>pattern_size</code> 填内角点列数、行数；当前要求至少 20 个实际点，并至少覆盖 4 列、4 行。程序会检查重复、共线、越界、对应点数量和覆盖率。</p>
+    <p class="note">你填写的 <strong>2 mm</strong> 是相邻格点对应的实际距离。当前单图几何拟合使用无量纲格位，2 mm 不会直接改变求出的径向变形；它用于记录物理尺度，以及满足条件时计算平面上的标称 mm/px。它不能补偿纸张不平或错误的角点对应。</p>
+
+    <h3 class="step">② 第 272 行：准备输入、固定中心并归一化</h3>
+    <pre class="source" data-source="algorithms/lens_single_calibration.py" data-start="272" data-end="297"><code>272 | def calibrate_single_points(points, image_size, pattern_size, spacing_mm=2.0, mode="radial", progress=None,
+273 |                             grid_indices=None, grid_step_confirmed=False):
+274 |     """Fit observed grid points, optionally with explicit sparse integer indices."""
+275 |     width, height = _size_tuple(image_size, "图像尺寸")
+276 |     grid, _ = _indexed_grid(pattern_size, grid_indices)
+277 |     _validate_grid_step_confirmation(grid_indices, grid_step_confirmed)
+278 |     if mode not in MODES or not np.isfinite(spacing_mm) or spacing_mm &lt;= 0:
+279 |         raise ValueError("矫正模式或棋盘间距无效。")
+280 |     points = np.asarray(points, np.float64).reshape(-1, 2)
+281 |     if points.shape != (len(grid), 2) or not np.isfinite(points).all():
+282 |         raise ValueError("角点必须与网格索引逐点对应（完整棋盘为列数×行数），且坐标必须为有限数值。")
+283 |     if len(np.unique(points, axis=0)) != len(points) or np.linalg.matrix_rank(points - points.mean(axis=0)) &lt; 2:
+284 |         raise ValueError("棋盘角点重复或共线，无法标定。")
+285 |     if points[:, 0].min() &lt; 0 or points[:, 0].max() &gt;= width or points[:, 1].min() &lt; 0 or points[:, 1].max() &gt;= height:
+286 |         raise ValueError("棋盘角点超出图像范围。")
+287 |     lower, upper = points.min(axis=0), points.max(axis=0)
+288 |     span = (upper - lower) / np.array([width, height])
+289 |     hull = cv2.convexHull(points.astype(np.float32))
+290 |     fraction = float(cv2.contourArea(hull) / (width * height))
+291 |     if fraction &lt; 0.025 or min(span) &lt; 0.12:
+292 |         raise ValueError("棋盘覆盖范围过小，单张图无法可靠约束边缘畸变；请让棋盘覆盖更大视野后重新拍摄。")
+293 |     center = np.array([(width - 1) / 2, (height - 1) / 2])
+294 |     scale = float(max(width, height))
+295 |     observed = (points - center) / scale
+296 |     radius_limit = float(np.linalg.norm(np.maximum(center, [width - 1, height - 1] - center) / scale))
+297 |     radial_samples = np.linspace(0, radius_limit ** 2, 24)</code></pre>
+    <p>第 293 行固定中心 <code>c = ((width−1)/2, (height−1)/2)</code>；第 294 行取 <code>S = max(width, height)</code>；第 295 行将观测角点变为 <code>observed = (points−c)/S</code>。这样优化时处理的是较小的归一化数值。</p>
+    <p>这里没有优化光心、焦距，也没有把 <code>S</code> 当作真实焦距。角点凸包面积占比小于 2.5%，或任一方向跨度小于图像对应尺寸的 12%，会直接拒绝求参；这只是最低覆盖门槛，通过它不代表整个视野已验证。</p>
+
+    <h3 class="step" id="code-residual">③ 第 299 行：把 10 个参数变成“预测角点误差”</h3>
+    <div class="formula">parameters = [h₁₁, h₁₂, h₁₃, h₂₁, h₂₂, h₂₃, h₃₁, h₃₂, k₁, k₂]<br>H 的右下角 h₃₃ 固定为 1；共 8 个 H 参数 + 2 个径向参数。</div>
+    <pre class="source" data-source="algorithms/lens_single_calibration.py" data-start="299" data-end="312"><code>299 |     def unpack(parameters):
+300 |         return np.append(parameters[:8], 1.0).reshape(3, 3), parameters[8:]
+301 | 
+302 |     def residual(parameters):
+303 |         homography, coefficients = unpack(parameters)
+304 |         homogeneous = np.column_stack((grid, np.ones(len(grid)))) @ homography.T
+305 |         denominators = homogeneous[:, 2:3]
+306 |         ideal = homogeneous[:, :2] / np.maximum(denominators, 0.02)
+307 |         predicted = _distort(ideal, coefficients)
+308 |         geometric = (predicted - observed).ravel() * scale
+309 |         denominator_penalty = np.minimum(denominators[:, 0] - 0.1, 0) * scale * 5
+310 |         derivative = 1 + 3 * coefficients[0] * radial_samples + 5 * coefficients[1] * radial_samples ** 2
+311 |         monotonic_penalty = np.minimum(derivative - 0.1, 0) * scale
+312 |         return np.concatenate((geometric, denominator_penalty, monotonic_penalty))</code></pre>
+    <p>第 304–306 行将规则格位乘以 <code>H</code>，再除以齐次坐标分母，得到理想成像位置。第 307 行加入径向畸变，预测照片中的位置。第 308 行与观测角点相减，再乘回 <code>S</code>，将几何误差换回像素单位；每个点贡献横向、纵向两项误差。</p>
+    <pre class="source" data-source="algorithms/lens_single_calibration.py" data-start="75" data-end="84"><code> 75 | def _project(points, homography):
+ 76 |     points = np.asarray(points, dtype=np.float64).reshape(-1, 2)
+ 77 |     homogeneous = np.column_stack((points, np.ones(len(points)))) @ homography.T
+ 78 |     return homogeneous[:, :2] / homogeneous[:, 2:3]
+ 79 | 
+ 80 | 
+ 81 | def _distort(points, coefficients):
+ 82 |     radius2 = np.sum(np.asarray(points) ** 2, axis=-1, keepdims=True)
+ 83 |     return points * (1 + coefficients[0] * radius2 + coefficients[1] * radius2 ** 2)
+ 84 | </code></pre>
+    <p><code>residual()</code> 还追加两类惩罚：分母过小时提高代价，避免平面投影接近无穷远；径向映射的导数过小时提高代价，减少图像折叠。<code>maximum(denominators, 0.02)</code> 是优化过程中的数值保护，不表示分母有问题的模型可以最终通过。</p>
+    <div class="formula">r<sub>d</sub> = r + k₁r³ + k₂r⁵<br>dr<sub>d</sub>/dr = 1 + 3k₁r² + 5k₂r⁴</div>
+    <p>第 310 行就是这个导数。优化时在 24 个半径平方位置检查，导数低于 0.1 会受惩罚。惩罚属于拟合目标的一部分；拟合结束后还有独立校验，并非仅靠采样惩罚保证映射有效。</p>
+
+    <h3 class="step" id="code-optimize">④ 第 326 行：为什么尝试 5 次，怎样选最后的参数</h3>
+    <pre class="source" data-source="algorithms/lens_single_calibration.py" data-start="314" data-end="341"><code>314 |     results = []
+315 |     initial_matrix = np.array([[scale, 0, center[0]], [0, scale, center[1]], [0, 0, 1]], np.float64)
+316 |     for seed_index, seed in enumerate((-0.6, -0.2, 0.0, 0.2, 0.6), start=1):
+317 |         if progress:
+318 |             progress(1, 2, f"正在拟合径向畸变和平面姿态：初值 {seed_index}/5…")
+319 |         ideal_seed = cv2.undistortPoints(points.reshape(-1, 1, 2), initial_matrix, np.array([seed, 0., 0., 0., 0.])).reshape(-1, 2)
+320 |         homography, _ = cv2.findHomography(grid, ideal_seed, method=0)
+321 |         if homography is None or not np.isfinite(homography).all():
+322 |             continue
+323 |         homography /= homography[2, 2]
+324 |         initial = np.concatenate((homography.reshape(-1)[:8], [seed, 0.]))
+325 |         initial[:8] = np.clip(initial[:8], -19.9, 19.9)
+326 |         fit = least_squares(residual, initial, bounds=(np.array([-20.] * 8 + [-3., -10.]), np.array([20.] * 8 + [3., 10.])),
+327 |                             loss="soft_l1", f_scale=0.5, x_scale="jac", max_nfev=1200,
+328 |                             ftol=1e-11, xtol=1e-11, gtol=1e-9)
+329 |         if fit.success and np.isfinite(fit.x).all():
+330 |             results.append(fit)
+331 |     if not results:
+332 |         raise ValueError("单张参数拟合未收敛，请检查棋盘是否清晰、完整且平整。")
+333 |     fit = min(results, key=lambda result: result.cost)
+334 |     homography, coefficients = unpack(fit.x)
+335 |     predicted = center + scale * _distort(_project(grid, homography), coefficients)
+336 |     errors = np.linalg.norm(predicted - points, axis=1)
+337 |     rms = float(np.sqrt(np.mean(errors ** 2)))
+338 |     if rms &gt; 2.0:
+339 |         raise ValueError(f"单张拟合误差过大（RMS {rms:.3f} px）；请检查行列数、板面平整度和角点检测。")
+340 |     if np.any(np.abs(coefficients) &gt; [2.99, 9.99]):
+341 |         raise ValueError("拟合参数触及模型边界，单张图片不足以约束当前畸变；请更换覆盖更完整的棋盘照片。")</code></pre>
+    <p>非线性拟合可能受初始值影响。当前分别以 <code>k₁ = −0.6、−0.2、0、0.2、0.6</code> 起步，<code>k₂</code> 初值为 0。每次先按假设的径向系数处理角点，用 <code>findHomography()</code> 生成一个初始 <code>H</code>，然后联合优化全部 10 个参数。<code>initial_matrix</code> 只用于生成初值，不是标定求出的真实相机内参。</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>参数 / 代码</th><th>当前含义</th></tr></thead>
+      <tbody>
+        <tr><td><code>bounds</code></td><td>H 的 8 项限制在 ±20，k₁ 在 ±3，k₂ 在 ±10。这是当前模型的工程限制，不是所有镜头的通用物理范围。</td></tr>
+        <tr><td><code>loss="soft_l1"</code></td><td>减少大残差对结果的支配；它不会自动删除错误角点，也不能保证拟合一定正确。</td></tr>
+        <tr><td><code>f_scale=0.5</code></td><td>稳健损失的转换尺度。不是承诺“矫正精度达到 0.5 px”。</td></tr>
+        <tr><td><code>x_scale="jac"</code></td><td>根据各参数对残差的敏感程度调整优化步长尺度。</td></tr>
+        <tr><td><code>max_nfev=1200</code></td><td>每次优化的函数评估次数上限；不等于固定做 1200 次迭代。</td></tr>
+        <tr><td><code>min(..., key=result.cost)</code></td><td>在成功、有限的候选中选择稳健目标代价最小者。该代价包含惩罚项，不是直接选择原始 RMS 最小者，也不保证找到了全局最优解。</td></tr>
+      </tbody>
+    </table></div>
+    <p>最终重新用原始角点计算 <code>RMS = sqrt(mean(每点二维距离²))</code>。大于 2 px 会报错；径向系数接近边界也会报错。这些是程序的接受条件，产品检测精度仍需独立验证。</p>
+
+    <h3 class="step">⑤ RMS 很小，为什么仍然可能提示“不可靠”</h3>
+    <p>单张棋盘中的部分变形可能同时被 <code>H</code> 与径向系数解释。两者互相补偿时，当前棋盘的误差可以很小，但边缘外推不一定准。因此代码还检查径向系数能否被这张图独立约束。</p>
+    <details>
+      <summary>展开 Jacobian / SVD 诊断和最终提示代码</summary>
+      <pre class="source" data-source="algorithms/lens_single_calibration.py" data-start="343" data-end="352"><code>343 |     # Measure how much radial information remains after allowing the plane H
+344 |     # to absorb its eight nuisance degrees of freedom. Small singular values
+345 |     # flag weak radial constraints even when the same-image RMS looks good.
+346 |     jacobian = fit.jac[:2 * len(points)]
+347 |     nuisance = jacobian[:, :8]
+348 |     radial = jacobian[:, 8:]
+349 |     independent_radial = radial - nuisance @ np.linalg.lstsq(nuisance, radial, rcond=None)[0]
+350 |     radial_singular_values = np.linalg.svd(independent_radial, compute_uv=False)
+351 |     radial_sigma_min = float(radial_singular_values[-1])
+352 |     radial_condition = float(radial_singular_values[0] / max(radial_sigma_min, 1e-15))</code></pre>
+      <p><code>nuisance</code> 是 H 的局部敏感性，<code>radial</code> 是两个径向系数的局部敏感性。第 349 行从径向变化中减去可由 H 变化解释的部分，再用奇异值检查剩下的信息是否过弱或失衡。这里使用的是稳健拟合返回的 Jacobian，是拟合后的诊断，不是新增一轮优化，也不是实际测量精度或置信区间。</p>
+      <pre class="source" data-source="algorithms/lens_single_calibration.py" data-start="361" data-end="381"><code>361 |     warnings = ["单张受约束拟合：畸变中心固定在图像中心，只估计 k1/k2；不代表完整相机内参或切向畸变标定。",
+362 |                 "RMS 是本张棋盘的拟合误差，请用另一张原图验证边缘效果。固定画布可能出现黑边或内容超出边界。"]
+363 |     if fraction &lt; 0.25 or min(span) &lt; 0.65 or coverage["radius_max"] &lt; 0.8 * radius_limit:
+364 |         warnings.append("棋盘没有覆盖整个视野；棋盘外区域属于外推，尤其四角的矫正和尺寸精度尚未验证。")
+365 |     if rms &gt; 0.5:
+366 |         warnings.append("拟合 RMS 超过 0.5 px，请放大检查角点和板面平整度。")
+367 |     if radial_sigma_min &lt; 1.0 or radial_condition &gt; 500:
+368 |         warnings.append("本张棋盘对两个径向系数的独立约束较弱；即使 RMS 较低，边缘外推也可能不准，请扩大棋盘覆盖范围验证。")
+369 |     if mode == "radial_perspective":
+370 |         warnings.append("平面拉正和标称 mm/px 仅适用于本次棋盘所在平面；不同高度的针脚不能直接沿用该比例。")
+371 |     if grid_indices is not None:
+372 |         warnings.append("使用实际检测到的可见格点拟合；编码区或遮挡区的缺失角点未补造。")
+373 |         if not grid_step_confirmed:
+374 |             warnings.append("尚未确认索引相邻一步对应一个真实方格；当前仅作几何预览，不输出标称 mm/px。")
+375 |     profile = SingleCalibrationProfile((width, height), mode, tuple(center), coefficients.copy(), homography.copy(),
+376 |                                        tuple(pattern_size), float(spacing_mm), rms,
+377 |                                        [{"path": "", "status": "used", "error_px": rms, "message": "单张棋盘拟合"}],
+378 |                                        warnings, points.copy(), coverage,
+379 |                                        None if grid_indices is None else np.asarray(grid_indices, np.int64).copy(),
+380 |                                        bool(grid_step_confirmed))
+381 |     validate_single_profile(profile)</code></pre>
+    </details>
+    <p>例如 RMS 超过 0.5 px、棋盘覆盖不足、径向最小奇异值小于 1 或条件比大于 500，会给出提示。程序最后打包保存 <code>mode、center、H、k₁、k₂、角点、覆盖率、RMS</code> 等信息，并调用 <code>validate_single_profile()</code> 再校验。</p>
+    <details>
+      <summary>展开防止径向映射折叠的最终检查</summary>
+      <pre class="source" data-source="algorithms/lens_single_calibration.py" data-start="95" data-end="111"><code> 95 | def _minimum_polynomial(a, b, maximum_radius2):
+ 96 |     values = [1.0, 1.0 + a * maximum_radius2 + b * maximum_radius2 ** 2]
+ 97 |     if b &gt; 0:
+ 98 |         vertex = -a / (2 * b)
+ 99 |         if 0 &lt; vertex &lt; maximum_radius2:
+100 |             values.append(1 + a * vertex + b * vertex ** 2)
+101 |     return min(values)
+102 | 
+103 | 
+104 | def _validate_radial(coefficients, radius_max):
+105 |     k1, k2 = coefficients
+106 |     radius2 = float(radius_max) ** 2
+107 |     scale_min = _minimum_polynomial(k1, k2, radius2)
+108 |     derivative_min = _minimum_polynomial(3 * k1, 5 * k2, radius2)
+109 |     if scale_min &lt;= 0.05 or derivative_min &lt;= 0.05:
+110 |         raise ValueError("拟合的径向模型在输出画布内发生折叠或接近折叠；请使用覆盖更大、更加清晰的原始棋盘图。")
+111 |     return scale_min, derivative_min</code></pre>
+      <p>它检查所需半径区间内缩放因子和径向导数的最小值；通过区间端点和二次多项式极值点求最小值。任一个最小值不大于 0.05 就拒绝，补充了优化时的离散采样惩罚。</p>
+    </details>
+
+    <h3 class="step" id="code-map">⑥ 第 451 行：径向与径向＋透视真正在哪里分开</h3>
+    <pre class="source" data-source="algorithms/lens_single_calibration.py" data-start="437" data-end="471"><code>437 | class SingleUndistorter:
+438 |     """One composite inverse map on a fixed-size canvas; alpha is fixed at one."""
+439 | 
+440 |     def __init__(self, profile, alpha=1.0):
+441 |         validate_single_profile(profile)
+442 |         if not np.isfinite(alpha) or abs(alpha - 1.0) &gt; 1e-12:
+443 |             raise ValueError("单张模式使用固定画布，视野参数只能为 1；不会自动裁剪或缩放。")
+444 |         self.image_size = tuple(profile.image_size)
+445 |         self.output_center, self.plane_scale, radius_max = _mapping_geometry(profile)
+446 |         self.pixel_size_mm = profile.pixel_size_mm
+447 |         started = time.perf_counter()
+448 |         width, height = self.image_size
+449 |         scale = float(max(width, height))
+450 |         yy, xx = np.indices((height, width), dtype=np.float32)
+451 |         if profile.mode == "radial":
+452 |             qx = (xx - profile.center[0]) / scale
+453 |             qy = (yy - profile.center[1]) / scale
+454 |         else:
+455 |             gx = (xx - self.output_center[0]) / self.plane_scale
+456 |             gy = (yy - self.output_center[1]) / self.plane_scale
+457 |             matrix = profile.homography
+458 |             denominator = matrix[2, 0] * gx + matrix[2, 1] * gy + 1
+459 |             qx = (matrix[0, 0] * gx + matrix[0, 1] * gy + matrix[0, 2]) / denominator
+460 |             qy = (matrix[1, 0] * gx + matrix[1, 1] * gy + matrix[1, 2]) / denominator
+461 |         radius2 = qx * qx + qy * qy
+462 |         factor = 1 + profile.radial_coeffs[0] * radius2 + profile.radial_coeffs[1] * radius2 * radius2
+463 |         self.map_x = np.asarray(profile.center[0] + scale * qx * factor, dtype=np.float32)
+464 |         self.map_y = np.asarray(profile.center[1] + scale * qy * factor, dtype=np.float32)
+465 |         if not np.isfinite(self.map_x).all() or not np.isfinite(self.map_y).all():
+466 |             raise ValueError("无法生成有限的矫正映射。")
+467 |         valid = (self.map_x &gt;= 0) &amp; (self.map_x &lt;= width - 1) &amp; (self.map_y &gt;= 0) &amp; (self.map_y &lt;= height - 1)
+468 |         self.valid_mask = valid
+469 |         # A conservative fully valid rectangle; it is not guaranteed maximal.
+470 |         self.valid_roi = _conservative_valid_rectangle(valid)
+471 |         self.map_build_ms = (time.perf_counter() - started) * 1000</code></pre>
+    <p><code>xx、yy</code> 枚举的是<strong>矫正后输出图</strong>的每个像素。第 451–453 行的纯径向模式直接把输出坐标归一化为理想成像位置 <code>qx、qy</code>，因此不会额外拉正棋盘姿态。</p>
+    <p>第 454–460 行的联合模式先把输出像素换算成规则平面格位 <code>gx、gy</code>，再经 <code>H</code> 得到理想成像位置。两种模式随后都在第 461–464 行加入径向畸变，算出原图采样位置 <code>map_x、map_y</code>。</p>
+    <div class="formula">纯径向：输出像素 → 理想成像坐标 → 径向模型 → 原图采样坐标<br>径向＋透视：输出像素 → 规则平面坐标 → H → 理想成像坐标 → 径向模型 → 原图采样坐标</div>
+    <p class="note">这里是在算<strong>“输出像素应去原图哪里取颜色”</strong>。所以虽然结果是去畸变，建表时使用的仍是“加入畸变”的正向公式；联合模式也直接使用 <code>H</code>。它们共同构成输出到输入的反向采样关系，无需逐像素求逆多项式，也没有先后生成两张中间图。</p>
+    <details>
+      <summary>展开联合模式输出中心与缩放的来源</summary>
+      <pre class="source" data-source="algorithms/lens_single_calibration.py" data-start="86" data-end="92"><code> 86 | def _local_geometry(homography):
+ 87 |     center = homography[:2, 2] / homography[2, 2]
+ 88 |     derivative = (homography[:2, :2] - np.outer(center, homography[2, :2])) / homography[2, 2]
+ 89 |     determinant = float(np.linalg.det(derivative))
+ 90 |     if not np.isfinite(determinant) or abs(determinant) &lt; 1e-9:
+ 91 |         raise ValueError("棋盘平面映射退化，无法确定有效的矫正尺度。")
+ 92 |     return center, float(np.sqrt(abs(determinant)))</code></pre>
+      <pre class="source" data-source="algorithms/lens_single_calibration.py" data-start="114" data-end="130"><code>114 | def _mapping_geometry(profile):
+115 |     width, height = profile.image_size
+116 |     scale = float(max(width, height))
+117 |     center = np.asarray(profile.center, np.float64)
+118 |     corners = np.array([[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]], np.float64)
+119 |     if profile.mode == "radial":
+120 |         ideal = (corners - center) / scale
+121 |         return center, scale, float(np.linalg.norm(ideal, axis=1).max())
+122 |     ideal_center, area_scale = _local_geometry(profile.homography)
+123 |     output_center = center + scale * ideal_center
+124 |     plane_scale = scale * area_scale
+125 |     plane_corners = (corners - output_center) / plane_scale
+126 |     denominators = np.column_stack((plane_corners, np.ones(4))) @ profile.homography[2]
+127 |     if np.min(denominators) &lt;= 0.05:
+128 |         raise ValueError("棋盘平面在输出画布内接近无穷远或发生翻折；请减小拍摄倾角，并让棋盘覆盖更大视野。")
+129 |     ideal = _project(plane_corners, profile.homography)
+130 |     return output_center, plane_scale, float(np.linalg.norm(ideal, axis=1).max())</code></pre>
+      <p><code>output_center</code> 锚定棋盘归一化中心经 H 映射后的位置；统一缩放取 <code>S × sqrt(|det J_H(0)|)</code>，保留棋盘中心处的局部面积尺度。它不是完整相机内参，也不会自动缩放到让所有内容铺满画布。输出宽高保持原图大小，因此可能有黑边或部分内容超出画面。</p>
+    </details>
+    <p><code>valid_mask</code> 标记采样坐标位于原图范围内的输出像素；<code>valid_roi</code> 是其中一个保守的有效矩形，不保证最大，也不会在 <code>apply()</code> 中自动裁剪图片。</p>
+
+    <h3 class="step">⑦ 第 482 行：查表与插值，得到真正的矫正图片</h3>
+    <pre class="source" data-source="algorithms/lens_single_calibration.py" data-start="473" data-end="482"><code>473 |     def apply(self, image):
+474 |         if not isinstance(image, np.ndarray) or image.ndim not in (2, 3):
+475 |             raise ValueError("请输入灰度或彩色原图。")
+476 |         if (image.shape[1], image.shape[0]) != self.image_size:
+477 |             raise ValueError(f"图片尺寸与单张标定尺寸 {self.image_size[0]}×{self.image_size[1]} 不一致。")
+478 |         if image.dtype not in (np.uint8, np.uint16, np.float32, np.float64):
+479 |             raise ValueError("图像数据类型不受支持。")
+480 |         if image.ndim == 3 and image.shape[2] not in (1, 3, 4):
+481 |             raise ValueError("图像通道数不受支持。")
+482 |         return cv2.remap(image, self.map_x, self.map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)</code></pre>
+    <p>例如，某个输出像素映射到原图 <code>(100.3, 200.6)</code>，坐标落在四个像素之间。<code>INTER_LINEAR</code> 使用相邻四点按距离加权取色，而不是简单四舍五入。超出原图的部分按常量边界处理，默认填零。</p>
+    <p>映射表在构造 <code>SingleUndistorter</code> 时生成并缓存；后续同一配置、同一分辨率的图片直接调用 <code>apply()</code>。参数改变后需要重建映射，图片尺寸不一致时当前代码直接拒绝处理。</p>
+  </section>
+
+  <section id="multi-code">
+    <h2>多姿态模式：对应的核心代码</h2>
+    <p>这一部分位于 <code>algorithms/lens_calibration.py</code>。每张图的规则棋盘三维点（棋盘坐标系中 Z=0）与照片角点一一对应；求参函数同时使用多组观测。</p>
+    <pre class="source" data-source="algorithms/lens_calibration.py" data-start="251" data-end="255"><code>251 |         rms, matrix, distortion, rotations, translations = cv2.calibrateCamera(
+252 |             object_points, image_points, image_size, None, None,
+253 |             flags=0,
+254 |             criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_MAX_ITER, 100, 1e-9),
+255 |         )</code></pre>
+    <p><code>matrix</code> 是共同的 K；<code>distortion</code> 默认包含 <code>k₁、k₂、p₁、p₂、k₃</code>；<code>rotations、translations</code> 分别记录各张棋盘的姿态。这里把相机参数求解交给 OpenCV，没有使用上述单图的固定中心、H 与两系数拟合函数。</p>
+    <pre class="source" data-source="algorithms/lens_calibration.py" data-start="305" data-end="316"><code>305 |         self.new_camera_matrix, roi = cv2.getOptimalNewCameraMatrix(
+306 |             self.camera_matrix, self.dist_coeffs, self.image_size, self.alpha, self.image_size,
+307 |         )
+308 |         if not np.isfinite(self.new_camera_matrix).all() or min(self.new_camera_matrix[0, 0], self.new_camera_matrix[1, 1]) &lt;= 0:
+309 |             raise ValueError("参数无法生成有效矫正图像，请重新标定或减小手动畸变系数。")
+310 |         self.valid_roi = tuple(int(v) for v in roi)
+311 |         self.map_x, self.map_y = cv2.initUndistortRectifyMap(
+312 |             self.camera_matrix, self.dist_coeffs, None, self.new_camera_matrix, self.image_size, cv2.CV_32FC1,
+313 |         )
+314 |         if not np.isfinite(self.map_x).all() or not np.isfinite(self.map_y).all():
+315 |             raise ValueError("畸变参数生成了无效像素映射，请重新标定。")
+316 |         self.map_build_ms = (time.perf_counter() - started) * 1000.0</code></pre>
+    <p><code>getOptimalNewCameraMatrix()</code> 根据视野保留参数选择输出内参；<code>initUndistortRectifyMap()</code> 根据内参、畸变参数生成映射。这里传入的旋转校正矩阵为 <code>None</code>，没有指定某个工作平面的 H，所以不会自动把斜拍的产品平面拉正。</p>
+    <pre class="source" data-source="algorithms/lens_calibration.py" data-start="318" data-end="328"><code>318 |     def apply(self, image: np.ndarray) -&gt; np.ndarray:
+319 |         if not isinstance(image, np.ndarray) or image.ndim not in (2, 3):
+320 |             raise ValueError("请输入灰度或彩色图像。")
+321 |         actual_size = (image.shape[1], image.shape[0])
+322 |         if actual_size != self.image_size:
+323 |             raise ValueError(f"图片尺寸 {actual_size[0]}×{actual_size[1]} 与标定尺寸 {self.image_size[0]}×{self.image_size[1]} 不一致；请使用同一分辨率的原始图片。")
+324 |         if image.dtype not in (np.uint8, np.uint16, np.float32, np.float64):
+325 |             raise ValueError("图像数据类型不受支持。")
+326 |         if image.ndim == 3 and image.shape[2] not in (1, 3, 4):
+327 |             raise ValueError("图像通道数不受支持。")
+328 |         return cv2.remap(image, self.map_x, self.map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)</code></pre>
+    <p>实际图像处理仍然是一次 <code>remap()</code>。三种模式主要区别在标定模型和映射表的计算，最终取样步骤相同。</p>
+  </section>
+
+  <section>
+    <h2>三种模式怎样选择</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>模式</th><th>当前求出的主要参数</th><th>输出处理</th></tr></thead>
+      <tbody>
+        <tr><td>单张·径向</td><td>H、k₁、k₂；中心固定</td><td>去径向畸变，保留透视</td></tr>
+        <tr><td>单张·径向＋透视</td><td>与上一种共用求参</td><td>去径向畸变，并拉正标定平面</td></tr>
+        <tr><td>多姿态·相机标定</td><td>K、五项畸变参数、各图姿态</td><td>去径向和切向畸变，不额外拉正工作平面</td></tr>
+      </tbody>
+    </table></div>
+    <p>单图模型与多姿态模型的坐标归一化方式不同，不能直接交换 <code>k₁、k₂</code> 数值。应通过各自的完整参数文件加载。</p>
+    <p>三种模式都预先生成 <code>map_x、map_y</code>，后续图片调用 <code>cv2.remap()</code> 查表、插值。每张产品图不需要重新拟合标定参数。</p>
+  </section>
+
+  <section>
+    <h2>与你当前产品测试的关系</h2>
+    <p>棋盘本身必须足够平整。纸张起伏、打印变形、错误角点都可能混入参数拟合。标定图上的误差小，不等于产品 ROI 在所有位置都准确，应使用独立图片检查。</p>
+    <p>镜头矫正处理成像畸变；定位组处理全局匹配之后不同部位的局部偏移。立体产品仍可能存在不同高度引起的视差。目前局部定位组只补偿平移，不能替代三维测量。</p>
+    <p>当前镜头矫正仍是独立 Demo。要测试产品图，可以加载参数、打开同分辨率原图并导出矫正结果；模板图与待测图应使用同一套矫正参数和输出坐标设置。</p>
+  </section>
+
+  <section>
+    <h2>官方参考入口（需要联网）</h2>
+    <p>上面的项目行为说明以当前源码为依据。通用模型可对照以下官方资料；打不开外链不影响本页阅读。</p>
+    <ul>
+      <li>径向、切向与相机标定：<a href="https://github.com/opencv/opencv/blob/4.12.0/doc/py_tutorials/py_calib3d/py_calibration/py_calibration.markdown">OpenCV 官方 GitHub：Camera Calibration，4.12.0</a></li>
+      <li>平面矩阵与透视变换：<a href="https://docs.opencv.org/4.13.0/d9/dab/tutorial_homography.html">OpenCV 官方：Homography</a></li>
+      <li>稳健最小二乘：<a href="https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.least_squares.html">SciPy 官方：least_squares</a></li>
+    </ul>
+  </section>
+</body>
+</html>

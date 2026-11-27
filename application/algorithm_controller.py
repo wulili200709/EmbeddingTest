@@ -190,6 +190,7 @@ class AlgorithmController(ModelBindingMixin):
         # tests may reuse the same product's models, each checked by file version
         # in _load_register_model_cached before use.
         params_path = os.path.normcase(os.path.abspath(path))
+        self._active_product_dir = os.path.dirname(params_path)
         if not reuse_embedding_models or params_path != self._loaded_params_path:
             self.clear_embedding_model_cache()
             self.clear_yolo_model_cache()
@@ -327,18 +328,55 @@ class AlgorithmController(ModelBindingMixin):
         normalized = re.sub(r"[^\w._-]+", "_", str(model_key or "").strip(), flags=re.UNICODE).strip("._-")
         return normalized
 
-    def tool_model_key(self, model_key: object) -> str:
-        return self._normalize_model_key(model_key)
+    def _raw_model_key(self, model_key: object) -> str:
+        normalized = self._normalize_model_key(model_key)
+        return re.sub(r"(?:__lens_[0-9a-f]{64})+$", "", normalized)
+
+    def _model_correction_config(self, model_key: object, product_dir=None):
+        from services.lens_correction import CorrectionConfig, get_config
+        root = self._active_product_dir if product_dir is None else str(product_dir or "")
+        role = camera_role_from_text(self._raw_model_key(model_key)) or DEFAULT_CAMERA_ROLE
+        return (get_config(root, role) if root else CorrectionConfig()), role
+
+    def tool_model_key(self, model_key: object, *, product_dir=None) -> str:
+        """Idempotent storage key, scoped to the current camera's image geometry."""
+        normalized = self._raw_model_key(model_key)
+        config, role = self._model_correction_config(normalized, product_dir)
+        if config.enabled:
+            return f"{normalized or role}__lens_{config.profile_id}"
+        return normalized
+
+    def _model_coordinate_metadata(self, model_key, product_dir=None):
+        config, role = self._model_correction_config(model_key, product_dir)
+        if not config.enabled:
+            return {}
+        return {"profile_id": config.profile_id, "camera_role": role,
+                "camera_serial": config.camera_serial, "mode": config.mode,
+                "image_size": list(config.image_size), "alpha": config.alpha}
+
+    def _validate_library_coordinate_space(self, manifest, model_key, product_dir=None):
+        from services.lens_correction import LensCorrectionError
+        config, _ = self._model_correction_config(model_key, product_dir)
+        metadata = dict(manifest.get("source") or {}).get("lens_correction")
+        signature = config.profile_id if config.enabled else "raw"
+        if config.enabled and not isinstance(metadata, dict):
+            raise LensCorrectionError("公共模型缺少标定版本记录，不能用于已启用镜头矫正的相机。")
+        if isinstance(metadata, dict):
+            if metadata.get("profile_id", "raw") != signature:
+                raise LensCorrectionError("公共模型的图像坐标版本与当前相机不一致，请重新训练或选择匹配版本。")
+            serial = str(metadata.get("camera_serial", "") or "")
+            if config.enabled and config.camera_serial and serial and serial != config.camera_serial:
+                raise LensCorrectionError("公共模型的物理相机序列号与当前标定绑定不一致。")
 
     def embedding_model_path(self, algorithm: str, product_dir: str, *, model_key: object = "") -> str:
-        normalized_key = self.tool_model_key(model_key)
+        normalized_key = self.tool_model_key(model_key, product_dir=product_dir)
         storage_code = learning_backbone_storage_code(algorithm)
         if normalized_key:
             return os.path.join(product_dir, f"{normalized_key}_register_model_{storage_code}.npz")
         return os.path.join(product_dir, f"register_model_{storage_code}.npz")
 
     def embedding_model_storage_paths(self, algorithm: str, product_dir: str, *, model_key: object = "") -> List[str]:
-        normalized_key = self.tool_model_key(model_key)
+        normalized_key = self.tool_model_key(model_key, product_dir=product_dir)
         paths: List[str] = []
         for storage_code in learning_backbone_storage_codes(algorithm):
             if normalized_key:
@@ -349,33 +387,36 @@ class AlgorithmController(ModelBindingMixin):
         return list(dict.fromkeys(paths))
 
     def embedding_model_legacy_path(self, algorithm: str, product_dir: str, *, model_key: object = "") -> str:
-        normalized_key = self.tool_model_key(model_key)
+        normalized_key = self.tool_model_key(model_key, product_dir=product_dir)
         algorithm = storage_code_backbone(algorithm)
         if normalized_key:
             return os.path.join(product_dir, f"{normalized_key}_register_model_{algorithm}.npz")
         return os.path.join(product_dir, f"register_model_{algorithm}.npz")
 
-    def embedding_cache_dir(self, algorithm: str, product_dir: str) -> str:
+    def embedding_cache_dir(self, algorithm: str, product_dir: str, *, model_key: object = "") -> str:
         storage_code = learning_backbone_storage_code(algorithm)
+        config, role = self._model_correction_config(model_key, product_dir)
+        if config.enabled:
+            return os.path.join(product_dir, "lens_assets", role, config.profile_id, "embedding_cache", storage_code)
         return os.path.join(product_dir, "embedding_cache", storage_code)
 
-    def traditional_model_storage_key(self, algorithm: str, *, model_key: object = "") -> str:
-        normalized_key = self.tool_model_key(model_key)
+    def traditional_model_storage_key(self, algorithm: str, *, model_key: object = "", product_dir=None) -> str:
+        normalized_key = self.tool_model_key(model_key, product_dir=product_dir)
         if normalized_key:
             return f"{algorithm}::{normalized_key}"
         return str(algorithm or "").strip()
 
-    def get_traditional_model_dict(self, algorithm: str, *, model_key: object = "") -> Optional[dict]:
-        manifest = self._library_model_for_key(model_key, algorithm=algorithm)
+    def get_traditional_model_dict(self, algorithm: str, *, model_key: object = "", product_dir=None) -> Optional[dict]:
+        manifest = self._library_model_for_key(model_key, algorithm=algorithm, product_dir=product_dir)
         if manifest is not None:
             if manifest["kind"] != "traditional":
                 raise ValueError("公共模型类型与传统工具不兼容")
             return dict(manifest["traditional_model"])
-        storage_key = self.traditional_model_storage_key(algorithm, model_key=model_key)
+        storage_key = self.traditional_model_storage_key(algorithm, model_key=model_key, product_dir=product_dir)
         model_dict = self.product_params.traditional_models.get(storage_key)
         if isinstance(model_dict, dict):
             return model_dict
-        if "__group__" in str(model_key or ""):
+        if "__group__" in str(model_key or "") or "__lens_" in storage_key:
             return None
         legacy_model_dict = self.product_params.traditional_models.get(str(algorithm or "").strip())
         if isinstance(legacy_model_dict, dict):
@@ -395,6 +436,8 @@ class AlgorithmController(ModelBindingMixin):
             return False
         normalized_key = self.tool_model_key(model_key)
         loaded_algorithm, loaded_key = self._loaded_embedding_model_key
+        if "__lens_" in normalized_key and loaded_key != normalized_key:
+            return False
         if str(loaded_algorithm or "").strip() and str(loaded_algorithm or "").strip() != str(algorithm or "").strip():
             return False
         if normalized_key and str(loaded_key or "").strip() and loaded_key != normalized_key:
@@ -516,11 +559,11 @@ class AlgorithmController(ModelBindingMixin):
         返回 (model_or_None, status_message)。
         调用方负责把 status_message 写进 lbl_status。
         """
+        self._active_product_dir = str(product_dir or "").strip()
         manifest = self._library_model_for_key(model_key)
         algorithm = manifest["algorithm"] if manifest is not None else self.resolve_learning_algorithm(algorithm)
         display_name = self.algorithm_display_name(algorithm)
         normalized_model_key = self.tool_model_key(model_key)
-        self._active_product_dir = str(product_dir or "").strip()
         self._active_library_parameters = dict(manifest["parameters"]) if manifest is not None else None
         if not algorithm:
             self.model = None
@@ -607,19 +650,28 @@ class AlgorithmController(ModelBindingMixin):
         训练 embedding 或传统阈值模型。
         成功返回 TrainResult；失败抛出异常（调用方负责捕获并弹 QMessageBox）。
         """
+        self._active_product_dir = str(product_dir or "").strip()
         algorithm = self.resolve_learning_algorithm(algorithm)
-        if parse_library_model_key(str(model_key or "")) is not None:
+        if parse_library_model_key(self._raw_model_key(model_key)) is not None:
             raise ValueError("公共模型版本为只读，请训练本地模型后发布新版本")
         self._active_library_parameters = None
         display_name = self.algorithm_display_name(algorithm)
         normalized_model_key = self.tool_model_key(model_key)
-        self._active_product_dir = str(product_dir or "").strip()
         mode = self.product_params.score_mode
         margin = float(self.product_params.margin)
         topk = int(self.product_params.topk)
 
         normalized_ok_samples = list(ok_samples or [])
         normalized_ng_samples = list(ng_samples or [])
+        from services.lens_correction import validate_prepared_path
+        correction, camera_role = self._model_correction_config(model_key, product_dir)
+        training_paths = list(ok_files) + list(ng_files)
+        training_paths += [sample[0] for sample in normalized_ok_samples + normalized_ng_samples]
+        for image_path in dict.fromkeys(training_paths):
+            validate_prepared_path(image_path, product_dir, camera_role)
+        effective_cache_dir = embedding_cache_dir or self.embedding_cache_dir(algorithm, product_dir, model_key=model_key)
+        if embedding_cache_dir and correction.enabled:
+            effective_cache_dir = os.path.join(embedding_cache_dir, camera_role, correction.profile_id)
 
         if self.is_yolo_algorithm(algorithm):
             roi_label = str(label_names[0] if label_names else "roi").strip() or "roi"
@@ -677,7 +729,7 @@ class AlgorithmController(ModelBindingMixin):
                 label_name=label_names[0],
                 label_names=label_names,
                 progress_callback=progress_callback,
-                cache_dir=embedding_cache_dir or self.embedding_cache_dir(algorithm, product_dir),
+                cache_dir=effective_cache_dir,
                 device=device,
                 feat_net=feat_net,
             )
@@ -1138,14 +1190,14 @@ class AlgorithmController(ModelBindingMixin):
             self._yolo_model_cache.clear()
 
     def yolo_model_paths(self, product_dir: str, *, model_key: object = ""):
-        manifest = self._library_model_for_key(model_key)
+        manifest = self._library_model_for_key(model_key, product_dir=product_dir)
         if manifest is not None:
             if manifest["kind"] != "yolo":
                 raise ValueError("公共模型类型与标准学习工具不兼容")
             return YoloClassifierPaths(pt=Path(manifest["directory"]) / "model.pt",
                                        onnx=Path(manifest["model_file"]),
                                        metadata=Path(manifest["classifier_metadata"]))
-        return yolo_classifier_paths(product_dir, self.tool_model_key(model_key))
+        return yolo_classifier_paths(product_dir, self.tool_model_key(model_key, product_dir=product_dir))
 
     def classifier_ng_threshold(self, model_key: object = "") -> float:
         manifest = self._library_model_for_key(model_key)

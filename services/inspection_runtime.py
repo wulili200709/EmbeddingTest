@@ -21,6 +21,7 @@ class CameraInspectionOutcome:
     capture_ms: float = 0.0
     match_ms: float = 0.0
     infer_ms: float = 0.0
+    correction_ms: float = 0.0
 
 
 @dataclass(frozen=True)

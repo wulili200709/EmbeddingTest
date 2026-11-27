@@ -43,11 +43,11 @@ from common import labelme_io
 from application.runtime.preview_frame import RuntimePreviewShape
 from domain import (
     InspectionItem,
-    load_inspection_items,
-    save_inspection_items,
     sync_items_with_labels,
 )
+from services.lens_inspection_items import load_inspection_items, save_inspection_items
 from ncc import locator as ncc_locator
+from services import lens_correction
 from shape.core import locator as shape_locator
 from shape.core.recipe import has_bound_localization_groups
 from shape.core.recipe_labels import inspection_item_specs_from_shape_recipe, output_labels_from_shape_recipe
@@ -579,6 +579,7 @@ class ProductRuntimeContext:
         self._inspection_items: List[InspectionItem] = []
         self._recipe = None
         self._recipes_by_role: Dict[str, object] = {}
+        self._recipe_lens_signatures: Dict[str, str] = {}
         self._ref_image = ""
         self._shape_match_ms_by_image: Dict[str, float] = {}
         self.reload()
@@ -620,10 +621,12 @@ class ProductRuntimeContext:
         total_t0 = time.perf_counter()
         match_ms = None
         camera_role = _camera_role_from_path(path)
+        path = lens_correction.prepare_path(path, self.session.product_dir, camera_role)
+        lens_correction.validate_prepared_path(path, self.session.product_dir, camera_role)
         method = self.loc_method_for_role(camera_role)
         if method == "shape":
             recipe = self._ensure_recipe_loaded(camera_role)
-            ref_image = self._reference_image(recipe)
+            ref_image = self._reference_image(recipe, camera_role)
             if (ref_image and os.path.exists(ref_image)) or (
                 recipe is not None and has_bound_localization_groups(recipe)
             ):
@@ -715,10 +718,12 @@ class ProductRuntimeContext:
             if enabled_items
             else DEFAULT_CAMERA_ROLE
         )
+        path = lens_correction.prepare_path(path, self.session.product_dir, camera_role)
+        lens_correction.validate_prepared_path(path, self.session.product_dir, camera_role)
         method = self.loc_method_for_role(camera_role)
         if method == "shape":
             recipe = self._ensure_recipe_loaded(camera_role)
-            ref_image = self._reference_image(recipe)
+            ref_image = self._reference_image(recipe, camera_role)
             if (ref_image and os.path.exists(ref_image)) or (
                 recipe is not None and has_bound_localization_groups(recipe)
             ):
@@ -777,6 +782,7 @@ class ProductRuntimeContext:
         camera_role: str,
         items: List[InspectionItem],
         feat_net=None,
+        image_prepared: bool = False,
     ) -> RuntimeFrameBatchPrediction:
         image = np.asarray(image_bgr)
         if image.ndim not in {2, 3}:
@@ -796,12 +802,18 @@ class ProductRuntimeContext:
         ]
 
         role = normalize_camera_role(camera_role, default=DEFAULT_CAMERA_ROLE)
+        correction_ms = 0.0
+        if not image_prepared:
+            product_dir = str(getattr(getattr(self, "session", None), "product_dir", "") or "")
+            correction = lens_correction.prepare_array(image, product_dir, role)
+            image = correction.image
+            correction_ms = float(correction.correction_ms)
         match_ms = 0.0
         roi_shapes: tuple[RuntimePreviewShape, ...] = ()
         method = self.loc_method_for_role(role)
         if method == "shape":
             recipe = self._ensure_recipe_loaded(role)
-            ref_image = self._reference_image(recipe)
+            ref_image = self._reference_image(recipe, role)
             if (ref_image and os.path.exists(ref_image)) or (
                 recipe is not None and has_bound_localization_groups(recipe)
             ):
@@ -1147,6 +1159,8 @@ class ProductRuntimeContext:
                 measurement_payload.update({"pred": pred})
             rows_by_key[item.model_key]["measurement"] = measurement_payload
 
+        if correction_ms:
+            inference_timing["correction_ms"] = correction_ms
         return RuntimeFrameBatchPrediction(
             rows=[dict(rows_by_key[item.model_key]) for item in enabled_items],
             match_ms=float(match_ms),
@@ -1169,6 +1183,7 @@ class ProductRuntimeContext:
         }
         self._ref_image = str(session_data.ref_image or "").strip()
         self._recipes_by_role = {}
+        self._recipe_lens_signatures = {}
         items = load_inspection_items(self.session.inspection_items_path)
         synced_items: List[InspectionItem] = []
         remaining_items: List[InspectionItem] = []
@@ -1187,6 +1202,11 @@ class ProductRuntimeContext:
                     continue
                 specs = ncc_locator.inspection_item_specs_for_product(self.session.product_dir, role)
             else:
+                if recipe is None and lens_correction.active_signature(self.session.product_dir, role) != "raw":
+                    # Changing the image coordinate system must not rewrite the
+                    # user's existing item configuration before new ROIs exist.
+                    synced_items.extend(role_items)
+                    continue
                 if recipe is None and not role_items:
                     continue
                 specs = inspection_item_specs_from_shape_recipe(recipe)
@@ -1229,8 +1249,13 @@ class ProductRuntimeContext:
 
     def _ensure_recipe_loaded(self, camera_role: str = "cam1"):
         role = normalize_camera_role(camera_role, default=DEFAULT_CAMERA_ROLE)
-        if role not in self._recipes_by_role or self._recipes_by_role.get(role) is None:
+        signature = lens_correction.active_signature(self.session.product_dir, role)
+        signatures = getattr(self, "_recipe_lens_signatures", {})
+        if (role not in self._recipes_by_role or self._recipes_by_role.get(role) is None
+                or signatures.get(role, "raw") != signature):
             self._recipes_by_role[role] = self._load_recipe_if_available(role)
+            signatures[role] = signature
+            self._recipe_lens_signatures = signatures
         if role == DEFAULT_CAMERA_ROLE:
             self._recipe = self._recipes_by_role.get(role)
         return self._recipes_by_role.get(role)
@@ -1252,8 +1277,17 @@ class ProductRuntimeContext:
             return self._ncc_output_labels(camera_role)
         return ["roi"]
 
-    def _reference_image(self, recipe) -> str:
-        if self._ref_image and os.path.exists(self._ref_image):
+    def _reference_image(self, recipe, camera_role: str = "cam1") -> str:
+        if lens_correction.active_signature(self.session.product_dir, camera_role) != "raw":
+            reference = str(getattr(recipe, "reference_image", "") or "")
+            if not reference:
+                raise lens_correction.LensCorrectionError(
+                    "Lens correction is enabled; create a template and reference ROIs for this calibration first."
+                )
+            lens_correction.validate_prepared_path(reference, self.session.product_dir, camera_role)
+            return reference
+        if (self._ref_image and os.path.exists(self._ref_image)
+                and not lens_correction.is_managed_image(self._ref_image)):
             return self._ref_image
         recipe_ref = getattr(recipe, "reference_image", "") if recipe is not None else ""
         return str(recipe_ref or "")

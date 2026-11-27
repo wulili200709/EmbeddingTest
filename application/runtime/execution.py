@@ -13,6 +13,7 @@ from pathlib import Path
 from domain import aggregate_runtime_outcome, recipe_name_from_path
 from common.algorithm_codes import learning_backbone_storage_code
 from common.camera_roles import configured_camera_roles, camera_index_for_role
+from services import lens_correction
 
 from .capture_policy import normalize_capture_retention_policy
 from .capture_channels import (
@@ -211,19 +212,15 @@ def _write_runtime_record_sync(runtime, record_service, runtime_result, *, lock_
         return
     if record_service is not None:
         try:
+            camera_results = {role: item.result for role, item in runtime_result.camera_results.items() if item is not None}
             record_service.write_product_result(
                 product_name=runtime_result.product_name,
                 recipe_name=runtime_result.recipe_name,
                 final_result=runtime_result.final_result,
-                camera1_result=runtime_result.camera_results.get("cam1", None).result
-                if runtime_result.camera_results.get("cam1") is not None
-                else "",
-                camera2_result=runtime_result.camera_results.get("cam2", None).result
-                if runtime_result.camera_results.get("cam2") is not None
-                else "",
-                camera3_result=runtime_result.camera_results.get("cam3", None).result
-                if runtime_result.camera_results.get("cam3") is not None
-                else "",
+                camera1_result=camera_results.get("cam1", ""),
+                camera2_result=camera_results.get("cam2", ""),
+                camera3_result=camera_results.get("cam3", ""),
+                camera4_result=camera_results.get("cam4", ""),
                 duration_ms=runtime_result.duration_ms,
                 is_error=runtime_result.is_system_error,
                 error_message=runtime_result.error_message,
@@ -480,6 +477,20 @@ def _validate_runtime_model_bindings(runtime, enabled_items: list[object]) -> tu
 
 
 def _warm_runtime_models(runtime, enabled_items: list[object]) -> None:
+    product_dir = str(getattr(getattr(runtime, "_session", None), "product_dir", "") or "")
+    for role in sorted({str(item.camera_id) for item in enabled_items}):
+        lens_correction.warmup(product_dir, role)
+        if lens_correction.active_signature(product_dir, role) != "raw":
+            from shape.core import locator as shape_locator
+            from ncc import locator as ncc_locator
+            method = runtime._runtime_context.loc_method_for_role(role)
+            if method == "shape":
+                if not shape_locator.recipe_is_ready(product_dir, role):
+                    raise lens_correction.LensCorrectionError(f"{role}: create the Shape template for this calibration first")
+                recipe = shape_locator.load_recipe_for_product(product_dir, role)
+                lens_correction.validate_prepared_path(recipe.reference_image, product_dir, role)
+            elif method == "ncc" and not ncc_locator.model_is_ready(product_dir, role):
+                raise lens_correction.LensCorrectionError(f"{role}: create the NCC template for this calibration first")
     learning_items = [
         item
         for item in enabled_items
@@ -852,6 +863,10 @@ def _inspect_frame(runtime, role: str, frame, *, physical_role: str = ""):
     image = runtime_controller_module.frame_to_bgr_image(frame)
     if image.ndim == 3 and image.shape[2] > 3:
         image = image[:, :, :3]
+    correction = lens_correction.prepare_array(
+        image, product_dir, role, camera_serial=camera_serial,
+    )
+    image = correction.image
     runtime.logAppended.emit(
         "[capture] "
         f"trigger={trigger_id or '-'} logical={role} physical={physical_role_text} "
@@ -869,6 +884,7 @@ def _inspect_frame(runtime, role: str, frame, *, physical_role: str = ""):
         source_path="",
         product_dir=product_dir,
         camera_role=role,
+        correction_profile_id=correction.profile_id if correction.corrected else "",
     )
     with runtime._frame_lock:
         runtime._last_preview_frames[role] = preview_frame
@@ -885,6 +901,8 @@ def _inspect_frame(runtime, role: str, frame, *, physical_role: str = ""):
                 image_path="",
                 image_bgr=image,
                 items=[item for item in runtime._runtime_context.inspection_items if item.camera_id == role],
+                image_prepared=True,
+                correction_ms=correction.correction_ms,
             )
         )
         execute_ms = float((time.perf_counter() - execute_t0) * 1000.0)
@@ -904,6 +922,7 @@ def _inspect_frame(runtime, role: str, frame, *, physical_role: str = ""):
         camera_role=role,
         roi_shapes=roi_shapes,
         measurements=measurements,
+        correction_profile_id=correction.profile_id if correction.corrected else "",
     )
     with runtime._frame_lock:
         runtime._last_preview_frames[role] = preview_frame
@@ -928,6 +947,7 @@ def _inspect_frame(runtime, role: str, frame, *, physical_role: str = ""):
         "[inspect-stage] "
         f"trigger={trigger_id or '-'} logical={role} "
         f"lock_wait={lock_wait_ms:.1f}ms execute={execute_ms:.1f}ms "
+        f"correction={float(correction.correction_ms):.1f}ms "
         f"model_load={float(stage_timing.get('model_load_ms', 0.0) or 0.0):.1f}ms "
         f"roi_preprocess={float(stage_timing.get('roi_preprocess_ms', 0.0) or 0.0):.1f}ms "
         f"backbone={float(stage_timing.get('backbone_ms', 0.0) or 0.0):.1f}ms "
@@ -942,6 +962,7 @@ def _inspect_frame(runtime, role: str, frame, *, physical_role: str = ""):
         message=message,
         match_ms=float(response.match_ms or 0.0),
         infer_ms=float(response.infer_ms or 0.0),
+        correction_ms=float(correction.correction_ms),
     )
 
 

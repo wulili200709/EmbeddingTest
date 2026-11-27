@@ -917,7 +917,14 @@ class SoftwareVersionDialog(QtWidgets.QDialog):
             tr("software.operator"),
             tr("software.current_version"),
         ])
-        self.table.horizontalHeader().setStretchLastSection(True)
+        header = self.table.horizontalHeader()
+        mode = QtWidgets.QHeaderView.ResizeMode
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(mode.ResizeToContents)
+        header.setSectionResizeMode(2, mode.Interactive)
+        header.resizeSection(2, 175)
+        header.setSectionResizeMode(3, mode.Stretch)
+        self.table.setWordWrap(False)
         root.addWidget(self.table, 1)
 
         form = QtWidgets.QGridLayout()
@@ -941,15 +948,16 @@ class SoftwareVersionDialog(QtWidgets.QDialog):
         self._reload()
 
     def _reload(self) -> None:
+        self.store.sync_software_updates()
         rows = self.store.software_versions()
         self.table.setRowCount(len(rows))
         keys = ["created_at", "version", "summary", "details", "operator", "software_version"]
         for row, data in enumerate(rows):
             for col, key in enumerate(keys):
                 item = QtWidgets.QTableWidgetItem(str(data.get(key, "") or ""))
+                item.setToolTip(item.text())
                 item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
                 self.table.setItem(row, col, item)
-        self.table.resizeColumnsToContents()
 
     def _add_version(self) -> None:
         if not self.can_edit:

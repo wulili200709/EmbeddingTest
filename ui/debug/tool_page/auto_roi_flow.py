@@ -144,6 +144,12 @@ def _autogen_roi_for_images(
         return
     labels = validation.labels or labels
 
+    from ui.debug.tool_page.lens_correction_flow import prepare_sample
+    try:
+        paths = [prepare_sample(self, path, camera_role=role) for path in paths]
+    except Exception as exc:
+        QtWidgets.QMessageBox.warning(self, tr("common.error"), str(exc))
+        return
     todo = self._resolve_autogen_targets(paths, only_missing=only_missing, silent=silent, camera_role=role)
     if not todo:
         if getattr(self, "_skip_empty_autogen_message", False):

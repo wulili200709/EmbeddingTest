@@ -73,6 +73,12 @@ class ReleaseHistoryTests(unittest.TestCase):
             (root / 'tools').mkdir()
             for name in ('generate_version_info.py', 'record_release.py'):
                 shutil.copy2(ROOT / 'tools' / name, root / 'tools' / name)
+            notes_dir = root / 'releases' / 'notes'
+            notes_dir.mkdir(parents=True)
+            (notes_dir / '3.0.7.json').write_text(json.dumps({
+                'version': '3.0.7', 'changes': [{'id': 'history', 'time': '2026-11-27 14:00:00',
+                'type': '新增', 'summary': '软件版本履历', 'details': '自动收录本次改动。'}],
+            }, ensure_ascii=False), encoding='utf-8')
             (root / 'VERSION').write_text('3.0.7', encoding='utf-8')
             def ps(path):
                 return "'" + str(path).replace("'", "''") + "'"
@@ -97,7 +103,8 @@ foreach ($run in 1..2) {{
             self.assertEqual((root / 'dist/LC System V3.0.7/LC System.exe').read_text(), 'executable 1')
             for archive in archives:
                 with zipfile.ZipFile(archive) as zipped:
-                    self.assertTrue(any(name.endswith('/VERSION_HISTORY.txt') for name in zipped.namelist()))
+                    history_file = next(name for name in zipped.namelist() if name.endswith('/VERSION_HISTORY.txt'))
+                    self.assertIn('自动收录本次改动。', zipped.read(history_file).decode('utf-8-sig'))
                     self.assertTrue(any(name.endswith('/release_record.json') for name in zipped.namelist()))
             self.assertEqual(len(json.loads((root / 'releases/history.json').read_text(encoding='utf-8'))), 2)
 

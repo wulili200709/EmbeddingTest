@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from common.camera_roles import normalize_camera_role
 from ui.algorithm_labels import algorithm_display_name
 from ui.i18n import tr
 
@@ -33,7 +34,7 @@ def library_model_origin(model: dict) -> str:
     camera = str(source.get("camera_id", "") or "")
     if not camera:
         key_camera = str(source.get("model_key", "")).partition("__")[0]
-        camera = key_camera if key_camera in {"cam1", "cam2", "cam3"} else ""
+        camera = normalize_camera_role(key_camera)
     parts = [str(source.get("order", "") or "-")]
     if camera:
         parts.append(camera)

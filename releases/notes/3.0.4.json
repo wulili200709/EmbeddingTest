@@ -1,0 +1,21 @@
+{
+  "version": "3.0.4",
+  "date": "2026-09-05",
+  "changes": [
+    {
+      "id": "pin-tip-point", "time": "2026-09-05 18:00:47", "type": "新增",
+      "summary": "针尖点定位", "details": "可在选定区域内定位针尖点。",
+      "commit": "a5c0b5e"
+    },
+    {
+      "id": "multi-pin-height", "time": "2026-09-05 18:00:47", "type": "新增",
+      "summary": "多针尖高度检测", "details": "可同时检测多根针尖到基准线的距离。",
+      "commit": "a5c0b5e"
+    },
+    {
+      "id": "per-pin-spacing", "time": "2026-09-06 07:47:43", "type": "新增",
+      "summary": "相邻针间距检测", "details": "每对相邻针可单独设置标准间距和上下公差。",
+      "commit": "7c954e0"
+    }
+  ]
+}
